@@ -11,10 +11,15 @@
 #include <LibCore/Process.h>
 #include <LibCore/Resource.h>
 #include <LibCore/System.h>
-#include <LibCrypto/OpenSSLForward.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Font/PathFontProvider.h>
+#if RINOS_LEGACY_OPENSSL
+#include <LibCrypto/OpenSSLForward.h>
+#include <openssl/thread.h>
+#endif
+#if RINOS_USE_SKIA_GRAPHICS
 #include <LibGfx/SkiaBackendContext.h>
+#endif
 #include <LibIPC/ConnectionFromClient.h>
 #include <LibIPC/TransportHandle.h>
 #include <LibJS/Bytecode/Interpreter.h>
@@ -40,8 +45,6 @@
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/PageClient.h>
 #include <WebContent/WebDriverConnection.h>
-
-#include <openssl/thread.h>
 
 #if defined(AK_OS_MACOS)
 #    include <LibIPC/Transport.h>
@@ -204,8 +207,12 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     if (force_cpu_painting) {
         WebContent::PageClient::set_use_skia_painter(WebContent::PageClient::UseSkiaPainter::CPUBackend);
     } else {
+#if RINOS_USE_SKIA_GRAPHICS
         Gfx::SkiaBackendContext::initialize_gpu_backend();
         WebContent::PageClient::set_use_skia_painter(WebContent::PageClient::UseSkiaPainter::GPUBackendIfAvailable);
+#else
+        WebContent::PageClient::set_use_skia_painter(WebContent::PageClient::UseSkiaPainter::CPUBackend);
+#endif
     }
 
     WebContent::PageClient::set_is_headless(is_headless);
@@ -225,7 +232,9 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
             VERIFY_NOT_REACHED();
     }
 
+#if RINOS_LEGACY_OPENSSL
     OPENSSL_TRY(OSSL_set_max_threads(nullptr, Core::System::hardware_concurrency()));
+#endif
 
     Web::HTML::Window::set_enable_test_mode(enable_test_mode);
     Web::HTML::Window::set_internals_object_exposed(expose_internals_object);
