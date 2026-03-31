@@ -5,8 +5,30 @@
  */
 
 #include <LibCrypto/Hash/Argon2.h>
-
 #include <AK/ByteBuffer.h>
+
+#ifdef AK_OS_RINOS
+
+namespace Crypto::Hash {
+
+Argon2::Argon2(Argon2Type type)
+    : m_type(type)
+{
+}
+
+Argon2::~Argon2() = default;
+
+ErrorOr<ByteBuffer> Argon2::derive_key(
+    ReadonlyBytes, ReadonlyBytes, u32, u32, u32, u32,
+    Optional<ReadonlyBytes>, Optional<ReadonlyBytes>, u32) const
+{
+    return Error::from_string_literal("Argon2 is not supported on RinOS");
+}
+
+}
+
+#else // !AK_OS_RINOS
+
 #include <LibCrypto/OpenSSL.h>
 
 #include <openssl/core_names.h>
@@ -90,3 +112,5 @@ ErrorOr<ByteBuffer> Argon2::derive_key(
 }
 
 }
+
+#endif // AK_OS_RINOS

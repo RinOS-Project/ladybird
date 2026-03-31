@@ -10,6 +10,27 @@
 
 #include <LibCrypto/Hash/HashManager.h>
 
+#ifdef AK_OS_RINOS
+
+namespace Crypto::Hash {
+
+class HKDF {
+    AK_MAKE_NONCOPYABLE(HKDF);
+
+public:
+    HKDF(HashKind hash_kind);
+    ~HKDF() = default;
+
+    ErrorOr<ByteBuffer> derive_key(Optional<ReadonlyBytes> maybe_salt, ReadonlyBytes input_keying_material, ReadonlyBytes info, u32 key_length_bytes);
+
+private:
+    HashKind m_hash_kind;
+};
+
+}
+
+#else // !AK_OS_RINOS
+
 namespace Crypto::Hash {
 
 class HKDF {
@@ -33,3 +54,5 @@ private:
 };
 
 }
+
+#endif // AK_OS_RINOS

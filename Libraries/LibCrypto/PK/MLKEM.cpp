@@ -8,6 +8,42 @@
 
 #include <LibCrypto/ASN1/DER.h>
 #include <LibCrypto/Curves/SECPxxxr1.h>
+
+#ifdef AK_OS_RINOS
+
+namespace Crypto::PK {
+
+ErrorOr<ByteBuffer> MLKEMPrivateKey::export_as_der() const
+{
+    ASN1::Encoder encoder;
+    TRY(encoder.write<ReadonlyBytes>(m_seed, ASN1::Class::Context, static_cast<ASN1::Kind>(0)));
+    return encoder.finish();
+}
+
+ErrorOr<MLKEM::KeyPairType> MLKEM::parse_mlkem_key(MLKEMSize, ReadonlyBytes, Vector<StringView>)
+{
+    return Error::from_string_literal("MLKEM key parsing is not supported on RinOS");
+}
+
+ErrorOr<MLKEMEncapsulation> MLKEM::encapsulate(MLKEMSize, MLKEMPublicKey const&)
+{
+    return Error::from_string_literal("MLKEM is not supported on RinOS");
+}
+
+ErrorOr<ByteBuffer> MLKEM::decapsulate(MLKEMSize, MLKEMPrivateKey const&, ByteBuffer)
+{
+    return Error::from_string_literal("MLKEM is not supported on RinOS");
+}
+
+ErrorOr<MLKEM::KeyPairType> MLKEM::generate_key_pair(MLKEMSize, ByteBuffer)
+{
+    return Error::from_string_literal("MLKEM is not supported on RinOS");
+}
+
+}
+
+#else // !AK_OS_RINOS
+
 #include <LibCrypto/OpenSSL.h>
 
 #include <openssl/core_names.h>
@@ -225,3 +261,5 @@ ErrorOr<MLKEM::KeyPairType> MLKEM::generate_key_pair(MLKEMSize size, ByteBuffer 
 }
 
 }
+
+#endif // AK_OS_RINOS

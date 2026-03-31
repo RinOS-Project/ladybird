@@ -1,4 +1,3 @@
-include(skia)
 include(vulkan)
 
 set(SOURCES
@@ -16,7 +15,6 @@ set(SOURCES
     Font/FontSupport.cpp
     Font/PathFontProvider.cpp
     Font/Typeface.cpp
-    Font/TypefaceSkia.cpp
     Font/WOFF/Loader.cpp
     Font/WOFF2/Loader.cpp
     FontCascadeList.cpp
@@ -43,17 +41,13 @@ set(SOURCES
     ImmutableBitmap.cpp
     PaintStyle.cpp
     Painter.cpp
-    PainterSkia.cpp
     PaintingSurface.cpp
     Palette.cpp
     Path.cpp
-    PathSkia.cpp
     Point.cpp
     Rect.cpp
     ShareableBitmap.cpp
     Size.cpp
-    SkiaBackendContext.cpp
-    SkiaUtils.cpp
     SystemTheme.cpp
     TextLayout.cpp
     Triangle.cpp
@@ -71,6 +65,20 @@ endif()
 
 if (HAS_FONTCONFIG)
     list(APPEND SOURCES Font/GlobalFontConfig.cpp)
+endif()
+
+set(LIBGFX_SKIA_SOURCES
+    Font/TypefaceSkia.cpp
+    PainterSkia.cpp
+    PathSkia.cpp
+    SkiaBackendContext.cpp
+    SkiaUtils.cpp
+)
+if (RINOS_USE_SKIA_GRAPHICS)
+    include(skia)
+    list(APPEND SOURCES ${LIBGFX_SKIA_SOURCES})
+else()
+    message(STATUS "RinOS policy: Skia raster backend disabled in LibGfx (aquamarine path expected).")
 endif()
 
 ladybird_lib(LibGfx gfx)
@@ -113,7 +121,12 @@ find_package(WebP REQUIRED)
 find_package(harfbuzz REQUIRED)
 
 target_link_libraries(LibGfx PRIVATE PkgConfig::WOFF2 JPEG::JPEG PNG::PNG avif WebP::webp WebP::webpdecoder
-            WebP::webpdemux WebP::libwebpmux skia harfbuzz)
+            WebP::webpdemux WebP::libwebpmux harfbuzz)
+if (RINOS_USE_SKIA_GRAPHICS)
+    target_link_libraries(LibGfx PRIVATE skia)
+else()
+    message(STATUS "RinOS policy: Skia raster backend disabled in LibGfx (aquamarine path expected).")
+endif()
 
 if (HAS_FONTCONFIG)
     target_link_libraries(LibGfx PRIVATE Fontconfig::Fontconfig)

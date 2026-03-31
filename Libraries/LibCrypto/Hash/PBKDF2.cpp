@@ -4,6 +4,65 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifdef AK_OS_RINOS
+
+#include <LibCrypto/Hash/PBKDF2.h>
+#include <LibCrypto/Authentication/HMAC.h>
+#include <string.h>
+
+namespace Crypto::Hash {
+
+PBKDF2::PBKDF2(HashKind hash_kind)
+    : m_hash_kind(hash_kind)
+{
+}
+
+ErrorOr<ByteBuffer> PBKDF2::derive_key(ReadonlyBytes password, ReadonlyBytes salt, u32 iterations, u32 key_length_bytes)
+{
+    // PBKDF2 (RFC 8018) using software HMAC
+    Authentication::HMAC hmac_template(m_hash_kind, password);
+    size_t h_len = hmac_template.digest_size();
+
+    u32 block_count = (key_length_bytes + static_cast<u32>(h_len) - 1) / static_cast<u32>(h_len);
+    auto output = TRY(ByteBuffer::create_uninitialized(key_length_bytes));
+    size_t offset = 0;
+
+    for (u32 i = 1; i <= block_count; i++) {
+        // U1 = HMAC(password, salt || INT(i))
+        Authentication::HMAC hmac(m_hash_kind, password);
+        hmac.update(salt.data(), salt.size());
+        u8 block_num[4];
+        block_num[0] = static_cast<u8>(i >> 24);
+        block_num[1] = static_cast<u8>(i >> 16);
+        block_num[2] = static_cast<u8>(i >> 8);
+        block_num[3] = static_cast<u8>(i);
+        hmac.update(block_num, 4);
+        auto u = hmac.digest();
+
+        u8 t[64]; // max digest
+        VERIFY(h_len <= sizeof(t));
+        memcpy(t, u.data(), h_len);
+
+        for (u32 j = 1; j < iterations; j++) {
+            Authentication::HMAC hmac_iter(m_hash_kind, password);
+            hmac_iter.update(u.data(), u.size());
+            u = hmac_iter.digest();
+            for (size_t k = 0; k < h_len; k++)
+                t[k] ^= u[k];
+        }
+
+        size_t copy_len = min(h_len, static_cast<size_t>(key_length_bytes) - offset);
+        memcpy(output.data() + offset, t, copy_len);
+        offset += copy_len;
+    }
+
+    return output;
+}
+
+}
+
+#else // !AK_OS_RINOS
+
 #include <LibCrypto/Hash/PBKDF2.h>
 #include <LibCrypto/OpenSSL.h>
 
@@ -40,3 +99,5 @@ ErrorOr<ByteBuffer> PBKDF2::derive_key(ReadonlyBytes password, ReadonlyBytes sal
 }
 
 }
+
+#endif // AK_OS_RINOS

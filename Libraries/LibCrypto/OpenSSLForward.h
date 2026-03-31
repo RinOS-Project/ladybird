@@ -6,6 +6,8 @@
 
 #pragma once
 
+#ifndef AK_OS_RINOS
+
 extern "C" {
 typedef struct engine_st ENGINE;
 typedef struct bignum_st BIGNUM;
@@ -38,3 +40,5 @@ void EVP_MAC_CTX_free(EVP_MAC_CTX*);
 void EVP_MAC_free(EVP_MAC*);
 void BN_free(BIGNUM*);
 }
+
+#endif // !AK_OS_RINOS

@@ -39,7 +39,9 @@ target_include_directories(requestserverservice PRIVATE ${LADYBIRD_SOURCE_DIR}/S
 
 target_link_libraries(RequestServer PRIVATE requestserverservice)
 target_link_libraries(requestserverservice PUBLIC LibCore LibDNS LibHTTP LibIPC LibMain LibRequests LibTLS LibWebSocket LibURL LibTextCodec CURL::libcurl)
-target_link_libraries(requestserverservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+if (RINOS_LEGACY_OPENSSL)
+    target_link_libraries(requestserverservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+endif()
 
 if (WIN32)
     lagom_windows_bin(RequestServer CONSOLE)

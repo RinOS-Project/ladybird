@@ -1,8 +1,18 @@
 include(fontconfig)
 include(libweb_generators)
 include(vulkan)
-include(skia)
 include(SDL3)
+
+if (RINOS_USE_SKIA_GRAPHICS)
+    include(skia)
+    list(APPEND SKIA_SOURCES
+        Painting/DisplayListPlayerSkia.cpp
+    )
+else()
+    list(APPEND SKIA_SOURCES
+        Painting/DisplayListPlayerSkiaAquamarineStub.cpp
+    )
+endif()
 
 find_package(unofficial-angle CONFIG)
 if(unofficial-angle_FOUND)
@@ -838,7 +848,6 @@ set(SOURCES
     Painting/CheckBoxPaintable.cpp
     Painting/DisplayList.cpp
     Painting/DisplayListCommand.cpp
-    Painting/DisplayListPlayerSkia.cpp
     Painting/DisplayListRecorder.cpp
     Painting/DisplayListRecordingContext.cpp
     Painting/ExternalContentSource.cpp
@@ -1171,6 +1180,7 @@ set(SOURCES
     XPath/XPathNSResolver.cpp
     XPath/XPathResult.cpp
 )
+list(APPEND SOURCES ${SKIA_SOURCES})
 
 compile_ipc(Worker/WebWorkerClient.ipc Worker/WebWorkerClientEndpoint.h)
 compile_ipc(Worker/WebWorkerServer.ipc Worker/WebWorkerServerEndpoint.h)
@@ -1219,7 +1229,12 @@ ladybird_lib(LibWeb web EXPLICIT_SYMBOL_EXPORT)
 
 find_package(LibXml2 REQUIRED)
 
-target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia LibWasm LibXML LibIDL LibURL LibTLS LibRequests LibGC LibThreading skia ${ANGLE_TARGETS} SDL3::SDL3 LibXml2::LibXml2)
+target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia LibWasm LibXML LibIDL LibURL LibTLS LibRequests LibGC LibThreading ${ANGLE_TARGETS} SDL3::SDL3 LibXml2::LibXml2)
+if (RINOS_USE_SKIA_GRAPHICS)
+    target_link_libraries(LibWeb PRIVATE skia)
+else()
+    message(STATUS "RinOS policy: LibWeb Skia link is disabled; ensure aquamarine raster path is used.")
+endif()
 
 if (HAS_FONTCONFIG)
     target_link_libraries(LibWeb PRIVATE Fontconfig::Fontconfig)

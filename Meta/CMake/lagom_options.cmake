@@ -23,7 +23,11 @@ ladybird_option(ENABLE_LAGOM_CCACHE ON CACHE BOOL "Enable ccache for Lagom build
 ladybird_option(LAGOM_USE_LINKER "" CACHE STRING "The linker to use (e.g. lld, mold) instead of the system default")
 ladybird_option(LAGOM_LINK_POOL_SIZE "" CACHE STRING "The maximum number of parallel jobs to use for linking")
 ladybird_option(ENABLE_LTO_FOR_RELEASE ${RELEASE_LTO_DEFAULT} CACHE BOOL "Enable link-time optimization for release builds")
-ladybird_option(ENABLE_LAGOM_COVERAGE_COLLECTION OFF CACHE STRING "Enable code coverage instrumentation for lagom binaries in clang")
+ladybird_option(ENABLE_LAGOM_COVERAGE_COLLECTION OFF CACHE STRING "Enable code coverage instrumentation for lagom libraries in clang")
+
+ladybird_option(RINOS_LEGACY_OPENSSL OFF CACHE BOOL "Enable legacy OpenSSL linkage for LibCrypto/LibTLS/Services")
+ladybird_option(RINOS_USE_SKIA_GRAPHICS OFF CACHE BOOL "Enable Skia graphics integration in LibGfx/LibWeb")
+ladybird_option(RINOS_USE_ICU_BACKEND OFF CACHE BOOL "Use ICU CMake package in LibUnicode instead of pure LibUnicode/RinICU flow")
 
 if (ANDROID OR APPLE)
     ladybird_option(ENABLE_QT OFF CACHE BOOL "Build ladybird application using Qt GUI")

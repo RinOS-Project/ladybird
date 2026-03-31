@@ -26,9 +26,12 @@ set(SOURCES
 set(GENERATED_SOURCES ${CURRENT_LIB_GENERATED})
 
 ladybird_lib(LibUnicode unicode)
-
-find_package(ICU 78.2 EXACT REQUIRED COMPONENTS data i18n uc)
-target_link_libraries(LibUnicode PRIVATE ICU::i18n ICU::uc ICU::data)
+if (RINOS_USE_ICU_BACKEND)
+    find_package(ICU 78.2 EXACT REQUIRED COMPONENTS data i18n uc)
+    target_link_libraries(LibUnicode PRIVATE ICU::i18n ICU::uc ICU::data)
+else()
+    message(STATUS "RinOS policy: ICU package lookup is disabled for LibUnicode. using libunicode_rust only.")
+endif()
 
 import_rust_crate(MANIFEST_PATH Rust/Cargo.toml CRATE_NAME libunicode_rust)
 target_link_libraries(LibUnicode PRIVATE libunicode_rust)

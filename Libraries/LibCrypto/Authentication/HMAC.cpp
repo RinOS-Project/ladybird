@@ -4,6 +4,124 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifdef AK_OS_RINOS
+
+#include <LibCrypto/Authentication/HMAC.h>
+#include <string.h>
+
+namespace Crypto::Authentication {
+
+static size_t hash_block_size(Hash::HashKind kind)
+{
+    switch (kind) {
+    case Hash::HashKind::MD5:
+    case Hash::HashKind::SHA1:
+    case Hash::HashKind::SHA256:
+        return 64;
+    case Hash::HashKind::SHA384:
+    case Hash::HashKind::SHA512:
+        return 128;
+    case Hash::HashKind::SHA3_256:
+        return 136;
+    case Hash::HashKind::SHA3_384:
+        return 104;
+    case Hash::HashKind::SHA3_512:
+        return 72;
+    case Hash::HashKind::BLAKE2b:
+        return 128;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+}
+
+static size_t hash_digest_size(Hash::HashKind kind)
+{
+    switch (kind) {
+    case Hash::HashKind::MD5: return 16;
+    case Hash::HashKind::SHA1: return 20;
+    case Hash::HashKind::SHA256: return 32;
+    case Hash::HashKind::SHA384: return 48;
+    case Hash::HashKind::SHA512: return 64;
+    case Hash::HashKind::SHA3_256: return 32;
+    case Hash::HashKind::SHA3_384: return 48;
+    case Hash::HashKind::SHA3_512: return 64;
+    case Hash::HashKind::BLAKE2b: return 64;
+    default: VERIFY_NOT_REACHED();
+    }
+}
+
+HMAC::HMAC(Hash::HashKind hash, ReadonlyBytes key)
+    : m_hash_kind(hash)
+    , m_key(key)
+    , m_inner_hash(hash)
+    , m_block_size(hash_block_size(hash))
+    , m_digest_size(hash_digest_size(hash))
+{
+    reset();
+}
+
+size_t HMAC::digest_size() const { return m_digest_size; }
+
+void HMAC::update(u8 const* message, size_t length)
+{
+    m_inner_hash.update(message, length);
+}
+
+ByteBuffer HMAC::digest()
+{
+    auto inner_digest = m_inner_hash.digest();
+
+    Hash::Manager outer(m_hash_kind);
+    outer.update(m_opad_key, m_block_size);
+    outer.update(inner_digest.immutable_data(), inner_digest.data_length());
+    auto outer_digest = outer.digest();
+
+    auto buf = MUST(ByteBuffer::create_uninitialized(m_digest_size));
+    memcpy(buf.data(), outer_digest.immutable_data(), m_digest_size);
+    return buf;
+}
+
+void HMAC::reset()
+{
+    // Derive key block
+    u8 key_block[128] = {};
+    if (m_key.size() > m_block_size) {
+        Hash::Manager key_hash(m_hash_kind);
+        key_hash.update(m_key.data(), m_key.size());
+        auto hashed = key_hash.digest();
+        memcpy(key_block, hashed.immutable_data(), hashed.data_length());
+    } else {
+        memcpy(key_block, m_key.data(), m_key.size());
+    }
+
+    for (size_t i = 0; i < m_block_size; i++) {
+        m_ipad_key[i] = key_block[i] ^ 0x36;
+        m_opad_key[i] = key_block[i] ^ 0x5c;
+    }
+
+    m_inner_hash = Hash::Manager(m_hash_kind);
+    m_inner_hash.update(m_ipad_key, m_block_size);
+}
+
+ByteString HMAC::class_name() const
+{
+    StringBuilder builder;
+    builder.append("HMAC-"sv);
+    switch (m_hash_kind) {
+    case Hash::HashKind::MD5: builder.append("MD5"sv); break;
+    case Hash::HashKind::SHA1: builder.append("SHA1"sv); break;
+    case Hash::HashKind::SHA256: builder.append("SHA256"sv); break;
+    case Hash::HashKind::SHA384: builder.append("SHA384"sv); break;
+    case Hash::HashKind::SHA512: builder.append("SHA512"sv); break;
+    default: builder.append("Unknown"sv); break;
+    }
+    return builder.to_byte_string();
+}
+
+}
+
+#else // !AK_OS_RINOS
+
 #include <LibCrypto/Authentication/HMAC.h>
 
 #include <openssl/core_names.h>
@@ -67,3 +185,5 @@ void HMAC::reset()
 }
 
 }
+
+#endif // AK_OS_RINOS

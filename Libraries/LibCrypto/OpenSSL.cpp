@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifndef AK_OS_RINOS
+
 #include <AK/ByteBuffer.h>
 #include <LibCrypto/OpenSSL.h>
 
@@ -79,3 +81,5 @@ ErrorOr<ByteBuffer> get_byte_buffer_param_from_key(OpenSSL_PKEY& key, char const
 }
 
 }
+
+#endif // !AK_OS_RINOS

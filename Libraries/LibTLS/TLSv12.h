@@ -9,7 +9,9 @@
 
 #include <LibCore/Socket.h>
 #include <LibCrypto/Certificate/Certificate.h>
-#include <LibTLS/OpenSSLForward.h>
+#ifndef AK_OS_RINOS
+#    include <LibTLS/OpenSSLForward.h>
+#endif
 
 namespace TLS {
 
@@ -19,15 +21,7 @@ struct Options {
 
 class TLSv12 final : public Core::Socket {
 public:
-    /// Reads into a buffer, with the maximum size being the size of the buffer.
-    /// The amount of bytes read can be smaller than the size of the buffer.
-    /// Returns either the bytes that were read, or an error in the case of
-    /// failure.
     virtual ErrorOr<Bytes> read_some(Bytes) override;
-
-    /// Tries to write the entire contents of the buffer. It is possible for
-    /// less than the full buffer to be written. Returns either the amount of
-    /// bytes written into the stream, or an error in the case of failure.
     virtual ErrorOr<size_t> write_some(ReadonlyBytes) override;
 
     virtual bool is_eof() const override;
@@ -46,16 +40,24 @@ public:
     ~TLSv12() override;
 
 private:
+#ifdef AK_OS_RINOS
+    struct rintls_ctx;
+    explicit TLSv12(NonnullOwnPtr<Core::TCPSocket>, rintls_ctx*);
+#else
     explicit TLSv12(NonnullOwnPtr<Core::TCPSocket>, SSL_CTX*, SSL*);
+#endif
 
     static ErrorOr<NonnullOwnPtr<TLSv12>> connect_internal(NonnullOwnPtr<Core::TCPSocket>, ByteString const&, Options);
 
     void handle_fatal_error();
 
+#ifdef AK_OS_RINOS
+    rintls_ctx* m_ctx { nullptr };
+#else
     SSL_CTX* m_ssl_ctx { nullptr };
     SSL* m_ssl { nullptr };
+#endif
 
-    // Keep this around or the socket will be closed
     NonnullOwnPtr<Core::TCPSocket> m_socket;
 };
 

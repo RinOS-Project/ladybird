@@ -28,7 +28,9 @@ protected:
     {
     }
 
+#ifndef AK_OS_RINOS
     static char const* curve_type_to_openssl_name(EdwardsCurveType curve_type);
+#endif
 
     EdwardsCurveType m_curve_type;
 };

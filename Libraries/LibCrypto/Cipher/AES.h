@@ -9,6 +9,76 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
+
+#ifdef AK_OS_RINOS
+
+namespace Crypto::Cipher {
+
+class AESCipher {
+public:
+    size_t block_size() const { return 16; }
+
+protected:
+    explicit AESCipher(ReadonlyBytes key)
+        : m_key(key)
+    {
+    }
+
+    ReadonlyBytes m_key;
+};
+
+class AESCBCCipher final : public AESCipher {
+public:
+    explicit AESCBCCipher(ReadonlyBytes key, bool no_padding = false);
+
+    ErrorOr<ByteBuffer> encrypt(ReadonlyBytes plaintext, ReadonlyBytes iv) const;
+    ErrorOr<ByteBuffer> decrypt(ReadonlyBytes ciphertext, ReadonlyBytes iv) const;
+
+private:
+    bool m_no_padding { false };
+};
+
+class AESCTRCipher final : public AESCipher {
+public:
+    explicit AESCTRCipher(ReadonlyBytes key);
+
+    ErrorOr<ByteBuffer> encrypt(ReadonlyBytes plaintext, ReadonlyBytes iv) const;
+    ErrorOr<ByteBuffer> decrypt(ReadonlyBytes ciphertext, ReadonlyBytes iv) const;
+};
+
+class AESGCMCipher final : public AESCipher {
+public:
+    explicit AESGCMCipher(ReadonlyBytes key);
+
+    struct EncryptedData {
+        ByteBuffer ciphertext;
+        ByteBuffer tag;
+    };
+
+    ErrorOr<EncryptedData> encrypt(ReadonlyBytes plaintext, ReadonlyBytes iv, ReadonlyBytes aad, size_t taglen) const;
+    ErrorOr<ByteBuffer> decrypt(ReadonlyBytes ciphertext, ReadonlyBytes iv, ReadonlyBytes aad, ReadonlyBytes tag) const;
+};
+
+class AESOCBCipher final : public AESCipher {
+public:
+    explicit AESOCBCipher(ReadonlyBytes key);
+
+    ErrorOr<ByteBuffer> encrypt(ReadonlyBytes plaintext, ReadonlyBytes iv, ReadonlyBytes aad, size_t tag_length) const;
+    ErrorOr<ByteBuffer> decrypt(ReadonlyBytes ciphertext, ReadonlyBytes iv, ReadonlyBytes aad, size_t tag_length) const;
+};
+
+class AESKWCipher final : public AESCipher {
+public:
+    explicit AESKWCipher(ReadonlyBytes key);
+
+    ErrorOr<ByteBuffer> wrap(ReadonlyBytes) const;
+    ErrorOr<ByteBuffer> unwrap(ReadonlyBytes) const;
+};
+
+}
+
+#else // !AK_OS_RINOS
+
 #include <LibCrypto/OpenSSLForward.h>
 
 namespace Crypto::Cipher {
@@ -77,3 +147,5 @@ public:
 };
 
 }
+
+#endif // AK_OS_RINOS

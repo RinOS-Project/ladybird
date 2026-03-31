@@ -31,7 +31,9 @@ target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${LADYBIRD
 target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${LADYBIRD_SOURCE_DIR}/Services/>)
 
 target_link_libraries(webcontentservice PUBLIC LibCore LibCrypto LibFileSystem LibGfx LibHTTP LibIPC LibJS LibMain LibMedia LibWeb LibWebSocket LibRequests LibWebView LibImageDecoderClient LibGC)
-target_link_libraries(webcontentservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+if (RINOS_LEGACY_OPENSSL)
+    target_link_libraries(webcontentservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+endif()
 target_link_libraries(webcontentservice PRIVATE SDL3::SDL3)
 
 add_executable(WebContent main.cpp)

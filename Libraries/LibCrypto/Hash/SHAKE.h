@@ -9,6 +9,37 @@
 #include <AK/ByteBuffer.h>
 #include <AK/Error.h>
 #include <AK/Noncopyable.h>
+
+#ifdef AK_OS_RINOS
+
+namespace Crypto::Hash {
+
+enum class SHAKEKind {
+    CSHAKE128,
+    CSHAKE256
+};
+
+class SHAKE {
+    AK_MAKE_NONCOPYABLE(SHAKE);
+
+public:
+    explicit SHAKE(SHAKEKind);
+    ~SHAKE() = default;
+
+    ErrorOr<ByteBuffer> digest(
+        ReadonlyBytes data,
+        u32 length,
+        Optional<ReadonlyBytes> customization,
+        Optional<ReadonlyBytes> function_name) const;
+
+private:
+    SHAKEKind m_kind;
+};
+
+}
+
+#else // !AK_OS_RINOS
+
 #include <LibCrypto/OpenSSLForward.h>
 
 namespace Crypto::Hash {
@@ -37,3 +68,5 @@ private:
 };
 
 }
+
+#endif // AK_OS_RINOS

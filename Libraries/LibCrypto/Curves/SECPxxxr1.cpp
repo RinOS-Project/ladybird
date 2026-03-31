@@ -5,6 +5,101 @@
  */
 
 #include <LibCrypto/Curves/SECPxxxr1.h>
+
+#ifdef AK_OS_RINOS
+
+extern "C" {
+#include <crypto/ecdh.h>
+}
+
+namespace Crypto::Curves {
+
+ErrorOr<UnsignedBigInteger> SECPxxxr1::generate_private_key()
+{
+    if (m_scalar_size != 32)
+        return Error::from_string_literal("Only P-256 is supported on RinOS");
+
+    p256_keypair_t kp;
+    if (p256_keygen(&kp) != ECDH_OK)
+        return Error::from_string_literal("P-256 key generation failed");
+
+    return UnsignedBigInteger::import_data(ReadonlyBytes { kp.private_key, P256_KEY_SIZE });
+}
+
+ErrorOr<SECPxxxr1Point> SECPxxxr1::generate_public_key(UnsignedBigInteger scalar)
+{
+    if (m_scalar_size != 32)
+        return Error::from_string_literal("Only P-256 is supported on RinOS");
+
+    auto scalar_bytes = TRY(SECPxxxr1Point::scalar_to_bytes(scalar, 32));
+
+    u8 pubkey[P256_POINT_SIZE];
+    if (p256_compute_public(pubkey, scalar_bytes.data()) != ECDH_OK)
+        return Error::from_string_literal("P-256 public key computation failed");
+
+    // pubkey is uncompressed: 04 || x(32) || y(32)
+    return SECPxxxr1Point {
+        UnsignedBigInteger::import_data(ReadonlyBytes { pubkey + 1, 32 }),
+        UnsignedBigInteger::import_data(ReadonlyBytes { pubkey + 33, 32 }),
+        32,
+    };
+}
+
+ErrorOr<SECPxxxr1Point> SECPxxxr1::compute_coordinate(UnsignedBigInteger scalar, SECPxxxr1Point point)
+{
+    if (m_scalar_size != 32)
+        return Error::from_string_literal("Only P-256 ECDH is supported on RinOS");
+
+    auto scalar_bytes = TRY(SECPxxxr1Point::scalar_to_bytes(scalar, 32));
+    auto peer_uncompressed = TRY(point.to_uncompressed());
+
+    u8 shared[P256_KEY_SIZE];
+    if (p256_ecdh(shared, scalar_bytes.data(), peer_uncompressed.data(), (rin_size_t)peer_uncompressed.size()) != ECDH_OK)
+        return Error::from_string_literal("P-256 ECDH failed");
+
+    // shared secret is the x-coordinate
+    return SECPxxxr1Point {
+        UnsignedBigInteger::import_data(ReadonlyBytes { shared, 32 }),
+        UnsignedBigInteger(0),
+        32,
+    };
+}
+
+ErrorOr<bool> SECPxxxr1::verify(ReadonlyBytes hash, SECPxxxr1Point pubkey, SECPxxxr1Signature signature)
+{
+    if (m_scalar_size != 32)
+        return Error::from_string_literal("Only P-256 ECDSA verify is supported on RinOS");
+
+    auto pubkey_bytes = TRY(pubkey.to_uncompressed());
+
+    // Convert signature to DER format for rintls
+    auto sig_der = TRY(signature.to_asn());
+
+    int ret = ecdsa_p256_verify(sig_der.data(), (rin_size_t)sig_der.size(),
+        hash.data(), (rin_size_t)hash.size(),
+        pubkey_bytes.data(), (rin_size_t)pubkey_bytes.size());
+
+    return ret == ECDH_OK;
+}
+
+ErrorOr<SECPxxxr1Signature> SECPxxxr1::sign(ReadonlyBytes, UnsignedBigInteger)
+{
+    return Error::from_string_literal("ECDSA signing is not supported on RinOS");
+}
+
+ErrorOr<bool> SECPxxxr1::is_valid_point(SECPxxxr1Point pubkey, Optional<UnsignedBigInteger>)
+{
+    if (m_scalar_size != 32)
+        return Error::from_string_literal("Only P-256 point validation is supported on RinOS");
+
+    auto pubkey_bytes = TRY(pubkey.to_uncompressed());
+    return p256_validate_public(pubkey_bytes.data(), (rin_size_t)pubkey_bytes.size()) == ECDH_OK;
+}
+
+}
+
+#else // !AK_OS_RINOS
+
 #include <LibCrypto/OpenSSL.h>
 
 #include <openssl/core_names.h>
@@ -211,3 +306,5 @@ ErrorOr<bool> SECPxxxr1::is_valid_point(SECPxxxr1Point pubkey, Optional<Unsigned
 }
 
 }
+
+#endif // AK_OS_RINOS

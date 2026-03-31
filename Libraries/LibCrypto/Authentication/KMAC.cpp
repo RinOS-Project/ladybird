@@ -5,10 +5,6 @@
  */
 
 #include <LibCrypto/Authentication/KMAC.h>
-#include <LibCrypto/OpenSSL.h>
-
-#include <openssl/core_names.h>
-#include <openssl/evp.h>
 
 namespace Crypto::Authentication {
 
@@ -36,6 +32,28 @@ KMAC::KMAC(KMACKind kind)
     : m_kind(kind)
 {
 }
+
+}
+
+#ifdef AK_OS_RINOS
+
+namespace Crypto::Authentication {
+
+ErrorOr<ByteBuffer> KMAC::sign(ReadonlyBytes, ReadonlyBytes, u32, Optional<ReadonlyBytes>) const
+{
+    return Error::from_string_literal("KMAC is not supported on RinOS");
+}
+
+}
+
+#else // !AK_OS_RINOS
+
+#include <LibCrypto/OpenSSL.h>
+
+#include <openssl/core_names.h>
+#include <openssl/evp.h>
+
+namespace Crypto::Authentication {
 
 // https://wicg.github.io/webcrypto-modern-algos/#kmac-operations-sign
 ErrorOr<ByteBuffer> KMAC::sign(ReadonlyBytes key, ReadonlyBytes message, u32 output_length_bits, Optional<ReadonlyBytes> customization) const
@@ -73,3 +91,5 @@ ErrorOr<ByteBuffer> KMAC::sign(ReadonlyBytes key, ReadonlyBytes message, u32 out
 }
 
 }
+
+#endif // AK_OS_RINOS

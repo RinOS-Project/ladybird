@@ -11,7 +11,9 @@
 #include <LibCrypto/ASN1/DER.h>
 #include <LibCrypto/BigInt/UnsignedBigInteger.h>
 #include <LibCrypto/Hash/HashManager.h>
-#include <LibCrypto/OpenSSL.h>
+#ifndef AK_OS_RINOS
+#    include <LibCrypto/OpenSSL.h>
+#endif
 #include <LibCrypto/PK/PK.h>
 
 namespace Crypto::PK {
@@ -194,10 +196,14 @@ public:
     void set_private_key(PrivateKeyType const& key) { m_private_key = key; }
 
 protected:
+#ifndef AK_OS_RINOS
     virtual ErrorOr<void> configure(OpenSSL_PKEY_CTX& ctx);
+#endif
 };
 
+#ifndef AK_OS_RINOS
 ErrorOr<EVP_MD const*> hash_kind_to_hash_type(Hash::HashKind hash_kind);
+#endif
 
 class RSA_EME : public RSA {
 public:
@@ -266,7 +272,9 @@ public:
     }
 
 protected:
+#ifndef AK_OS_RINOS
     ErrorOr<void> configure(OpenSSL_PKEY_CTX& ctx) override;
+#endif
 };
 
 class RSA_PKCS1_EMSA : public RSA_EMSA {
@@ -285,7 +293,9 @@ public:
     }
 
 protected:
+#ifndef AK_OS_RINOS
     ErrorOr<void> configure(OpenSSL_PKEY_CTX& ctx) override;
+#endif
 };
 
 class RSA_OAEP_EME : public RSA_EME {
@@ -306,7 +316,9 @@ public:
     void set_label(ReadonlyBytes label) { m_label = label; }
 
 protected:
+#ifndef AK_OS_RINOS
     ErrorOr<void> configure(OpenSSL_PKEY_CTX& ctx) override;
+#endif
 
 private:
     Optional<ReadonlyBytes> m_label {};
@@ -330,7 +342,9 @@ public:
     void set_salt_length(int value) { m_salt_length = value; }
 
 protected:
+#ifndef AK_OS_RINOS
     ErrorOr<void> configure(OpenSSL_PKEY_CTX& ctx) override;
+#endif
 
 private:
     Optional<int> m_salt_length;

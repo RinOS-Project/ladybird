@@ -5,12 +5,158 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibCrypto/Cipher/AES.h>
-#include <LibCrypto/OpenSSL.h>
+#ifdef AK_OS_RINOS
 
-#include <openssl/evp.h>
+#include <LibCrypto/Cipher/AES.h>
+#include <LibCrypto/RinCryptoImpl.h>
+
+extern "C" {
+#include <crypto/aes.h>
+}
 
 namespace Crypto::Cipher {
+
+AESCBCCipher::AESCBCCipher(ReadonlyBytes key, bool no_padding)
+    : AESCipher(key)
+    , m_no_padding(no_padding)
+{
+}
+
+ErrorOr<ByteBuffer> AESCBCCipher::encrypt(ReadonlyBytes plaintext, ReadonlyBytes iv) const
+{
+    auto out = TRY(ByteBuffer::create_uninitialized(plaintext.size() + 16));
+    size_t ct_len = 0;
+    int pad = m_no_padding ? 0 : 1;
+    if (rin_aes_cbc_encrypt(m_key.data(), static_cast<int>(m_key.size()), iv.data(),
+            plaintext.data(), plaintext.size(), out.data(), &ct_len, pad)
+        != 0)
+        return Error::from_string_literal("AES-CBC encrypt failed");
+    return out.slice(0, ct_len);
+}
+
+ErrorOr<ByteBuffer> AESCBCCipher::decrypt(ReadonlyBytes ciphertext, ReadonlyBytes iv) const
+{
+    auto out = TRY(ByteBuffer::create_uninitialized(ciphertext.size()));
+    size_t pt_len = 0;
+    int pad = m_no_padding ? 0 : 1;
+    if (rin_aes_cbc_decrypt(m_key.data(), static_cast<int>(m_key.size()), iv.data(),
+            ciphertext.data(), ciphertext.size(), out.data(), &pt_len, pad)
+        != 0)
+        return Error::from_string_literal("AES-CBC decrypt failed");
+    return out.slice(0, pt_len);
+}
+
+AESCTRCipher::AESCTRCipher(ReadonlyBytes key)
+    : AESCipher(key)
+{
+}
+
+ErrorOr<ByteBuffer> AESCTRCipher::encrypt(ReadonlyBytes plaintext, ReadonlyBytes iv) const
+{
+    auto out = TRY(ByteBuffer::create_uninitialized(plaintext.size()));
+    if (rin_aes_ctr_crypt(m_key.data(), static_cast<int>(m_key.size()), iv.data(),
+            plaintext.data(), plaintext.size(), out.data())
+        != 0)
+        return Error::from_string_literal("AES-CTR encrypt failed");
+    return out;
+}
+
+ErrorOr<ByteBuffer> AESCTRCipher::decrypt(ReadonlyBytes ciphertext, ReadonlyBytes iv) const
+{
+    return encrypt(ciphertext, iv); // CTR mode encryption == decryption
+}
+
+AESGCMCipher::AESGCMCipher(ReadonlyBytes key)
+    : AESCipher(key)
+{
+}
+
+ErrorOr<AESGCMCipher::EncryptedData> AESGCMCipher::encrypt(ReadonlyBytes plaintext, ReadonlyBytes iv, ReadonlyBytes aad, size_t taglen) const
+{
+    aes_ctx ctx;
+    if (aes_init(&ctx, m_key.data(), static_cast<int>(m_key.size())) != 0)
+        return Error::from_string_literal("AES-GCM init failed");
+
+    auto out = TRY(ByteBuffer::create_uninitialized(plaintext.size()));
+    auto tag = TRY(ByteBuffer::create_uninitialized(taglen));
+    rin_size_t ct_len = 0;
+    if (aes_gcm_encrypt(&ctx, iv.data(), static_cast<rin_size_t>(iv.size()),
+            aad.data(), static_cast<rin_size_t>(aad.size()),
+            plaintext.data(), static_cast<rin_size_t>(plaintext.size()),
+            out.data(), &ct_len, tag.data(), static_cast<rin_size_t>(taglen))
+        != 0)
+        return Error::from_string_literal("AES-GCM encrypt failed");
+
+    return EncryptedData {
+        .ciphertext = TRY(out.slice(0, ct_len)),
+        .tag = tag,
+    };
+}
+
+ErrorOr<ByteBuffer> AESGCMCipher::decrypt(ReadonlyBytes ciphertext, ReadonlyBytes iv, ReadonlyBytes aad, ReadonlyBytes tag) const
+{
+    aes_ctx ctx;
+    if (aes_init(&ctx, m_key.data(), static_cast<int>(m_key.size())) != 0)
+        return Error::from_string_literal("AES-GCM init failed");
+
+    auto out = TRY(ByteBuffer::create_uninitialized(ciphertext.size()));
+    rin_size_t pt_len = 0;
+    if (aes_gcm_decrypt(&ctx, iv.data(), static_cast<rin_size_t>(iv.size()),
+            aad.data(), static_cast<rin_size_t>(aad.size()),
+            ciphertext.data(), static_cast<rin_size_t>(ciphertext.size()),
+            tag.data(), static_cast<rin_size_t>(tag.size()),
+            out.data(), &pt_len)
+        != 0)
+        return Error::from_string_literal("AES-GCM decrypt/verify failed");
+
+    return out.slice(0, pt_len);
+}
+
+AESOCBCipher::AESOCBCipher(ReadonlyBytes key)
+    : AESCipher(key)
+{
+}
+
+ErrorOr<ByteBuffer> AESOCBCipher::encrypt(ReadonlyBytes, ReadonlyBytes, ReadonlyBytes, size_t) const
+{
+    return Error::from_string_literal("AES-OCB not supported on RinOS");
+}
+
+ErrorOr<ByteBuffer> AESOCBCipher::decrypt(ReadonlyBytes, ReadonlyBytes, ReadonlyBytes, size_t) const
+{
+    return Error::from_string_literal("AES-OCB not supported on RinOS");
+}
+
+AESKWCipher::AESKWCipher(ReadonlyBytes key)
+    : AESCipher(key)
+{
+}
+
+ErrorOr<ByteBuffer> AESKWCipher::wrap(ReadonlyBytes plaintext) const
+{
+    auto out = TRY(ByteBuffer::create_uninitialized(plaintext.size() + 8));
+    size_t ct_len = 0;
+    if (rin_aes_kw_wrap(m_key.data(), static_cast<int>(m_key.size()),
+            plaintext.data(), plaintext.size(), out.data(), &ct_len)
+        != 0)
+        return Error::from_string_literal("AES-KW wrap failed");
+    return out.slice(0, ct_len);
+}
+
+ErrorOr<ByteBuffer> AESKWCipher::unwrap(ReadonlyBytes ciphertext) const
+{
+    auto out = TRY(ByteBuffer::create_uninitialized(ciphertext.size()));
+    size_t pt_len = 0;
+    if (rin_aes_kw_unwrap(m_key.data(), static_cast<int>(m_key.size()),
+            ciphertext.data(), ciphertext.size(), out.data(), &pt_len)
+        != 0)
+        return Error::from_string_literal("AES-KW unwrap failed");
+    return out.slice(0, pt_len);
+}
+
+}
+
+#else // !AK_OS_RINOS
 
 #define GET_CIPHER(key, mode)            \
     [&key] {                             \
@@ -286,3 +432,5 @@ ErrorOr<ByteBuffer> AESKWCipher::unwrap(ReadonlyBytes ciphertext) const
 }
 
 }
+
+#endif // !AK_OS_RINOS

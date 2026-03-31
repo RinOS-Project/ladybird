@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifndef AK_OS_RINOS
+
 #include <LibCrypto/Hash/SHA3.h>
 
 #include <openssl/evp.h>
@@ -26,3 +28,5 @@ SHA3_512::SHA3_512(EVP_MD_CTX* context)
 }
 
 }
+
+#endif // !AK_OS_RINOS

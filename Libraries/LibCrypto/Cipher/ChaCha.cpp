@@ -4,6 +4,62 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifdef AK_OS_RINOS
+
+#include <LibCrypto/Cipher/ChaCha.h>
+#include <LibCrypto/RinCryptoImpl.h>
+
+namespace Crypto::Cipher {
+
+ErrorOr<ByteBuffer> ChaCha20Poly1305::encrypt(ReadonlyBytes key, ReadonlyBytes nonce, ReadonlyBytes plaintext, ReadonlyBytes aad)
+{
+    if (key.size() != key_size)
+        return Error::from_string_literal("ChaCha20-Poly1305 key must be 32 bytes");
+    if (nonce.size() != nonce_size)
+        return Error::from_string_literal("ChaCha20-Poly1305 nonce must be 12 bytes");
+
+    auto ciphertext = TRY(ByteBuffer::create_uninitialized(plaintext.size()));
+    u8 tag[16];
+
+    if (rin_chacha20_poly1305_encrypt(key.data(), nonce.data(),
+            aad.data(), aad.size(), plaintext.data(), plaintext.size(),
+            ciphertext.data(), tag)
+        != 0)
+        return Error::from_string_literal("ChaCha20-Poly1305 encrypt failed");
+
+    auto result = TRY(ByteBuffer::create_uninitialized(plaintext.size() + tag_size));
+    result.overwrite(0, ciphertext.data(), ciphertext.size());
+    result.overwrite(ciphertext.size(), tag, tag_size);
+    return result;
+}
+
+ErrorOr<ByteBuffer> ChaCha20Poly1305::decrypt(ReadonlyBytes key, ReadonlyBytes nonce, ReadonlyBytes ciphertext_and_tag, ReadonlyBytes aad)
+{
+    if (key.size() != key_size)
+        return Error::from_string_literal("ChaCha20-Poly1305 key must be 32 bytes");
+    if (nonce.size() != nonce_size)
+        return Error::from_string_literal("ChaCha20-Poly1305 nonce must be 12 bytes");
+    if (ciphertext_and_tag.size() < tag_size)
+        return Error::from_string_literal("Ciphertext too short");
+
+    auto ct_size = ciphertext_and_tag.size() - tag_size;
+    auto ct = ciphertext_and_tag.slice(0, ct_size);
+    auto tag = ciphertext_and_tag.slice(ct_size, tag_size);
+
+    auto plaintext = TRY(ByteBuffer::create_uninitialized(ct_size));
+    if (rin_chacha20_poly1305_decrypt(key.data(), nonce.data(),
+            aad.data(), aad.size(), ct.data(), ct_size,
+            tag.data(), plaintext.data())
+        != 0)
+        return Error::from_string_literal("ChaCha20-Poly1305 authentication failed");
+
+    return plaintext;
+}
+
+}
+
+#else // !AK_OS_RINOS
+
 #include <LibCrypto/Cipher/ChaCha.h>
 #include <LibCrypto/OpenSSL.h>
 
@@ -97,3 +153,5 @@ ErrorOr<ByteBuffer> ChaCha20Poly1305::decrypt(ReadonlyBytes key, ReadonlyBytes n
 }
 
 }
+
+#endif // AK_OS_RINOS

@@ -65,8 +65,13 @@ if (ENABLE_QT AND ENABLE_GUI_TARGETS)
     find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 endif()
 
-# We need to find OpenSSL in order to link it explicitly with all targets.
-find_package(OpenSSL REQUIRED)
+if (RINOS_LEGACY_OPENSSL)
+    # Legacy compatibility path; RinOS phase plan prefers rintls.
+    message(STATUS "RinOS legacy mode: OpenSSL is enabled.")
+    find_package(OpenSSL REQUIRED)
+else()
+    message(STATUS "RinOS policy: OpenSSL detection is disabled; legacy OpenSSL linkage should be replaced by rintls.")
+endif()
 
 include(CTest) # for BUILD_TESTING option, default ON
 

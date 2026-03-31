@@ -2,6 +2,7 @@ add_cxx_compile_options(-Wvla)
 
 set(SOURCES
     OpenSSL.cpp
+    RinCryptoImpl.cpp
     ASN1/ASN1.cpp
     ASN1/DER.cpp
     ASN1/PEM.cpp
@@ -36,5 +37,13 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(libtommath REQUIRED IMPORTED_TARGET libtommath)
 target_link_libraries(LibCrypto PRIVATE PkgConfig::libtommath)
 
-find_package(OpenSSL REQUIRED)
-target_link_libraries(LibCrypto PUBLIC OpenSSL::Crypto)
+if (AK_OS_RINOS)
+    # rintls include paths for RinOS builds
+    target_include_directories(LibCrypto PRIVATE ${CMAKE_SOURCE_DIR}/../../rintls)
+    target_compile_definitions(LibCrypto PRIVATE AK_OS_RINOS=1)
+elseif (RINOS_LEGACY_OPENSSL)
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(LibCrypto PUBLIC OpenSSL::Crypto)
+else()
+    message(STATUS "RinOS policy: OpenSSL linkage for LibCrypto is disabled; rintls migration path is required.")
+endif()

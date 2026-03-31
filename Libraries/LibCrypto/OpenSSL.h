@@ -6,6 +6,8 @@
 
 #pragma once
 
+#ifndef AK_OS_RINOS
+
 #include <AK/Error.h>
 #include <AK/Format.h>
 #include <LibCrypto/BigInt/UnsignedBigInteger.h>
@@ -136,3 +138,5 @@ ErrorOr<StringView> hash_kind_to_openssl_digest_name(Hash::HashKind hash);
 ErrorOr<ByteBuffer> get_byte_buffer_param_from_key(OpenSSL_PKEY& key, char const* key_name);
 
 }
+
+#endif // !AK_OS_RINOS

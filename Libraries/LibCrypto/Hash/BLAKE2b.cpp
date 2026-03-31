@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifndef AK_OS_RINOS
+
 #include <LibCrypto/Hash/BLAKE2b.h>
 
 #include <openssl/evp.h>
@@ -16,3 +18,5 @@ BLAKE2b::BLAKE2b(EVP_MD_CTX* context)
 }
 
 }
+
+#endif // !AK_OS_RINOS

@@ -9,6 +9,27 @@
 
 #include <LibCrypto/Hash/HashManager.h>
 
+#ifdef AK_OS_RINOS
+
+namespace Crypto::Hash {
+
+class PBKDF2 {
+    AK_MAKE_NONCOPYABLE(PBKDF2);
+
+public:
+    PBKDF2(HashKind hash_kind);
+    ~PBKDF2() = default;
+
+    ErrorOr<ByteBuffer> derive_key(ReadonlyBytes password, ReadonlyBytes salt, u32 iterations, u32 key_length_bytes);
+
+private:
+    HashKind m_hash_kind;
+};
+
+}
+
+#else // !AK_OS_RINOS
+
 namespace Crypto::Hash {
 
 class PBKDF2 {
@@ -30,3 +51,5 @@ private:
 };
 
 }
+
+#endif // AK_OS_RINOS

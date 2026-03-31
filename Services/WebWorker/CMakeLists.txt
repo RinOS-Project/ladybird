@@ -14,12 +14,18 @@ target_include_directories(webworkerservice PRIVATE ${LADYBIRD_SOURCE_DIR})
 target_include_directories(webworkerservice PRIVATE ${LADYBIRD_SOURCE_DIR}/Services/)
 
 target_link_libraries(webworkerservice PUBLIC LibCore LibFileSystem LibGfx LibHTTP LibIPC LibJS LibRequests LibWeb LibWebView LibUnicode LibImageDecoderClient LibMain LibURL LibGC)
-target_link_libraries(webworkerservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+if (RINOS_LEGACY_OPENSSL)
+    target_link_libraries(webworkerservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+endif()
 
 add_executable(WebWorker main.cpp)
 
 target_include_directories(WebWorker PRIVATE ${LADYBIRD_SOURCE_DIR})
-target_link_libraries(WebWorker PRIVATE webworkerservice OpenSSL::Crypto OpenSSL::SSL)
+if (RINOS_LEGACY_OPENSSL)
+    target_link_libraries(WebWorker PRIVATE webworkerservice OpenSSL::Crypto OpenSSL::SSL)
+else()
+    target_link_libraries(WebWorker PRIVATE webworkerservice)
+endif()
 
 if(WIN32)
     find_package(pthread REQUIRED)

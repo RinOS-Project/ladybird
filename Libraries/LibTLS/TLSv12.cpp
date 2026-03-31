@@ -7,8 +7,152 @@
 
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/Promise.h>
-#include <LibCrypto/OpenSSL.h>
 #include <LibTLS/TLSv12.h>
+
+#ifdef AK_OS_RINOS
+
+extern "C" {
+#include <rintls.h>
+}
+
+namespace TLS {
+
+ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect(ByteString const& host, u16 port, Options options)
+{
+    auto tcp_socket = TRY(Core::TCPSocket::connect(host, port));
+    return connect_internal(move(tcp_socket), host, move(options));
+}
+
+ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect(Core::SocketAddress const& address, ByteString const& host, Options options)
+{
+    auto tcp_socket = TRY(Core::TCPSocket::connect(address));
+    return connect_internal(move(tcp_socket), host, move(options));
+}
+
+void TLSv12::handle_fatal_error()
+{
+    if (m_ctx) {
+        rintls_free(m_ctx);
+        m_ctx = nullptr;
+    }
+    m_socket->close();
+}
+
+ErrorOr<Bytes> TLSv12::read_some(Bytes bytes)
+{
+    if (!m_ctx)
+        return Error::from_string_literal("TLS connection is closed");
+
+    int ret = rintls_recv(m_ctx, bytes.data(), (rin_size_t)bytes.size());
+    if (ret == RINTLS_ERR_CLOSED) {
+        close();
+        return Bytes { bytes.data(), 0 };
+    }
+    if (ret == RINTLS_ERR_WANT_READ || ret == RINTLS_ERR_WANT_WRITE)
+        return Error::from_errno(EAGAIN);
+    if (ret < 0) {
+        handle_fatal_error();
+        return Error::from_string_literal("Fatal TLS error reading from connection");
+    }
+    return Bytes { bytes.data(), static_cast<unsigned long>(ret) };
+}
+
+ErrorOr<size_t> TLSv12::write_some(ReadonlyBytes bytes)
+{
+    if (!m_ctx)
+        return Error::from_string_literal("TLS connection is closed");
+
+    int ret = rintls_send(m_ctx, bytes.data(), (rin_size_t)bytes.size());
+    if (ret == RINTLS_ERR_WANT_READ || ret == RINTLS_ERR_WANT_WRITE)
+        return Error::from_errno(EAGAIN);
+    if (ret < 0) {
+        handle_fatal_error();
+        return Error::from_string_literal("Fatal TLS error writing to connection");
+    }
+    return static_cast<size_t>(ret);
+}
+
+bool TLSv12::is_eof() const
+{
+    return m_socket->is_eof();
+}
+
+bool TLSv12::is_open() const
+{
+    return m_socket->is_open();
+}
+
+void TLSv12::close()
+{
+    if (m_ctx)
+        rintls_close(m_ctx);
+    m_socket->close();
+}
+
+ErrorOr<size_t> TLSv12::pending_bytes() const
+{
+    // rintls does not expose a pending bytes API; rely on socket level
+    return 0;
+}
+
+ErrorOr<bool> TLSv12::can_read_without_blocking(int timeout) const
+{
+    return m_socket->can_read_without_blocking(timeout);
+}
+
+ErrorOr<void> TLSv12::set_blocking(bool)
+{
+    return Error::from_string_literal("Blocking mode cannot be changed after the TLS connection is established");
+}
+
+ErrorOr<void> TLSv12::set_close_on_exec(bool enabled)
+{
+    return m_socket->set_close_on_exec(enabled);
+}
+
+TLSv12::TLSv12(NonnullOwnPtr<Core::TCPSocket> socket, rintls_ctx* ctx)
+    : m_ctx(ctx)
+    , m_socket(move(socket))
+{
+    m_socket->on_ready_to_read = [this] {
+        if (on_ready_to_read)
+            on_ready_to_read();
+    };
+}
+
+TLSv12::~TLSv12()
+{
+    if (m_ctx)
+        rintls_free(m_ctx);
+}
+
+ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPSocket> socket, ByteString const& host, Options)
+{
+    TRY(socket->set_blocking(false));
+
+    auto* ctx = rintls_new();
+    if (!ctx)
+        return Error::from_string_literal("Failed to create rintls context");
+    ArmedScopeGuard free_ctx = [&] { rintls_free(ctx); };
+
+    if (rintls_set_hostname(ctx, host.characters()) != RINTLS_OK)
+        return Error::from_string_literal("Failed to set TLS hostname");
+
+    if (rintls_connect(ctx, socket->fd(), host.characters()) != RINTLS_OK) {
+        auto err = rintls_get_error(ctx);
+        dbgln("rintls handshake failed: {}", rintls_strerror(err));
+        return Error::from_string_literal("TLS handshake failed");
+    }
+
+    free_ctx.disarm();
+    return adopt_own(*new TLSv12(move(socket), ctx));
+}
+
+}
+
+#else // !AK_OS_RINOS
+
+#include <LibCrypto/OpenSSL.h>
 
 #ifdef AK_OS_WINDOWS
 #    include <AK/Windows.h>
@@ -279,3 +423,5 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPS
 }
 
 }
+
+#endif // AK_OS_RINOS

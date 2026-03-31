@@ -7,6 +7,42 @@
 #include <LibCrypto/PK/MLDSA.h>
 
 #include <LibCrypto/Curves/SECPxxxr1.h>
+
+#ifdef AK_OS_RINOS
+
+namespace Crypto::PK {
+
+ErrorOr<ByteBuffer> MLDSAPrivateKey::export_as_der() const
+{
+    ASN1::Encoder encoder;
+    TRY(encoder.write<ReadonlyBytes>(m_seed, ASN1::Class::Context, static_cast<ASN1::Kind>(0)));
+    return encoder.finish();
+}
+
+ErrorOr<MLDSA::KeyPairType> MLDSA::parse_mldsa_key(MLDSASize, ReadonlyBytes, Vector<StringView>)
+{
+    return Error::from_string_literal("MLDSA key parsing is not supported on RinOS");
+}
+
+ErrorOr<MLDSA::KeyPairType> MLDSA::generate_key_pair(MLDSASize, ByteBuffer)
+{
+    return Error::from_string_literal("MLDSA is not supported on RinOS");
+}
+
+ErrorOr<ByteBuffer> MLDSA::sign(ReadonlyBytes)
+{
+    return Error::from_string_literal("MLDSA is not supported on RinOS");
+}
+
+ErrorOr<bool> MLDSA::verify(ReadonlyBytes, ReadonlyBytes)
+{
+    return Error::from_string_literal("MLDSA is not supported on RinOS");
+}
+
+}
+
+#else // !AK_OS_RINOS
+
 #include <LibCrypto/OpenSSL.h>
 
 #include <openssl/core_names.h>
@@ -268,3 +304,5 @@ ErrorOr<bool> MLDSA::verify(ReadonlyBytes message, ReadonlyBytes signature)
 }
 
 }
+
+#endif // AK_OS_RINOS

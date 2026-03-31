@@ -9,7 +9,9 @@
 #include <AK/ByteBuffer.h>
 #include <AK/Error.h>
 #include <AK/Noncopyable.h>
-#include <LibCrypto/OpenSSLForward.h>
+#ifndef AK_OS_RINOS
+#    include <LibCrypto/OpenSSLForward.h>
+#endif
 
 namespace Crypto::Authentication {
 

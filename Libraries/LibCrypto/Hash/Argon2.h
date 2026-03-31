@@ -7,7 +7,9 @@
 #pragma once
 
 #include <AK/Error.h>
-#include <LibCrypto/OpenSSLForward.h>
+#ifndef AK_OS_RINOS
+#    include <LibCrypto/OpenSSLForward.h>
+#endif
 
 namespace Crypto::Hash {
 
@@ -37,7 +39,11 @@ public:
         u32 tag_length) const;
 
 private:
+#ifdef AK_OS_RINOS
+    Argon2Type m_type;
+#else
     EVP_KDF* m_kdf;
+#endif
 };
 
 }
