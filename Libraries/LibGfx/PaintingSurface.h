@@ -63,6 +63,8 @@ public:
     T sk_image_snapshot() const;
 
     RefPtr<SkiaBackendContext> skia_backend_context() const;
+#else
+    Bitmap* bitmap() const;
 #endif
 
     void flush();

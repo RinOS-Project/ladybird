@@ -22,8 +22,10 @@
 #include <LibWeb/WebGL/WebGLShader.h>
 #include <LibWeb/WebIDL/Buffers.h>
 
+#ifndef AK_OS_RINOS
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
+#endif
 
 namespace Web::WebGL {
 

@@ -72,6 +72,11 @@ void PaintingSurface::flush()
 void PaintingSurface::lock_context() const { }
 void PaintingSurface::unlock_context() const { }
 
+Bitmap* PaintingSurface::bitmap() const
+{
+    return m_impl->bitmap.ptr();
+}
+
 }
 
 #else // !AK_OS_RINOS

@@ -6,14 +6,18 @@
  */
 
 #define GL_GLEXT_PROTOTYPES 1
+#ifndef AK_OS_RINOS
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 extern "C" {
 #include <GLES2/gl2ext_angle.h>
 }
+#endif
 
 #include <LibGfx/ImmutableBitmap.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/SkiaUtils.h>
+#endif
 #include <LibWeb/HTML/HTMLCanvasElement.h>
 #include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/HTML/HTMLVideoElement.h>
@@ -35,12 +39,14 @@ extern "C" {
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
+#ifndef AK_OS_RINOS
 #include <core/SkCanvas.h>
 #include <core/SkColorSpace.h>
 #include <core/SkColorType.h>
 #include <core/SkImage.h>
 #include <core/SkPixmap.h>
 #include <core/SkSurface.h>
+#endif
 
 namespace Web::WebGL {
 

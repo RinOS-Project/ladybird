@@ -13,7 +13,11 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/CompositingAndBlendingOperator.h>
 #include <LibGfx/ImmutableBitmap.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/PainterSkia.h>
+#else
+#include <LibGfx/PainterAquamarine.h>
+#endif
 #include <LibGfx/Rect.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibJS/Runtime/ValueInlines.h>
@@ -221,7 +225,11 @@ Gfx::Painter* CanvasRenderingContext2D::painter()
     auto surface = canvas_element().surface();
     if (!m_painter && surface) {
         canvas_element().set_needs_repaint();
+#ifdef AK_OS_RINOS
+        m_painter = make<Gfx::PainterAquamarine>(*canvas_element().surface());
+#else
         m_painter = make<Gfx::PainterSkia>(*canvas_element().surface());
+#endif
     }
     return m_painter.ptr();
 }

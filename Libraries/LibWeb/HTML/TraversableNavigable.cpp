@@ -8,7 +8,9 @@
 
 #include <AK/QuickSort.h>
 #include <LibGfx/Bitmap.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/SkiaBackendContext.h>
+#endif
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/Geolocation/GeolocationCoordinates.h>

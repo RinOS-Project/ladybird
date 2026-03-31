@@ -6,7 +6,9 @@
 
 #include <AK/OwnPtr.h>
 #include <LibGfx/CompositingAndBlendingOperator.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/PainterSkia.h>
+#endif
 #include <LibGfx/Rect.h>
 #include <LibUnicode/Segmenter.h>
 #include <LibWeb/Bindings/Intrinsics.h>

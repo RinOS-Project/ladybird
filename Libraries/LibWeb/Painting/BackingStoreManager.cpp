@@ -7,7 +7,9 @@
 #include <LibCore/Timer.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/PaintingSurface.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/SkiaBackendContext.h>
+#endif
 #include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Page/SharedBackingStore.h>
 #include <LibWeb/Painting/BackingStoreManager.h>
@@ -42,7 +44,9 @@ void BackingStoreManager::restart_resize_timer()
 
 void BackingStoreManager::reallocate_backing_stores(Gfx::IntSize size)
 {
+#ifndef AK_OS_RINOS
     auto skia_backend_context = Gfx::SkiaBackendContext::the();
+#endif
 
     RefPtr<Gfx::PaintingSurface> front_store;
     RefPtr<Gfx::PaintingSurface> back_store;

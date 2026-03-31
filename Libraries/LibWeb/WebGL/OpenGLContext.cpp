@@ -10,6 +10,7 @@
 #include <LibGfx/PaintingSurface.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
 
+#ifndef AK_OS_RINOS
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #define EGL_EGLEXT_PROTOTYPES 1
@@ -23,6 +24,7 @@ extern "C" {
 #include <GLES2/gl2ext_angle.h>
 }
 #include <GLES3/gl3.h>
+#endif // !AK_OS_RINOS
 
 // Enable WebGL if we're on MacOS and can use Metal or if we can use shareable Vulkan images
 #if defined(AK_OS_MACOS) || defined(USE_VULKAN_IMAGES)
@@ -30,6 +32,40 @@ extern "C" {
 #endif
 
 namespace Web::WebGL {
+
+#ifdef AK_OS_RINOS
+// RinOS: WebGL not supported (no GPU/ANGLE backend)
+struct OpenGLContext::Impl {};
+
+OpenGLContext::OpenGLContext(NonnullRefPtr<Gfx::SkiaBackendContext> skia_backend_context, Impl, WebGLVersion webgl_version, DrawingBufferOptions drawing_buffer_options)
+    : m_skia_backend_context(move(skia_backend_context))
+    , m_impl(make<Impl>())
+    , m_webgl_version(webgl_version)
+    , m_drawing_buffer_options(drawing_buffer_options)
+{
+    VERIFY_NOT_REACHED();
+}
+
+OpenGLContext::~OpenGLContext() = default;
+
+OwnPtr<OpenGLContext> OpenGLContext::create(NonnullRefPtr<Gfx::SkiaBackendContext>, WebGLVersion, DrawingBufferOptions)
+{
+    return {};
+}
+
+void OpenGLContext::notify_content_will_change() { }
+void OpenGLContext::clear_buffer_to_default_values() { }
+void OpenGLContext::allocate_painting_surface_if_needed() { }
+void OpenGLContext::set_size(Gfx::IntSize const&) { }
+void OpenGLContext::make_current() { }
+void OpenGLContext::present(bool) { }
+RefPtr<Gfx::PaintingSurface> OpenGLContext::surface() { return {}; }
+u32 OpenGLContext::default_renderbuffer() const { return 0; }
+u32 OpenGLContext::default_framebuffer() const { return 0; }
+Vector<String> OpenGLContext::get_supported_opengl_extensions() { return {}; }
+void OpenGLContext::request_extension(char const*) { }
+
+#else // !AK_OS_RINOS
 
 struct OpenGLContext::Impl {
     EGLDisplay display { EGL_NO_DISPLAY };
@@ -526,5 +562,7 @@ void OpenGLContext::request_extension(char const* extension_name)
     (void)extension_name;
 #endif
 }
+
+#endif // !AK_OS_RINOS
 
 }

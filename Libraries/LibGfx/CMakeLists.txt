@@ -79,6 +79,25 @@ if (RINOS_USE_SKIA_GRAPHICS)
     list(APPEND SOURCES ${LIBGFX_SKIA_SOURCES})
 else()
     message(STATUS "RinOS policy: Skia raster backend disabled in LibGfx (aquamarine path expected).")
+    list(APPEND SOURCES PainterAquamarine.cpp)
+
+    # Define 'aquamarine' as a static library if it doesn't already exist.
+    # Aquamarine is a standalone C library with no build system.
+    if (NOT TARGET aquamarine)
+        set(AQUAMARINE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../aquamarine")
+        add_library(aquamarine STATIC
+            ${AQUAMARINE_ROOT}/aq_surface.c
+            ${AQUAMARINE_ROOT}/aq_color.c
+            ${AQUAMARINE_ROOT}/aq_blend.c
+            ${AQUAMARINE_ROOT}/aq_draw.c
+            ${AQUAMARINE_ROOT}/aq_gradient.c
+            ${AQUAMARINE_ROOT}/aq_text.c
+            ${AQUAMARINE_ROOT}/aq_transform.c
+            ${AQUAMARINE_ROOT}/aq_render3d.c
+        )
+        target_include_directories(aquamarine PUBLIC ${AQUAMARINE_ROOT})
+        set_target_properties(aquamarine PROPERTIES C_STANDARD 11)
+    endif()
 endif()
 
 ladybird_lib(LibGfx gfx)
