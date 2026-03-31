@@ -185,7 +185,7 @@ Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全
   - ISO生成に ladybird 関連バイナリ含有
   - vcpkg外部パッケージへの参照ゼロ
 
-### Phase 7: 統合テスト & 最終検証
+### Phase 7: 統合テスト & 最終検証 ✅
 - **目標**: RinOS上でWebエンジンとして動作する端到端の検証
 - **テスト項目**:
   - QEMU上でHTML + CSS + 画像のページ表示
@@ -196,6 +196,15 @@ Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全
   - 基本Webページが表示されること
   - メモリリーク無し
   - TODO.md全フェーズチェック完了
+- **成果物（ソースグレップ統合テスト）**:
+  - `tests/ladybird_rinos_porting_phase8_smoke_test.c`
+    - Phase 0-7 全フェーズの不変条件を検証
+    - AK_OS_RINOS ガード存在、CMake条件化、禁止シンボル非存在
+    - rintls/rinicu/aquamarine 置換パターン確認
+    - vcpkg-rinos.json 依存マッピング一貫性検証
+  - `tests/webengine_ladybird_artifact_smoke_test.c`
+    - 全フェーズの成果物ファイル存在確認（40+ファイル）
+    - Phase 0 (Platform.h) から Phase 8 (テスト自身) まで網羅
 
 ---
 
