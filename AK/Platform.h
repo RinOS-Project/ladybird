@@ -126,6 +126,10 @@
 #    define AK_OS_HAIKU
 #endif
 
+#if defined(__rinos__) || defined(__RINOS__)
+#    define AK_OS_RINOS
+#endif
+
 #if defined(__gnu_hurd__)
 #    define AK_OS_GNU_HURD
 #endif
