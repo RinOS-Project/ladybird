@@ -12,7 +12,7 @@
 
 #ifdef AK_OS_SERENITY
 #    include <serenity.h>
-#elif defined(AK_OS_LINUX) || defined(AK_LIBC_GLIBC) || defined(AK_OS_MACOS) || defined(AK_OS_IOS) || defined(AK_OS_NETBSD) || defined(AK_OS_SOLARIS) || defined(AK_OS_HAIKU)
+#elif defined(AK_OS_LINUX) || defined(AK_LIBC_GLIBC) || defined(AK_OS_MACOS) || defined(AK_OS_IOS) || defined(AK_OS_NETBSD) || defined(AK_OS_SOLARIS) || defined(AK_OS_HAIKU) || defined(AK_OS_RINOS)
 #    include <pthread.h>
 #    include <sys/resource.h>
 #elif defined(AK_OS_FREEBSD) || defined(AK_OS_OPENBSD)
@@ -33,12 +33,12 @@ StackInfo::StackInfo()
         perror("get_stack_bounds");
         VERIFY_NOT_REACHED();
     }
-#elif defined(AK_OS_LINUX) or defined(AK_LIBC_GLIBC) or defined(AK_OS_FREEBSD) or defined(AK_OS_NETBSD) or defined(AK_OS_SOLARIS) or defined(AK_OS_HAIKU)
+#elif defined(AK_OS_LINUX) or defined(AK_LIBC_GLIBC) or defined(AK_OS_FREEBSD) or defined(AK_OS_NETBSD) or defined(AK_OS_SOLARIS) or defined(AK_OS_HAIKU) or defined(AK_OS_RINOS)
     int rc;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
 
-#    if defined(AK_OS_LINUX) or defined(AK_LIBC_GLIBC) or defined(AK_OS_HAIKU)
+#    if defined(AK_OS_LINUX) or defined(AK_LIBC_GLIBC) or defined(AK_OS_HAIKU) or defined(AK_OS_RINOS)
     if ((rc = pthread_getattr_np(pthread_self(), &attr)) != 0) {
         fprintf(stderr, "pthread_getattr_np: %s\n", strerror(rc));
         VERIFY_NOT_REACHED();
