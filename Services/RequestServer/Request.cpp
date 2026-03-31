@@ -13,7 +13,9 @@
 #include <LibHTTP/Cache/Utilities.h>
 #include <LibHTTP/Status.h>
 #include <LibTextCodec/Decoder.h>
-#include <RequestServer/CURL.h>
+#if !defined(AK_OS_RINOS)
+#    include <RequestServer/CURL.h>
+#endif
 #include <RequestServer/ConnectionFromClient.h>
 #include <RequestServer/Request.h>
 #include <RequestServer/Resolver.h>
@@ -143,6 +145,10 @@ Request::~Request()
     if (!m_response_buffer.is_eof())
         dbgln("Warning: Request destroyed with buffered data (it's likely that the client disappeared or the request was cancelled)");
 
+#if defined(AK_OS_RINOS)
+    if (m_rin_fetch)
+        m_rin_fetch->cancel();
+#else
     if (m_curl_easy_handle) {
         auto result = curl_multi_remove_handle(m_curl_multi_handle, m_curl_easy_handle);
         VERIFY(result == CURLM_OK);
@@ -152,6 +158,7 @@ Request::~Request()
 
     for (auto* string_list : m_curl_string_lists)
         curl_slist_free_all(string_list);
+#endif
 
     if (m_cache_entry_writer.has_value()) {
         if (m_state == State::Complete)
@@ -196,11 +203,19 @@ void Request::notify_fetch_complete(Badge<ConnectionFromClient>, int result_code
         transfer_headers_to_client_if_needed();
     }
 
+#if defined(AK_OS_RINOS)
+    m_rin_result_code = result_code;
+
+    if (m_response_buffer.is_eof())
+        transition_to_state(State::Complete);
+}
+#else
     m_curl_result_code = result_code;
 
     if (m_response_buffer.is_eof())
         transition_to_state(State::Complete);
 }
+#endif
 
 void Request::transition_to_state(State state)
 {
@@ -334,7 +349,11 @@ void Request::handle_read_cache_state()
         m_client_request_pipe->writer_fd(),
         weak_callback(*this, [](auto& self, auto bytes_sent) {
             self.m_bytes_transferred_to_client = bytes_sent;
+#if defined(AK_OS_RINOS)
+            self.m_rin_result_code = 0;
+#else
             self.m_curl_result_code = CURLE_OK;
+#endif
 
             self.transition_to_state(State::Complete);
         }),
@@ -371,7 +390,11 @@ void Request::handle_failed_cache_only_state()
         return;
     transfer_headers_to_client_if_needed();
 
+#if defined(AK_OS_RINOS)
+    m_rin_result_code = 0;
+#else
     m_curl_result_code = CURLE_OK;
+#endif
     transition_to_state(State::Complete);
 }
 
@@ -424,7 +447,11 @@ void Request::handle_serve_substitution_state()
         return;
     }
 
+#if defined(AK_OS_RINOS)
+    m_rin_result_code = 0;
+#else
     m_curl_result_code = CURLE_OK;
+#endif
 
     if (write_queued_bytes_without_blocking().is_error())
         transition_to_state(State::Error);
@@ -472,6 +499,11 @@ void Request::handle_retrieve_cookie_state()
 
 void Request::handle_connect_state()
 {
+#if defined(AK_OS_RINOS)
+    // On RinOS, connect pre-warming is a no-op. The actual connection
+    // happens in handle_fetch_state via RinHTTPFetch::create.
+    (void)m_curl_multi_handle;
+#else
     m_curl_easy_handle = curl_easy_init();
     if (!m_curl_easy_handle) {
         dbgln("Request::handle_connect_state: Failed to initialize curl easy handle");
@@ -494,12 +526,55 @@ void Request::handle_connect_state()
 
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
     VERIFY(result == CURLM_OK);
+#endif
 }
 
 void Request::handle_fetch_state()
 {
     dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: DNS lookup successful");
 
+#if defined(AK_OS_RINOS)
+    auto is_revalidation = this->is_revalidation_request();
+    if (!is_revalidation) {
+        if (inform_client_request_started().is_error())
+            return;
+    }
+
+    ByteBuffer body_copy;
+    if (!m_request_body.is_empty())
+        body_copy = MUST(ByteBuffer::copy(m_request_body));
+
+    // Build revalidation headers into request_headers if needed
+    auto headers_for_fetch = HTTP::HeaderList::create(m_request_headers->headers());
+    if (is_revalidation) {
+        auto revalidation_attributes = HTTP::RevalidationAttributes::create(m_cache_entry_reader->response_headers());
+        VERIFY(revalidation_attributes.etag.has_value() || revalidation_attributes.last_modified.has_value());
+
+        if (revalidation_attributes.etag.has_value())
+            headers_for_fetch->append({ "If-None-Match"sv, *revalidation_attributes.etag });
+        if (revalidation_attributes.last_modified.has_value())
+            headers_for_fetch->append({ "If-Modified-Since"sv, *revalidation_attributes.last_modified });
+    }
+
+    VERIFY(m_dns_result);
+    auto fetch_or_error = RinHTTPFetch::create(m_url, m_method, *headers_for_fetch, body_copy, m_dns_result, s_connect_timeout_seconds);
+    if (fetch_or_error.is_error()) {
+        dbgln("Request::handle_fetch_state: Failed to create RinHTTPFetch: {}", fetch_or_error.error());
+        m_network_error = Requests::NetworkError::UnableToConnect;
+        transition_to_state(State::Error);
+        return;
+    }
+
+    m_rin_fetch = fetch_or_error.release_value();
+    m_rin_fetch->callback_user_data = this;
+
+    m_rin_fetch->on_header_received = &on_header_received;
+    m_rin_fetch->on_data_received = &on_data_received;
+
+    m_rin_fetch->on_complete = [this](int result_code) {
+        notify_fetch_complete({}, result_code);
+    };
+#else
     m_curl_easy_handle = curl_easy_init();
     if (!m_curl_easy_handle) {
         dbgln("Request::handle_start_fetch_state: Failed to initialize curl easy handle");
@@ -613,11 +688,25 @@ void Request::handle_fetch_state()
 
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
     VERIFY(result == CURLM_OK);
+#endif
 }
 
 void Request::handle_complete_state()
 {
     if (m_type == Type::Fetch) {
+#if defined(AK_OS_RINOS)
+        VERIFY(m_rin_result_code.has_value());
+
+        if (*m_rin_result_code != 0) {
+            m_network_error = Requests::NetworkError::Unknown;
+            transition_to_state(State::Error);
+            return;
+        }
+
+        auto timing_info = m_rin_fetch ? m_rin_fetch->timing_info() : Requests::RequestTimingInfo {};
+        transfer_headers_to_client_if_needed();
+        m_client.async_request_finished(m_request_id, m_bytes_transferred_to_client, timing_info, m_network_error);
+#else
         VERIFY(m_curl_result_code.has_value());
 
         // HTTPS servers might terminate their connection without proper notice of shutdown - i.e. they do not send
@@ -643,6 +732,7 @@ void Request::handle_complete_state()
         transfer_headers_to_client_if_needed();
 
         m_client.async_request_finished(m_request_id, m_bytes_transferred_to_client, timing_info, m_network_error);
+#endif
     }
 
     m_client.request_complete({}, *this);
@@ -700,7 +790,11 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
         // If we arrive here, we did not receive an HTTP 304 response code. We must remove the cache entry and inform
         // the client of the new response headers and data.
         if (request.revalidation_failed().is_error())
+#if defined(AK_OS_RINOS)
+            return 0;
+#else
             return CURL_WRITEFUNC_ERROR;
+#endif
 
         request.m_disk_cache->create_entry(request, request.m_url, request.m_method, request.m_request_headers, request.m_request_start_time)
             .visit(
@@ -725,7 +819,11 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
 
     if (result.is_error()) {
         dbgln("Request::on_data_received: Aborting request because error occurred whilst writing data to the client: {}", result.error());
+#if defined(AK_OS_RINOS)
+        return 0;
+#else
         return CURL_WRITEFUNC_ERROR;
+#endif
     }
 
     return total_size;
@@ -809,7 +907,11 @@ ErrorOr<void> Request::write_queued_bytes_without_blocking()
         write_bytes_to_disk_cache(bytes_to_send.size());
         MUST(m_response_buffer.discard(bytes_to_send.size()));
 
+#if defined(AK_OS_RINOS)
+        if (m_response_buffer.is_eof() && m_rin_result_code.has_value())
+#else
         if (m_response_buffer.is_eof() && m_curl_result_code.has_value())
+#endif
             transition_to_state(State::Complete);
 
         return {};
@@ -840,7 +942,11 @@ ErrorOr<void> Request::write_queued_bytes_without_blocking()
     m_bytes_transferred_to_client += result.value();
 
     m_client_writer_notifier->set_enabled(!m_response_buffer.is_eof());
+#if defined(AK_OS_RINOS)
+    if (m_response_buffer.is_eof() && m_rin_result_code.has_value())
+#else
     if (m_response_buffer.is_eof() && m_curl_result_code.has_value())
+#endif
         transition_to_state(State::Complete);
 
     return {};
@@ -882,6 +988,11 @@ bool Request::is_cache_only_request() const
 
 u32 Request::acquire_status_code() const
 {
+#if defined(AK_OS_RINOS)
+    if (!m_rin_fetch)
+        return 0;
+    return m_rin_fetch->status_code();
+#else
     if (!m_curl_easy_handle)
         return 0;
 
@@ -890,10 +1001,18 @@ u32 Request::acquire_status_code() const
     VERIFY(result == CURLE_OK);
 
     return static_cast<u32>(http_status_code);
+#endif
 }
 
 Requests::RequestTimingInfo Request::acquire_timing_info() const
 {
+#if defined(AK_OS_RINOS)
+    if (m_cache_entry_reader.has_value())
+        return {};
+    if (!m_rin_fetch)
+        return {};
+    return m_rin_fetch->timing_info();
+#else
     // curl_easy_perform()
     // |
     // |--QUEUE
@@ -965,6 +1084,7 @@ Requests::RequestTimingInfo Request::acquire_timing_info() const
         .encoded_body_size = encoded_body_size,
         .http_version_alpn_identifier = http_version_alpn,
     };
+#endif
 }
 
 }

@@ -24,7 +24,11 @@
 #include <RequestServer/Forward.h>
 #include <RequestServer/RequestPipe.h>
 
+#if defined(AK_OS_RINOS)
+#    include <RequestServer/RinHTTPTransport.h>
+#else
 struct curl_slist;
+#endif
 
 namespace RequestServer {
 
@@ -188,9 +192,14 @@ private:
     ConnectionFromClient& m_client;
 
     void* m_curl_multi_handle { nullptr };
+#if defined(AK_OS_RINOS)
+    OwnPtr<RinHTTPFetch> m_rin_fetch;
+    Optional<int> m_rin_result_code;
+#else
     void* m_curl_easy_handle { nullptr };
     Vector<curl_slist*> m_curl_string_lists;
     Optional<int> m_curl_result_code;
+#endif
 
     NonnullRefPtr<Resolver> m_resolver;
     RefPtr<DNS::LookupResult const> m_dns_result;

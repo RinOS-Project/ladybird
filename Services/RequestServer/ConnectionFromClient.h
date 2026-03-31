@@ -67,24 +67,30 @@ private:
     virtual void websocket_close(u64 websocket_id, u16, ByteString) override;
     virtual Messages::RequestServer::WebsocketSetCertificateResponse websocket_set_certificate(u64, ByteString, ByteString) override;
 
+#if !defined(AK_OS_RINOS)
     static int on_socket_callback(void*, int sockfd, int what, void* user_data, void*);
     static int on_timeout_callback(void*, long timeout_ms, void* user_data);
     void check_active_requests();
+#endif
 
     ErrorOr<IPC::TransportHandle> create_client_socket();
 
     ConnectionMap& m_connections;
     Optional<HTTP::DiskCache&> m_disk_cache;
 
+#if !defined(AK_OS_RINOS)
     void* m_curl_multi { nullptr };
+#endif
 
     HashMap<u64, NonnullOwnPtr<Request>> m_active_requests;
     HashMap<u64, NonnullOwnPtr<Request>> m_active_revalidation_requests;
     HashMap<u64, RefPtr<WebSocket::WebSocket>> m_websockets;
 
     RefPtr<Core::Timer> m_timer;
+#if !defined(AK_OS_RINOS)
     HashMap<int, NonnullRefPtr<Core::Notifier>> m_read_notifiers;
     HashMap<int, NonnullRefPtr<Core::Notifier>> m_write_notifiers;
+#endif
 
     NonnullRefPtr<Resolver> m_resolver;
     ByteString m_alt_svc_cache_path;

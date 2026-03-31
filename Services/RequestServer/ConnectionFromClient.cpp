@@ -17,11 +17,15 @@
 #include <LibRequests/WebSocket.h>
 #include <LibWebSocket/ConnectionInfo.h>
 #include <LibWebSocket/Message.h>
-#include <RequestServer/CURL.h>
+#if defined(AK_OS_RINOS)
+#    include <LibWebSocket/Impl/WebSocketImplSerenity.h>
+#else
+#    include <RequestServer/CURL.h>
+#    include <RequestServer/WebSocketImplCurl.h>
+#endif
 #include <RequestServer/ConnectionFromClient.h>
 #include <RequestServer/Request.h>
 #include <RequestServer/Resolver.h>
-#include <RequestServer/WebSocketImplCurl.h>
 
 namespace RequestServer {
 
@@ -32,7 +36,9 @@ ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transpo
     : IPC::ConnectionFromClient<RequestClientEndpoint, RequestServerEndpoint>(*this, move(transport), s_client_ids.allocate())
     , m_connections(connections)
     , m_disk_cache(disk_cache)
+#if !defined(AK_OS_RINOS)
     , m_curl_multi(curl_multi_init())
+#endif
     , m_resolver(Resolver::default_resolver())
     , m_alt_svc_cache_path(ByteString::formatted("{}/Ladybird/alt-svc-cache.txt", Core::StandardPaths::cache_directory()))
 {
@@ -43,6 +49,7 @@ ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transpo
 
     m_connections.set(client_id(), *this);
 
+#if !defined(AK_OS_RINOS)
     auto set_option = [this](auto option, auto value) {
         auto result = curl_multi_setopt(m_curl_multi, option, value);
         VERIFY(result == CURLM_OK);
@@ -57,6 +64,7 @@ ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transpo
         VERIFY(result == CURLM_OK);
         check_active_requests();
     });
+#endif
 }
 
 ConnectionFromClient::~ConnectionFromClient()
@@ -64,8 +72,10 @@ ConnectionFromClient::~ConnectionFromClient()
     m_active_requests.clear();
     m_active_revalidation_requests.clear();
 
+#if !defined(AK_OS_RINOS)
     curl_multi_cleanup(m_curl_multi);
     m_curl_multi = nullptr;
+#endif
 }
 
 Optional<ConnectionFromClient&> ConnectionFromClient::primary_connection()
@@ -203,7 +213,11 @@ void ConnectionFromClient::start_request(u64 request_id, ByteString method, URL:
 {
     dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: start_request({}, {})", request_id, url);
 
+#if defined(AK_OS_RINOS)
+    auto request = Request::fetch(request_id, m_disk_cache, cache_mode, *this, nullptr, m_resolver, move(url), move(method), HTTP::HeaderList::create(move(request_headers)), move(request_body), include_credentials, m_alt_svc_cache_path, proxy_data);
+#else
     auto request = Request::fetch(request_id, m_disk_cache, cache_mode, *this, m_curl_multi, m_resolver, move(url), move(method), HTTP::HeaderList::create(move(request_headers)), move(request_body), include_credentials, m_alt_svc_cache_path, proxy_data);
+#endif
     m_active_requests.set(request_id, move(request));
 }
 
@@ -213,10 +227,15 @@ void ConnectionFromClient::start_revalidation_request(Badge<Request>, ByteString
 
     dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: start_revalidation_request({}, {})", request_id, url);
 
+#if defined(AK_OS_RINOS)
+    auto request = Request::revalidate(request_id, m_disk_cache, *this, nullptr, m_resolver, move(url), move(method), move(request_headers), move(request_body), include_credentials, m_alt_svc_cache_path, proxy_data);
+#else
     auto request = Request::revalidate(request_id, m_disk_cache, *this, m_curl_multi, m_resolver, move(url), move(method), move(request_headers), move(request_body), include_credentials, m_alt_svc_cache_path, proxy_data);
+#endif
     m_active_revalidation_requests.set(request_id, move(request));
 }
 
+#if !defined(AK_OS_RINOS)
 int ConnectionFromClient::on_socket_callback(CURL*, int sockfd, int what, void* user_data, void*)
 {
     auto* client = static_cast<ConnectionFromClient*>(user_data);
@@ -302,6 +321,7 @@ void ConnectionFromClient::check_active_requests()
         request->notify_fetch_complete({}, msg->data.result);
     }
 }
+#endif
 
 Messages::RequestServer::StopRequestResponse ConnectionFromClient::stop_request(u64 request_id)
 {
@@ -324,7 +344,11 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
 
 void ConnectionFromClient::ensure_connection(u64 request_id, URL::URL url, ::RequestServer::CacheLevel cache_level)
 {
+#if defined(AK_OS_RINOS)
+    auto request = Request::connect(request_id, *this, nullptr, m_resolver, move(url), cache_level);
+#else
     auto request = Request::connect(request_id, *this, m_curl_multi, m_resolver, move(url), cache_level);
+#endif
     m_active_requests.set(request_id, move(request));
 }
 
@@ -378,7 +402,11 @@ void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, Byt
             if (auto const& path = default_certificate_path(); !path.is_empty())
                 connection_info.set_root_certificates_path(path);
 
+#if defined(AK_OS_RINOS)
+            auto impl = adopt_ref(*new WebSocket::WebSocketImplSerenity());
+#else
             auto impl = WebSocketImplCurl::create(m_curl_multi);
+#endif
             auto connection = WebSocket::WebSocket::create(move(connection_info), move(impl));
 
             connection->on_open = [this, websocket_id]() {
