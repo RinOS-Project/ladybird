@@ -8,9 +8,45 @@
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/IDNA.h>
 
-#include <unicode/idna.h>
+#ifndef AK_OS_RINOS
+#    include <unicode/idna.h>
+#endif
 
 namespace Unicode::IDNA {
+
+#ifdef AK_OS_RINOS
+
+// RinOS: Simplified IDNA toASCII — pass through ASCII domains, reject non-ASCII
+// Full IDNA UTS#46 requires complex Unicode normalization + Punycode which rinicu doesn't expose.
+ErrorOr<String> to_ascii(Utf8View domain_name, ToAsciiOptions const& options)
+{
+    auto const& input = domain_name.as_string();
+
+    // Check if already pure ASCII
+    bool all_ascii = true;
+    for (auto byte : input.bytes()) {
+        if (byte > 0x7E) {
+            all_ascii = false;
+            break;
+        }
+    }
+
+    if (all_ascii) {
+        // Validate DNS length if requested
+        if (options.verify_dns_length == VerifyDnsLength::Yes) {
+            if (input.is_empty())
+                return Error::from_string_literal("Unable to convert domain to ASCII");
+            if (input.bytes().size() > 253)
+                return Error::from_string_literal("Unable to convert domain to ASCII");
+        }
+        return String::from_utf8(input);
+    }
+
+    // Non-ASCII domain names require full UTS#46 processing — not available on RinOS
+    return Error::from_string_literal("Unable to convert domain to ASCII");
+}
+
+#else
 
 // https://www.unicode.org/reports/tr46/#ToASCII
 ErrorOr<String> to_ascii(Utf8View domain_name, ToAsciiOptions const& options)
@@ -61,5 +97,7 @@ ErrorOr<String> to_ascii(Utf8View domain_name, ToAsciiOptions const& options)
 
     return builder.to_string();
 }
+
+#endif // AK_OS_RINOS
 
 }

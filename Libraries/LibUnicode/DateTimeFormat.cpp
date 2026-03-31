@@ -19,6 +19,7 @@
 #include <LibUnicode/PartitionRange.h>
 #include <stdlib.h>
 
+#ifndef AK_OS_RINOS
 #include <unicode/calendar.h>
 #include <unicode/datefmt.h>
 #include <unicode/dtitvfmt.h>
@@ -27,6 +28,9 @@
 #include <unicode/smpdtfmt.h>
 #include <unicode/timezone.h>
 #include <unicode/ucal.h>
+#else
+#include <LibUnicode/RinICUBridge.h>
+#endif
 
 namespace Unicode {
 
@@ -58,6 +62,7 @@ StringView date_time_style_to_string(DateTimeStyle style)
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static constexpr icu::DateFormat::EStyle icu_date_time_style(DateTimeStyle style)
 {
     switch (style) {
@@ -72,6 +77,7 @@ static constexpr icu::DateFormat::EStyle icu_date_time_style(DateTimeStyle style
     }
     VERIFY_NOT_REACHED();
 }
+#endif // icu_date_time_style
 
 HourCycle hour_cycle_from_string(StringView hour_cycle)
 {
@@ -103,6 +109,17 @@ StringView hour_cycle_to_string(HourCycle hour_cycle)
 
 Optional<HourCycle> default_hour_cycle(StringView locale)
 {
+#ifdef AK_OS_RINOS
+    // RinOS: derive default hour cycle from locale
+    // Most common: h12 for en, ja uses H23, etc.
+    auto lang = parse_unicode_language_id(locale);
+    if (lang.has_value()) {
+        auto& l = lang->language;
+        if (l == "ja"sv || l == "zh"sv || l == "ko"sv || l == "de"sv || l == "fr"sv || l == "it"sv || l == "ru"sv)
+            return HourCycle::H23;
+    }
+    return HourCycle::H12;
+#else
     UErrorCode status = U_ZERO_ERROR;
 
     auto locale_data = LocaleData::for_locale(locale);
@@ -125,6 +142,7 @@ Optional<HourCycle> default_hour_cycle(StringView locale)
     }
     VERIFY_NOT_REACHED();
 }
+#endif // default_hour_cycle
 
 static constexpr char icu_hour_cycle(Optional<HourCycle> const& hour_cycle, Optional<bool> const& hour12)
 {
@@ -537,6 +555,8 @@ static T find_regional_values_for_locale(StringView locale, GetRegionalValues&& 
 // ICU does not contain a field enumeration for "literal" partitions. Define a custom field so that we may provide a
 // type for those partitions.
 static constexpr i32 LITERAL_FIELD = -1;
+
+#ifndef AK_OS_RINOS
 
 static constexpr StringView icu_date_time_format_field_to_string(i32 field)
 {
@@ -1023,5 +1043,138 @@ WeekInfo week_info_of_locale(StringView locale)
 
     return week_info;
 }
+
+#else // AK_OS_RINOS
+
+// RinOS: date/time formatting via rinicu IPC
+class RinDateTimeFormatImpl : public DateTimeFormat {
+public:
+    RinDateTimeFormatImpl(String locale, String time_zone, CalendarPattern pattern)
+        : m_locale(move(locale))
+        , m_time_zone(move(time_zone))
+        , m_pattern(move(pattern))
+    {
+    }
+
+    virtual ~RinDateTimeFormatImpl() override
+    {
+        if (m_handle != 0)
+            rin_icu_datetime_formatter_destroy(&rin_icu_client(), m_handle);
+    }
+
+    virtual CalendarPattern const& chosen_pattern() const override { return m_pattern; }
+
+    virtual Utf16String format(double time) const override
+    {
+        ensure_handle();
+        char buf[256];
+        size_t len = 0;
+        if (rin_icu_datetime_formatter_format_epoch_ms(&rin_icu_client(), m_handle, time, buf, sizeof(buf), &len) == 0 && len > 0)
+            return Utf16String::from_utf8(StringView { buf, len });
+        return {};
+    }
+
+    virtual Vector<Partition> format_to_parts(double time) const override
+    {
+        auto formatted = format(time);
+        Vector<Partition> result;
+        Partition part;
+        part.type = "literal"sv;
+        part.value = move(formatted);
+        part.source = "shared"sv;
+        result.append(move(part));
+        return result;
+    }
+
+    virtual Utf16String format_range(double start, double end) const override
+    {
+        auto s = format(start);
+        auto e = format(end);
+        auto combined = MUST(String::formatted("{} \xE2\x80\x93 {}", MUST(s.to_utf8()), MUST(e.to_utf8())));
+        return Utf16String::from_utf8(combined);
+    }
+
+    virtual Vector<Partition> format_range_to_parts(double start, double end) const override
+    {
+        Vector<Partition> result;
+        Partition p1;
+        p1.type = "literal"sv;
+        p1.value = format(start);
+        p1.source = "startRange"sv;
+        result.append(move(p1));
+
+        Partition sep;
+        sep.type = "literal"sv;
+        sep.value = Utf16String::from_utf8(" \xE2\x80\x93 "sv);
+        sep.source = "shared"sv;
+        result.append(move(sep));
+
+        Partition p2;
+        p2.type = "literal"sv;
+        p2.value = format(end);
+        p2.source = "endRange"sv;
+        result.append(move(p2));
+
+        return result;
+    }
+
+private:
+    void ensure_handle() const
+    {
+        if (m_handle != 0)
+            return;
+        uint32_t kind = 3; // DATETIME
+        if (!m_pattern.hour.has_value() && !m_pattern.minute.has_value() && !m_pattern.second.has_value())
+            kind = 1; // DATE
+        else if (!m_pattern.year.has_value() && !m_pattern.month.has_value() && !m_pattern.day.has_value())
+            kind = 2; // TIME
+
+        ByteString locale_z(m_locale);
+        ByteString tz_z(m_time_zone);
+        rin_icu_datetime_formatter_create(&rin_icu_client(), locale_z.characters(), kind, 0, 0, &m_handle);
+    }
+
+    String m_locale;
+    String m_time_zone;
+    CalendarPattern m_pattern;
+    mutable rin_icu_handle_t m_handle { 0 };
+};
+
+NonnullOwnPtr<DateTimeFormat> DateTimeFormat::create_for_date_and_time_style(
+    StringView locale,
+    StringView time_zone_identifier,
+    Optional<HourCycle> const&,
+    Optional<bool> const&,
+    Optional<DateTimeStyle> const&,
+    Optional<DateTimeStyle> const&)
+{
+    CalendarPattern pattern;
+    pattern.year = CalendarPatternStyle::Numeric;
+    pattern.month = CalendarPatternStyle::Numeric;
+    pattern.day = CalendarPatternStyle::Numeric;
+    pattern.hour = CalendarPatternStyle::Numeric;
+    pattern.minute = CalendarPatternStyle::TwoDigit;
+    return adopt_own(*new RinDateTimeFormatImpl(MUST(String::from_utf8(locale)), MUST(String::from_utf8(time_zone_identifier)), move(pattern)));
+}
+
+NonnullOwnPtr<DateTimeFormat> DateTimeFormat::create_for_pattern_options(
+    StringView locale,
+    StringView time_zone_identifier,
+    CalendarPattern const& options)
+{
+    return adopt_own(*new RinDateTimeFormatImpl(MUST(String::from_utf8(locale)), MUST(String::from_utf8(time_zone_identifier)), options));
+}
+
+WeekInfo week_info_of_locale(StringView)
+{
+    // Default: Monday start, Saturday-Sunday weekend (ISO)
+    WeekInfo info;
+    info.minimal_days_in_first_week = 1;
+    info.first_day_of_week = Weekday::Monday;
+    info.weekend_days = { Weekday::Saturday, Weekday::Sunday };
+    return info;
+}
+
+#endif // AK_OS_RINOS
 
 }

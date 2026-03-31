@@ -15,6 +15,46 @@
 #include <AK/Vector.h>
 #include <LibUnicode/DurationFormat.h>
 
+#ifdef AK_OS_RINOS
+
+namespace Unicode {
+
+// On RinOS, LocaleData is a lightweight wrapper around a locale string.
+// All heavy lifting is done via rinicu IPC in each module's implementation.
+class LocaleData {
+public:
+    static Optional<LocaleData&> for_locale(StringView locale);
+    static String canonicalize(StringView locale);
+
+    StringView locale_string() const { return m_locale_string; }
+
+    Optional<DigitalFormat> const& digital_format() { return m_digital_format; }
+    void set_digital_format(DigitalFormat digital_format) { m_digital_format = move(digital_format); }
+
+private:
+    explicit LocaleData(String locale_string);
+
+    String m_locale_string;
+    Optional<String> m_canonical_locale_string;
+    Optional<DigitalFormat> m_digital_format;
+};
+
+class TimeZoneData {
+public:
+    static Optional<TimeZoneData&> for_time_zone(StringView time_zone);
+
+    StringView time_zone_string() const { return m_time_zone_string; }
+
+private:
+    explicit TimeZoneData(String time_zone_string);
+
+    String m_time_zone_string;
+};
+
+} // namespace Unicode
+
+#else // !AK_OS_RINOS
+
 #include <unicode/locid.h>
 #include <unicode/strenum.h>
 #include <unicode/stringpiece.h>
@@ -164,3 +204,5 @@ ALWAYS_INLINE Vector<String> icu_string_enumeration_to_list(OwnPtr<icu::StringEn
 }
 
 }
+
+#endif // !AK_OS_RINOS

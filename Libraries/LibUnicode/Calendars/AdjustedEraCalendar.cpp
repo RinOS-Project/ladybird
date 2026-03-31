@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifndef AK_OS_RINOS
+
 #include <LibUnicode/Calendars/AdjustedEraCalendar.h>
 #include <LibUnicode/Calendars/Constants.h>
 #include <LibUnicode/ICU.h>
@@ -148,3 +150,5 @@ int32_t AdjustedEraCalendar::handleGetLimit(UCalendarDateFields field, ELimitTyp
 UOBJECT_DEFINE_RTTI_IMPLEMENTATION(AdjustedEraCalendar)
 
 }
+
+#endif // AK_OS_RINOS

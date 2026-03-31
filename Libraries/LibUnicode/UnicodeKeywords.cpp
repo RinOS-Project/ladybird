@@ -10,11 +10,13 @@
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/UnicodeKeywords.h>
 
-#include <unicode/calendar.h>
-#include <unicode/coll.h>
-#include <unicode/locid.h>
-#include <unicode/numsys.h>
-#include <unicode/ucurr.h>
+#ifndef AK_OS_RINOS
+#    include <unicode/calendar.h>
+#    include <unicode/coll.h>
+#    include <unicode/locid.h>
+#    include <unicode/numsys.h>
+#    include <unicode/ucurr.h>
+#endif
 
 namespace Unicode {
 
@@ -47,6 +49,12 @@ Vector<String> const& available_calendars()
     return calendars;
 }
 
+#ifdef AK_OS_RINOS
+Vector<String> available_calendars(StringView)
+{
+    return { "gregory"_string, "iso8601"_string, "japanese"_string, "buddhist"_string };
+}
+#else
 Vector<String> available_calendars(StringView locale)
 {
     UErrorCode status = U_ZERO_ERROR;
@@ -65,7 +73,15 @@ Vector<String> available_calendars(StringView locale)
         return !StringView { value, value_length }.is_one_of("islamic"sv, "islamic-rgsa"sv);
     });
 }
+#endif
 
+#ifdef AK_OS_RINOS
+Vector<String> const& available_currencies()
+{
+    static Vector<String> currencies { "USD"_string, "EUR"_string, "JPY"_string, "GBP"_string, "CNY"_string };
+    return currencies;
+}
+#else
 Vector<String> const& available_currencies()
 {
     static auto currencies = []() -> Vector<String> {
@@ -99,6 +115,7 @@ Vector<String> const& available_currencies()
 
     return currencies;
 }
+#endif
 
 Vector<String> const& available_collation_case_orderings()
 {
@@ -112,6 +129,13 @@ Vector<String> const& available_collation_numeric_orderings()
     return case_orderings;
 }
 
+#ifdef AK_OS_RINOS
+Vector<String> const& available_collations()
+{
+    static Vector<String> collations { "default"_string, "emoji"_string, "eor"_string };
+    return collations;
+}
+#else
 Vector<String> const& available_collations()
 {
     static auto collations = []() -> Vector<String> {
@@ -133,7 +157,14 @@ Vector<String> const& available_collations()
 
     return collations;
 }
+#endif
 
+#ifdef AK_OS_RINOS
+Vector<String> available_collations(StringView)
+{
+    return { "default"_string };
+}
+#else
 Vector<String> available_collations(StringView locale)
 {
     UErrorCode status = U_ZERO_ERROR;
@@ -157,6 +188,7 @@ Vector<String> available_collations(StringView locale)
 
     return collations;
 }
+#endif
 
 Vector<String> const& available_hour_cycles()
 {
@@ -181,6 +213,13 @@ Vector<String> available_hour_cycles(StringView locale)
     return hour_cycles;
 }
 
+#ifdef AK_OS_RINOS
+Vector<String> const& available_number_systems()
+{
+    static Vector<String> systems { "latn"_string };
+    return systems;
+}
+#else
 Vector<String> const& available_number_systems()
 {
     static auto number_systems = []() -> Vector<String> {
@@ -204,7 +243,14 @@ Vector<String> const& available_number_systems()
 
     return number_systems;
 }
+#endif
 
+#ifdef AK_OS_RINOS
+Vector<String> available_number_systems(StringView)
+{
+    return { "latn"_string };
+}
+#else
 Vector<String> available_number_systems(StringView locale)
 {
     auto locale_data = LocaleData::for_locale(locale);
@@ -223,5 +269,6 @@ Vector<String> available_number_systems(StringView locale)
 
     return number_systems;
 }
+#endif
 
 }

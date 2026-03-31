@@ -4,6 +4,76 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifdef AK_OS_RINOS
+
+#include <AK/HashMap.h>
+#include <AK/NonnullOwnPtr.h>
+#include <LibUnicode/ICU.h>
+#include <LibUnicode/RinICUBridge.h>
+#include <LibUnicode/Locale.h>
+
+namespace Unicode {
+
+static HashMap<String, OwnPtr<LocaleData>> s_locale_cache;
+static HashMap<String, OwnPtr<TimeZoneData>> s_time_zone_cache;
+
+Optional<LocaleData&> LocaleData::for_locale(StringView locale)
+{
+    auto locale_data = s_locale_cache.get(locale);
+
+    if (!locale_data.has_value()) {
+        locale_data = s_locale_cache.ensure(MUST(String::from_utf8(locale)), [&]() -> OwnPtr<LocaleData> {
+            return adopt_own(*new LocaleData { MUST(String::from_utf8(locale)) });
+        });
+    }
+
+    if (locale_data.value())
+        return *locale_data.value();
+    return {};
+}
+
+LocaleData::LocaleData(String locale_string)
+    : m_locale_string(move(locale_string))
+{
+}
+
+String LocaleData::canonicalize(StringView locale)
+{
+    auto locale_data = LocaleData::for_locale(locale);
+    VERIFY(locale_data.has_value());
+
+    if (locale_data->m_canonical_locale_string.has_value())
+        return *locale_data->m_canonical_locale_string;
+
+    locale_data->m_canonical_locale_string = rin_icu_locale_string_op(
+        rin_icu_locale_canonicalize, locale);
+    return *locale_data->m_canonical_locale_string;
+}
+
+Optional<TimeZoneData&> TimeZoneData::for_time_zone(StringView time_zone)
+{
+    auto time_zone_data = s_time_zone_cache.get(time_zone);
+
+    if (!time_zone_data.has_value()) {
+        time_zone_data = s_time_zone_cache.ensure(MUST(String::from_utf8(time_zone)), [&]() -> OwnPtr<TimeZoneData> {
+            return adopt_own(*new TimeZoneData { MUST(String::from_utf8(time_zone)) });
+        });
+    }
+
+    if (time_zone_data.value())
+        return *time_zone_data.value();
+    return {};
+}
+
+TimeZoneData::TimeZoneData(String time_zone_string)
+    : m_time_zone_string(move(time_zone_string))
+{
+}
+
+} // namespace Unicode
+
+#else // !AK_OS_RINOS
+
 #include <AK/HashMap.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/Utf16View.h>
@@ -235,3 +305,5 @@ UCharIterator icu_string_iterator(Utf16View const& string)
 }
 
 }
+
+#endif // !AK_OS_RINOS

@@ -10,9 +10,13 @@
 #include <LibUnicode/PartitionRange.h>
 #include <LibUnicode/RelativeTimeFormat.h>
 
+#ifndef AK_OS_RINOS
 #include <unicode/decimfmt.h>
 #include <unicode/numfmt.h>
 #include <unicode/reldatefmt.h>
+#else
+#include <LibUnicode/RinICUBridge.h>
+#endif
 
 namespace Unicode {
 
@@ -60,6 +64,7 @@ StringView time_unit_to_string(TimeUnit time_unit)
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static constexpr URelativeDateTimeUnit icu_time_unit(TimeUnit unit)
 {
     switch (unit) {
@@ -252,5 +257,56 @@ NonnullOwnPtr<RelativeTimeFormat> RelativeTimeFormat::create(StringView locale, 
 
     return make<RelativeTimeFormatImpl>(move(formatter));
 }
+
+#else // AK_OS_RINOS
+
+// RinOS: relative time formatting via rinicu IPC
+class RinRelativeTimeFormatImpl : public RelativeTimeFormat {
+public:
+    RinRelativeTimeFormatImpl(String locale)
+        : m_locale(move(locale))
+    {
+    }
+
+    virtual ~RinRelativeTimeFormatImpl() override = default;
+
+    virtual Utf16String format(double time, TimeUnit unit, NumericDisplay) const override
+    {
+        auto unit_str = time_unit_to_string(unit);
+        ByteString locale_z(m_locale);
+        ByteString unit_z(unit_str);
+        char buf[256];
+        size_t len = 0;
+        auto time_str = ByteString::formatted("{}", time);
+        if (rin_icu_relative_time_format(&rin_icu_client(), locale_z.characters(), unit_z.characters(), time_str.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+            return Utf16String::from_utf8(StringView { buf, len });
+        // Fallback
+        auto fallback = MUST(String::formatted("{} {} ago", -time, unit_str));
+        return Utf16String::from_utf8(fallback);
+    }
+
+    virtual Vector<Partition> format_to_parts(double time, TimeUnit unit, NumericDisplay numeric_display) const override
+    {
+        auto formatted = format(time, unit, numeric_display);
+        auto unit_string = time_unit_to_string(unit);
+        Vector<Partition> result;
+        Partition part;
+        part.type = "literal"sv;
+        part.value = move(formatted);
+        part.unit = unit_string;
+        result.append(move(part));
+        return result;
+    }
+
+private:
+    String m_locale;
+};
+
+NonnullOwnPtr<RelativeTimeFormat> RelativeTimeFormat::create(StringView locale, Style)
+{
+    return make<RinRelativeTimeFormatImpl>(MUST(String::from_utf8(locale)));
+}
+
+#endif // AK_OS_RINOS
 
 }

@@ -9,14 +9,90 @@
 #include <LibUnicode/CharacterTypes.h>
 #include <LibUnicode/ICU.h>
 
+#ifndef AK_OS_RINOS
 #include <unicode/bytestream.h>
 #include <unicode/casemap.h>
 #include <unicode/stringoptions.h>
 #include <unicode/translit.h>
+#else
+extern "C" {
+#include <rin_unicode.h>
+}
+#endif
 
 // This file contains definitions of AK::String methods which require UCD data.
 
 namespace AK {
+
+#ifdef AK_OS_RINOS
+
+// RinOS: case mapping via libunicode codepoint-level operations
+ErrorOr<String> String::to_lowercase(Optional<StringView> const&) const
+{
+    StringBuilder builder { bytes_as_string_view().length() };
+    for (auto code_point : code_points())
+        builder.append_code_point(rin_unicode_tolower(code_point));
+    return builder.to_string_without_validation();
+}
+
+ErrorOr<String> String::to_uppercase(Optional<StringView> const&) const
+{
+    StringBuilder builder { bytes_as_string_view().length() };
+    for (auto code_point : code_points())
+        builder.append_code_point(rin_unicode_toupper(code_point));
+    return builder.to_string_without_validation();
+}
+
+ErrorOr<String> String::to_titlecase(Optional<StringView> const&, TrailingCodePointTransformation trailing_code_point_transformation) const
+{
+    StringBuilder builder { bytes_as_string_view().length() };
+    bool capitalize_next = true;
+    for (auto code_point : code_points()) {
+        if (rin_unicode_isspace(code_point) || rin_unicode_ispunct(code_point)) {
+            capitalize_next = true;
+            builder.append_code_point(code_point);
+        } else if (capitalize_next) {
+            builder.append_code_point(rin_unicode_toupper(code_point));
+            capitalize_next = false;
+        } else if (trailing_code_point_transformation == TrailingCodePointTransformation::Lowercase) {
+            builder.append_code_point(rin_unicode_tolower(code_point));
+        } else {
+            builder.append_code_point(code_point);
+        }
+    }
+    return builder.to_string_without_validation();
+}
+
+ErrorOr<String> String::to_fullwidth() const
+{
+    // Simplified halfwidth→fullwidth: ASCII 0x21-0x7E maps to U+FF01-U+FF5E, space to U+3000
+    StringBuilder builder { bytes_as_string_view().length() * 3 };
+    for (auto code_point : code_points()) {
+        if (code_point == 0x20)
+            builder.append_code_point(0x3000);
+        else if (code_point >= 0x21 && code_point <= 0x7E)
+            builder.append_code_point(0xFF01 + (code_point - 0x21));
+        else
+            builder.append_code_point(code_point);
+    }
+    return builder.to_string_without_validation();
+}
+
+static ErrorOr<void> build_casefold_string(StringView string, StringBuilder& builder)
+{
+    // Use libunicode full case folding
+    for (auto code_point : Utf8View(string)) {
+        char out[8];
+        size_t out_len = 0;
+        if (rin_unicode_casefold_full(code_point, out, sizeof(out), &out_len) == 0 && out_len > 0)
+            builder.append(StringView { out, out_len });
+        else
+            builder.append_code_point(code_point);
+    }
+    return {};
+}
+
+#else // !AK_OS_RINOS
 
 struct ResolvedLocale {
     ByteString buffer;
@@ -114,6 +190,8 @@ static ErrorOr<void> build_casefold_string(StringView string, StringBuilder& bui
 
     return {};
 }
+
+#endif // !AK_OS_RINOS
 
 ErrorOr<String> String::to_casefold() const
 {

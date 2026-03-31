@@ -11,9 +11,11 @@
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/NumberFormat.h>
 
-#include <unicode/measfmt.h>
-#include <unicode/measunit.h>
-#include <unicode/measure.h>
+#ifndef AK_OS_RINOS
+#    include <unicode/measfmt.h>
+#    include <unicode/measunit.h>
+#    include <unicode/measure.h>
+#endif
 
 namespace Unicode {
 
@@ -21,6 +23,20 @@ static constexpr bool is_not_ascii_digit(u32 code_point)
 {
     return !is_ascii_digit(code_point);
 }
+
+#ifdef AK_OS_RINOS
+
+DigitalFormat digital_format(StringView)
+{
+    // RinOS: Return standard digital format separators (":" for both)
+    DigitalFormat format;
+    format.uses_two_digit_hours = false;
+    format.hours_minutes_separator = Utf16String::from_utf8(":"sv);
+    format.minutes_seconds_separator = Utf16String::from_utf8(":"sv);
+    return format;
+}
+
+#else
 
 DigitalFormat digital_format(StringView locale)
 {
@@ -82,5 +98,7 @@ DigitalFormat digital_format(StringView locale)
     locale_data->set_digital_format(move(digital_format));
     return *locale_data->digital_format();
 }
+
+#endif // AK_OS_RINOS
 
 }

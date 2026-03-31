@@ -13,9 +13,13 @@
 #include <LibUnicode/PartitionRange.h>
 #include <math.h>
 
+#ifndef AK_OS_RINOS
 #include <unicode/numberformatter.h>
 #include <unicode/numberrangeformatter.h>
 #include <unicode/plurrule.h>
+#else
+#include <LibUnicode/RinICUBridge.h>
+#endif
 
 namespace Unicode {
 
@@ -79,6 +83,7 @@ StringView sign_display_to_string(SignDisplay sign_display)
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static constexpr UNumberSignDisplay icu_sign_display(SignDisplay sign_display, Optional<CurrencySign> const& currency_sign)
 {
     switch (sign_display) {
@@ -95,6 +100,7 @@ static constexpr UNumberSignDisplay icu_sign_display(SignDisplay sign_display, O
     }
     VERIFY_NOT_REACHED();
 }
+#endif // icu_sign_display
 
 Notation notation_from_string(StringView notation)
 {
@@ -124,6 +130,7 @@ StringView notation_to_string(Notation notation)
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static icu::number::Notation icu_notation(Notation notation, Optional<CompactDisplay> const& compact_display)
 {
     switch (notation) {
@@ -143,6 +150,7 @@ static icu::number::Notation icu_notation(Notation notation, Optional<CompactDis
     }
     VERIFY_NOT_REACHED();
 }
+#endif // icu_notation
 
 CompactDisplay compact_display_from_string(StringView compact_display)
 {
@@ -192,6 +200,7 @@ StringView grouping_to_string(Grouping grouping)
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static constexpr UNumberGroupingStrategy icu_grouping_strategy(Grouping grouping)
 {
     switch (grouping) {
@@ -206,6 +215,7 @@ static constexpr UNumberGroupingStrategy icu_grouping_strategy(Grouping grouping
     }
     VERIFY_NOT_REACHED();
 }
+#endif // icu_grouping_strategy
 
 CurrencyDisplay currency_display_from_string(StringView currency_display)
 {
@@ -235,6 +245,7 @@ StringView currency_display_to_string(CurrencyDisplay currency_display)
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static constexpr UNumberUnitWidth icu_currency_display(CurrencyDisplay currency_display)
 {
     switch (currency_display) {
@@ -249,6 +260,7 @@ static constexpr UNumberUnitWidth icu_currency_display(CurrencyDisplay currency_
     }
     VERIFY_NOT_REACHED();
 }
+#endif // icu_currency_display
 
 CurrencySign currency_sign_from_string(StringView currency_sign)
 {
@@ -346,6 +358,7 @@ StringView rounding_mode_to_string(RoundingMode rounding_mode)
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static constexpr UNumberFormatRoundingMode icu_rounding_mode(RoundingMode rounding_mode)
 {
     switch (rounding_mode) {
@@ -370,6 +383,7 @@ static constexpr UNumberFormatRoundingMode icu_rounding_mode(RoundingMode roundi
     }
     VERIFY_NOT_REACHED();
 }
+#endif // icu_rounding_mode
 
 TrailingZeroDisplay trailing_zero_display_from_string(StringView trailing_zero_display)
 {
@@ -391,6 +405,7 @@ StringView trailing_zero_display_to_string(TrailingZeroDisplay trailing_zero_dis
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static constexpr UNumberTrailingZeroDisplay icu_trailing_zero_display(TrailingZeroDisplay trailing_zero_display)
 {
     switch (trailing_zero_display) {
@@ -401,7 +416,9 @@ static constexpr UNumberTrailingZeroDisplay icu_trailing_zero_display(TrailingZe
     }
     VERIFY_NOT_REACHED();
 }
+#endif // icu_trailing_zero_display
 
+#ifndef AK_OS_RINOS
 static constexpr UNumberUnitWidth icu_unit_width(Style unit_display)
 {
     switch (unit_display) {
@@ -864,5 +881,165 @@ NonnullOwnPtr<NumberFormat> NumberFormat::create(
     bool is_unit = display_options.style == NumberFormatStyle::Unit;
     return adopt_own(*new NumberFormatImpl(locale_data->locale(), move(formatter), is_unit));
 }
+
+#else // AK_OS_RINOS
+
+// RinOS: number formatting via rinicu IPC
+class RinNumberFormatImpl : public NumberFormat {
+public:
+    RinNumberFormatImpl(String locale, DisplayOptions display_options, bool is_unit)
+        : m_locale(move(locale))
+        , m_display_options(move(display_options))
+        , m_is_unit(is_unit)
+    {
+    }
+
+    virtual ~RinNumberFormatImpl() override
+    {
+        if (m_handle != 0)
+            rin_icu_number_formatter_destroy(&rin_icu_client(), m_handle);
+        if (m_plural_handle != 0)
+            rin_icu_plural_rules_destroy(&rin_icu_client(), m_plural_handle);
+    }
+
+    virtual Utf16String format(Value const& value) const override
+    {
+        ensure_handle();
+        auto val_str = value_to_string(value);
+
+        char buf[512];
+        size_t len = 0;
+        if (rin_icu_number_formatter_format(&rin_icu_client(), m_handle, val_str.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+            return Utf16String::from_utf8(StringView { buf, len });
+
+        return Utf16String::from_utf8(val_str);
+    }
+
+    virtual Vector<Partition> format_to_parts(Value const& value) const override
+    {
+        auto formatted = format(value);
+        Vector<Partition> result;
+        Partition part;
+        part.type = "integer"sv;
+        part.value = move(formatted);
+        part.source = "shared"sv;
+        result.append(move(part));
+        return result;
+    }
+
+    virtual Utf16String format_range(Value const& start, Value const& end) const override
+    {
+        auto s = format(start);
+        auto e = format(end);
+        auto combined = MUST(String::formatted("{}\xE2\x80\x93{}", MUST(s.to_utf8()), MUST(e.to_utf8())));
+        return Utf16String::from_utf8(combined);
+    }
+
+    virtual Vector<Partition> format_range_to_parts(Value const& start, Value const& end) const override
+    {
+        Vector<Partition> result;
+
+        auto s = format(start);
+        Partition p1;
+        p1.type = "integer"sv;
+        p1.value = move(s);
+        p1.source = "startRange"sv;
+        result.append(move(p1));
+
+        Partition sep;
+        sep.type = "literal"sv;
+        sep.value = Utf16String::from_utf8("\xE2\x80\x93"sv);
+        sep.source = "shared"sv;
+        result.append(move(sep));
+
+        auto e = format(end);
+        Partition p2;
+        p2.type = "integer"sv;
+        p2.value = move(e);
+        p2.source = "endRange"sv;
+        result.append(move(p2));
+
+        return result;
+    }
+
+    virtual void create_plural_rules(PluralForm plural_form) override
+    {
+        uint32_t type = (plural_form == PluralForm::Ordinal) ? 2 : 1;
+        ByteString locale_z(m_locale);
+        rin_icu_plural_rules_create(&rin_icu_client(), locale_z.characters(), type, &m_plural_handle);
+    }
+
+    virtual PluralCategory select_plural(Value const& value) const override
+    {
+        if (m_plural_handle == 0)
+            return PluralCategory::Other;
+        auto val_str = value_to_string(value);
+        char buf[32];
+        size_t len = 0;
+        if (rin_icu_plural_rules_select(&rin_icu_client(), m_plural_handle, val_str.characters(), buf, sizeof(buf), &len) == 0 && len > 0) {
+            auto sv = StringView { buf, len };
+            if (sv == "zero"sv) return PluralCategory::Zero;
+            if (sv == "one"sv) return PluralCategory::One;
+            if (sv == "two"sv) return PluralCategory::Two;
+            if (sv == "few"sv) return PluralCategory::Few;
+            if (sv == "many"sv) return PluralCategory::Many;
+        }
+        return PluralCategory::Other;
+    }
+
+    virtual PluralCategory select_plural_range(Value const&, Value const& end) const override
+    {
+        return select_plural(end);
+    }
+
+    virtual Vector<PluralCategory> available_plural_categories() const override
+    {
+        return { PluralCategory::Zero, PluralCategory::One, PluralCategory::Two, PluralCategory::Few, PluralCategory::Many, PluralCategory::Other };
+    }
+
+private:
+    void ensure_handle() const
+    {
+        if (m_handle != 0)
+            return;
+        uint32_t style = 1; // DECIMAL
+        switch (m_display_options.style) {
+        case NumberFormatStyle::Percent:
+            style = 2;
+            break;
+        case NumberFormatStyle::Currency:
+            style = 3;
+            break;
+        default:
+            break;
+        }
+        ByteString locale_z(m_locale);
+        rin_icu_number_formatter_create(&rin_icu_client(), locale_z.characters(), style, &m_handle);
+    }
+
+    static ByteString value_to_string(Value const& value)
+    {
+        return value.visit(
+            [](double number) { return ByteString::formatted("{}", number); },
+            [](String const& number) { return ByteString(number); });
+    }
+
+    String m_locale;
+    DisplayOptions m_display_options;
+    bool m_is_unit { false };
+    mutable rin_icu_handle_t m_handle { 0 };
+    rin_icu_handle_t m_plural_handle { 0 };
+};
+
+NonnullOwnPtr<NumberFormat> NumberFormat::create(
+    StringView locale,
+    DisplayOptions const& display_options,
+    RoundingOptions const&)
+{
+    bool is_unit = display_options.style == NumberFormatStyle::Unit;
+    return adopt_own(*new RinNumberFormatImpl(MUST(String::from_utf8(locale)), display_options, is_unit));
+}
+
+#endif // AK_OS_RINOS
 
 }

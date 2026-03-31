@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifndef AK_OS_RINOS
+
 #include <AK/Time.h>
 #include <LibUnicode/Calendar.h>
 #include <LibUnicode/Calendars/ChineseDangiCalendar.h>
@@ -194,3 +196,5 @@ UBool ChineseDangiCalendar::haveDefaultCentury() const
 UOBJECT_DEFINE_RTTI_IMPLEMENTATION(ChineseDangiCalendar)
 
 }
+
+#endif // AK_OS_RINOS

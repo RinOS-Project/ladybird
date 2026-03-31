@@ -8,11 +8,15 @@
 #include <LibUnicode/DisplayNames.h>
 #include <LibUnicode/ICU.h>
 
+#ifndef AK_OS_RINOS
 #include <unicode/dtptngen.h>
 #include <unicode/localebuilder.h>
 #include <unicode/locdspnm.h>
 #include <unicode/tznames.h>
 #include <unicode/udatpg.h>
+#else
+#include <LibUnicode/RinICUBridge.h>
+#endif
 
 namespace Unicode {
 
@@ -39,6 +43,16 @@ StringView language_display_to_string(LanguageDisplay language_display)
 
 Optional<Utf16String> language_display_name(StringView locale, StringView language, LanguageDisplay display)
 {
+#ifdef AK_OS_RINOS
+    (void)display;
+    ByteString locale_z(locale);
+    ByteString key_z(language);
+    char buf[256];
+    size_t len = 0;
+    if (rin_icu_display_name(&rin_icu_client(), locale_z.characters(), 1 /* LANGUAGE */, key_z.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+        return Utf16String::from_utf8(StringView { buf, len });
+    return {};
+#else
     auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
         return {};
@@ -56,9 +70,19 @@ Optional<Utf16String> language_display_name(StringView locale, StringView langua
 
     return icu_string_to_utf16_string(result);
 }
+#endif // language_display_name
 
 Optional<Utf16String> region_display_name(StringView locale, StringView region)
 {
+#ifdef AK_OS_RINOS
+    ByteString locale_z(locale);
+    ByteString key_z(region);
+    char buf[256];
+    size_t len = 0;
+    if (rin_icu_display_name(&rin_icu_client(), locale_z.characters(), 2 /* REGION */, key_z.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+        return Utf16String::from_utf8(StringView { buf, len });
+    return {};
+#else
     UErrorCode status = U_ZERO_ERROR;
 
     auto locale_data = LocaleData::for_locale(locale);
@@ -74,9 +98,19 @@ Optional<Utf16String> region_display_name(StringView locale, StringView region)
 
     return icu_string_to_utf16_string(result);
 }
+#endif // region_display_name
 
 Optional<Utf16String> script_display_name(StringView locale, StringView script)
 {
+#ifdef AK_OS_RINOS
+    ByteString locale_z(locale);
+    ByteString key_z(script);
+    char buf[256];
+    size_t len = 0;
+    if (rin_icu_display_name(&rin_icu_client(), locale_z.characters(), 3 /* SCRIPT */, key_z.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+        return Utf16String::from_utf8(StringView { buf, len });
+    return {};
+#else
     UErrorCode status = U_ZERO_ERROR;
 
     auto locale_data = LocaleData::for_locale(locale);
@@ -91,10 +125,20 @@ Optional<Utf16String> script_display_name(StringView locale, StringView script)
     locale_data->standard_display_names().scriptDisplayName(icu_script.getScript(), result);
 
     return icu_string_to_utf16_string(result);
+#endif // script_display_name
 }
 
 Optional<Utf16String> calendar_display_name(StringView locale, StringView calendar)
 {
+#ifdef AK_OS_RINOS
+    ByteString locale_z(locale);
+    ByteString key_z(calendar);
+    char buf[256];
+    size_t len = 0;
+    if (rin_icu_display_name(&rin_icu_client(), locale_z.characters(), 4 /* CALENDAR */, key_z.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+        return Utf16String::from_utf8(StringView { buf, len });
+    return {};
+#else
     auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
         return {};
@@ -110,8 +154,10 @@ Optional<Utf16String> calendar_display_name(StringView locale, StringView calend
     locale_data->standard_display_names().keyValueDisplayName("calendar", ByteString(calendar).characters(), result);
 
     return icu_string_to_utf16_string(result);
+#endif // calendar_display_name
 }
 
+#ifndef AK_OS_RINOS
 static constexpr UDateTimePatternField icu_date_time_field(StringView field)
 {
     if (field == "day"sv)
@@ -154,9 +200,20 @@ static constexpr UDateTimePGDisplayWidth icu_date_time_style(Style style)
 
     VERIFY_NOT_REACHED();
 }
+#endif // !AK_OS_RINOS (icu_date_time helpers)
 
 Optional<Utf16String> date_time_field_display_name(StringView locale, StringView field, Style style)
 {
+#ifdef AK_OS_RINOS
+    (void)style;
+    ByteString locale_z(locale);
+    ByteString key_z(field);
+    char buf[256];
+    size_t len = 0;
+    if (rin_icu_display_name(&rin_icu_client(), locale_z.characters(), 5 /* DATE_TIME_FIELD */, key_z.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+        return Utf16String::from_utf8(StringView { buf, len });
+    return {};
+#else
     auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
         return {};
@@ -168,10 +225,22 @@ Optional<Utf16String> date_time_field_display_name(StringView locale, StringView
     result = locale_data->date_time_pattern_generator().getFieldDisplayName(icu_field, icu_style);
 
     return icu_string_to_utf16_string(result);
+#endif // date_time_field_display_name
 }
 
 Optional<Utf16String> time_zone_display_name(StringView locale, StringView time_zone_identifier, TimeZoneOffset::InDST in_dst, double time)
 {
+#ifdef AK_OS_RINOS
+    (void)in_dst;
+    (void)time;
+    ByteString locale_z(locale);
+    ByteString key_z(time_zone_identifier);
+    char buf[256];
+    size_t len = 0;
+    if (rin_icu_display_name(&rin_icu_client(), locale_z.characters(), 6 /* TIME_ZONE */, key_z.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+        return Utf16String::from_utf8(StringView { buf, len });
+    return {};
+#else
     auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
         return {};
@@ -184,8 +253,10 @@ Optional<Utf16String> time_zone_display_name(StringView locale, StringView time_
         return {};
 
     return icu_string_to_utf16_string(time_zone_name);
+#endif // time_zone_display_name
 }
 
+#ifndef AK_OS_RINOS
 static constexpr Array<UChar, 4> icu_currency_code(StringView currency)
 {
     VERIFY(currency.length() == 3);
@@ -211,9 +282,20 @@ static constexpr UCurrNameStyle icu_currency_style(Style style)
 
     VERIFY_NOT_REACHED();
 }
+#endif // !AK_OS_RINOS (icu_currency helpers)
 
 Optional<Utf16String> currency_display_name(StringView locale, StringView currency, Style style)
 {
+#ifdef AK_OS_RINOS
+    (void)style;
+    ByteString locale_z(locale);
+    ByteString key_z(currency);
+    char buf[256];
+    size_t len = 0;
+    if (rin_icu_display_name(&rin_icu_client(), locale_z.characters(), 7 /* CURRENCY */, key_z.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+        return Utf16String::from_utf8(StringView { buf, len });
+    return {};
+#else
     UErrorCode status = U_ZERO_ERROR;
 
     auto locale_data = LocaleData::for_locale(locale);
@@ -231,10 +313,20 @@ Optional<Utf16String> currency_display_name(StringView locale, StringView curren
         return {};
 
     return icu_string_to_utf16_string(result, length);
+#endif // currency_display_name
 }
 
 Optional<Utf16String> currency_numeric_display_name(StringView locale, StringView currency)
 {
+#ifdef AK_OS_RINOS
+    ByteString locale_z(locale);
+    ByteString key_z(currency);
+    char buf[256];
+    size_t len = 0;
+    if (rin_icu_display_name(&rin_icu_client(), locale_z.characters(), 8 /* CURRENCY_NUMERIC */, key_z.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+        return Utf16String::from_utf8(StringView { buf, len });
+    return {};
+#else
     UErrorCode status = U_ZERO_ERROR;
 
     auto locale_data = LocaleData::for_locale(locale);
@@ -252,6 +344,7 @@ Optional<Utf16String> currency_numeric_display_name(StringView locale, StringVie
         return {};
 
     return icu_string_to_utf16_string(result, length);
+#endif // currency_numeric_display_name
 }
 
 }

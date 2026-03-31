@@ -7,7 +7,11 @@
 #include <LibUnicode/Collator.h>
 #include <LibUnicode/ICU.h>
 
+#ifndef AK_OS_RINOS
 #include <unicode/coll.h>
+#else
+#include <LibUnicode/RinICUBridge.h>
+#endif
 
 namespace Unicode {
 
@@ -31,6 +35,7 @@ StringView usage_to_string(Usage usage)
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static NonnullOwnPtr<icu::Locale> apply_usage_to_locale(icu::Locale const& locale, Usage usage, StringView collation)
 {
     auto result = adopt_own(*locale.clone());
@@ -48,6 +53,7 @@ static NonnullOwnPtr<icu::Locale> apply_usage_to_locale(icu::Locale const& local
     verify_icu_success(status);
     return result;
 }
+#endif
 
 Sensitivity sensitivity_from_string(StringView sensitivity)
 {
@@ -77,6 +83,7 @@ StringView sensitivity_to_string(Sensitivity sensitivity)
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static constexpr UColAttributeValue icu_sensitivity(Sensitivity sensitivity)
 {
     switch (sensitivity) {
@@ -113,6 +120,7 @@ static Sensitivity sensitivity_for_collator(icu::Collator const& collator)
         return Sensitivity::Variant;
     }
 }
+#endif // !AK_OS_RINOS (icu_sensitivity / sensitivity_for_collator)
 
 CaseFirst case_first_from_string(StringView case_first)
 {
@@ -137,6 +145,101 @@ StringView case_first_to_string(CaseFirst case_first)
     }
     VERIFY_NOT_REACHED();
 }
+
+#ifdef AK_OS_RINOS
+
+// RinOS: collation via rinicu IPC
+class RinCollatorImpl : public Collator {
+public:
+    RinCollatorImpl(rin_icu_handle_t handle, Sensitivity sensitivity, bool ignore_punct)
+        : m_handle(handle)
+        , m_sensitivity(sensitivity)
+        , m_ignore_punctuation(ignore_punct)
+    {
+    }
+
+    virtual ~RinCollatorImpl() override
+    {
+        rin_icu_collator_destroy(&Unicode::rin_icu_client(), m_handle);
+    }
+
+    virtual Collator::Order compare(Utf16View const& lhs, Utf16View const& rhs) const override
+    {
+        auto lhs_utf8 = MUST(lhs.to_utf8());
+        auto rhs_utf8 = MUST(rhs.to_utf8());
+        int32_t result = 0;
+
+        if (rin_icu_collator_compare(&Unicode::rin_icu_client(), m_handle,
+                lhs_utf8.bytes_as_string_view().characters_without_null_termination(),
+                rhs_utf8.bytes_as_string_view().characters_without_null_termination(),
+                &result)
+            != 0)
+            return Order::Equal;
+
+        if (result < 0)
+            return Order::Before;
+        if (result > 0)
+            return Order::After;
+        return Order::Equal;
+    }
+
+    virtual Sensitivity sensitivity() const override { return m_sensitivity; }
+    virtual bool ignore_punctuation() const override { return m_ignore_punctuation; }
+
+private:
+    rin_icu_handle_t m_handle;
+    Sensitivity m_sensitivity;
+    bool m_ignore_punctuation;
+};
+
+static uint32_t rin_icu_strength(Sensitivity s)
+{
+    switch (s) {
+    case Sensitivity::Base:
+        return 1; // RIN_ICU_COLLATION_PRIMARY
+    case Sensitivity::Accent:
+        return 2; // RIN_ICU_COLLATION_SECONDARY
+    case Sensitivity::Case:
+        return 1; // primary + case_first
+    case Sensitivity::Variant:
+        return 3; // RIN_ICU_COLLATION_TERTIARY
+    }
+    return 3;
+}
+
+NonnullOwnPtr<Collator> Collator::create(
+    StringView locale,
+    Usage,
+    StringView,
+    Optional<Sensitivity> sensitivity,
+    CaseFirst case_first,
+    bool numeric,
+    Optional<bool> ignore_punctuation)
+{
+    if (!sensitivity.has_value())
+        sensitivity = Sensitivity::Variant;
+    if (!ignore_punctuation.has_value())
+        ignore_punctuation = false;
+
+    char locale_buf[128];
+    auto n = locale.length() < sizeof(locale_buf) - 1 ? locale.length() : sizeof(locale_buf) - 1;
+    __builtin_memcpy(locale_buf, locale.characters_without_null_termination(), n);
+    locale_buf[n] = '\0';
+
+    rin_icu_collator_options_t opts = {};
+    opts.strength = rin_icu_strength(*sensitivity);
+    opts.case_first = (case_first == CaseFirst::Upper) ? 1 : (case_first == CaseFirst::Lower) ? 2
+                                                                                               : 0;
+    opts.numeric = numeric ? 1 : 0;
+    opts.ignore_punctuation = *ignore_punctuation ? 1 : 0;
+
+    rin_icu_handle_t handle = 0;
+    rin_icu_collator_create(&rin_icu_client(), locale_buf, &opts, &handle);
+
+    return adopt_own(*new RinCollatorImpl(handle, *sensitivity, *ignore_punctuation));
+}
+
+#else // !AK_OS_RINOS
 
 static constexpr UColAttributeValue icu_case_first(CaseFirst case_first)
 {
@@ -243,5 +346,7 @@ NonnullOwnPtr<Collator> Collator::create(
 
     return adopt_own(*new CollatorImpl(move(collator)));
 }
+
+#endif // !AK_OS_RINOS
 
 }

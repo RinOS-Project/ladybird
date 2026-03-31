@@ -11,9 +11,13 @@
 #include <LibUnicode/Locale.h>
 #include <LibUnicode/Segmenter.h>
 
+#ifndef AK_OS_RINOS
 #include <unicode/brkiter.h>
 #include <unicode/utext.h>
 #include <unicode/utf8.h>
+#else
+#include <LibUnicode/RinICUBridge.h>
+#endif
 
 namespace Unicode {
 
@@ -130,6 +134,233 @@ private:
     size_t m_length { 0 };
     size_t m_current { 0 };
 };
+
+#ifdef AK_OS_RINOS
+
+// RinOS: segmentation via rinicu IPC
+class RinSegmenterImpl : public Segmenter {
+public:
+    RinSegmenterImpl(SegmenterGranularity granularity, StringView locale)
+        : Segmenter(granularity)
+        , m_locale(locale)
+    {
+    }
+
+    virtual ~RinSegmenterImpl() override
+    {
+        destroy_handle();
+    }
+
+    virtual NonnullOwnPtr<Segmenter> clone() const override
+    {
+        return make<RinSegmenterImpl>(m_segmenter_granularity, m_locale);
+    }
+
+    virtual void set_segmented_text(String text) override
+    {
+        destroy_handle();
+        m_text_utf8 = move(text);
+        m_text_length = m_text_utf8.byte_count();
+        create_handle(m_text_utf8.bytes_as_string_view());
+    }
+
+    virtual void set_segmented_text(Utf16View const& text) override
+    {
+        set_segmented_text(MUST(text.to_utf8()));
+    }
+
+    virtual size_t current_boundary() override
+    {
+        return m_current;
+    }
+
+    virtual Optional<size_t> previous_boundary(size_t index, Inclusive inclusive) override
+    {
+        // Simple backward iteration: find boundaries from start up to index
+        if (inclusive == Inclusive::Yes && is_boundary(index))
+            return index;
+        if (index == 0)
+            return {};
+
+        // Reset and iterate forward collecting boundaries before index
+        Optional<size_t> last_before;
+        reset_iteration();
+        while (true) {
+            auto next = next_from_icu();
+            if (!next.has_value() || *next >= index)
+                break;
+            last_before = *next;
+        }
+        if (last_before.has_value())
+            m_current = *last_before;
+        return last_before;
+    }
+
+    virtual Optional<size_t> next_boundary(size_t index, Inclusive inclusive) override
+    {
+        if (inclusive == Inclusive::Yes && is_boundary(index))
+            return index;
+        if (index >= m_text_length)
+            return {};
+
+        // Reset and find next boundary after index
+        reset_iteration();
+        while (true) {
+            auto next = next_from_icu();
+            if (!next.has_value())
+                return {};
+            if (*next > index) {
+                m_current = *next;
+                return *next;
+            }
+        }
+    }
+
+    virtual void for_each_boundary(String text, SegmentationCallback callback) override
+    {
+        if (text.is_empty())
+            return;
+        set_segmented_text(move(text));
+        for_each_boundary_impl(callback);
+    }
+
+    virtual void for_each_boundary(Utf16View const& text, SegmentationCallback callback) override
+    {
+        if (text.is_empty())
+            return;
+        set_segmented_text(text);
+        for_each_boundary_impl(callback);
+    }
+
+    virtual void for_each_boundary(Utf32View const& text, SegmentationCallback callback) override
+    {
+        if (text.is_empty())
+            return;
+        set_segmented_text(MUST(String::formatted("{}", text)));
+
+        auto code_points = m_text_utf8.code_points();
+        auto current = code_points.begin();
+        size_t code_point_index = 0;
+
+        for_each_boundary_impl([&](auto byte_index) {
+            auto it = code_points.iterator_at_byte_offset(byte_index);
+            while (current != it) {
+                ++code_point_index;
+                ++current;
+            }
+            return callback(code_point_index);
+        });
+    }
+
+    virtual bool is_current_boundary_word_like() const override
+    {
+        // rinicu doesn't expose rule status; approximate with simple heuristic
+        return false;
+    }
+
+private:
+    static uint32_t rin_granularity(SegmenterGranularity g)
+    {
+        switch (g) {
+        case SegmenterGranularity::Grapheme:
+            return 1; // RIN_ICU_SEGMENTER_GRAPHEME
+        case SegmenterGranularity::Word:
+            return 2; // RIN_ICU_SEGMENTER_WORD
+        case SegmenterGranularity::Sentence:
+            return 3; // RIN_ICU_SEGMENTER_SENTENCE
+        case SegmenterGranularity::Line:
+            return 4; // RIN_ICU_SEGMENTER_LINE
+        }
+        return 1;
+    }
+
+    void create_handle(StringView text)
+    {
+        char locale_buf[128];
+        auto n = m_locale.length() < sizeof(locale_buf) - 1 ? m_locale.length() : sizeof(locale_buf) - 1;
+        __builtin_memcpy(locale_buf, m_locale.characters_without_null_termination(), n);
+        locale_buf[n] = '\0';
+
+        rin_icu_segmenter_create(&rin_icu_client(), locale_buf, rin_granularity(m_segmenter_granularity), &m_handle);
+        if (m_handle != 0)
+            rin_icu_segmenter_reset(&rin_icu_client(), m_handle, text.characters_without_null_termination(), text.length());
+    }
+
+    void destroy_handle()
+    {
+        if (m_handle != 0) {
+            rin_icu_segmenter_destroy(&rin_icu_client(), m_handle);
+            m_handle = 0;
+        }
+    }
+
+    void reset_iteration()
+    {
+        if (m_handle != 0)
+            rin_icu_segmenter_reset(&rin_icu_client(), m_handle,
+                m_text_utf8.bytes_as_string_view().characters_without_null_termination(),
+                m_text_utf8.byte_count());
+    }
+
+    Optional<size_t> next_from_icu()
+    {
+        if (m_handle == 0)
+            return {};
+        int32_t pos = -1;
+        if (rin_icu_segmenter_next(&rin_icu_client(), m_handle, &pos) != 0 || pos < 0)
+            return {};
+        return static_cast<size_t>(pos);
+    }
+
+    bool is_boundary(size_t index)
+    {
+        if (index == 0 || index >= m_text_length)
+            return true;
+        reset_iteration();
+        while (true) {
+            auto next = next_from_icu();
+            if (!next.has_value())
+                return false;
+            if (*next == index)
+                return true;
+            if (*next > index)
+                return false;
+        }
+    }
+
+    void for_each_boundary_impl(SegmentationCallback& callback)
+    {
+        if (callback(0) == IterationDecision::Break)
+            return;
+        reset_iteration();
+        while (true) {
+            auto next = next_from_icu();
+            if (!next.has_value())
+                return;
+            if (callback(*next) == IterationDecision::Break)
+                return;
+        }
+    }
+
+    String m_locale;
+    String m_text_utf8;
+    size_t m_text_length { 0 };
+    size_t m_current { 0 };
+    rin_icu_handle_t m_handle { 0 };
+};
+
+NonnullOwnPtr<Segmenter> Segmenter::create(SegmenterGranularity segmenter_granularity)
+{
+    return Segmenter::create(default_locale(), segmenter_granularity);
+}
+
+NonnullOwnPtr<Segmenter> Segmenter::create(StringView locale, SegmenterGranularity segmenter_granularity)
+{
+    // ASCII grapheme fast path
+    return make<RinSegmenterImpl>(segmenter_granularity, locale);
+}
+
+#else // !AK_OS_RINOS
 
 class SegmenterImpl : public Segmenter {
 public:
@@ -337,6 +568,10 @@ NonnullOwnPtr<Segmenter> Segmenter::create(StringView locale, SegmenterGranulari
     verify_icu_success(status);
 
     return make<SegmenterImpl>(segmenter.release_nonnull(), segmenter_granularity);
+}
+
+#endif // !AK_OS_RINOS
+
 }
 
 NonnullOwnPtr<Segmenter> Segmenter::create_for_ascii_grapheme(size_t length)

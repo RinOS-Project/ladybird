@@ -12,8 +12,12 @@
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/Locale.h>
 
+#ifndef AK_OS_RINOS
 #include <unicode/localebuilder.h>
 #include <unicode/locid.h>
+#else
+#include <LibUnicode/RinICUBridge.h>
+#endif
 
 namespace Unicode {
 
@@ -483,6 +487,11 @@ String canonicalize_unicode_locale_id(StringView locale)
 
 String canonicalize_unicode_extension_values(StringView key, StringView value)
 {
+#ifdef AK_OS_RINOS
+    // On RinOS, return the value as-is (canonicalization is best-effort).
+    (void)key;
+    return MUST(String::from_utf8(value));
+#else
     UErrorCode status = U_ZERO_ERROR;
 
     icu::LocaleBuilder builder;
@@ -495,6 +504,7 @@ String canonicalize_unicode_extension_values(StringView key, StringView value)
     verify_icu_success(status);
 
     return MUST(result.to_string());
+#endif
 }
 
 StringView default_locale()
@@ -530,6 +540,27 @@ static void define_locales_without_scripts(HashTable<String>& locales)
 
 bool is_locale_available(StringView locale)
 {
+#ifdef AK_OS_RINOS
+    static auto available_locales = []() {
+        HashTable<String> available;
+        char buf[4096];
+        uint32_t len = 0;
+
+        if (rin_icu_locale_available(&rin_icu_client(), buf, sizeof(buf), &len) == 0 && len > 0) {
+            StringView list { buf, len };
+            list.for_each_split_view(',', SplitBehavior::Nothing, [&](StringView entry) {
+                auto trimmed = entry.trim_whitespace();
+                if (!trimmed.is_empty())
+                    available.set(MUST(String::from_utf8(trimmed)));
+            });
+        }
+
+        define_locales_without_scripts(available);
+        return available;
+    }();
+
+    return available_locales.contains(locale);
+#else
     static auto available_locales = []() {
         i32 count = 0;
         auto const* locale_list = icu::Locale::getAvailableLocales(count);
@@ -552,6 +583,7 @@ bool is_locale_available(StringView locale)
     }();
 
     return available_locales.contains(locale);
+#endif
 }
 
 Style style_from_string(StringView style)
@@ -579,6 +611,7 @@ StringView style_to_string(Style style)
     }
 }
 
+#ifndef AK_OS_RINOS
 static void apply_extensions_to_locale(icu::Locale& locale, icu::Locale const& locale_with_extensions)
 {
     UErrorCode status = U_ZERO_ERROR;
@@ -593,18 +626,19 @@ static void apply_extensions_to_locale(icu::Locale& locale, icu::Locale const& l
     locale = builder.build(status);
     verify_icu_success(status);
 }
+#endif
 
 Optional<String> add_likely_subtags(StringView locale)
 {
+#ifdef AK_OS_RINOS
+    return rin_icu_locale_string_op(rin_icu_locale_maximize, locale);
+#else
     UErrorCode status = U_ZERO_ERROR;
 
     auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
         return {};
 
-    // ICU doesn't seem to handle maximizing locales that have keywords. For example, "und-x-private" should become
-    // "en-Latn-US-x-private" (in the same manner that "und" becomes "en-Latn-US"). So here, we maximize the locale
-    // without keywords, then add them back if needed.
     auto maximized = icu::Locale::createFromName(locale_data->locale().getBaseName());
 
     maximized.addLikelySubtags(status);
@@ -619,19 +653,20 @@ Optional<String> add_likely_subtags(StringView locale)
         return {};
 
     return MUST(result.to_string());
+#endif
 }
 
 Optional<String> remove_likely_subtags(StringView locale)
 {
+#ifdef AK_OS_RINOS
+    return rin_icu_locale_string_op(rin_icu_locale_minimize, locale);
+#else
     UErrorCode status = U_ZERO_ERROR;
 
     auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
         return {};
 
-    // ICU doesn't seem to handle minimizing locales that have keywords. For example, "und-x-private" should become
-    // "en-x-private" (in the same manner that "und" becomes "en"). So here, we minimize the locale without keywords,
-    // then add them back if needed.
     auto minimized = icu::Locale::createFromName(locale_data->locale().getBaseName());
 
     minimized.minimizeSubtags(status);
@@ -646,15 +681,27 @@ Optional<String> remove_likely_subtags(StringView locale)
         return {};
 
     return MUST(result.to_string());
+#endif
 }
 
 bool is_locale_character_ordering_right_to_left(StringView locale)
 {
+#ifdef AK_OS_RINOS
+    // RTL locales: Arabic, Hebrew, Farsi, Urdu, etc.
+    auto parsed = parse_unicode_language_id(locale);
+    if (!parsed.has_value() || !parsed->language.has_value())
+        return false;
+    auto lang = parsed->language->bytes_as_string_view();
+    return lang == "ar"sv || lang == "he"sv || lang == "fa"sv || lang == "ur"sv
+        || lang == "yi"sv || lang == "ps"sv || lang == "sd"sv || lang == "ckb"sv
+        || lang == "ug"sv || lang == "arc"sv || lang == "syc"sv;
+#else
     auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
-        return false; // Default to left-to-right
+        return false;
 
     return static_cast<bool>(locale_data->locale().isRightToLeft());
+#endif
 }
 
 String LanguageID::to_string() const

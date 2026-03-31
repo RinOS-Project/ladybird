@@ -8,7 +8,11 @@
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/ListFormat.h>
 
+#ifndef AK_OS_RINOS
 #include <unicode/listformatter.h>
+#else
+#include <LibUnicode/RinICUBridge.h>
+#endif
 
 namespace Unicode {
 
@@ -36,6 +40,7 @@ StringView list_format_type_to_string(ListFormatType list_format_type)
     VERIFY_NOT_REACHED();
 }
 
+#ifndef AK_OS_RINOS
 static constexpr UListFormatterType icu_list_format_type(ListFormatType type)
 {
     switch (type) {
@@ -153,5 +158,81 @@ NonnullOwnPtr<ListFormat> ListFormat::create(StringView locale, ListFormatType t
 
     return adopt_own(*new ListFormatImpl(move(formatter)));
 }
+
+#else // AK_OS_RINOS
+
+// RinOS: list formatting via rinicu IPC
+class RinListFormatImpl : public ListFormat {
+public:
+    RinListFormatImpl(String locale, ListFormatType type, Style style)
+        : m_locale(move(locale))
+        , m_type(type)
+        , m_style(style)
+    {
+    }
+
+    virtual ~RinListFormatImpl() override = default;
+
+    virtual Utf16String format(ReadonlySpan<Utf16String> list) const override
+    {
+        auto items = build_items(list);
+        uint32_t rin_type = (m_type == ListFormatType::Conjunction) ? 1 : (m_type == ListFormatType::Disjunction) ? 2 : 3;
+        ByteString locale_z(m_locale);
+        char buf[4096];
+        size_t len = 0;
+
+        // Build a null-separated list of items for rinicu
+        StringBuilder items_buf;
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (i > 0)
+                items_buf.append('\0');
+            items_buf.append(items[i]);
+        }
+        auto items_str = MUST(items_buf.to_string());
+
+        if (rin_icu_list_format(&rin_icu_client(), locale_z.characters(), rin_type, items_str.bytes_as_string_view().characters_without_null_termination(), items_str.byte_count(), static_cast<uint32_t>(items.size()), buf, sizeof(buf), &len) == 0 && len > 0)
+            return Utf16String::from_utf8(StringView { buf, len });
+
+        // Fallback: comma-separated
+        StringBuilder fallback;
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (i > 0)
+                fallback.append(", "sv);
+            fallback.append(items[i]);
+        }
+        return Utf16String::from_utf8(MUST(fallback.to_string()));
+    }
+
+    virtual Vector<Partition> format_to_parts(ReadonlySpan<Utf16String> list) const override
+    {
+        auto formatted = format(list);
+        Vector<Partition> result;
+        Partition part;
+        part.type = "element"sv;
+        part.value = move(formatted);
+        result.append(move(part));
+        return result;
+    }
+
+private:
+    static Vector<ByteString> build_items(ReadonlySpan<Utf16String> list)
+    {
+        Vector<ByteString> items;
+        for (auto const& item : list)
+            items.append(ByteString(MUST(item.to_utf8())));
+        return items;
+    }
+
+    String m_locale;
+    ListFormatType m_type;
+    Style m_style;
+};
+
+NonnullOwnPtr<ListFormat> ListFormat::create(StringView locale, ListFormatType type, Style style)
+{
+    return adopt_own(*new RinListFormatImpl(MUST(String::from_utf8(locale)), type, style));
+}
+
+#endif // AK_OS_RINOS
 
 }

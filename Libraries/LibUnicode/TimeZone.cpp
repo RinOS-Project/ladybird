@@ -10,13 +10,19 @@
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/TimeZone.h>
 
+#ifndef AK_OS_RINOS
 #include <unicode/basictz.h>
 #include <unicode/timezone.h>
 #include <unicode/ucal.h>
+#else
+#include <LibUnicode/RinICUBridge.h>
+#endif
 
 namespace Unicode {
 
 static Optional<String> cached_system_time_zone;
+
+#ifndef AK_OS_RINOS
 
 static String current_time_zone_impl(OwnPtr<icu::TimeZone> time_zone)
 {
@@ -276,5 +282,89 @@ Optional<TimeZoneTransition> get_time_zone_transition(StringView time_zone, Unix
 
     return OptionalNone {};
 }
+
+#else // AK_OS_RINOS
+
+// RinOS: timezone operations via rinicu IPC
+String current_time_zone()
+{
+    return cached_system_time_zone.ensure([] {
+        char buf[128];
+        size_t len = 0;
+        if (rin_icu_time_zone_current(&rin_icu_client(), buf, sizeof(buf), &len) == 0 && len > 0)
+            return MUST(String::from_utf8(StringView { buf, len }));
+        return "UTC"_string;
+    });
+}
+
+void clear_system_time_zone_cache()
+{
+    cached_system_time_zone.clear();
+}
+
+ErrorOr<void> set_current_time_zone(StringView time_zone)
+{
+    cached_system_time_zone = TRY(String::from_utf8(time_zone));
+    return {};
+}
+
+Vector<String> const& available_time_zones()
+{
+    static auto time_zones = [] {
+        Vector<String> result;
+        char buf[8192];
+        size_t len = 0;
+        if (rin_icu_time_zone_available(&rin_icu_client(), buf, sizeof(buf), &len) == 0 && len > 0) {
+            StringView zones_str { buf, len };
+            for (auto zone : zones_str.split_view(','))
+                result.append(MUST(String::from_utf8(zone)));
+        }
+        if (result.is_empty())
+            result.append("UTC"_string);
+        quick_sort(result);
+        return result;
+    }();
+    return time_zones;
+}
+
+Vector<String> available_time_zones_in_region(StringView)
+{
+    return { "UTC"_string };
+}
+
+Optional<String> resolve_primary_time_zone(StringView time_zone)
+{
+    return rin_icu_tz_string_op(time_zone, rin_icu_time_zone_canonicalize);
+}
+
+Optional<TimeZoneOffset> time_zone_offset(StringView time_zone, UnixDateTime time)
+{
+    ByteString tz_z(time_zone);
+    int32_t offset_ms = 0;
+    int32_t dst = 0;
+    if (rin_icu_time_zone_offset(&rin_icu_client(), tz_z.characters(), static_cast<double>(time.milliseconds_since_epoch()), &offset_ms, &dst) == 0) {
+        return TimeZoneOffset {
+            .offset = AK::Duration::from_milliseconds(offset_ms),
+            .in_dst = dst != 0 ? TimeZoneOffset::InDST::Yes : TimeZoneOffset::InDST::No,
+        };
+    }
+    return {};
+}
+
+Vector<TimeZoneOffset> disambiguated_time_zone_offsets(StringView time_zone, UnixDateTime time)
+{
+    auto offset = time_zone_offset(time_zone, time);
+    if (offset.has_value())
+        return { *offset };
+    return {};
+}
+
+Optional<TimeZoneTransition> get_time_zone_transition(StringView, UnixDateTime, TimeZoneTransition::Options)
+{
+    // Transitions not available via rinicu
+    return OptionalNone {};
+}
+
+#endif // AK_OS_RINOS
 
 }
