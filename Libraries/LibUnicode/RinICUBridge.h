@@ -27,12 +27,12 @@ rin_icu_client_t& rin_icu_client();
 // Convenience: call rinicu with a locale string, filling a char buffer.
 // Returns a String from the buffer, or empty on failure.
 String rin_icu_locale_string_op(
-    int (*fn)(rin_icu_client_t*, char const*, char*, uint32_t, uint32_t*),
+    int (*fn)(rin_icu_client_t*, char const*, char*, size_t, size_t*),
     StringView locale);
 
 // Convenience: call rinicu timezone string op.
 String rin_icu_tz_string_op(
-    int (*fn)(rin_icu_client_t*, char const*, char*, uint32_t, uint32_t*),
+    int (*fn)(rin_icu_client_t*, char const*, char*, size_t, size_t*),
     StringView tz);
 
 } // namespace Unicode

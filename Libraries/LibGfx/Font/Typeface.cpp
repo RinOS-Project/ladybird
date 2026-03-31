@@ -38,6 +38,8 @@ ErrorOr<NonnullRefPtr<Typeface>> Typeface::try_load_from_temporary_memory(Readon
 ErrorOr<NonnullRefPtr<Typeface>> Typeface::try_load_from_externally_owned_memory(ReadonlyBytes bytes, u32 ttc_index)
 {
 #ifdef AK_OS_RINOS
+    (void)bytes;
+    (void)ttc_index;
     return Error::from_string_literal("Typeface loading requires Skia on non-RinOS");
 #else
     return TypefaceSkia::load_from_buffer(bytes, ttc_index);

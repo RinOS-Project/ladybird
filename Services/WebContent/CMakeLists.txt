@@ -34,7 +34,11 @@ target_link_libraries(webcontentservice PUBLIC LibCore LibCrypto LibFileSystem L
 if (RINOS_LEGACY_OPENSSL)
     target_link_libraries(webcontentservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
 endif()
-target_link_libraries(webcontentservice PRIVATE SDL3::SDL3)
+if (NOT AK_OS_RINOS)
+    target_link_libraries(webcontentservice PRIVATE SDL3::SDL3)
+else()
+    message(STATUS "RinOS policy: SDL3/Gamepad backend excluded from WebContent.")
+endif()
 
 add_executable(WebContent main.cpp)
 

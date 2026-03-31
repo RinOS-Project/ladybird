@@ -23,11 +23,11 @@ rin_icu_client_t& rin_icu_client()
 }
 
 String rin_icu_locale_string_op(
-    int (*fn)(rin_icu_client_t*, char const*, char*, uint32_t, uint32_t*),
+    int (*fn)(rin_icu_client_t*, char const*, char*, size_t, size_t*),
     StringView locale)
 {
     char buf[256];
-    uint32_t len = 0;
+    size_t len = 0;
 
     // Null-terminate the locale for C API
     char locale_buf[128];
@@ -41,11 +41,11 @@ String rin_icu_locale_string_op(
 }
 
 String rin_icu_tz_string_op(
-    int (*fn)(rin_icu_client_t*, char const*, char*, uint32_t, uint32_t*),
+    int (*fn)(rin_icu_client_t*, char const*, char*, size_t, size_t*),
     StringView tz)
 {
     char buf[256];
-    uint32_t len = 0;
+    size_t len = 0;
 
     char tz_buf[128];
     auto n = tz.length() < sizeof(tz_buf) - 1 ? tz.length() : sizeof(tz_buf) - 1;

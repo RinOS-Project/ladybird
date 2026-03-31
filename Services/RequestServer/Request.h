@@ -177,6 +177,7 @@ private:
 
     virtual bool is_revalidation_request() const override;
     ErrorOr<void> revalidation_failed();
+    void handle_fetch_complete_result(int result_code);
 
     bool is_cache_only_request() const;
 

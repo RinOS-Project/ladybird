@@ -20,7 +20,7 @@ static AqColor to_aq_color(Color c)
     return AQ_RGBA(c.red(), c.green(), c.blue(), c.alpha());
 }
 
-static AqSurface* bitmap_to_aq_surface(Bitmap& bmp)
+static AqSurface* bitmap_to_aq_surface(Bitmap const& bmp)
 {
     AqPixelFormat fmt = AQ_FORMAT_BGRA32;
     switch (bmp.format()) {
@@ -37,7 +37,7 @@ static AqSurface* bitmap_to_aq_surface(Bitmap& bmp)
         break;
     }
     return aq_surface_create_from(
-        reinterpret_cast<uint8_t*>(bmp.begin()),
+        const_cast<uint8_t*>(reinterpret_cast<uint8_t const*>(bmp.begin())),
         bmp.width(), bmp.height(),
         static_cast<int32_t>(bmp.pitch()), fmt);
 }
@@ -130,8 +130,10 @@ void PainterAquamarine::draw_bitmap(FloatRect const& dst_rect, ImmutableBitmap c
 {
     if (!m_impl->aq_surf)
         return;
-    auto& bmp = src_bitmap.bitmap();
-    auto* src_surf = bitmap_to_aq_surface(const_cast<Bitmap&>(bmp));
+    auto bmp = src_bitmap.bitmap();
+    if (!bmp)
+        return;
+    auto* src_surf = bitmap_to_aq_surface(*bmp);
     if (!src_surf)
         return;
 

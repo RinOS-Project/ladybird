@@ -9,7 +9,11 @@
 
 #include <LibCore/Socket.h>
 #include <LibCrypto/Certificate/Certificate.h>
-#ifndef AK_OS_RINOS
+#ifdef AK_OS_RINOS
+extern "C" {
+#    include "../../../rintls/rintls.h"
+}
+#else
 #    include <LibTLS/OpenSSLForward.h>
 #endif
 
@@ -41,7 +45,6 @@ public:
 
 private:
 #ifdef AK_OS_RINOS
-    struct rintls_ctx;
     explicit TLSv12(NonnullOwnPtr<Core::TCPSocket>, rintls_ctx*);
 #else
     explicit TLSv12(NonnullOwnPtr<Core::TCPSocket>, SSL_CTX*, SSL*);

@@ -351,7 +351,14 @@ FLATTEN UnsignedDivisionResult UnsignedBigInteger::divided_by(UnsignedBigInteger
 FLATTEN UnsignedBigInteger UnsignedBigInteger::pow(u32 exponent) const
 {
     UnsignedBigInteger result;
-    MP_MUST(mp_expt_n(&m_mp, exponent, &result.m_mp));
+    MP_MUST(mp_expt_u32(&m_mp, exponent, &result.m_mp));
+    return result;
+}
+
+FLATTEN UnsignedBigInteger UnsignedBigInteger::mod_pow(UnsignedBigInteger const& exponent, UnsignedBigInteger const& modulus) const
+{
+    UnsignedBigInteger result;
+    MP_MUST(mp_exptmod(&m_mp, &exponent.m_mp, &modulus.m_mp, &result.m_mp));
     return result;
 }
 

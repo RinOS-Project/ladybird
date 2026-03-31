@@ -200,6 +200,7 @@ ErrorOr<void> PNGImageDecoderPlugin::initialize()
     png_set_filler(m_context->png_ptr, 0xFF, PNG_FILLER_AFTER);
     png_set_bgr(m_context->png_ptr);
 
+#ifndef AK_OS_RINOS
     png_byte color_primaries { 0 };
     png_byte transfer_function { 0 };
     png_byte matrix_coefficients { 0 };
@@ -211,13 +212,16 @@ ErrorOr<void> PNGImageDecoderPlugin::initialize()
         Media::VideoFullRangeFlag rf { video_full_range_flag };
         m_context->cicp = Media::CodingIndependentCodePoints { cp, tc, mc, rf };
     } else {
+#endif
         char* profile_name = nullptr;
         int compression_type = 0;
         u8* profile_data = nullptr;
         u32 profile_len = 0;
         if (png_get_iCCP(m_context->png_ptr, m_context->info_ptr, &profile_name, &compression_type, &profile_data, &profile_len))
             m_context->icc_profile = TRY(ByteBuffer::copy(profile_data, profile_len));
+#ifndef AK_OS_RINOS
     }
+#endif
 
     u8* exif_data = nullptr;
     u32 exif_length = 0;
@@ -256,6 +260,9 @@ ErrorOr<void> PNGLoadingContext::apply_exif_orientation()
 ErrorOr<size_t> PNGLoadingContext::read_frames(png_structp png_ptr, png_infop info_ptr)
 {
     Vector<u8*> row_pointers;
+#ifdef AK_OS_RINOS
+    (void)info_ptr;
+#endif
     auto decode_frame = [&](IntSize frame_size) -> ErrorOr<NonnullRefPtr<Bitmap>> {
         auto frame_bitmap = TRY(Bitmap::create(BitmapFormat::BGRA8888, AlphaType::Unpremultiplied, frame_size));
 
@@ -267,6 +274,7 @@ ErrorOr<size_t> PNGLoadingContext::read_frames(png_structp png_ptr, png_infop in
         return frame_bitmap;
     };
 
+#ifndef AK_OS_RINOS
     if (png_get_acTL(png_ptr, info_ptr, &frame_count, &loop_count)) {
         // acTL chunk present: This is an APNG.
         png_set_acTL(png_ptr, info_ptr, frame_count, loop_count);
@@ -357,13 +365,16 @@ ErrorOr<size_t> PNGLoadingContext::read_frames(png_structp png_ptr, png_infop in
             frame_count = 1;
         }
     } else {
+#endif
         // This is a single-frame PNG.
         frame_count = 1;
         loop_count = 0;
 
         auto decoded_frame_bitmap = TRY(decode_frame(size));
         frame_descriptors.append({ move(decoded_frame_bitmap), 0 });
+#ifndef AK_OS_RINOS
     }
+#endif
     return frame_count;
 }
 

@@ -55,6 +55,14 @@ set(SOURCES
     YUVData.cpp
 )
 
+if (AK_OS_RINOS)
+    list(REMOVE_ITEM SOURCES
+        Font/WOFF2/Loader.cpp
+        ImageFormats/AVIFLoader.cpp
+        ImageFormats/JPEGXLLoader.cpp
+    )
+endif()
+
 if (APPLE)
     list(APPEND SOURCES MetalContext.mm)
 endif()
@@ -199,7 +207,7 @@ if (APPLE)
     target_link_libraries(LibCore PUBLIC "-framework Accelerate")
 endif()
 
-if (HAS_VULKAN)
+if (HAS_VULKAN AND NOT AK_OS_RINOS)
     target_link_libraries(LibCore PUBLIC Vulkan::Vulkan Vulkan::Headers)
 
     if (USE_VULKAN_IMAGES)

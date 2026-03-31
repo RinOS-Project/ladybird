@@ -2,6 +2,9 @@ include(${CMAKE_CURRENT_LIST_DIR}/common_compile_options.cmake)
 
 add_cxx_compile_options(-Wno-maybe-uninitialized)
 add_cxx_compile_options(-Wno-shorten-64-to-32)
+if (AK_OS_RINOS)
+    add_cxx_compile_options(-Wno-invalid-constexpr)
+endif()
 
 if(NOT MSVC)
     add_cxx_compile_options(-fsigned-char)

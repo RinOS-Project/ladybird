@@ -12,7 +12,7 @@
 #include <LibCrypto/RinTLSHashFunction.h>
 
 extern "C" {
-#include <crypto/sha1.h>
+#include "../../../../rintls/crypto/sha1.h"
 }
 
 namespace Crypto::Hash {

@@ -28,7 +28,7 @@ Utf16String Utf16String::to_lowercase(Optional<StringView> const&) const
 {
     if (has_ascii_storage())
         return to_ascii_lowercase();
-    auto utf8 = MUST(to_utf8());
+    auto utf8 = to_utf8();
     auto lowered = MUST(utf8.to_lowercase());
     return Utf16String::from_utf8(lowered);
 }
@@ -37,28 +37,28 @@ Utf16String Utf16String::to_uppercase(Optional<StringView> const&) const
 {
     if (has_ascii_storage())
         return to_ascii_uppercase();
-    auto utf8 = MUST(to_utf8());
+    auto utf8 = to_utf8();
     auto uppered = MUST(utf8.to_uppercase());
     return Utf16String::from_utf8(uppered);
 }
 
 Utf16String Utf16String::to_titlecase(Optional<StringView> const& locale, TrailingCodePointTransformation trailing_code_point_transformation) const
 {
-    auto utf8 = MUST(to_utf8());
+    auto utf8 = to_utf8();
     auto titled = MUST(utf8.to_titlecase(locale, trailing_code_point_transformation));
     return Utf16String::from_utf8(titled);
 }
 
 Utf16String Utf16String::to_casefold() const
 {
-    auto utf8 = MUST(to_utf8());
+    auto utf8 = to_utf8();
     auto folded = MUST(utf8.to_casefold());
     return Utf16String::from_utf8(folded);
 }
 
 Utf16String Utf16String::to_fullwidth() const
 {
-    auto utf8 = MUST(to_utf8());
+    auto utf8 = to_utf8();
     auto wide = MUST(utf8.to_fullwidth());
     return Utf16String::from_utf8(wide);
 }

@@ -69,8 +69,8 @@ Optional<Utf16String> language_display_name(StringView locale, StringView langua
     display_names.localeDisplayName(language_data->locale().getName(), result);
 
     return icu_string_to_utf16_string(result);
-}
 #endif // language_display_name
+}
 
 Optional<Utf16String> region_display_name(StringView locale, StringView region)
 {
@@ -97,8 +97,8 @@ Optional<Utf16String> region_display_name(StringView locale, StringView region)
     locale_data->standard_display_names().regionDisplayName(icu_region.getCountry(), result);
 
     return icu_string_to_utf16_string(result);
-}
 #endif // region_display_name
+}
 
 Optional<Utf16String> script_display_name(StringView locale, StringView script)
 {

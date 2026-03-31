@@ -99,7 +99,7 @@ void HMAC::reset()
         m_opad_key[i] = key_block[i] ^ 0x5c;
     }
 
-    m_inner_hash = Hash::Manager(m_hash_kind);
+    m_inner_hash.reset();
     m_inner_hash.update(m_ipad_key, m_block_size);
 }
 

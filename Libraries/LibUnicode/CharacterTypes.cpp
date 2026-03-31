@@ -63,15 +63,15 @@ static constexpr GeneralCategory GC_INITIAL_PUNCTUATION = 28;
 static constexpr GeneralCategory GC_FINAL_PUNCTUATION = 29;
 static constexpr GeneralCategory GC_CHAR_CATEGORY_COUNT = 30;
 
-static constexpr GeneralCategory GENERAL_CATEGORY_CASED_LETTER = GC_CHAR_CATEGORY_COUNT + 1;
-static constexpr GeneralCategory GENERAL_CATEGORY_LETTER = GC_CHAR_CATEGORY_COUNT + 2;
-static constexpr GeneralCategory GENERAL_CATEGORY_MARK = GC_CHAR_CATEGORY_COUNT + 3;
-static constexpr GeneralCategory GENERAL_CATEGORY_NUMBER = GC_CHAR_CATEGORY_COUNT + 4;
-static constexpr GeneralCategory GENERAL_CATEGORY_PUNCTUATION = GC_CHAR_CATEGORY_COUNT + 5;
-static constexpr GeneralCategory GENERAL_CATEGORY_SYMBOL = GC_CHAR_CATEGORY_COUNT + 6;
-static constexpr GeneralCategory GENERAL_CATEGORY_SEPARATOR = GC_CHAR_CATEGORY_COUNT + 7;
-static constexpr GeneralCategory GENERAL_CATEGORY_OTHER = GC_CHAR_CATEGORY_COUNT + 8;
-static constexpr GeneralCategory GENERAL_CATEGORY_LIMIT = GC_CHAR_CATEGORY_COUNT + 9;
+static constexpr GeneralCategory GENERAL_CATEGORY_CASED_LETTER = GeneralCategory(31);
+static constexpr GeneralCategory GENERAL_CATEGORY_LETTER = GeneralCategory(32);
+static constexpr GeneralCategory GENERAL_CATEGORY_MARK = GeneralCategory(33);
+static constexpr GeneralCategory GENERAL_CATEGORY_NUMBER = GeneralCategory(34);
+static constexpr GeneralCategory GENERAL_CATEGORY_PUNCTUATION = GeneralCategory(35);
+static constexpr GeneralCategory GENERAL_CATEGORY_SYMBOL = GeneralCategory(36);
+static constexpr GeneralCategory GENERAL_CATEGORY_SEPARATOR = GeneralCategory(37);
+static constexpr GeneralCategory GENERAL_CATEGORY_OTHER = GeneralCategory(38);
+static constexpr GeneralCategory GENERAL_CATEGORY_LIMIT = GeneralCategory(39);
 
 struct GCNameEntry {
     StringView long_name;
@@ -701,15 +701,10 @@ u32 canonicalize(u32 code_point, bool unicode_mode)
 {
     if (unicode_mode) {
         // Case fold
-        char buf[8];
-        size_t len = 0;
-        if (rin_unicode_casefold_full(code_point, buf, sizeof(buf), &len) == 0 && len > 0) {
-            // Return first code point of the folded result
-            Utf8View view { StringView { buf, len } };
-            auto it = view.begin();
-            if (it != view.end())
-                return *it;
-        }
+        uint32_t folded[3] = { 0, 0, 0 };
+        size_t len = rin_unicode_casefold_full(code_point, folded);
+        if (len > 0)
+            return folded[0];
         return code_point;
     }
 

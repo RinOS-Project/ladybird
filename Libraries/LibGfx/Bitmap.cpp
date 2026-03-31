@@ -202,7 +202,7 @@ ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::scaled(int const width, int const height,
     auto scaled_bitmap = TRY(Gfx::Bitmap::create(format(), alpha_type(), { width, height }));
     auto const src_w = this->width();
     auto const src_h = this->height();
-    bool bilinear = (scaling_mode != ScalingMode::NearestNeighbor && scaling_mode != ScalingMode::BoxSampling);
+    bool bilinear = (scaling_mode == ScalingMode::Bilinear || scaling_mode == ScalingMode::BilinearMipmap);
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             if (!bilinear) {

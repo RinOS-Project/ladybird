@@ -43,6 +43,41 @@ include(UI/cmake/EnableLagom.cmake)
 include(lagom_options NO_POLICY_SCOPE)
 include(lagom_compile_options)
 
+if (AK_OS_RINOS)
+    add_compile_definitions(AK_OS_RINOS=1)
+
+    add_library(RinTLSShim STATIC
+        ${LADYBIRD_SOURCE_DIR}/../rintls/rintls.c
+        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/aes.c
+        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/bignum.c
+        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/ecdh.c
+        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/hmac.c
+        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rsa.c
+        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/sha1.c
+        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/sha256.c
+        ${LADYBIRD_SOURCE_DIR}/../rintls/tls/handshake.c
+        ${LADYBIRD_SOURCE_DIR}/../rintls/tls/record.c
+        ${LADYBIRD_SOURCE_DIR}/../rintls/x509/cert.c
+    )
+    target_include_directories(RinTLSShim PRIVATE
+        ${LADYBIRD_SOURCE_DIR}/../rintls
+        ${LADYBIRD_SOURCE_DIR}/../libc
+    )
+    if (CMAKE_CROSSCOMPILING)
+        target_compile_definitions(RinTLSShim PRIVATE RIN_USERSPACE=1 RIN_FREESTANDING=0)
+    else()
+        target_compile_definitions(RinTLSShim PRIVATE RIN_USERSPACE=1 RIN_FREESTANDING=0 RINTLS_HOST_LIBC=1)
+    endif()
+    target_compile_options(RinTLSShim PRIVATE
+        -Wno-unused-parameter
+        -Wno-unused-but-set-variable
+        -Wno-unused-variable
+        -Wno-sign-compare
+        -Wno-missing-prototypes
+        -Wno-implicit-function-declaration
+    )
+endif()
+
 if (HAIKU)
     # Haiku needs some extra compile definitions to make important stuff in its headers available.
     add_compile_definitions(_DEFAULT_SOURCE)

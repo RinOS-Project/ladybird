@@ -15,7 +15,7 @@
 #include <AK/Utf8View.h>
 #include <AK/Vector.h>
 
-#include <simdutf.h>
+#include "simdutf.h"
 
 namespace AK {
 

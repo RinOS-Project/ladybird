@@ -219,7 +219,7 @@ private:
     {
         Vector<ByteString> items;
         for (auto const& item : list)
-            items.append(ByteString(MUST(item.to_utf8())));
+            items.append(ByteString(item.to_utf8()));
         return items;
     }
 

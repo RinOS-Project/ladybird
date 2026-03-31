@@ -187,6 +187,11 @@ void Request::notify_retrieved_http_cookie(Badge<ConnectionFromClient>, StringVi
 
 void Request::notify_fetch_complete(Badge<ConnectionFromClient>, int result_code)
 {
+    handle_fetch_complete_result(result_code);
+}
+
+void Request::handle_fetch_complete_result(int result_code)
+{
     if (is_revalidation_request()) {
         if (acquire_status_code() == 304) {
             if (m_type == Type::BackgroundRevalidation && m_disk_cache->mode() == HTTP::DiskCache::Mode::Testing)
@@ -208,14 +213,13 @@ void Request::notify_fetch_complete(Badge<ConnectionFromClient>, int result_code
 
     if (m_response_buffer.is_eof())
         transition_to_state(State::Complete);
-}
 #else
     m_curl_result_code = result_code;
 
     if (m_response_buffer.is_eof())
         transition_to_state(State::Complete);
-}
 #endif
+}
 
 void Request::transition_to_state(State state)
 {
@@ -572,7 +576,7 @@ void Request::handle_fetch_state()
     m_rin_fetch->on_data_received = &on_data_received;
 
     m_rin_fetch->on_complete = [this](int result_code) {
-        notify_fetch_complete({}, result_code);
+        handle_fetch_complete_result(result_code);
     };
 #else
     m_curl_easy_handle = curl_easy_init();

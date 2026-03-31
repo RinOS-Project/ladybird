@@ -10,8 +10,6 @@
 #include <AK/GenericShorthands.h>
 #include <AK/StringBuilder.h>
 #include <AK/TypeCasts.h>
-#include <LibUnicode/Calendars/AdjustedEraCalendar.h>
-#include <LibUnicode/Calendars/ChineseDangiCalendar.h>
 #include <LibUnicode/DateTimeFormat.h>
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/Locale.h>
@@ -20,6 +18,8 @@
 #include <stdlib.h>
 
 #ifndef AK_OS_RINOS
+#include <LibUnicode/Calendars/AdjustedEraCalendar.h>
+#include <LibUnicode/Calendars/ChineseDangiCalendar.h>
 #include <unicode/calendar.h>
 #include <unicode/datefmt.h>
 #include <unicode/dtitvfmt.h>
@@ -141,8 +141,8 @@ Optional<HourCycle> default_hour_cycle(StringView locale)
         return HourCycle::H24;
     }
     VERIFY_NOT_REACHED();
-}
 #endif // default_hour_cycle
+}
 
 static constexpr char icu_hour_cycle(Optional<HourCycle> const& hour_cycle, Optional<bool> const& hour12)
 {
@@ -1090,7 +1090,9 @@ public:
     {
         auto s = format(start);
         auto e = format(end);
-        auto combined = MUST(String::formatted("{} \xE2\x80\x93 {}", MUST(s.to_utf8()), MUST(e.to_utf8())));
+        auto s_utf8 = s.to_utf8();
+        auto e_utf8 = e.to_utf8();
+        auto combined = MUST(String::formatted("{} \xE2\x80\x93 {}", s_utf8, e_utf8));
         return Utf16String::from_utf8(combined);
     }
 

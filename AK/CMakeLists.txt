@@ -74,14 +74,18 @@ else()
     message(STATUS "RinOS policy: simdutf replaced by libunicode.")
 endif()
 
-find_package(FastFloat CONFIG REQUIRED)
-target_link_libraries(AK PRIVATE FastFloat::fast_float)
+if (NOT AK_OS_RINOS)
+    find_package(FastFloat CONFIG REQUIRED)
+    target_link_libraries(AK PRIVATE FastFloat::fast_float)
 
-find_package(fmt CONFIG REQUIRED)
-target_link_libraries(AK PRIVATE fmt::fmt)
+    find_package(fmt CONFIG REQUIRED)
+    target_link_libraries(AK PRIVATE fmt::fmt)
+else()
+    message(STATUS "RinOS policy: FastFloat/fmt are replaced by AK fallback conversions.")
+endif()
 
 # FIXME: Make this generic for all imported shared library dependencies and apply globally
-if (BUILD_SHARED_LIBS AND NOT CMAKE_SKIP_INSTALL_RULES AND NOT "${VCPKG_INSTALLED_DIR}" STREQUAL "")
+if (BUILD_SHARED_LIBS AND NOT CMAKE_SKIP_INSTALL_RULES AND NOT "${VCPKG_INSTALLED_DIR}" STREQUAL "" AND NOT AK_OS_RINOS)
     install(IMPORTED_RUNTIME_ARTIFACTS simdutf::simdutf
             LIBRARY COMPONENT Lagom_Runtime NAMELINK_COMPONENT Lagom_Development
             FRAMEWORK COMPONENT Lagom_Runtime

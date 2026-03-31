@@ -158,10 +158,10 @@ ErrorOr<ByteBuffer> RSA::decrypt(ReadonlyBytes in)
         // h = qinv * (m1 - m2) mod p
         UnsignedBigInteger diff;
         if (m1 >= m2) {
-            diff = m1.minus(m2);
+            diff = TRY(m1.minus(m2));
         } else {
             // m1 < m2: diff = m1 + p - m2
-            diff = m1.plus(p).minus(m2);
+            diff = TRY(m1.plus(p).minus(m2));
         }
         auto h = qinv.multiplied_by(diff).divided_by(p).remainder;
         m = m2.plus(h.multiplied_by(q));

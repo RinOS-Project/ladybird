@@ -7,7 +7,7 @@
 #include <AK/Base64.h>
 #include <AK/Types.h>
 
-#include <simdutf.h>
+#include "simdutf.h"
 
 namespace AK {
 

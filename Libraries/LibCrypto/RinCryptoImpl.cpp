@@ -13,8 +13,8 @@
 #include <string.h>
 
 extern "C" {
-#include <crypto/aes.h>
-#include <crypto/hmac.h>
+#include "../../../rintls/crypto/aes.h"
+#include "../../../rintls/crypto/hmac.h"
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -118,7 +118,6 @@ void rin_md5_update(rin_md5_ctx* ctx, u8 const* data, size_t len)
 void rin_md5_final(rin_md5_ctx* ctx, u8* digest)
 {
     u64 bits = ctx->count * 8;
-    size_t index = ctx->count % 64;
 
     u8 pad = 0x80;
     rin_md5_update(ctx, &pad, 1);
@@ -640,7 +639,6 @@ int rin_pbkdf2_hmac_sha256(
         memcpy(t, u, 32);
 
         for (u32 i = 1; i < iterations; i++) {
-            hmac_sha256(&hmac_ctx, password, pwd_len);
             hmac_sha256_init(&hmac_ctx, password, pwd_len);
             hmac_sha256_update(&hmac_ctx, u, 32);
             hmac_sha256_final(&hmac_ctx, u);

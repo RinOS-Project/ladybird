@@ -334,7 +334,7 @@ Vector<String> available_time_zones_in_region(StringView)
 
 Optional<String> resolve_primary_time_zone(StringView time_zone)
 {
-    return rin_icu_tz_string_op(time_zone, rin_icu_time_zone_canonicalize);
+    return rin_icu_tz_string_op(rin_icu_time_zone_canonicalize, time_zone);
 }
 
 Optional<TimeZoneOffset> time_zone_offset(StringView time_zone, UnixDateTime time)

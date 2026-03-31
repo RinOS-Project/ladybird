@@ -12,7 +12,7 @@
 #ifdef AK_OS_RINOS
 
 extern "C" {
-#include <rintls.h>
+#include "../../../rintls/rintls.h"
 }
 
 namespace TLS {

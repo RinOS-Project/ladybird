@@ -25,6 +25,26 @@ set(SOURCES
 
 if (AK_OS_RINOS)
     list(APPEND SOURCES RinICUBridge.cpp)
+
+    set(RINICU_HOST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/RinICUHost")
+    set(LIBUNICODE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../libunicode")
+
+    if (NOT TARGET rinicu)
+        add_library(rinicu STATIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/RinICUHostCompat.c
+        )
+        target_include_directories(rinicu PRIVATE ${RINICU_HOST_ROOT})
+        target_compile_options(rinicu PRIVATE -Wno-cast-qual)
+    endif()
+
+    if (NOT TARGET libunicode)
+        add_library(libunicode STATIC
+            ${LIBUNICODE_ROOT}/core.c
+            ${LIBUNICODE_ROOT}/locale_adapter.c
+        )
+        target_include_directories(libunicode PRIVATE ${LIBUNICODE_ROOT})
+        target_compile_options(libunicode PRIVATE -Wno-cast-qual)
+    endif()
 endif()
 
 set(GENERATED_SOURCES ${CURRENT_LIB_GENERATED})
@@ -35,6 +55,11 @@ if (AK_OS_RINOS)
     # RinOS: link rinicu + libunicode instead of ICU/Rust
     target_link_libraries(LibUnicode PRIVATE rinicu libunicode)
     target_compile_definitions(LibUnicode PRIVATE AK_OS_RINOS=1)
+    target_compile_options(LibUnicode PRIVATE -Wno-unused-const-variable -Wno-unused-function)
+    target_include_directories(LibUnicode PRIVATE
+        ${RINICU_HOST_ROOT}
+        ${LIBUNICODE_ROOT}
+    )
 else()
     if (RINOS_USE_ICU_BACKEND)
         find_package(ICU 78.2 EXACT REQUIRED COMPONENTS data i18n uc)

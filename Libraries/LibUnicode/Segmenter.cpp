@@ -142,7 +142,7 @@ class RinSegmenterImpl : public Segmenter {
 public:
     RinSegmenterImpl(SegmenterGranularity granularity, StringView locale)
         : Segmenter(granularity)
-        , m_locale(locale)
+        , m_locale(MUST(String::from_utf8(locale)))
     {
     }
 
@@ -277,8 +277,9 @@ private:
     void create_handle(StringView text)
     {
         char locale_buf[128];
-        auto n = m_locale.length() < sizeof(locale_buf) - 1 ? m_locale.length() : sizeof(locale_buf) - 1;
-        __builtin_memcpy(locale_buf, m_locale.characters_without_null_termination(), n);
+        auto locale_view = m_locale.bytes_as_string_view();
+        auto n = locale_view.length() < sizeof(locale_buf) - 1 ? locale_view.length() : sizeof(locale_buf) - 1;
+        __builtin_memcpy(locale_buf, locale_view.characters_without_null_termination(), n);
         locale_buf[n] = '\0';
 
         rin_icu_segmenter_create(&rin_icu_client(), locale_buf, rin_granularity(m_segmenter_granularity), &m_handle);
@@ -328,7 +329,8 @@ private:
         }
     }
 
-    void for_each_boundary_impl(SegmentationCallback& callback)
+    template<typename Callback>
+    void for_each_boundary_impl(Callback&& callback)
     {
         if (callback(0) == IterationDecision::Break)
             return;
@@ -571,8 +573,6 @@ NonnullOwnPtr<Segmenter> Segmenter::create(StringView locale, SegmenterGranulari
 }
 
 #endif // !AK_OS_RINOS
-
-}
 
 NonnullOwnPtr<Segmenter> Segmenter::create_for_ascii_grapheme(size_t length)
 {

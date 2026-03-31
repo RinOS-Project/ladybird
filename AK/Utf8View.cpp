@@ -9,7 +9,7 @@
 #include <AK/Format.h>
 #include <AK/Utf8View.h>
 
-#include <simdutf.h>
+#include "simdutf.h"
 
 namespace AK {
 

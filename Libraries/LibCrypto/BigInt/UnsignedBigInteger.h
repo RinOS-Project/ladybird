@@ -83,6 +83,7 @@ public:
     [[nodiscard]] UnsignedBigInteger multiplied_by(UnsignedBigInteger const& other) const;
     [[nodiscard]] UnsignedDivisionResult divided_by(UnsignedBigInteger const& divisor) const;
     [[nodiscard]] UnsignedBigInteger pow(u32 exponent) const;
+    [[nodiscard]] UnsignedBigInteger mod_pow(UnsignedBigInteger const& exponent, UnsignedBigInteger const& modulus) const;
     [[nodiscard]] UnsignedBigInteger gcd(UnsignedBigInteger const& other) const;
     [[nodiscard]] UnsignedBigInteger lcm(UnsignedBigInteger const& other) const;
 

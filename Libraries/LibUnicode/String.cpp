@@ -82,12 +82,14 @@ static ErrorOr<void> build_casefold_string(StringView string, StringBuilder& bui
 {
     // Use libunicode full case folding
     for (auto code_point : Utf8View(string)) {
-        char out[8];
-        size_t out_len = 0;
-        if (rin_unicode_casefold_full(code_point, out, sizeof(out), &out_len) == 0 && out_len > 0)
-            builder.append(StringView { out, out_len });
-        else
+        uint32_t folded[3] = { 0, 0, 0 };
+        auto out_len = rin_unicode_casefold_full(code_point, folded);
+        if (out_len > 0) {
+            for (size_t i = 0; i < out_len; ++i)
+                builder.append_code_point(folded[i]);
+        } else {
             builder.append_code_point(code_point);
+        }
     }
     return {};
 }

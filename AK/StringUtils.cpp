@@ -16,7 +16,7 @@
 #include <AK/Vector.h>
 #include <string.h>
 
-#include <simdutf.h>
+#include "simdutf.h"
 
 namespace AK {
 

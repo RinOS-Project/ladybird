@@ -40,7 +40,7 @@ Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全
 | OpenSSL (crypto) | `libs/rintls/crypto/` | LibCrypto | 2 |
 | OpenSSL (SSL/TLS) | `libs/rintls/` (TLS record/handshake) | LibTLS | 2 |
 | libtommath (bignum) | `libs/rintls/crypto/bignum.h` | LibCrypto | 2 |
-| curl (HTTP client) | `src/apps/workerd/` (workerd daemon) | Services/RequestServer | 4 |
+| curl (HTTP client) | `Services/RequestServer/` + `resolved` + `rintls` | Services/RequestServer | 4 |
 | ICU 78.2 | `libs/rinicu/` (IPC client → rinicud) | LibUnicode | 3 |
 | Rust crate (libunicode_rust) | C/C++ 代替 (`libs/libunicode/`) | LibUnicode | 3 |
 | HarfBuzz / FreeType | aquamarine TrueType + stb_truetype | LibGfx/Font | 5 |
@@ -125,16 +125,13 @@ Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全
   - LibJS Intl API テスト動作
   - ICU ヘッダ (`<unicode/*.h>`) / Rust 参照ゼロ
 
-### Phase 4: ネットワーク置換 (workerd + resolved + rintls)
-- **目標**: curl / OpenSSL::SSL ネットワーク依存を除去、workerdプロトコルで置換
+### Phase 4: ネットワーク置換 (RequestServer + resolved + rintls)
+- **目標**: curl / OpenSSL::SSL ネットワーク依存を除去し、Ladybird の RequestServer を RinOS transport に載せ替える
 - **実装**:
-  - `LibRequests/WorkerdRequestClient.cpp` 新規作成
-    - Unix socket `/tmp/workerd.sock` へ接続
-    - `workerd_service_abi.h` プロトコルで fetch 実行
-    - SHM 経由の大容量ボディ転送対応
-  - `Services/RequestServer/` — curl依存コード削除
-  - `LibDNS/` — resolved daemon 経由の名前解決に切替
-  - `LibWebSocket/` — rintls + rinhttp 経由で直接実装
+  - `Services/RequestServer/` — curl依存コード削除、`RinHTTPTransport` による直接 HTTP/1.1 + TLS 実装
+  - `resolved` — DNS lookup の正式依存
+  - `rintls` — HTTPS / WebSocket の正式依存
+  - `LibWebSocket/` — rintls + direct socket transport 経由で直接実装
 - **完了条件**:
   - HTTP/HTTPS fetch テスト通過
   - SHM大容量転送テスト通過
@@ -179,6 +176,7 @@ Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全
   - `src/webengine/CMakeLists.txt` 完成
   - `RinLadybirdPlatform.cpp/.hpp`, `RinLadybirdRuntime.cpp` 実装
   - `generate_ladybird_buildinfo.py` 実装
+  - host前段は `LAGOM_TOOLS_ONLY=ON` の Lagom tools/code generators のみに限定
   - `scripts/build_iso.sh` にladybirdビルド統合
 - **完了条件**:
   - i386/x86_64 両方で cmake 成功
@@ -222,7 +220,7 @@ Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全
 #include <rinicu/rin_icu.h>         // ICU services (IPC client)
 #include <libunicode/rin_unicode.h> // Low-level Unicode
 #include <aquamarine/aquamarine.h>  // 2D/3D rendering
-#include <workerd_service_abi.h>    // workerd wire protocol
+// Ladybird の IPC endpoint / generated headers は host Lagom tools で生成する
 ```
 
 ### コミット規約
@@ -262,8 +260,8 @@ Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全
 │  └─────────────┘  └─────────────┘  │  SHA,X.509)      │ │
 │                                     └──────────────────┘ │
 │  ┌──────────────────────────┐                            │
-│  │ workerd (HTTP/image svc) │  ← Unix socket IPC        │
-│  │ + resolved (DNS)         │  ← workerd_service_abi.h   │
+│  │ RequestServer            │  ← RinHTTPTransport       │
+│  │ + resolved + rintls      │  ← Ladybird IPC           │
 │  └──────────────────────────┘                            │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -329,8 +327,8 @@ grep -r '#include.*<openssl/' libs/ladybird/Libraries/ && echo "FAIL" || echo "P
 - **決定**: ML-KEM / ML-DSA は `ENOSYS` を返す stub とする
 - **理由**: rintls に実装がなく、Web Crypto API での要求頻度が極めて低い
 
-### ADR-005: workerd を HTTP リクエストバックエンドとして使用
+### ADR-005: RequestServer を RinOS transport に載せる
 - **日付**: 2026-03-31
-- **決定**: Ladybird の RequestServer (curl) を RinOS の workerd daemon で置換
-- **理由**: workerd は既に `src/apps/workerd/` に実装済みで、Unix socket IPC + SHM によるHTTP fetch / 画像デコードを提供
-- **プロトコル**: `src/shared/workerd_service_abi.h` (magic: WRV2, version: 3)
+- **決定**: Ladybird の RequestServer を維持し、内部 transport を RinOS の direct socket + `resolved` + `rintls` に置換
+- **理由**: Browser → WebContent → RequestServer の公式プロセス境界を保ったまま、curl/OpenSSL/workerd を退役できる
+- **補足**: host前段では helper service を組まず、`LAGOM_TOOLS_ONLY=ON` の Lagom tools/code generators のみをビルドする

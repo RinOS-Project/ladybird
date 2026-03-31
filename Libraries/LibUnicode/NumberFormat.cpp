@@ -931,7 +931,7 @@ public:
     {
         auto s = format(start);
         auto e = format(end);
-        auto combined = MUST(String::formatted("{}\xE2\x80\x93{}", MUST(s.to_utf8()), MUST(e.to_utf8())));
+        auto combined = MUST(String::formatted("{}\xE2\x80\x93{}", s.to_utf8(), e.to_utf8()));
         return Utf16String::from_utf8(combined);
     }
 

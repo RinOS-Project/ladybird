@@ -9,7 +9,7 @@
     "  5) Kept as vcpkg deps for non-RinOS platforms (fast-float, fmt, simdutf)",
     "",
     "CMake guard: all find_package() calls are wrapped with if(NOT AK_OS_RINOS).",
-    "Build path:  scripts/build_iso.sh + scripts/build_apps.sh (no cmake).",
+    "Build path:  scripts/build_iso.sh + scripts/build_apps.sh + host Lagom tools (CMake/Ninja, LAGOM_TOOLS_ONLY=ON).",
     "See: Documentation/RinOS_Porting.md for the full dependency replacement table."
   ],
   "rinos-dependency-map": {

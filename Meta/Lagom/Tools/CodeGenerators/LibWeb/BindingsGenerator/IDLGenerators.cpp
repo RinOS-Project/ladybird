@@ -27,6 +27,16 @@ Vector<StringView> g_header_search_paths;
 template<typename ParameterType>
 static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter, ByteString const& js_name, ByteString const& js_suffix, ByteString const& cpp_name, IDL::Interface const& interface, bool legacy_null_to_empty_string = false, bool optional = false, Optional<ByteString> optional_default_value = {}, bool variadic = false, size_t recursion_depth = 0);
 
+static SourceGenerator generator_for_member_by_exposure(SourceGenerator& default_generator, SourceGenerator& window_only_generator, StringView name, HashMap<ByteString, ByteString> const& extended_attributes)
+{
+    if (auto maybe_exposed = extended_attributes.get("Exposed"); maybe_exposed.has_value()) {
+        auto exposed_to = MUST(IDL::parse_exposure_set(name, *maybe_exposed));
+        if (exposed_to == IDL::ExposedTo::Window)
+            return window_only_generator.fork();
+    }
+    return default_generator.fork();
+}
+
 // FIXME: Generate this automatically somehow.
 static bool is_platform_object(Type const& type)
 {
@@ -3436,15 +3446,6 @@ static void collect_attribute_values_of_an_inheritance_stack(SourceGenerator& fu
         // NOTE: Add more specified exposed global interface groups when needed.
         StringBuilder window_exposed_only_members_builder;
         SourceGenerator window_exposed_only_members_generator { window_exposed_only_members_builder, function_generator.clone_mapping() };
-        auto generator_for_member = [&](auto const& name, auto& extended_attributes) -> SourceGenerator {
-            if (auto maybe_exposed = extended_attributes.get("Exposed"); maybe_exposed.has_value()) {
-                auto exposed_to = MUST(IDL::parse_exposure_set(name, *maybe_exposed));
-                if (exposed_to == IDL::ExposedTo::Window) {
-                    return window_exposed_only_members_generator.fork();
-                }
-            }
-            return function_generator.fork();
-        };
 
         // 1. Let id be the identifier of attr.
         // 2. Let value be the result of running the getter steps of attr with object as this.
@@ -3464,7 +3465,7 @@ static void collect_attribute_values_of_an_inheritance_stack(SourceGenerator& fu
             if (!attribute.type->is_json(interface_in_chain))
                 continue;
 
-            auto attribute_generator = generator_for_member(attribute.name, attribute.extended_attributes);
+            auto attribute_generator = generator_for_member_by_exposure(function_generator, window_exposed_only_members_generator, attribute.name, attribute.extended_attributes);
             auto return_value_name = ByteString::formatted("{}_retval", attribute.name.to_snakecase());
 
             attribute_generator.set("attribute.name", attribute.name);
@@ -3858,15 +3859,6 @@ void @class_name@::initialize(JS::Realm& realm)
     // NOTE: Add more specified exposed global interface groups when needed.
     StringBuilder window_exposed_only_members_builder;
     SourceGenerator window_exposed_only_members_generator { window_exposed_only_members_builder, generator.clone_mapping() };
-    auto generator_for_member = [&](auto const& name, auto& extended_attributes) -> SourceGenerator {
-        if (auto maybe_exposed = extended_attributes.get("Exposed"); maybe_exposed.has_value()) {
-            auto exposed_to = MUST(IDL::parse_exposure_set(name, *maybe_exposed));
-            if (exposed_to == IDL::ExposedTo::Window) {
-                return window_exposed_only_members_generator.fork();
-            }
-        }
-        return generator.fork();
-    };
 
     // https://webidl.spec.whatwg.org/#es-attributes
     for (auto& attribute : interface.attributes) {
@@ -3874,7 +3866,7 @@ void @class_name@::initialize(JS::Realm& realm)
         if ((generate_unforgeables == GenerateUnforgeables::Yes && !has_unforgeable_attribute) || (generate_unforgeables == GenerateUnforgeables::No && has_unforgeable_attribute))
             continue;
 
-        auto attribute_generator = generator_for_member(attribute.name, attribute.extended_attributes);
+        auto attribute_generator = generator_for_member_by_exposure(generator, window_exposed_only_members_generator, attribute.name, attribute.extended_attributes);
 
         // AD-HOC: Do not expose experimental attributes unless instructed to do so.
         if (attribute.extended_attributes.contains("Experimental")) {
@@ -3956,7 +3948,7 @@ void @class_name@::initialize(JS::Realm& realm)
             continue;
 
         if (function.extended_attributes.contains("FIXME")) {
-            auto function_generator = generator_for_member(function.name, function.extended_attributes);
+            auto function_generator = generator_for_member_by_exposure(generator, window_exposed_only_members_generator, function.name, function.extended_attributes);
             function_generator.set("function.name", function.name);
             function_generator.append(R"~~~(
         @define_direct_property@("@function.name@"_utf16_fly_string, JS::js_undefined(), default_attributes | JS::Attribute::Unimplemented);
@@ -3988,7 +3980,7 @@ void @class_name@::initialize(JS::Realm& realm)
             continue;
 
         auto const& function = overload_set.value.first();
-        auto function_generator = generator_for_member(function.name, function.extended_attributes);
+        auto function_generator = generator_for_member_by_exposure(generator, window_exposed_only_members_generator, function.name, function.extended_attributes);
         function_generator.set("function.name", overload_set.key);
         function_generator.set("function.name:snakecase", make_input_acceptable_cpp(overload_set.key.to_snakecase()));
         function_generator.set("function.length", ByteString::number(get_shortest_function_length(overload_set.value)));
@@ -4024,7 +4016,7 @@ void @class_name@::initialize(JS::Realm& realm)
     if (interface.has_stringifier && should_generate_stringifier) {
         // FIXME: Do stringifiers need to be added to the unscopable list?
         auto stringifier_generator = interface.stringifier_extended_attributes.has_value()
-            ? generator_for_member("stringifier"sv, *interface.stringifier_extended_attributes)
+            ? generator_for_member_by_exposure(generator, window_exposed_only_members_generator, "stringifier"sv, *interface.stringifier_extended_attributes)
             : generator.fork();
         stringifier_generator.append(R"~~~(
     @define_native_function@(realm, "toString"_utf16_fly_string, to_string, 0, default_attributes);

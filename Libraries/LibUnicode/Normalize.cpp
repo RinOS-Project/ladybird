@@ -107,8 +107,7 @@ String normalize(StringView string, NormalizationForm form)
         return MUST(String::from_utf8(string));
 
     return MUST(builder.to_string());
-}
-
 #endif // !AK_OS_RINOS
+}
 
 }

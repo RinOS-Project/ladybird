@@ -351,7 +351,7 @@ FLATTEN SignedDivisionResult SignedBigInteger::divided_by(SignedBigInteger const
 FLATTEN SignedBigInteger SignedBigInteger::pow(u32 exponent) const
 {
     SignedBigInteger result;
-    MP_MUST(mp_expt_n(&m_mp, exponent, &result.m_mp));
+    MP_MUST(mp_expt_u32(&m_mp, exponent, &result.m_mp));
     return result;
 }
 

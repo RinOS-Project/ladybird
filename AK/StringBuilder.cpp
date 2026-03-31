@@ -19,7 +19,7 @@
 #include <AK/Utf16View.h>
 #include <AK/Utf32View.h>
 
-#include <simdutf.h>
+#include "simdutf.h"
 
 namespace AK {
 

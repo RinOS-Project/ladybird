@@ -544,7 +544,7 @@ bool is_locale_available(StringView locale)
     static auto available_locales = []() {
         HashTable<String> available;
         char buf[4096];
-        uint32_t len = 0;
+        size_t len = 0;
 
         if (rin_icu_locale_available(&rin_icu_client(), buf, sizeof(buf), &len) == 0 && len > 0) {
             StringView list { buf, len };
