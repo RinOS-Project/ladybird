@@ -10,6 +10,7 @@
 #include <AK/Checked.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ShareableBitmap.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/SkiaUtils.h>
 
 #include <core/SkBitmap.h>
@@ -17,6 +18,7 @@
 #include <core/SkImage.h>
 #include <core/SkImageInfo.h>
 #include <core/SkPixmap.h>
+#endif
 #include <errno.h>
 
 #ifdef AK_OS_MACOS
@@ -196,6 +198,45 @@ ErrorOr<NonnullRefPtr<Gfx::Bitmap>> Bitmap::cropped(Gfx::IntRect crop, Gfx::Colo
 
 ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::scaled(int const width, int const height, ScalingMode const scaling_mode) const
 {
+#ifdef AK_OS_RINOS
+    auto scaled_bitmap = TRY(Gfx::Bitmap::create(format(), alpha_type(), { width, height }));
+    auto const src_w = this->width();
+    auto const src_h = this->height();
+    bool bilinear = (scaling_mode != ScalingMode::NearestNeighbor && scaling_mode != ScalingMode::BoxSampling);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            if (!bilinear) {
+                int sx = x * src_w / width;
+                int sy = y * src_h / height;
+                sx = min(sx, src_w - 1);
+                sy = min(sy, src_h - 1);
+                scaled_bitmap->set_pixel(x, y, get_pixel(sx, sy));
+            } else {
+                float fx = (x + 0.5f) * src_w / width - 0.5f;
+                float fy = (y + 0.5f) * src_h / height - 0.5f;
+                int x0 = static_cast<int>(fx);
+                int y0 = static_cast<int>(fy);
+                float xf = fx - x0;
+                float yf = fy - y0;
+                x0 = clamp(x0, 0, src_w - 1);
+                y0 = clamp(y0, 0, src_h - 1);
+                int x1 = min(x0 + 1, src_w - 1);
+                int y1 = min(y0 + 1, src_h - 1);
+                auto c00 = get_pixel(x0, y0);
+                auto c10 = get_pixel(x1, y0);
+                auto c01 = get_pixel(x0, y1);
+                auto c11 = get_pixel(x1, y1);
+                auto lerp = [](u8 a, u8 b, float t) -> u8 { return static_cast<u8>(a + t * (b - a)); };
+                u8 r = lerp(lerp(c00.red(), c10.red(), xf), lerp(c01.red(), c11.red(), xf), yf);
+                u8 g = lerp(lerp(c00.green(), c10.green(), xf), lerp(c01.green(), c11.green(), xf), yf);
+                u8 b = lerp(lerp(c00.blue(), c10.blue(), xf), lerp(c01.blue(), c11.blue(), xf), yf);
+                u8 a = lerp(lerp(c00.alpha(), c10.alpha(), xf), lerp(c01.alpha(), c11.alpha(), xf), yf);
+                scaled_bitmap->set_pixel(x, y, Color(r, g, b, a));
+            }
+        }
+    }
+    return scaled_bitmap;
+#else
     auto const source_info = SkImageInfo::Make(this->width(), this->height(), to_skia_color_type(format()), to_skia_alpha_type(format(), alpha_type()), nullptr);
     SkPixmap const source_sk_pixmap(source_info, begin(), pitch());
     SkBitmap source_sk_bitmap;
@@ -210,6 +251,7 @@ ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::scaled(int const width, int const height,
     if (!source_sk_image->scalePixels(scaled_sk_pixmap, to_skia_sampling_options(scaling_mode)))
         return Error::from_string_literal("Unable to scale pixels for bitmap");
     return scaled_bitmap;
+#endif
 }
 
 ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::to_bitmap_backed_by_anonymous_buffer() const
@@ -348,6 +390,30 @@ void Bitmap::set_alpha_type_destructive(AlphaType alpha_type)
         }
     }
     VERIFY(err == kvImageNoError);
+#elif defined(AK_OS_RINOS)
+    // Manual premultiply / unpremultiply conversion
+    if (m_alpha_type == AlphaType::Unpremultiplied) {
+        // Convert unpremultiplied -> premultiplied
+        for (BGRA8888& pixel : *this) {
+            u8 a = (pixel >> 24) & 0xff;
+            if (a == 0) { pixel = 0; continue; }
+            if (a == 255) continue;
+            u8 r = ((pixel >> 16) & 0xff) * a / 255;
+            u8 g = ((pixel >> 8) & 0xff) * a / 255;
+            u8 b = (pixel & 0xff) * a / 255;
+            pixel = (static_cast<u32>(a) << 24) | (static_cast<u32>(r) << 16) | (static_cast<u32>(g) << 8) | b;
+        }
+    } else {
+        // Convert premultiplied -> unpremultiplied
+        for (BGRA8888& pixel : *this) {
+            u8 a = (pixel >> 24) & 0xff;
+            if (a == 0 || a == 255) continue;
+            u8 r = min(static_cast<u32>(((pixel >> 16) & 0xff) * 255 / a), 255u);
+            u8 g = min(static_cast<u32>(((pixel >> 8) & 0xff) * 255 / a), 255u);
+            u8 b = min(static_cast<u32>((pixel & 0xff) * 255 / a), 255u);
+            pixel = (static_cast<u32>(a) << 24) | (static_cast<u32>(r) << 16) | (static_cast<u32>(g) << 8) | b;
+        }
+    }
 #else
     auto color_type = to_skia_color_type(m_format);
     auto source_alpha = to_skia_alpha_type(m_format, m_alpha_type);

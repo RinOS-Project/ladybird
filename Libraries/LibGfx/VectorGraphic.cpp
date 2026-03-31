@@ -5,11 +5,20 @@
  */
 
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/PainterSkia.h>
+#ifndef AK_OS_RINOS
+#    include <LibGfx/PainterSkia.h>
+#endif
 #include <LibGfx/VectorGraphic.h>
 
 namespace Gfx {
 
+#ifdef AK_OS_RINOS
+ErrorOr<NonnullRefPtr<Gfx::Bitmap>> VectorGraphic::bitmap(IntSize size, AffineTransform) const
+{
+    // TODO: Implement with PainterAquamarine
+    return TRY(Bitmap::create(Gfx::BitmapFormat::BGRA8888, size));
+}
+#else
 ErrorOr<NonnullRefPtr<Gfx::Bitmap>> VectorGraphic::bitmap(IntSize size, AffineTransform transform) const
 {
     auto bitmap = TRY(Bitmap::create(Gfx::BitmapFormat::BGRA8888, size));
@@ -31,5 +40,6 @@ ErrorOr<NonnullRefPtr<Gfx::Bitmap>> VectorGraphic::bitmap(IntSize size, AffineTr
 
     return bitmap;
 }
+#endif
 
 }

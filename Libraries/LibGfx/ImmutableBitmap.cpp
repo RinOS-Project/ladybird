@@ -8,9 +8,11 @@
 #include <AK/OwnPtr.h>
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/PaintingSurface.h>
+#include <LibGfx/YUVData.h>
+
+#ifndef AK_OS_RINOS
 #include <LibGfx/SkiaBackendContext.h>
 #include <LibGfx/SkiaUtils.h>
-#include <LibGfx/YUVData.h>
 
 #include <core/SkBitmap.h>
 #include <core/SkCanvas.h>
@@ -20,6 +22,7 @@
 #include <core/SkYUVAPixmaps.h>
 #include <gpu/ganesh/GrDirectContext.h>
 #include <gpu/ganesh/SkImageGanesh.h>
+#endif // !AK_OS_RINOS
 
 namespace Gfx {
 
@@ -34,6 +37,174 @@ StringView export_format_name(ExportFormat format)
     }
     VERIFY_NOT_REACHED();
 }
+
+#ifdef AK_OS_RINOS
+
+struct ImmutableBitmapImpl {
+    RefPtr<Gfx::Bitmap> bitmap;
+    ColorSpace color_space;
+    OwnPtr<YUVData> yuv_data;
+    IntSize cached_size;
+};
+
+int ImmutableBitmap::width() const
+{
+    if (m_impl->bitmap)
+        return m_impl->bitmap->width();
+    if (m_impl->yuv_data)
+        return m_impl->yuv_data->size().width();
+    return m_impl->cached_size.width();
+}
+
+int ImmutableBitmap::height() const
+{
+    if (m_impl->bitmap)
+        return m_impl->bitmap->height();
+    if (m_impl->yuv_data)
+        return m_impl->yuv_data->size().height();
+    return m_impl->cached_size.height();
+}
+
+IntRect ImmutableBitmap::rect() const { return { {}, size() }; }
+IntSize ImmutableBitmap::size() const { return { width(), height() }; }
+
+AlphaType ImmutableBitmap::alpha_type() const
+{
+    return m_impl->bitmap ? m_impl->bitmap->alpha_type() : AlphaType::Premultiplied;
+}
+
+ErrorOr<BitmapExportResult> ImmutableBitmap::export_to_byte_buffer(ExportFormat format, int flags, Optional<int> target_width, Optional<int> target_height) const
+{
+    if (!m_impl->bitmap)
+        return Error::from_string_literal("No bitmap data available for export");
+
+    int w = target_width.value_or(width());
+    int h = target_height.value_or(height());
+    // For simplicity, ignore scaling on RinOS and use original size if mismatch
+    if (w != width() || h != height()) {
+        w = width();
+        h = height();
+    }
+
+    int bpp = 4;
+    switch (format) {
+    case ExportFormat::Gray8: case ExportFormat::Alpha8: bpp = 1; break;
+    case ExportFormat::RGB565: case ExportFormat::RGBA5551: case ExportFormat::RGBA4444: bpp = 2; break;
+    case ExportFormat::RGB888: bpp = 3; break;
+    case ExportFormat::RGBA8888: bpp = 4; break;
+    default: VERIFY_NOT_REACHED();
+    }
+
+    Checked<size_t> buffer_pitch = w;
+    buffer_pitch *= bpp;
+    if (buffer_pitch.has_overflow() || Checked<size_t>::multiplication_would_overflow(buffer_pitch.value(), h))
+        return Error::from_string_literal("ImmutableBitmap::export_to_byte_buffer size overflow");
+
+    auto buffer = MUST(ByteBuffer::create_zeroed(buffer_pitch.value() * h));
+    auto* raw = buffer.data();
+
+    for (int y = 0; y < h; ++y) {
+        auto target_y = (flags & ExportFlags::FlipY) ? h - y - 1 : y;
+        for (int x = 0; x < w; ++x) {
+            auto pixel = get_pixel(x, y);
+            auto offset = target_y * buffer_pitch.value() + x * bpp;
+            switch (format) {
+            case ExportFormat::RGBA8888:
+                raw[offset + 0] = pixel.red();
+                raw[offset + 1] = pixel.green();
+                raw[offset + 2] = pixel.blue();
+                raw[offset + 3] = pixel.alpha();
+                break;
+            case ExportFormat::RGB888:
+                raw[offset + 0] = pixel.red();
+                raw[offset + 1] = pixel.green();
+                raw[offset + 2] = pixel.blue();
+                break;
+            case ExportFormat::Gray8:
+                raw[offset] = static_cast<u8>(0.299f * pixel.red() + 0.587f * pixel.green() + 0.114f * pixel.blue());
+                break;
+            case ExportFormat::Alpha8:
+                raw[offset] = pixel.alpha();
+                break;
+            default:
+                break; // Other formats not fully supported on RinOS
+            }
+        }
+    }
+
+    return BitmapExportResult { .buffer = move(buffer), .width = w, .height = h };
+}
+
+RefPtr<Gfx::Bitmap const> ImmutableBitmap::bitmap() const
+{
+    return m_impl->bitmap;
+}
+
+bool ImmutableBitmap::is_yuv_backed() const
+{
+    return m_impl->yuv_data != nullptr;
+}
+
+ErrorOr<NonnullRefPtr<ImmutableBitmap>> ImmutableBitmap::create_from_yuv(NonnullOwnPtr<YUVData> yuv_data)
+{
+    auto size = yuv_data->size();
+    ImmutableBitmapImpl impl {
+        .bitmap = nullptr,
+        .color_space = {},
+        .yuv_data = move(yuv_data),
+        .cached_size = size,
+    };
+    return adopt_ref(*new ImmutableBitmap(make<ImmutableBitmapImpl>(move(impl))));
+}
+
+Color ImmutableBitmap::get_pixel(int x, int y) const
+{
+    if (m_impl->bitmap)
+        return m_impl->bitmap->get_pixel(x, y);
+    return Color::Black;
+}
+
+NonnullRefPtr<ImmutableBitmap> ImmutableBitmap::create(NonnullRefPtr<Bitmap> bitmap, ColorSpace color_space)
+{
+    auto size = bitmap->size();
+    ImmutableBitmapImpl impl {
+        .bitmap = move(bitmap),
+        .color_space = move(color_space),
+        .yuv_data = nullptr,
+        .cached_size = size,
+    };
+    return adopt_ref(*new ImmutableBitmap(make<ImmutableBitmapImpl>(move(impl))));
+}
+
+NonnullRefPtr<ImmutableBitmap> ImmutableBitmap::create(NonnullRefPtr<Bitmap> bitmap, AlphaType alpha_type, ColorSpace color_space)
+{
+    auto source_bitmap = bitmap;
+    if (source_bitmap->alpha_type() != alpha_type) {
+        source_bitmap = MUST(bitmap->clone());
+        source_bitmap->set_alpha_type_destructive(alpha_type);
+    }
+    return create(source_bitmap, move(color_space));
+}
+
+NonnullRefPtr<ImmutableBitmap> ImmutableBitmap::create_snapshot_from_painting_surface(NonnullRefPtr<PaintingSurface> painting_surface)
+{
+    auto size = painting_surface->size();
+    auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, size));
+    painting_surface->read_into_bitmap(*bitmap);
+    return create(move(bitmap));
+}
+
+ImmutableBitmap::ImmutableBitmap(NonnullOwnPtr<ImmutableBitmapImpl> impl)
+    : m_impl(move(impl))
+{
+}
+
+ImmutableBitmap::~ImmutableBitmap() = default;
+
+void ImmutableBitmap::lock_context() { }
+void ImmutableBitmap::unlock_context() { }
+
+#else // !AK_OS_RINOS
 
 struct ImmutableBitmapImpl {
     RefPtr<SkiaBackendContext> context;
@@ -449,5 +620,7 @@ void ImmutableBitmap::unlock_context()
     if (context)
         context->unlock();
 }
+
+#endif // AK_OS_RINOS
 
 }

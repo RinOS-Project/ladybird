@@ -5,20 +5,36 @@
  */
 
 #include <LibGfx/ImmutableBitmap.h>
-#include <LibGfx/SkiaBackendContext.h>
+#ifndef AK_OS_RINOS
+#    include <LibGfx/SkiaBackendContext.h>
+#endif
 #include <LibGfx/YUVData.h>
 
-#include <core/SkColorSpace.h>
-#include <core/SkImage.h>
-#include <core/SkYUVAInfo.h>
-#include <core/SkYUVAPixmaps.h>
-#include <gpu/ganesh/GrDirectContext.h>
-#include <gpu/ganesh/SkImageGanesh.h>
+#ifndef AK_OS_RINOS
+#    include <core/SkColorSpace.h>
+#    include <core/SkImage.h>
+#    include <core/SkYUVAInfo.h>
+#    include <core/SkYUVAPixmaps.h>
+#    include <gpu/ganesh/GrDirectContext.h>
+#    include <gpu/ganesh/SkImageGanesh.h>
+#endif
 
 namespace Gfx {
 
 namespace Details {
 
+#ifdef AK_OS_RINOS
+struct YUVDataImpl {
+    IntSize size;
+    u8 bit_depth;
+    Media::Subsampling subsampling;
+    Media::CodingIndependentCodePoints cicp;
+
+    FixedArray<u8> y_buffer;
+    FixedArray<u8> u_buffer;
+    FixedArray<u8> v_buffer;
+};
+#else
 struct YUVDataImpl {
     IntSize size;
     u8 bit_depth;
@@ -128,6 +144,7 @@ struct YUVDataImpl {
         return pixmaps.value();
     }
 };
+#endif
 
 }
 
@@ -153,7 +170,9 @@ ErrorOr<NonnullOwnPtr<YUVData>> YUVData::create(IntSize size, u8 bit_depth, Medi
         .y_buffer = move(y_buffer),
         .u_buffer = move(u_buffer),
         .v_buffer = move(v_buffer),
+#ifndef AK_OS_RINOS
         .pixmaps = {},
+#endif
     }));
 
     return adopt_nonnull_own_or_enomem(new (nothrow) YUVData(move(impl)));
@@ -201,9 +220,11 @@ Bytes YUVData::v_data()
     return m_impl->v_buffer.span();
 }
 
+#ifndef AK_OS_RINOS
 SkYUVAPixmaps const& YUVData::skia_yuva_pixmaps() const
 {
     return m_impl->get_or_create_pixmaps();
 }
+#endif
 
 }

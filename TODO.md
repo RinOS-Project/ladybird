@@ -15,7 +15,7 @@
 - OpenSSLバックエンドをrintlsに置換
 - 52ファイル変更、+2982/-48行
 
-### Phase 3: LibUnicode ICU → rinicu/libunicode ✅
+### Phase 3: LibUnicode ICU → rinicu/libunicode ✅ (fb710dd79c)
 - 22ファイル変更、+2337/-28行
 - RinICUBridge.h/.cpp: rinicu IPCクライアントブリッジ
 - ICU.h/ICU.cpp: LocaleData/TimeZoneData軽量化
@@ -39,11 +39,24 @@
 - Calendars/*.cpp: #ifndef AK_OS_RINOSガード
 - CMakeLists.txt: rinicu/libunicodeリンク設定
 
-## 未完了フェーズ
+### Phase 4: LibGfx Skia → aquamarine ✅
+- 16ファイル変更、Skia依存コードを#ifdef AK_OS_RINOSガードで分離
+- Bitmap.cpp: 手動バイリニア/ニアレストネイバースケーリング、手動プレマルチプライ変換
+- ColorSpace.cpp: sRGBのみの簡易カラースペース実装
+- Filter.cpp/FilterImpl.h: スタブフィルター実装（Skia画像フィルターパイプラインなし）
+- Font/Font.cpp: HarfBuzzベースフォントメトリクス（SkFont不使用）
+- Font/FontDatabase.cpp: TypefaceSkiaフォールバック無効化
+- Font/Typeface.cpp: TypefaceSkia参照ガード
+- ImmutableBitmap.cpp: Bitmapのみの実装（SkImage/GPU不使用）
+- PaintingSurface.cpp/.h: Bitmap直接ラップ（SkSurface不使用）
+- Painter.cpp: PainterAquamarineスタブ（TODO: 完全実装）
+- Path.cpp: PathImplAquamarineスタブ（TODO: 完全実装）
+- TextLayout.cpp: SkTextBlobなしのグリフバウンド計算
+- VectorGraphic.cpp: ブランクビットマップ返却（TODO: PainterAquamarine統合）
+- YUVData.cpp: Skia YUV型を除外、コアバッファのみ保持
+- CMakeLists.txt: aquamarineリンク追加、AK_OS_RINOS定義追加
 
-### Phase 4: LibGfx Skia → aquamarine
-- Skiaレンダリングバックエンドをaquamarineに置換
-- フォント処理、画像デコード、2Dレンダリング
+## 未完了フェーズ
 
 ### Phase 5: LibWeb/LibWebView 統合
 - ネットワーク層 workerd統合

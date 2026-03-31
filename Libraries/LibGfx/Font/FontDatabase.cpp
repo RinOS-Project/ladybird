@@ -9,7 +9,9 @@
 #include <LibCore/StandardPaths.h>
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/Font/FontDatabase.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/Font/TypefaceSkia.h>
+#endif
 
 #if defined(AK_OS_HAIKU)
 #    include <FindDirectory.h>
@@ -54,12 +56,16 @@ RefPtr<Gfx::Font> FontDatabase::get_font_for_code_point(u32 code_point, float po
 {
     CodePointFallbackKey key { code_point, weight, width, slope };
     auto& entry = m_code_point_fallback_cache.ensure(key, [&]() -> CodePointFallbackEntry {
+#ifdef AK_OS_RINOS
+        return { {}, nullptr };
+#else
         auto typeface_or_error = TypefaceSkia::find_typeface_for_code_point(code_point, weight, width, slope);
         if (typeface_or_error.is_error() || !typeface_or_error.value())
             return { {}, nullptr };
 
         auto typeface = typeface_or_error.release_value();
         return { typeface->family(), typeface };
+#endif
     });
 
     // FIXME: Does it matter that we don't pass a FontVariationSettings or ShapeFeatures here?

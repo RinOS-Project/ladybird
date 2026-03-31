@@ -6,6 +6,76 @@
 
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/PaintingSurface.h>
+
+#ifdef AK_OS_RINOS
+
+namespace Gfx {
+
+struct PaintingSurface::Impl {
+    IntSize size;
+    RefPtr<Bitmap> bitmap;
+};
+
+NonnullRefPtr<PaintingSurface> PaintingSurface::create_with_size(IntSize size, BitmapFormat color_type, AlphaType alpha_type)
+{
+    auto bitmap = Bitmap::create(color_type, alpha_type, size).value();
+    return adopt_ref(*new PaintingSurface(make<Impl>(size, bitmap)));
+}
+
+NonnullRefPtr<PaintingSurface> PaintingSurface::wrap_bitmap(Bitmap& bitmap)
+{
+    auto size = bitmap.size();
+    return adopt_ref(*new PaintingSurface(make<Impl>(size, bitmap)));
+}
+
+PaintingSurface::PaintingSurface(NonnullOwnPtr<Impl>&& impl)
+    : m_impl(move(impl))
+{
+}
+
+PaintingSurface::~PaintingSurface() = default;
+
+void PaintingSurface::read_into_bitmap(Bitmap& bitmap)
+{
+    auto* src = m_impl->bitmap->begin();
+    auto* dst = bitmap.begin();
+    auto bytes = min(m_impl->bitmap->data_size(), bitmap.data_size());
+    memcpy(dst, src, bytes);
+}
+
+void PaintingSurface::write_from_bitmap(Bitmap const& bitmap)
+{
+    auto* src = bitmap.begin();
+    auto* dst = m_impl->bitmap->begin();
+    auto bytes = min(bitmap.data_size(), m_impl->bitmap->data_size());
+    memcpy(dst, src, bytes);
+}
+
+IntSize PaintingSurface::size() const
+{
+    return m_impl->size;
+}
+
+IntRect PaintingSurface::rect() const
+{
+    return { {}, m_impl->size };
+}
+
+void PaintingSurface::notify_content_will_change() { }
+
+void PaintingSurface::flush()
+{
+    if (on_flush)
+        on_flush(*this);
+}
+
+void PaintingSurface::lock_context() const { }
+void PaintingSurface::unlock_context() const { }
+
+}
+
+#else // !AK_OS_RINOS
+
 #include <LibGfx/SkiaUtils.h>
 
 #include <core/SkColorSpace.h>
@@ -238,3 +308,5 @@ void PaintingSurface::unlock_context() const
 }
 
 }
+
+#endif // !AK_OS_RINOS

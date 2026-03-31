@@ -7,13 +7,15 @@
 #include <LibGfx/Filter.h>
 #include <LibGfx/FilterImpl.h>
 #include <LibGfx/ImmutableBitmap.h>
-#include <LibGfx/SkiaUtils.h>
-#include <core/SkBlendMode.h>
-#include <core/SkColorFilter.h>
-#include <core/SkScalar.h>
-#include <effects/SkColorMatrix.h>
-#include <effects/SkImageFilters.h>
-#include <effects/SkPerlinNoiseShader.h>
+#ifndef AK_OS_RINOS
+#    include <LibGfx/SkiaUtils.h>
+#    include <core/SkBlendMode.h>
+#    include <core/SkColorFilter.h>
+#    include <core/SkScalar.h>
+#    include <effects/SkColorMatrix.h>
+#    include <effects/SkImageFilters.h>
+#    include <effects/SkPerlinNoiseShader.h>
+#endif
 
 namespace Gfx {
 
@@ -44,6 +46,27 @@ FilterImpl const& Filter::impl() const
     return *m_impl;
 }
 
+#ifdef AK_OS_RINOS
+// RinOS: stub filter implementations (no Skia image filter pipeline)
+Filter Filter::arithmetic(Optional<Filter const&>, Optional<Filter const&>, float, float, float, float) { return Filter(Impl::create()); }
+Filter Filter::compose(Filter const&, Filter const&) { return Filter(Impl::create()); }
+Filter Filter::blend(Optional<Filter const&>, Optional<Filter const&>, Gfx::CompositingAndBlendingOperator) { return Filter(Impl::create()); }
+Filter Filter::blur(float, float, Optional<Filter const&>) { return Filter(Impl::create()); }
+Filter Filter::flood(Gfx::Color, float) { return Filter(Impl::create()); }
+Filter Filter::displacement_map(Optional<Filter const&>, Optional<Filter const&>, float, ChannelSelector, ChannelSelector) { return Filter(Impl::create()); }
+Filter Filter::drop_shadow(float, float, float, Gfx::Color, Optional<Filter const&>) { return Filter(Impl::create()); }
+Filter Filter::color(ColorFilterType, float, Optional<Filter const&>) { return Filter(Impl::create()); }
+Filter Filter::color_matrix(float[20], Optional<Filter const&>) { return Filter(Impl::create()); }
+Filter Filter::color_table(Optional<ReadonlyBytes>, Optional<ReadonlyBytes>, Optional<ReadonlyBytes>, Optional<ReadonlyBytes>, Optional<Filter const&>) { return Filter(Impl::create()); }
+Filter Filter::saturate(float, Optional<Filter const&>) { return Filter(Impl::create()); }
+Filter Filter::hue_rotate(float, Optional<Filter const&>) { return Filter(Impl::create()); }
+Filter Filter::image(Gfx::ImmutableBitmap const&, Gfx::IntRect const&, Gfx::IntRect const&, Gfx::ScalingMode) { return Filter(Impl::create()); }
+Filter Filter::merge(Vector<Optional<Filter>> const&) { return Filter(Impl::create()); }
+Filter Filter::erode(float, float, Optional<Filter> const&) { return Filter(Impl::create()); }
+Filter Filter::dilate(float, float, Optional<Filter> const&) { return Filter(Impl::create()); }
+Filter Filter::offset(float, float, Optional<Filter const&>) { return Filter(Impl::create()); }
+Filter Filter::turbulence(TurbulenceType, float, float, i32, float, Gfx::IntSize const&) { return Filter(Impl::create()); }
+#else
 Filter Filter::arithmetic(Optional<Filter const&> background, Optional<Filter const&> foreground, float k1, float k2, float k3, float k4)
 {
     sk_sp<SkImageFilter> background_skia = background.has_value() ? background->m_impl->filter : nullptr;
@@ -338,5 +361,6 @@ Filter Filter::turbulence(TurbulenceType turbulence_type, float base_frequency_x
 
     return Filter(Impl::create(SkImageFilters::Shader(move(turbulence_shader))));
 }
+#endif
 
 }

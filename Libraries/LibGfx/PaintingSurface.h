@@ -12,14 +12,18 @@
 #include <AK/RefPtr.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/Size.h>
-#include <LibGfx/SkiaBackendContext.h>
+#ifndef AK_OS_RINOS
+#    include <LibGfx/SkiaBackendContext.h>
+#endif
 
 #ifdef AK_OS_MACOS
 #    include <LibGfx/MetalContext.h>
 #endif
 
+#ifndef AK_OS_RINOS
 class SkCanvas;
 class SkSurface;
+#endif
 
 namespace Gfx {
 
@@ -51,6 +55,7 @@ public:
     IntSize size() const;
     IntRect rect() const;
 
+#ifndef AK_OS_RINOS
     SkCanvas& canvas() const;
     SkSurface& sk_surface() const;
 
@@ -58,6 +63,7 @@ public:
     T sk_image_snapshot() const;
 
     RefPtr<SkiaBackendContext> skia_backend_context() const;
+#endif
 
     void flush();
 

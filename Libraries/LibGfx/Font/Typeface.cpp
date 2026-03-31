@@ -9,7 +9,9 @@
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/Font/FontVariationSettings.h>
 #include <LibGfx/Font/Typeface.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/Font/TypefaceSkia.h>
+#endif
 
 namespace Gfx {
 
@@ -35,7 +37,11 @@ ErrorOr<NonnullRefPtr<Typeface>> Typeface::try_load_from_temporary_memory(Readon
 
 ErrorOr<NonnullRefPtr<Typeface>> Typeface::try_load_from_externally_owned_memory(ReadonlyBytes bytes, u32 ttc_index)
 {
+#ifdef AK_OS_RINOS
+    return Error::from_string_literal("Typeface loading requires Skia on non-RinOS");
+#else
     return TypefaceSkia::load_from_buffer(bytes, ttc_index);
+#endif
 }
 
 Typeface::Typeface() = default;
@@ -62,11 +68,13 @@ NonnullRefPtr<Font> Typeface::font(float point_size, FontVariationSettings const
         m_fonts.remove(m_fonts.begin());
 
     RefPtr<Typeface const> used_typeface = const_cast<Typeface*>(this);
+#ifndef AK_OS_RINOS
     if (!variations.is_empty()) {
         if (auto const* skia_typeface = as_if<TypefaceSkia const>(this))
             if (auto derived = skia_typeface->clone_with_variations(variations.to_sorted_list()))
                 used_typeface = move(derived);
     }
+#endif
 
     auto font = adopt_ref(*new Font(*used_typeface, point_size, point_size, DEFAULT_DPI, DEFAULT_DPI, variations, shape_features));
     m_fonts.set(key, font);

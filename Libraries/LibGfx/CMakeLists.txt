@@ -126,6 +126,11 @@ if (RINOS_USE_SKIA_GRAPHICS)
     target_link_libraries(LibGfx PRIVATE skia)
 else()
     message(STATUS "RinOS policy: Skia raster backend disabled in LibGfx (aquamarine path expected).")
+    target_link_libraries(LibGfx PRIVATE aquamarine)
+endif()
+
+if (AK_OS_RINOS)
+    target_compile_definitions(LibGfx PRIVATE AK_OS_RINOS=1)
 endif()
 
 if (HAS_FONTCONFIG)

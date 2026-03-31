@@ -10,16 +10,24 @@
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
 
+#ifndef AK_OS_RINOS
 #include <core/SkColorSpace.h>
 #include <core/SkData.h>
+#endif
 
 namespace Gfx {
 
 namespace Details {
 
+#ifdef AK_OS_RINOS
+struct ColorSpaceImpl {
+    bool is_srgb { true };
+};
+#else
 struct ColorSpaceImpl {
     sk_sp<SkColorSpace> color_space;
 };
+#endif
 
 }
 
@@ -28,6 +36,18 @@ ColorSpace::ColorSpace()
 {
 }
 
+#ifdef AK_OS_RINOS
+ColorSpace::ColorSpace(ColorSpace const& other)
+    : m_color_space(make<Details::ColorSpaceImpl>(Details::ColorSpaceImpl { other.m_color_space->is_srgb }))
+{
+}
+
+ColorSpace& ColorSpace::operator=(ColorSpace const& other)
+{
+    m_color_space = make<Details::ColorSpaceImpl>(Details::ColorSpaceImpl { other.m_color_space->is_srgb });
+    return *this;
+}
+#else
 ColorSpace::ColorSpace(ColorSpace const& other)
     : m_color_space(make<Details::ColorSpaceImpl>(other.m_color_space->color_space))
 {
@@ -38,6 +58,7 @@ ColorSpace& ColorSpace::operator=(ColorSpace const& other)
     m_color_space = make<Details::ColorSpaceImpl>(other.m_color_space->color_space);
     return *this;
 }
+#endif
 
 ColorSpace::ColorSpace(ColorSpace&& other) = default;
 ColorSpace& ColorSpace::operator=(ColorSpace&&) = default;
@@ -48,6 +69,38 @@ ColorSpace::ColorSpace(NonnullOwnPtr<Details::ColorSpaceImpl>&& color_space)
 {
 }
 
+#ifdef AK_OS_RINOS
+ErrorOr<ColorSpace> ColorSpace::from_cicp(Media::CodingIndependentCodePoints cicp)
+{
+    if (cicp.matrix_coefficients() != Media::MatrixCoefficients::Identity)
+        return Error::from_string_literal("Unsupported matrix coefficients for CICP");
+
+    if (cicp.video_full_range_flag() != Media::VideoFullRangeFlag::Full)
+        return Error::from_string_literal("Unsupported matrix coefficients for CICP");
+
+    switch (cicp.color_primaries()) {
+    case Media::ColorPrimaries::BT709:
+        break;
+    default:
+        return Error::from_string_literal("FIXME: Unsupported color primaries");
+    }
+
+    switch (cicp.transfer_characteristics()) {
+    case Media::TransferCharacteristics::SRGB:
+        break;
+    default:
+        return Error::from_string_literal("FIXME: Unsupported transfer function");
+    }
+
+    return ColorSpace {};
+}
+
+ErrorOr<ColorSpace> ColorSpace::load_from_icc_bytes(ReadonlyBytes)
+{
+    // Without Skia/skcms we cannot parse ICC profiles; return default sRGB.
+    return ColorSpace {};
+}
+#else
 ErrorOr<ColorSpace> ColorSpace::from_cicp(Media::CodingIndependentCodePoints cicp)
 {
     if (cicp.matrix_coefficients() != Media::MatrixCoefficients::Identity)
@@ -125,6 +178,7 @@ sk_sp<SkColorSpace>& ColorSpace::color_space()
 {
     return m_color_space->color_space;
 }
+#endif
 
 }
 
@@ -133,6 +187,10 @@ namespace IPC {
 template<>
 ErrorOr<void> encode(Encoder& encoder, Gfx::ColorSpace const& color_space)
 {
+#ifdef AK_OS_RINOS
+    TRY(encoder.encode<u64>(color_space.m_color_space->is_srgb ? 1 : 0));
+    return {};
+#else
     if (!color_space.m_color_space->color_space) {
         TRY(encoder.encode<u64>(0));
         return {};
@@ -141,11 +199,17 @@ ErrorOr<void> encode(Encoder& encoder, Gfx::ColorSpace const& color_space)
     TRY(encoder.encode<u64>(serialized->size()));
     TRY(encoder.append(serialized->bytes(), serialized->size()));
     return {};
+#endif
 }
 
 template<>
 ErrorOr<Gfx::ColorSpace> decode(Decoder& decoder)
 {
+#ifdef AK_OS_RINOS
+    auto marker = TRY(decoder.decode<u64>());
+    (void)marker;
+    return Gfx::ColorSpace {};
+#else
     // Color space profiles shouldn't be larger than 1 MiB
     static constexpr u64 MAX_COLOR_SPACE_SIZE = 1 * MiB;
 
@@ -164,6 +228,7 @@ ErrorOr<Gfx::ColorSpace> decode(Decoder& decoder)
         return Error::from_string_literal("IPC: Failed to deserialize color space");
 
     return Gfx::ColorSpace { make<::Gfx::Details::ColorSpaceImpl>(move(color_space)) };
+#endif
 }
 
 }

@@ -10,12 +10,16 @@
 #include <AK/Utf16String.h>
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/Font/FontDatabase.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/Font/TypefaceSkia.h>
+#endif
 #include <LibGfx/TextLayout.h>
 
+#ifndef AK_OS_RINOS
 #include <core/SkFont.h>
 #include <core/SkFontMetrics.h>
 #include <core/SkFontTypes.h>
+#endif
 
 #include <harfbuzz/hb-ot.h>
 #include <harfbuzz/hb.h>
@@ -35,6 +39,25 @@ Font::Font(NonnullRefPtr<Typeface const> typeface, float point_width, float poin
 
     m_pixel_size = m_point_height * (DEFAULT_DPI / POINTS_PER_INCH);
 
+#ifdef AK_OS_RINOS
+    auto* hb_font_p = hb_font_create(m_typeface->harfbuzz_typeface());
+    hb_font_set_scale(hb_font_p, m_pixel_size * 64, m_pixel_size * 64);
+    hb_font_extents_t extents;
+    hb_font_get_h_extents(hb_font_p, &extents);
+    FontPixelMetrics metrics;
+    metrics.size = m_pixel_size;
+    metrics.ascent = extents.ascender / 64.0f;
+    metrics.descent = -extents.descender / 64.0f;
+    metrics.line_gap = extents.line_gap / 64.0f;
+    metrics.x_height = metrics.ascent * 0.5f;
+    metrics.advance_of_ascii_zero = 0;
+    hb_codepoint_t glyph;
+    if (hb_font_get_nominal_glyph(hb_font_p, '0', &glyph)) {
+        metrics.advance_of_ascii_zero = hb_font_get_glyph_h_advance(hb_font_p, glyph) / 64.0f;
+    }
+    hb_font_destroy(hb_font_p);
+    m_pixel_metrics = metrics;
+#else
     auto const* sk_typeface = as<TypefaceSkia>(*m_typeface).sk_typeface();
     SkFont const font { sk_ref_sp(sk_typeface), m_pixel_size };
 
@@ -50,10 +73,24 @@ Font::Font(NonnullRefPtr<Typeface const> typeface, float point_width, float poin
     metrics.line_gap = skMetrics.fLeading;
 
     m_pixel_metrics = metrics;
+#endif
 }
 
 ScaledFontMetrics Font::metrics() const
 {
+#ifdef AK_OS_RINOS
+    auto* hb_font_p = hb_font_create(m_typeface->harfbuzz_typeface());
+    hb_font_set_scale(hb_font_p, m_pixel_size * 64, m_pixel_size * 64);
+    hb_font_extents_t extents;
+    hb_font_get_h_extents(hb_font_p, &extents);
+    ScaledFontMetrics metrics;
+    metrics.ascender = extents.ascender / 64.0f;
+    metrics.descender = -extents.descender / 64.0f;
+    metrics.line_gap = extents.line_gap / 64.0f;
+    metrics.x_height = metrics.ascender * 0.5f;
+    hb_font_destroy(hb_font_p);
+    return metrics;
+#else
     SkFontMetrics sk_metrics;
     skia_font(1).getMetrics(&sk_metrics);
 
@@ -63,6 +100,7 @@ ScaledFontMetrics Font::metrics() const
     metrics.line_gap = sk_metrics.fLeading;
     metrics.x_height = sk_metrics.fXHeight;
     return metrics;
+#endif
 }
 
 float Font::width(Utf16View const& view) const { return measure_text_width(view, *this); }
@@ -135,6 +173,7 @@ hb_font_t* Font::harfbuzz_font() const
     return m_harfbuzz_font;
 }
 
+#ifndef AK_OS_RINOS
 SkFont Font::skia_font(float scale) const
 {
     auto const& sk_typeface = as<TypefaceSkia>(*m_typeface).sk_typeface();
@@ -142,6 +181,7 @@ SkFont Font::skia_font(float scale) const
     sk_font.setSubpixel(true);
     return sk_font;
 }
+#endif
 
 Font::ShapingCache::~ShapingCache()
 {

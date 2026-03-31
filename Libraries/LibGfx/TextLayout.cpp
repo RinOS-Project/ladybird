@@ -12,14 +12,18 @@
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/Point.h>
 #include <LibGfx/TextLayout.h>
+#ifndef AK_OS_RINOS
 #include <core/SkFont.h>
 #include <core/SkTextBlob.h>
+#endif
 #include <harfbuzz/hb.h>
 
 namespace Gfx {
 
 struct GlyphRun::CachedTextBlob {
+#ifndef AK_OS_RINOS
     sk_sp<SkTextBlob> blob;
+#endif
     FloatRect bounds;
     float scale { 0 };
 };
@@ -48,6 +52,33 @@ NonnullRefPtr<GlyphRun> GlyphRun::slice(size_t start, size_t length) const
     return adopt_ref(*new GlyphRun(move(sliced_glyphs), m_font, m_text_type, width));
 }
 
+#ifdef AK_OS_RINOS
+void GlyphRun::ensure_text_blob(float scale) const
+{
+    if (m_cached_text_blob && m_cached_text_blob->scale == scale)
+        return;
+    m_cached_text_blob = make<CachedTextBlob>();
+    m_cached_text_blob->scale = scale;
+    if (m_glyphs.is_empty())
+        return;
+    // Calculate approximate bounds from glyph positions
+    float min_x = m_glyphs[0].position.x();
+    float max_x = min_x;
+    float min_y = m_glyphs[0].position.y();
+    float max_y = min_y;
+    float font_ascent = m_font->pixel_metrics().ascent;
+    float font_descent = m_font->pixel_metrics().descent;
+    for (auto const& glyph : m_glyphs) {
+        float x = glyph.position.x() * scale;
+        float y = (glyph.position.y() + font_ascent) * scale;
+        min_x = min(min_x, x);
+        max_x = max(max_x, x + glyph.glyph_width * scale);
+        min_y = min(min_y, y - font_ascent * scale);
+        max_y = max(max_y, y + font_descent * scale);
+    }
+    m_cached_text_blob->bounds = { min_x, min_y, max_x - min_x, max_y - min_y };
+}
+#else
 void GlyphRun::ensure_text_blob(float scale) const
 {
     if (m_cached_text_blob && m_cached_text_blob->scale == scale)
@@ -79,6 +110,7 @@ void GlyphRun::ensure_text_blob(float scale) const
         m_cached_text_blob->bounds = { sk_bounds.x(), sk_bounds.y(), sk_bounds.width(), sk_bounds.height() };
     }
 }
+#endif
 
 FloatRect GlyphRun::cached_blob_bounds() const
 {
@@ -87,13 +119,29 @@ FloatRect GlyphRun::cached_blob_bounds() const
     return m_cached_text_blob->bounds;
 }
 
+#ifdef AK_OS_RINOS
+SkTextBlob* GlyphRun::cached_skia_text_blob() const
+{
+    return nullptr;
+}
+#else
 SkTextBlob* GlyphRun::cached_skia_text_blob() const
 {
     if (!m_cached_text_blob || !m_cached_text_blob->blob)
         return nullptr;
     return m_cached_text_blob->blob.get();
 }
+#endif
 
+#ifdef AK_OS_RINOS
+Vector<float> GlyphRun::get_glyph_intercepts(float scale, float y_top, float y_bottom) const
+{
+    (void)scale;
+    (void)y_top;
+    (void)y_bottom;
+    return {};
+}
+#else
 Vector<float> GlyphRun::get_glyph_intercepts(float scale, float y_top, float y_bottom) const
 {
     ensure_text_blob(scale);
@@ -111,6 +159,7 @@ Vector<float> GlyphRun::get_glyph_intercepts(float scale, float y_top, float y_b
     blob->getIntercepts(bounds.data(), intervals.data());
     return intervals;
 }
+#endif
 
 Vector<NonnullRefPtr<GlyphRun>> shape_text(FloatPoint baseline_start, Utf16View const& string, FontCascadeList const& font_cascade_list, float letter_spacing)
 {
