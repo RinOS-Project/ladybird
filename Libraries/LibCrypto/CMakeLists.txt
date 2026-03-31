@@ -33,9 +33,14 @@ set(SOURCES
 
 ladybird_lib(LibCrypto crypto)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(libtommath REQUIRED IMPORTED_TARGET libtommath)
-target_link_libraries(LibCrypto PRIVATE PkgConfig::libtommath)
+if (NOT AK_OS_RINOS)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(libtommath REQUIRED IMPORTED_TARGET libtommath)
+    target_link_libraries(LibCrypto PRIVATE PkgConfig::libtommath)
+else()
+    # RinOS: BigInt uses Ladybird's built-in UnsignedBigInteger; libtommath excluded
+    message(STATUS "RinOS policy: libtommath excluded; built-in BigInt used.")
+endif()
 
 if (AK_OS_RINOS)
     # rintls include paths for RinOS builds

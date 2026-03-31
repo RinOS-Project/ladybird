@@ -1,3 +1,5 @@
 include_guard()
 
-find_package(SDL3 CONFIG REQUIRED)
+if (NOT AK_OS_RINOS)
+    find_package(SDL3 CONFIG REQUIRED)
+endif()

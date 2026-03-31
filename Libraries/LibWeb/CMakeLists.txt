@@ -1,7 +1,11 @@
-include(fontconfig)
 include(libweb_generators)
-include(vulkan)
-include(SDL3)
+if (NOT AK_OS_RINOS)
+    include(fontconfig)
+    include(vulkan)
+    include(SDL3)
+else()
+    message(STATUS "RinOS policy: fontconfig/vulkan/SDL3 excluded from LibWeb.")
+endif()
 
 if (RINOS_USE_SKIA_GRAPHICS)
     include(skia)
@@ -1232,9 +1236,14 @@ set(GENERATED_SOURCES
 
 ladybird_lib(LibWeb web EXPLICIT_SYMBOL_EXPORT)
 
-find_package(LibXml2 REQUIRED)
-
-target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia LibWasm LibXML LibIDL LibURL LibTLS LibRequests LibGC LibThreading ${ANGLE_TARGETS} SDL3::SDL3 LibXml2::LibXml2)
+if (NOT AK_OS_RINOS)
+    find_package(LibXml2 REQUIRED)
+    target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia LibWasm LibXML LibIDL LibURL LibTLS LibRequests LibGC LibThreading ${ANGLE_TARGETS} SDL3::SDL3 LibXml2::LibXml2)
+else()
+    # RinOS: SDL3, LibXml2 external deps excluded; display is aquamarine, XML is built-in
+    target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia LibWasm LibXML LibIDL LibURL LibTLS LibRequests LibGC LibThreading)
+    message(STATUS "RinOS policy: LibXml2/SDL3 excluded from LibWeb link.")
+endif()
 if (RINOS_USE_SKIA_GRAPHICS)
     target_link_libraries(LibWeb PRIVATE skia)
 else()

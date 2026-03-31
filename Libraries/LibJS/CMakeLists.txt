@@ -271,8 +271,13 @@ set(GENERATED_SOURCES Bytecode/Op.cpp)
 
 ladybird_lib(LibJS js EXPLICIT_SYMBOL_EXPORT)
 
-find_package(simdjson CONFIG REQUIRED)
-target_link_libraries(LibJS PRIVATE simdjson::simdjson)
+if (NOT AK_OS_RINOS)
+    find_package(simdjson CONFIG REQUIRED)
+    target_link_libraries(LibJS PRIVATE simdjson::simdjson)
+else()
+    # RinOS: simdjson is not available; LibJS uses its built-in JSON parser fallback
+    message(STATUS "RinOS policy: simdjson excluded; built-in JSON parser used.")
+endif()
 
 target_link_libraries(LibJS PRIVATE LibCore LibCrypto LibFileSystem LibRegex LibSyntax LibGC)
 

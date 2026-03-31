@@ -2,7 +2,15 @@ set(SOURCES
     Database.cpp
 )
 
-find_package(SQLite3 REQUIRED)
+if (NOT AK_OS_RINOS)
+    find_package(SQLite3 REQUIRED)
+endif()
 
 ladybird_lib(LibDatabase database EXPLICIT_SYMBOL_EXPORT)
-target_link_libraries(LibDatabase PRIVATE LibCore SQLite::SQLite3)
+if (NOT AK_OS_RINOS)
+    target_link_libraries(LibDatabase PRIVATE LibCore SQLite::SQLite3)
+else()
+    # RinOS: libsqlite3 is provided by libs/libsqlite3, linked externally
+    target_link_libraries(LibDatabase PRIVATE LibCore)
+    message(STATUS "RinOS policy: SQLite3 provided by RinOS native libsqlite3.")
+endif()

@@ -66,8 +66,13 @@ else()
 endif()
 configure_file(Backtrace.h.in Backtrace.h @ONLY)
 
-find_package(simdutf REQUIRED)
-target_link_libraries(AK PRIVATE simdutf::simdutf)
+if (NOT AK_OS_RINOS)
+    find_package(simdutf REQUIRED)
+    target_link_libraries(AK PRIVATE simdutf::simdutf)
+else()
+    # RinOS: libunicode provides UTF validation/conversion instead of simdutf
+    message(STATUS "RinOS policy: simdutf replaced by libunicode.")
+endif()
 
 find_package(FastFloat CONFIG REQUIRED)
 target_link_libraries(AK PRIVATE FastFloat::fast_float)

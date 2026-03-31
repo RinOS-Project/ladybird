@@ -1,6 +1,7 @@
-include(audio)
-
-include(ffmpeg)
+if (NOT AK_OS_RINOS)
+    include(audio)
+    include(ffmpeg)
+endif()
 
 set(SOURCES
     Containers/Matroska/MatroskaDemuxer.cpp
@@ -22,21 +23,26 @@ set(SOURCES
 ladybird_lib(LibMedia media EXPLICIT_SYMBOL_EXPORT)
 target_link_libraries(LibMedia PRIVATE LibCore LibCrypto LibIPC LibGfx LibThreading LibUnicode)
 
-target_sources(LibMedia PRIVATE
-        FFmpeg/FFmpegAudioConverter.cpp
-        FFmpeg/FFmpegAudioDecoder.cpp
-        FFmpeg/FFmpegDemuxer.cpp
-        FFmpeg/FFmpegHelpers.cpp
-        FFmpeg/FFmpegIOContext.cpp
-        FFmpeg/FFmpegVideoDecoder.cpp
-)
+if (NOT AK_OS_RINOS)
+    target_sources(LibMedia PRIVATE
+            FFmpeg/FFmpegAudioConverter.cpp
+            FFmpeg/FFmpegAudioDecoder.cpp
+            FFmpeg/FFmpegDemuxer.cpp
+            FFmpeg/FFmpegHelpers.cpp
+            FFmpeg/FFmpegIOContext.cpp
+            FFmpeg/FFmpegVideoDecoder.cpp
+    )
 
-if (NOT ANDROID)
-    target_link_libraries(LibMedia PRIVATE PkgConfig::AVCODEC PkgConfig::AVFORMAT PkgConfig::AVUTIL PkgConfig::LIBSWRESAMPLE)
+    if (NOT ANDROID)
+        target_link_libraries(LibMedia PRIVATE PkgConfig::AVCODEC PkgConfig::AVFORMAT PkgConfig::AVUTIL PkgConfig::LIBSWRESAMPLE)
+    else()
+        target_include_directories(LibMedia PRIVATE ${FFMPEG_INCLUDE_DIRS})
+        target_link_directories(LibMedia PRIVATE ${FFMPEG_LIBRARY_DIRS})
+        target_link_libraries(LibMedia PRIVATE ${FFMPEG_LIBRARIES})
+    endif()
 else()
-    target_include_directories(LibMedia PRIVATE ${FFMPEG_INCLUDE_DIRS})
-    target_link_directories(LibMedia PRIVATE ${FFMPEG_LIBRARY_DIRS})
-    target_link_libraries(LibMedia PRIVATE ${FFMPEG_LIBRARIES})
+    # RinOS: media=off, FFmpeg excluded
+    message(STATUS "RinOS policy: FFmpeg/media sources excluded from LibMedia.")
 endif()
 
 if (LADYBIRD_AUDIO_BACKEND STREQUAL "PULSE")

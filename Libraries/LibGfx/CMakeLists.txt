@@ -130,17 +130,23 @@ if (ENABLE_INSTALL_HEADERS)
 endif()
 
 # Third-party
-find_package(PkgConfig)
+if (NOT AK_OS_RINOS)
+    find_package(PkgConfig)
 
-pkg_check_modules(WOFF2 REQUIRED IMPORTED_TARGET libwoff2dec)
-find_package(JPEG REQUIRED)
-find_package(PNG REQUIRED)
-find_package(LIBAVIF REQUIRED)
-find_package(WebP REQUIRED)
-find_package(harfbuzz REQUIRED)
+    pkg_check_modules(WOFF2 REQUIRED IMPORTED_TARGET libwoff2dec)
+    find_package(JPEG REQUIRED)
+    find_package(PNG REQUIRED)
+    find_package(LIBAVIF REQUIRED)
+    find_package(WebP REQUIRED)
+    find_package(harfbuzz REQUIRED)
 
-target_link_libraries(LibGfx PRIVATE PkgConfig::WOFF2 JPEG::JPEG PNG::PNG avif WebP::webp WebP::webpdecoder
-            WebP::webpdemux WebP::libwebpmux harfbuzz)
+    target_link_libraries(LibGfx PRIVATE PkgConfig::WOFF2 JPEG::JPEG PNG::PNG avif WebP::webp WebP::webpdecoder
+                WebP::webpdemux WebP::libwebpmux harfbuzz)
+else()
+    # RinOS: native image decoders (png, jpeg, webp) and aquamarine font engine
+    # are linked externally; AVIF/JXL/WOFF2 are excluded from the feature set.
+    message(STATUS "RinOS policy: LibGfx image/font deps provided by RinOS native libraries.")
+endif()
 if (RINOS_USE_SKIA_GRAPHICS)
     target_link_libraries(LibGfx PRIVATE skia)
 else()
@@ -156,35 +162,37 @@ if (HAS_FONTCONFIG)
     target_link_libraries(LibGfx PRIVATE Fontconfig::Fontconfig)
 endif()
 
-set(CMAKE_REQUIRED_LIBRARIES PNG::PNG)
-check_c_source_compiles([=[
-    #include <png.h>
-    #if !defined(PNG_APNG_SUPPORTED) || !defined(PNG_READ_APNG_SUPPORTED) || !defined(PNG_READ_APNG_SUPPORTED)
-    #error "APNG support is required"
-    #endif
-    int main() {}
-]=] LIBPNG_HAS_APNG)
-unset(CMAKE_REQUIRED_LIBRARIES)
+if (NOT AK_OS_RINOS)
+    set(CMAKE_REQUIRED_LIBRARIES PNG::PNG)
+    check_c_source_compiles([=[
+        #include <png.h>
+        #if !defined(PNG_APNG_SUPPORTED) || !defined(PNG_READ_APNG_SUPPORTED) || !defined(PNG_READ_APNG_SUPPORTED)
+        #error "APNG support is required"
+        #endif
+        int main() {}
+    ]=] LIBPNG_HAS_APNG)
+    unset(CMAKE_REQUIRED_LIBRARIES)
 
-if (NOT LIBPNG_HAS_APNG)
-    message(FATAL_ERROR "libpng does not support APNG, which is required by LibGfx.")
-endif()
-
-if (NOT ANDROID)
-    pkg_check_modules(Jxl REQUIRED IMPORTED_TARGET libjxl)
-    # FIXME: Build vcpkg libraries with clang-cl so they can also build in sanitize.
-    # https://github.com/LadybirdBrowser/ladybird/issues/5224
-    if (WIN32 AND ENABLE_ADDRESS_SANITIZER)
-        # We have to disable ASAN for the full target as fixing the issue in the initial SkiaBackendContext.cpp TU
-        #  alone causes transitive issues in other TUs that depend on it
-        target_compile_options(LibGfx PRIVATE -fno-sanitize=address)
+    if (NOT LIBPNG_HAS_APNG)
+        message(FATAL_ERROR "libpng does not support APNG, which is required by LibGfx.")
     endif()
-    target_link_libraries(LibGfx PRIVATE PkgConfig::Jxl)
-else()
-    find_package(libjxl REQUIRED)
-    find_package(hwy REQUIRED)
-    target_link_libraries(LibGfx PRIVATE libjxl::libjxl hwy::hwy)
-endif()
+
+    if (NOT ANDROID)
+        pkg_check_modules(Jxl REQUIRED IMPORTED_TARGET libjxl)
+        # FIXME: Build vcpkg libraries with clang-cl so they can also build in sanitize.
+        # https://github.com/LadybirdBrowser/ladybird/issues/5224
+        if (WIN32 AND ENABLE_ADDRESS_SANITIZER)
+            # We have to disable ASAN for the full target as fixing the issue in the initial SkiaBackendContext.cpp TU
+            #  alone causes transitive issues in other TUs that depend on it
+            target_compile_options(LibGfx PRIVATE -fno-sanitize=address)
+        endif()
+        target_link_libraries(LibGfx PRIVATE PkgConfig::Jxl)
+    else()
+        find_package(libjxl REQUIRED)
+        find_package(hwy REQUIRED)
+        target_link_libraries(LibGfx PRIVATE libjxl::libjxl hwy::hwy)
+    endif()
+endif() # NOT AK_OS_RINOS
 
 if (APPLE)
     target_link_libraries(LibCore PUBLIC "-framework Metal")
