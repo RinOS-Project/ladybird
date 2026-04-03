@@ -64,6 +64,26 @@ StringView time_unit_to_string(TimeUnit time_unit)
     VERIFY_NOT_REACHED();
 }
 
+NumericDisplay numeric_display_from_string(StringView numeric_display)
+{
+    if (numeric_display == "always"sv)
+        return NumericDisplay::Always;
+    if (numeric_display == "auto"sv)
+        return NumericDisplay::Auto;
+    VERIFY_NOT_REACHED();
+}
+
+StringView numeric_display_to_string(NumericDisplay numeric_display)
+{
+    switch (numeric_display) {
+    case NumericDisplay::Always:
+        return "always"sv;
+    case NumericDisplay::Auto:
+        return "auto"sv;
+    }
+    VERIFY_NOT_REACHED();
+}
+
 #ifndef AK_OS_RINOS
 static constexpr URelativeDateTimeUnit icu_time_unit(TimeUnit unit)
 {
@@ -84,26 +104,6 @@ static constexpr URelativeDateTimeUnit icu_time_unit(TimeUnit unit)
         return URelativeDateTimeUnit::UDAT_REL_UNIT_QUARTER;
     case TimeUnit::Year:
         return URelativeDateTimeUnit::UDAT_REL_UNIT_YEAR;
-    }
-    VERIFY_NOT_REACHED();
-}
-
-NumericDisplay numeric_display_from_string(StringView numeric_display)
-{
-    if (numeric_display == "always"sv)
-        return NumericDisplay::Always;
-    if (numeric_display == "auto"sv)
-        return NumericDisplay::Auto;
-    VERIFY_NOT_REACHED();
-}
-
-StringView numeric_display_to_string(NumericDisplay numeric_display)
-{
-    switch (numeric_display) {
-    case NumericDisplay::Always:
-        return "always"sv;
-    case NumericDisplay::Auto:
-        return "auto"sv;
     }
     VERIFY_NOT_REACHED();
 }

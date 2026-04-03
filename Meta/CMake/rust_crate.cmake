@@ -9,6 +9,10 @@
 function(import_rust_crate)
     cmake_parse_arguments(PARSE_ARGV 0 ARG "" "MANIFEST_PATH;CRATE_NAME;FFI_OUTPUT_DIR" "")
 
+    if (AK_OS_RINOS AND CMAKE_CROSSCOMPILING)
+        message(FATAL_ERROR "RinOS target builds must not import Rust crates: ${ARG_CRATE_NAME}")
+    endif()
+
     set(ARG_MANIFEST_PATH "${CMAKE_CURRENT_SOURCE_DIR}/${ARG_MANIFEST_PATH}")
     if (NOT ARG_FFI_OUTPUT_DIR)
         set(ARG_FFI_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}")

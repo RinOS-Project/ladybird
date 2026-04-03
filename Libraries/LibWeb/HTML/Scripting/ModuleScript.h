@@ -40,7 +40,9 @@ public:
     virtual ~JavaScriptModuleScript() override;
 
     static WebIDL::ExceptionOr<GC::Ptr<JavaScriptModuleScript>> create(ByteString const& filename, StringView source, JS::Realm&, URL::URL base_url);
+#ifndef AK_OS_RINOS
     static WebIDL::ExceptionOr<GC::Ptr<JavaScriptModuleScript>> create_from_pre_parsed(ByteString const& filename, NonnullRefPtr<JS::SourceCode const> source_code, JS::Realm&, URL::URL base_url, JS::FFI::ParsedProgram* parsed);
+#endif
 
     enum class PreventErrorReporting {
         Yes,

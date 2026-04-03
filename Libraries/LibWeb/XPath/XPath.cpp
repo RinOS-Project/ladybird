@@ -18,15 +18,32 @@
 #include <LibWeb/DOM/Text.h>
 #include <LibWeb/WebIDL/DOMException.h>
 
-#include <libxml/parser.h>
-#include <libxml/tree.h>
-#include <libxml/valid.h>
-#include <libxml/xmlstring.h>
-#include <libxml/xpath.h>
+#if !defined(AK_OS_RINOS)
+#    include <libxml/parser.h>
+#    include <libxml/tree.h>
+#    include <libxml/valid.h>
+#    include <libxml/xmlstring.h>
+#    include <libxml/xpath.h>
+#endif
 
 #include "XPath.h"
 
 namespace Web::XPath {
+
+#if defined(AK_OS_RINOS)
+
+WebIDL::ExceptionOr<GC::Ref<XPathExpression>> create_expression(JS::Realm& realm, String const& expression, GC::Ptr<XPathNSResolver> resolver)
+{
+    return realm.create<XPathExpression>(realm, expression, resolver);
+}
+
+WebIDL::ExceptionOr<GC::Ref<XPathResult>> evaluate(JS::Realm& realm, String const& expression, DOM::Node const&, GC::Ptr<XPathNSResolver>, unsigned short, GC::Ptr<XPathResult>)
+{
+    (void)expression;
+    return WebIDL::NotSupportedError::create(realm, "XPath is disabled on RinOS builds"_utf16);
+}
+
+#else
 
 static xmlNodePtr mirror_node(xmlDocPtr doc, DOM::Node const& node)
 {
@@ -207,5 +224,7 @@ WebIDL::ExceptionOr<GC::Ref<XPathResult>> evaluate(JS::Realm& realm, String cons
 
     return GC::Ref<XPathResult>(*result);
 }
+
+#endif
 
 }

@@ -9,7 +9,11 @@
 #include <LibThreading/Thread.h>
 #include <LibWeb/HTML/RenderingThread.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
+#if defined(AK_OS_RINOS)
+#    include <LibWeb/Painting/DisplayListPlayerAquamarine.h>
+#else
 #include <LibWeb/Painting/DisplayListPlayerSkia.h>
+#endif
 
 #include <LibCore/Platform/ScopedAutoreleasePool.h>
 
@@ -59,12 +63,18 @@ public:
 
     ~ThreadData() = default;
 
-    void set_skia_player(OwnPtr<Painting::DisplayListPlayerSkia>&& player)
+    void set_display_list_player(
+#if defined(AK_OS_RINOS)
+        OwnPtr<Painting::DisplayListPlayerAquamarine>&& player
+#else
+        OwnPtr<Painting::DisplayListPlayerSkia>&& player
+#endif
+    )
     {
-        m_skia_player = move(player);
+        m_display_list_player = move(player);
     }
 
-    bool has_skia_player() const { return m_skia_player != nullptr; }
+    bool has_display_list_player() const { return m_display_list_player != nullptr; }
 
     void exit()
     {
@@ -130,7 +140,7 @@ public:
                     [this](ScreenshotCommand& cmd) {
                         if (!m_cached_display_list)
                             return;
-                        m_skia_player->execute(*m_cached_display_list, Painting::ScrollStateSnapshotByDisplayList(m_cached_scroll_state_snapshot), *cmd.target_surface);
+                        m_display_list_player->execute(*m_cached_display_list, Painting::ScrollStateSnapshotByDisplayList(m_cached_scroll_state_snapshot), *cmd.target_surface);
                         if (cmd.callback) {
                             invoke_on_main_thread([callback = move(cmd.callback)]() mutable {
                                 callback();
@@ -168,7 +178,7 @@ public:
                 }
 
                 if (m_cached_display_list && m_backing_stores.is_valid()) {
-                    m_skia_player->execute(*m_cached_display_list, Painting::ScrollStateSnapshotByDisplayList(m_cached_scroll_state_snapshot), *m_backing_stores.back_store);
+                    m_display_list_player->execute(*m_cached_display_list, Painting::ScrollStateSnapshotByDisplayList(m_cached_scroll_state_snapshot), *m_backing_stores.back_store);
                     i32 rendered_bitmap_id = m_backing_stores.back_bitmap_id;
                     m_backing_stores.swap();
 
@@ -205,7 +215,11 @@ private:
 
     Queue<CompositorCommand> m_command_queue;
 
-    OwnPtr<Painting::DisplayListPlayerSkia> m_skia_player;
+#if defined(AK_OS_RINOS)
+    OwnPtr<Painting::DisplayListPlayerAquamarine> m_display_list_player;
+#else
+    OwnPtr<Painting::DisplayListPlayerSkia> m_display_list_player;
+#endif
     RefPtr<Painting::DisplayList> m_cached_display_list;
     Painting::ScrollStateSnapshotByDisplayList m_cached_scroll_state_snapshot;
     BackingStoreState m_backing_stores;
@@ -238,7 +252,7 @@ RenderingThread::~RenderingThread()
 
 void RenderingThread::start(DisplayListPlayerType)
 {
-    VERIFY(m_thread_data->has_skia_player());
+    VERIFY(m_thread_data->has_display_list_player());
     m_thread = Threading::Thread::construct("Renderer"sv, [thread_data = m_thread_data] {
         thread_data->compositor_loop();
         return static_cast<intptr_t>(0);
@@ -247,9 +261,15 @@ void RenderingThread::start(DisplayListPlayerType)
     m_thread->detach();
 }
 
-void RenderingThread::set_skia_player(OwnPtr<Painting::DisplayListPlayerSkia>&& player)
+void RenderingThread::set_display_list_player(
+#if defined(AK_OS_RINOS)
+    OwnPtr<Painting::DisplayListPlayerAquamarine>&& player
+#else
+    OwnPtr<Painting::DisplayListPlayerSkia>&& player
+#endif
+)
 {
-    m_thread_data->set_skia_player(move(player));
+    m_thread_data->set_display_list_player(move(player));
 }
 
 void RenderingThread::update_display_list(NonnullRefPtr<Painting::DisplayList> display_list, Painting::ScrollStateSnapshotByDisplayList&& scroll_state_snapshot)

@@ -74,23 +74,46 @@ static LexicalPath find_prefix(LexicalPath const& application_directory)
     return application_directory.parent();
 }
 
+static ByteString bundled_resource_root()
+{
+    auto app_dir = MUST(application_directory());
+#ifdef AK_OS_MACOS
+    return LexicalPath(app_dir).parent().append("Resources"sv).string();
+#else
+    return find_prefix(LexicalPath(app_dir)).append("share/Lagom"sv).string();
+#endif
+}
+
+static bool resource_root_has_default_theme(ByteString const& resource_root)
+{
+    auto theme_path = LexicalPath::join(resource_root, "themes"sv, "Default.ini"sv);
+    return !Core::System::stat(theme_path.string()).is_error();
+}
+
 void platform_init(Optional<ByteString> ladybird_binary_path)
 {
     s_ladybird_binary_path = move(ladybird_binary_path);
 
     s_ladybird_resource_root = [] {
+        auto bundled_root = bundled_resource_root();
+        Optional<ByteString> home_lagom;
         auto home = Core::Environment::get("XDG_CONFIG_HOME"sv)
                         .value_or_lazy_evaluated_optional([]() { return Core::Environment::get("HOME"sv); });
         if (home.has_value()) {
-            auto home_lagom = ByteString::formatted("{}/.lagom", home);
-            if (FileSystem::is_directory(home_lagom))
-                return home_lagom;
+            auto candidate = ByteString::formatted("{}/.lagom", home);
+            if (FileSystem::is_directory(candidate) && resource_root_has_default_theme(candidate))
+                home_lagom = move(candidate);
         }
-        auto app_dir = MUST(application_directory());
-#ifdef AK_OS_MACOS
-        return LexicalPath(app_dir).parent().append("Resources"sv).string();
+#ifdef AK_OS_RINOS
+        if (s_ladybird_binary_path.has_value() && resource_root_has_default_theme(bundled_root))
+            return bundled_root;
+        if (home_lagom.has_value())
+            return home_lagom.release_value();
+        return bundled_root;
 #else
-        return find_prefix(LexicalPath(app_dir)).append("share/Lagom"sv).string();
+        if (home_lagom.has_value())
+            return home_lagom.release_value();
+        return bundled_root;
 #endif
     }();
 
@@ -133,7 +156,7 @@ ErrorOr<Vector<ByteString>> get_paths_for_helper_process(StringView process_name
 
 ErrorOr<void> handle_attached_debugger()
 {
-#if defined(AK_OS_LINUX)
+#if defined(AK_OS_LINUX) && !defined(AK_OS_RINOS)
     // Let's ignore SIGINT if we're being debugged because GDB incorrectly forwards the signal to us even when it's set
     // to "nopass". See https://sourceware.org/bugzilla/show_bug.cgi?id=9425 for details.
     if (TRY(Core::Process::is_being_debugged())) {

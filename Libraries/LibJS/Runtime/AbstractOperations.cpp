@@ -9,8 +9,10 @@
 #include <AK/Function.h>
 #include <AK/Optional.h>
 #include <AK/Utf16View.h>
+#include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/ModuleLoading.h>
+#include <LibJS/Parser.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Accessor.h>
 #include <LibJS/Runtime/ArgumentsObject.h>
@@ -38,8 +40,6 @@
 #include <LibJS/Runtime/SuppressedError.h>
 #include <LibJS/Runtime/Temporal/AbstractOperations.h>
 #include <LibJS/Runtime/ValueInlines.h>
-#include <LibJS/RustIntegration.h>
-#include <LibJS/SourceCode.h>
 
 namespace JS {
 
@@ -61,30 +61,23 @@ ThrowCompletionOr<Value> call_impl(VM& vm, Value function, Value this_value, Rea
         return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function);
 
     // 3. Return ? F.[[Call]](V, argumentsList).
+    ExecutionContext* callee_context = nullptr;
     auto& function_object = function.as_function();
     size_t registers_and_locals_count = 0;
     size_t constants_count = 0;
     size_t argument_count = arguments_list.size();
     function_object.get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(callee_context, registers_and_locals_count, constants_count, argument_count);
 
-    auto& stack = vm.interpreter_stack();
-    auto* stack_mark = stack.top();
-    auto* callee_context = stack.allocate(registers_and_locals_count, constants_count, argument_count);
-    if (!callee_context) [[unlikely]]
-        return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
-    ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
-
-    auto* argument_values = callee_context->arguments_data();
+    auto* argument_values = callee_context->arguments.data();
     for (size_t i = 0; i < arguments_list.size(); ++i)
         argument_values[i] = arguments_list[i];
-    for (size_t i = arguments_list.size(); i < argument_count; ++i)
-        argument_values[i] = js_undefined();
     callee_context->passed_argument_count = arguments_list.size();
 
     return function_object.internal_call(*callee_context, this_value);
 }
 
-ThrowCompletionOr<Value> call_impl(VM& vm, FunctionObject& function, Value this_value, ReadonlySpan<Value> arguments_list)
+ThrowCompletionOr<Value> call_impl(VM&, FunctionObject& function, Value this_value, ReadonlySpan<Value> arguments_list)
 {
     // 1. If argumentsList is not present, set argumentsList to a new empty List.
 
@@ -92,30 +85,23 @@ ThrowCompletionOr<Value> call_impl(VM& vm, FunctionObject& function, Value this_
     // Note: Called with a FunctionObject ref
 
     // 3. Return ? F.[[Call]](V, argumentsList).
+    ExecutionContext* callee_context = nullptr;
     size_t registers_and_locals_count = 0;
     size_t constants_count = 0;
     size_t argument_count = arguments_list.size();
     function.get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(callee_context, registers_and_locals_count, constants_count, argument_count);
 
-    auto& stack = vm.interpreter_stack();
-    auto* stack_mark = stack.top();
-    auto* callee_context = stack.allocate(registers_and_locals_count, constants_count, argument_count);
-    if (!callee_context) [[unlikely]]
-        return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
-    ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
-
-    auto* argument_values = callee_context->arguments_data();
+    auto* argument_values = callee_context->arguments.data();
     for (size_t i = 0; i < arguments_list.size(); ++i)
         argument_values[i] = arguments_list[i];
-    for (size_t i = arguments_list.size(); i < argument_count; ++i)
-        argument_values[i] = js_undefined();
     callee_context->passed_argument_count = arguments_list.size();
 
     return function.internal_call(*callee_context, this_value);
 }
 
 // 7.3.15 Construct ( F [ , argumentsList [ , newTarget ] ] ), https://tc39.es/ecma262/#sec-construct
-ThrowCompletionOr<GC::Ref<Object>> construct_impl(VM& vm, FunctionObject& function, ReadonlySpan<Value> arguments_list, FunctionObject* new_target)
+ThrowCompletionOr<GC::Ref<Object>> construct_impl(VM&, FunctionObject& function, ReadonlySpan<Value> arguments_list, FunctionObject* new_target)
 {
     // 1. If newTarget is not present, set newTarget to F.
     if (!new_target)
@@ -124,23 +110,16 @@ ThrowCompletionOr<GC::Ref<Object>> construct_impl(VM& vm, FunctionObject& functi
     // 2. If argumentsList is not present, set argumentsList to a new empty List.
 
     // 3. Return ? F.[[Construct]](argumentsList, newTarget).
+    ExecutionContext* callee_context = nullptr;
     size_t registers_and_locals_count = 0;
     size_t constants_count = 0;
     size_t argument_count = arguments_list.size();
     function.get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(callee_context, registers_and_locals_count, constants_count, argument_count);
 
-    auto& stack = vm.interpreter_stack();
-    auto* stack_mark = stack.top();
-    auto* callee_context = stack.allocate(registers_and_locals_count, constants_count, argument_count);
-    if (!callee_context) [[unlikely]]
-        return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
-    ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
-
-    auto* argument_values = callee_context->arguments_data();
+    auto* argument_values = callee_context->arguments.data();
     for (size_t i = 0; i < arguments_list.size(); ++i)
         argument_values[i] = arguments_list[i];
-    for (size_t i = arguments_list.size(); i < argument_count; ++i)
-        argument_values[i] = js_undefined();
     callee_context->passed_argument_count = arguments_list.size();
 
     return function.internal_construct(*callee_context, *new_target);
@@ -151,10 +130,10 @@ ThrowCompletionOr<size_t> length_of_array_like(VM& vm, Object const& object)
 {
     // OPTIMIZATION: For Array objects with a magical "length" property, it should always reflect the size of indexed property storage.
     if (object.has_magical_length_property())
-        return object.indexed_array_like_size();
+        return object.indexed_properties().array_like_size();
 
     // 1. Return ℝ(? ToLength(? Get(obj, "length"))).
-    static Bytecode::StaticPropertyLookupCache cache;
+    static Bytecode::PropertyLookupCache cache;
     return TRY(object.get(vm.names.length, cache)).to_length(vm);
 }
 
@@ -201,7 +180,7 @@ ThrowCompletionOr<GC::RootVector<Value>> create_list_from_array_like(VM& vm, Val
 ThrowCompletionOr<FunctionObject*> species_constructor(VM& vm, Object const& object, FunctionObject& default_constructor)
 {
     // 1. Let C be ? Get(O, "constructor").
-    static Bytecode::StaticPropertyLookupCache cache;
+    static Bytecode::PropertyLookupCache cache;
     auto constructor = TRY(object.get(vm.names.constructor, cache));
 
     // 2. If C is undefined, return defaultConstructor.
@@ -213,7 +192,7 @@ ThrowCompletionOr<FunctionObject*> species_constructor(VM& vm, Object const& obj
         return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, constructor);
 
     // 4. Let S be ? Get(C, @@species).
-    static Bytecode::StaticPropertyLookupCache cache2;
+    static Bytecode::PropertyLookupCache cache2;
     auto species = TRY(constructor.as_object().get(vm.well_known_symbol_species(), cache2));
 
     // 5. If S is either undefined or null, return defaultConstructor.
@@ -413,7 +392,7 @@ ThrowCompletionOr<Object*> get_prototype_from_constructor(VM& vm, FunctionObject
     // 1. Assert: intrinsicDefaultProto is this specification's name of an intrinsic object. The corresponding object must be an intrinsic that is intended to be used as the [[Prototype]] value of an object.
 
     // 2. Let proto be ? Get(constructor, "prototype").
-    static Bytecode::StaticPropertyLookupCache cache;
+    static Bytecode::PropertyLookupCache cache;
     auto prototype = TRY(constructor.get(vm.names.prototype, cache));
 
     // 3. If Type(proto) is not Object, then
@@ -639,15 +618,17 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
         auto this_environment_record = get_this_environment(vm);
 
         // b. If thisEnvRec is a function Environment Record, then
-        if (auto* this_function_environment_record = as_if<FunctionEnvironment>(*this_environment_record)) {
+        if (is<FunctionEnvironment>(*this_environment_record)) {
+            auto& this_function_environment_record = static_cast<FunctionEnvironment&>(*this_environment_record);
+
             // i. Let F be thisEnvRec.[[FunctionObject]].
-            auto& function = as<ECMAScriptFunctionObject>(this_function_environment_record->function_object());
+            auto& function = as<ECMAScriptFunctionObject>(this_function_environment_record.function_object());
 
             // ii. Set inFunction to true.
             in_function = true;
 
             // iii. Set inMethod to thisEnvRec.HasSuperBinding().
-            in_method = this_function_environment_record->has_super_binding();
+            in_method = this_function_environment_record.has_super_binding();
 
             // iv. If F.[[ConstructorKind]] is derived, set inDerivedConstructor to true.
             if (function.constructor_kind() == ConstructorKind::Derived)
@@ -671,16 +652,30 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
     //     f. If inMethod is false, and body Contains SuperProperty, throw a SyntaxError exception.
     //     g. If inDerivedConstructor is false, and body Contains SuperCall, throw a SyntaxError exception.
     //     h. If inClassFieldInitializer is true, and ContainsArguments of body is true, throw a SyntaxError exception.
+    Parser::EvalInitialState initial_state {
+        .in_eval_function_context = in_function,
+        .allow_super_property_lookup = in_method,
+        .allow_super_constructor_call = in_derived_constructor,
+        .in_class_field_initializer = in_class_field_initializer,
+    };
 
-    auto rust_compilation = RustIntegration::compile_eval(*code_string, vm, strict_caller, in_function, in_method, in_derived_constructor, in_class_field_initializer);
-    if (!rust_compilation.has_value())
-        return vm.throw_completion<SyntaxError>("Failed to compile eval code"_string);
-    if (rust_compilation->is_error())
-        return vm.throw_completion<SyntaxError>(rust_compilation->release_error());
-    auto& eval_result = rust_compilation->value();
-    auto executable = eval_result.executable;
-    auto strict_eval = eval_result.is_strict_mode;
-    auto eval_declaration_data = move(eval_result.declaration_data);
+    Parser parser(Lexer(SourceCode::create({}, code_string->utf16_string())), Program::Type::Script, move(initial_state));
+    auto program = parser.parse_program(strict_caller == CallerMode::Strict);
+
+    //     b. If script is a List of errors, throw a SyntaxError exception.
+    if (parser.has_errors()) {
+        auto& error = parser.errors()[0];
+        return vm.throw_completion<SyntaxError>(error.to_string());
+    }
+
+    bool strict_eval = false;
+
+    // 14. If strictCaller is true, let strictEval be true.
+    if (strict_caller == CallerMode::Strict)
+        strict_eval = true;
+    // 15. Else, let strictEval be IsStrict of script.
+    else
+        strict_eval = program->is_strict_mode();
 
     // 16. Let runningContext be the running execution context.
     // 17. NOTE: If direct is true, runningContext will be the execution context that performed the direct eval. If direct is false, runningContext will be the execution context for the invocation of the eval function.
@@ -730,17 +725,19 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
     // NOTE: Spec steps are rearranged in order to compute number of registers+constants+locals before construction of the execution context.
 
     // 30. Let result be Completion(EvalDeclarationInstantiation(body, varEnv, lexEnv, privateEnv, strictEval)).
+    auto eval_declaration_data = EvalDeclarationData::create(vm, program, strict_eval);
     TRY(eval_declaration_instantiation(vm, eval_declaration_data, variable_environment, lexical_environment, private_environment, strict_eval));
 
+    // 31. If result.[[Type]] is normal, then
+    //     a. Set result to the result of evaluating body.
+    auto executable = Bytecode::Generator::generate_from_ast_node(vm, program, {});
+    executable->name = "eval"_utf16_fly_string;
     if (Bytecode::g_dump_bytecode)
         executable->dump();
 
     // 22. Let evalContext be a new ECMAScript code execution context.
-    auto& stack = vm.interpreter_stack();
-    auto* stack_mark = stack.top();
-    auto* eval_context = stack.allocate(executable->registers_and_locals_count, executable->constants.size(), 0);
-    if (!eval_context) [[unlikely]]
-        return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
+    ExecutionContext* eval_context = nullptr;
+    ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(eval_context, executable->registers_and_locals_count, executable->constants.size(), 0);
 
     // 23. Set evalContext's Function to null.
     // NOTE: This was done in the construction of eval_context.
@@ -768,19 +765,64 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
         // 33. Suspend evalContext and remove it from the execution context stack.
         // 34. Resume the context that is now on the top of the execution context stack as the running execution context.
         vm.pop_execution_context();
-        stack.deallocate(stack_mark);
     };
 
-    Optional<Value> result;
+    Optional<Value> eval_result;
 
-    result = TRY(vm.bytecode_interpreter().run_executable(*eval_context, *executable, {}));
+    eval_result = TRY(vm.bytecode_interpreter().run_executable(*eval_context, *executable, {}));
 
     // 32. If result.[[Type]] is normal and result.[[Value]] is empty, then
     //     a. Set result to NormalCompletion(undefined).
     // NOTE: Step 33 and 34 is handled by `pop_guard` above.
     // 35. Return ? result.
     // NOTE: Step 35 is also performed with each use of `TRY` above.
-    return result.value_or(js_undefined());
+    return eval_result.value_or(js_undefined());
+}
+
+EvalDeclarationData EvalDeclarationData::create(VM& vm, Program const& program, bool strict)
+{
+    EvalDeclarationData data;
+
+    // Pre-compute var declared names.
+    MUST(program.for_each_var_declared_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
+        data.var_names.append(identifier.string());
+        return {};
+    }));
+
+    // Pre-compute functions to initialize and declared function names.
+    MUST(program.for_each_var_function_declaration_in_reverse_order([&](FunctionDeclaration const& function) -> ThrowCompletionOr<void> {
+        auto function_name = function.name();
+        if (data.declared_function_names.set(function_name) != AK::HashSetResult::InsertedNewEntry)
+            return {};
+        data.functions_to_initialize.append({ SharedFunctionInstanceData::create_for_function_node(vm, function), function_name });
+        return {};
+    }));
+
+    // Pre-compute var scoped variable names.
+    MUST(program.for_each_var_scoped_variable_declaration([&](VariableDeclaration const& declaration) {
+        return declaration.for_each_bound_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
+            data.var_scoped_names.append(identifier.string());
+            return {};
+        });
+    }));
+
+    // Pre-compute AnnexB candidates.
+    if (!strict) {
+        MUST(program.for_each_function_hoistable_with_annexB_extension([&](FunctionDeclaration& function_declaration) -> ThrowCompletionOr<void> {
+            data.annex_b_candidates.append(function_declaration);
+            return {};
+        }));
+    }
+
+    // Pre-compute lexical bindings.
+    MUST(program.for_each_lexically_scoped_declaration([&](Declaration const& declaration) {
+        return declaration.for_each_bound_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
+            data.lexical_bindings.append({ identifier.string(), declaration.is_constant_declaration() });
+            return {};
+        });
+    }));
+
+    return data;
 }
 
 // 19.2.1.3 EvalDeclarationInstantiation ( body, varEnv, lexEnv, privateEnv, strict ), https://tc39.es/ecma262/#sec-evaldeclarationinstantiation
@@ -868,9 +910,9 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, EvalDeclarationDa
         HashTable<Utf16FlyString> hoisted_functions;
 
         // b. For each FunctionDeclaration f that is directly contained in the StatementList of a Block, CaseClause, or DefaultClause Contained within body, do
-        for (size_t i = 0; i < data.annex_b_candidate_names.size(); ++i) {
+        for (auto& function_declaration : data.annex_b_candidates) {
             // i. Let F be StringValue of the BindingIdentifier of f.
-            auto& function_name = data.annex_b_candidate_names[i];
+            auto function_name = function_declaration->name();
 
             // ii. If replacing the FunctionDeclaration f with a VariableStatement that has F as a BindingIdentifier would not produce any Early Errors for body, then
             // Note: This is checked during parsing and for_each_function_hoistable_with_annexB_extension so it always passes here.
@@ -952,6 +994,7 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, EvalDeclarationDa
             //     iii. Let fobj be ! benv.GetBindingValue(F, false).
             //     iv. Perform ? genv.SetMutableBinding(F, fobj, false).
             //     v. Return unused.
+            function_declaration->set_should_do_additional_annexB_steps();
         }
     }
 
@@ -1003,7 +1046,7 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, EvalDeclarationDa
         // b. Let fo be InstantiateFunctionObject of f with arguments lexEnv and privateEnv.
         auto function = ECMAScriptFunctionObject::create_from_function_data(
             realm,
-            *function_to_initialize.shared_data,
+            function_to_initialize.shared_data,
             lexical_environment,
             private_environment);
 
@@ -1085,7 +1128,7 @@ Object* create_unmapped_arguments_object(VM& vm, ReadonlySpan<Value> arguments)
         auto value = arguments[index];
 
         // b. Perform ! CreateDataPropertyOrThrow(obj, ! ToString(𝔽(index)), val).
-        object->indexed_put(index, value);
+        object->indexed_properties().put(index, value);
 
         // c. Set index to index + 1.
     }
@@ -1128,7 +1171,7 @@ Object* create_mapped_arguments_object(VM& vm, FunctionObject& function, Readonl
         auto value = arguments[index];
 
         // b. Perform ! CreateDataPropertyOrThrow(obj, ! ToString(𝔽(index)), val).
-        object->indexed_put(index, value);
+        object->indexed_properties().put(index, value);
 
         // c. Set index to index + 1.
     }

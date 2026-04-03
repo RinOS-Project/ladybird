@@ -46,7 +46,7 @@ struct addrinfo;
 struct sockaddr;
 #endif
 
-#if !defined(AK_OS_BSD_GENERIC) && !defined(AK_OS_ANDROID) && !defined(AK_OS_WINDOWS)
+#if !defined(AK_OS_BSD_GENERIC) && !defined(AK_OS_ANDROID) && !defined(AK_OS_WINDOWS) && !defined(AK_OS_RINOS)
 #    include <shadow.h>
 #endif
 
@@ -135,6 +135,7 @@ CORE_API ErrorOr<void> kill(pid_t, int signal);
 CORE_API ErrorOr<void> chown(StringView pathname, uid_t uid, gid_t gid);
 ErrorOr<pid_t> posix_spawn(StringView path, posix_spawn_file_actions_t const* file_actions, posix_spawnattr_t const* attr, char* const arguments[], char* const envp[]);
 ErrorOr<pid_t> posix_spawnp(StringView path, posix_spawn_file_actions_t* const file_actions, posix_spawnattr_t* const attr, char* const arguments[], char* const envp[]);
+CORE_API ErrorOr<pid_t> spawn_process(StringView path, char* const arguments[], char* const envp[], int takeover_fd, StringView takeover_name);
 
 struct WaitPidResult {
     pid_t pid;

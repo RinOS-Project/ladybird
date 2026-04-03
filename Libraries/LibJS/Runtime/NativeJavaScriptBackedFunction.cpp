@@ -5,12 +5,13 @@
  */
 
 #include <AK/TypeCasts.h>
+#include <LibJS/Bytecode/BuiltinAbstractOperationsEnabled.h>
+#include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Runtime/AsyncFunctionDriverWrapper.h>
 #include <LibJS/Runtime/AsyncGenerator.h>
 #include <LibJS/Runtime/GeneratorObject.h>
 #include <LibJS/Runtime/NativeJavaScriptBackedFunction.h>
-#include <LibJS/RustIntegration.h>
 
 namespace JS {
 
@@ -80,11 +81,12 @@ ThrowCompletionOr<Value> NativeJavaScriptBackedFunction::call()
 
     auto& realm = *vm.current_realm();
     if (kind == FunctionKind::AsyncGenerator)
-        return AsyncGenerator::create(realm, GC::Ref { *this }, vm.running_execution_context().copy());
+        return AsyncGenerator::create(realm, result, GC::Ref { *this }, vm.running_execution_context().copy());
 
-    auto generator_object = GeneratorObject::create(realm, GC::Ref { *this }, vm.running_execution_context().copy());
+    auto generator_object = GeneratorObject::create(realm, result, GC::Ref { *this }, vm.running_execution_context().copy());
 
-    // NOTE: Async functions are entirely transformed to generator functions, and wrapped in a custom driver that returns a promise.
+    // NOTE: Async functions are entirely transformed to generator functions, and wrapped in a custom driver that returns a promise
+    //       See AwaitExpression::generate_bytecode() for the transformation.
     if (kind == FunctionKind::Async)
         return AsyncFunctionDriverWrapper::create(realm, generator_object);
 
@@ -96,12 +98,7 @@ Bytecode::Executable& NativeJavaScriptBackedFunction::bytecode_executable()
 {
     auto& executable = m_shared_function_instance_data->m_executable;
     if (!executable) {
-        auto rust_executable = RustIntegration::compile_function(vm(), *m_shared_function_instance_data, true);
-        VERIFY(rust_executable);
-        executable = rust_executable;
-        executable->name = m_shared_function_instance_data->m_name;
-        if (Bytecode::g_dump_bytecode)
-            executable->dump();
+        executable = Bytecode::compile(vm(), m_shared_function_instance_data, Bytecode::BuiltinAbstractOperationsEnabled::Yes);
         m_shared_function_instance_data->clear_compile_inputs();
     }
 

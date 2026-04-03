@@ -7,7 +7,9 @@
 #include <LibCore/EventLoop.h>
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibMedia/Demuxer.h>
+#ifndef AK_OS_RINOS
 #include <LibMedia/FFmpeg/FFmpegVideoDecoder.h>
+#endif
 #include <LibMedia/Providers/MediaTimeProvider.h>
 #include <LibMedia/Sinks/VideoSink.h>
 #include <LibMedia/VideoDecoder.h>
@@ -20,6 +22,13 @@ namespace Media {
 
 DecoderErrorOr<NonnullRefPtr<VideoDataProvider>> VideoDataProvider::try_create(NonnullRefPtr<Core::WeakEventLoopReference> const& main_thread_event_loop, NonnullRefPtr<Demuxer> const& demuxer, Track const& track, RefPtr<MediaTimeProvider> const& time_provider)
 {
+#ifdef AK_OS_RINOS
+    (void)main_thread_event_loop;
+    (void)demuxer;
+    (void)track;
+    (void)time_provider;
+    return DecoderError::with_description(DecoderErrorCategory::NotImplemented, "RinOS disables video decoding in the Ladybird target build"sv);
+#else
     TRY(demuxer->create_context_for_track(track));
     auto duration = TRY(demuxer->duration_of_track(track));
     auto thread_data = DECODER_TRY_ALLOC(try_make_ref_counted<VideoDataProvider::ThreadData>(main_thread_event_loop, demuxer, track, duration, time_provider));
@@ -40,6 +49,7 @@ DecoderErrorOr<NonnullRefPtr<VideoDataProvider>> VideoDataProvider::try_create(N
     thread->detach();
 
     return provider;
+#endif
 }
 
 VideoDataProvider::VideoDataProvider(NonnullRefPtr<ThreadData> const& thread_state)
@@ -108,10 +118,14 @@ VideoDataProvider::ThreadData::ThreadData(NonnullRefPtr<Core::WeakEventLoopRefer
 
 DecoderErrorOr<void> VideoDataProvider::ThreadData::create_decoder()
 {
+#ifdef AK_OS_RINOS
+    return DecoderError::with_description(DecoderErrorCategory::NotImplemented, "RinOS disables video decoding in the Ladybird target build"sv);
+#else
     auto codec_id = TRY(m_demuxer->get_codec_id_for_track(m_track));
     auto codec_initialization_data = TRY(m_demuxer->get_codec_initialization_data_for_track(m_track));
     m_decoder = TRY(FFmpeg::FFmpegVideoDecoder::try_create(codec_id, codec_initialization_data));
     return {};
+#endif
 }
 
 bool VideoDataProvider::is_blocked() const

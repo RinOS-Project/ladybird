@@ -71,6 +71,7 @@ WebIDL::ExceptionOr<GC::Ptr<JavaScriptModuleScript>> JavaScriptModuleScript::cre
     return script;
 }
 
+#ifndef AK_OS_RINOS
 WebIDL::ExceptionOr<GC::Ptr<JavaScriptModuleScript>> JavaScriptModuleScript::create_from_pre_parsed(ByteString const& filename, NonnullRefPtr<JS::SourceCode const> source_code, JS::Realm& realm, URL::URL base_url, JS::FFI::ParsedProgram* parsed)
 {
     auto script = realm.create<JavaScriptModuleScript>(move(base_url), filename, realm);
@@ -90,6 +91,7 @@ WebIDL::ExceptionOr<GC::Ptr<JavaScriptModuleScript>> JavaScriptModuleScript::cre
     script->m_record = result.value();
     return script;
 }
+#endif
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#run-a-module-script
 // https://whatpr.org/html/9893/webappapis.html#run-a-module-script

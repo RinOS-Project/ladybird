@@ -4,12 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <harfbuzz/hb.h>
-
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/Font/FontVariationSettings.h>
 #include <LibGfx/Font/Typeface.h>
 #ifndef AK_OS_RINOS
+#include <harfbuzz/hb.h>
 #include <LibGfx/Font/TypefaceSkia.h>
 #endif
 
@@ -40,7 +39,7 @@ ErrorOr<NonnullRefPtr<Typeface>> Typeface::try_load_from_externally_owned_memory
 #ifdef AK_OS_RINOS
     (void)bytes;
     (void)ttc_index;
-    return Error::from_string_literal("Typeface loading requires Skia on non-RinOS");
+    return Error::from_string_literal("Typeface loading is unavailable on this RinOS build");
 #else
     return TypefaceSkia::load_from_buffer(bytes, ttc_index);
 #endif
@@ -50,10 +49,12 @@ Typeface::Typeface() = default;
 
 Typeface::~Typeface()
 {
+#ifndef AK_OS_RINOS
     if (m_harfbuzz_face)
         hb_face_destroy(m_harfbuzz_face);
     if (m_harfbuzz_blob)
         hb_blob_destroy(m_harfbuzz_blob);
+#endif
 }
 
 NonnullRefPtr<Font> Typeface::font(float point_size, FontVariationSettings const& variations, Gfx::ShapeFeatures const& shape_features) const
@@ -85,11 +86,15 @@ NonnullRefPtr<Font> Typeface::font(float point_size, FontVariationSettings const
 
 hb_face_t* Typeface::harfbuzz_typeface() const
 {
+#ifdef AK_OS_RINOS
+    return nullptr;
+#else
     if (!m_harfbuzz_blob)
         m_harfbuzz_blob = hb_blob_create(reinterpret_cast<char const*>(buffer().data()), buffer().size(), HB_MEMORY_MODE_READONLY, nullptr, [](void*) { });
     if (!m_harfbuzz_face)
         m_harfbuzz_face = hb_face_create(m_harfbuzz_blob, ttc_index());
     return m_harfbuzz_face;
+#endif
 }
 
 }

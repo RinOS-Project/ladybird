@@ -5,6 +5,7 @@
  */
 
 #include <LibCore/Directory.h>
+#include <AK/StringBuilder.h>
 #include <LibCore/System.h>
 
 namespace Core {
@@ -63,7 +64,11 @@ ErrorOr<Directory> Directory::create(LexicalPath path, CreateDirectories create_
     if (create_directories == CreateDirectories::Yes)
         TRY(ensure_directory(path, creation_mode));
     // FIXME: doesn't work on Linux probably
+#ifdef AK_OS_RINOS
+    auto fd = TRY(System::open(path.string(), O_DIRECTORY | O_CLOEXEC));
+#else
     auto fd = TRY(System::open(path.string(), O_CLOEXEC));
+#endif
     return adopt_fd(fd, move(path));
 }
 
@@ -90,7 +95,19 @@ ErrorOr<NonnullOwnPtr<File>> Directory::open(StringView filename, File::OpenMode
 
 ErrorOr<struct stat> Directory::stat(StringView filename, int flags) const
 {
+#ifdef AK_OS_RINOS
+    StringBuilder builder;
+    TRY(builder.try_append(m_path.string()));
+    if (!m_path.string().ends_with('/'))
+        TRY(builder.try_append('/'));
+    TRY(builder.try_append(filename));
+    auto full_path = builder.to_byte_string();
+    if (flags & AT_SYMLINK_NOFOLLOW)
+        return System::lstat(full_path);
+    return System::stat(full_path);
+#else
     return System::fstatat(m_directory_fd, filename, flags);
+#endif
 }
 
 ErrorOr<struct stat> Directory::stat() const

@@ -79,9 +79,9 @@ namespace JS::Bytecode {
 
 // The asm interpreter is available on x86_64 (non-Windows) and AArch64.
 // Win64 uses a different ABI that the x86_64 backend doesn't support yet.
-#if ARCH(AARCH64)
+#if ARCH(AARCH64) && !defined(AK_OS_RINOS)
 #    define HAS_ASM_INTERPRETER 1
-#elif ARCH(X86_64) && !defined(_WIN32)
+#elif ARCH(X86_64) && !defined(_WIN32) && !defined(AK_OS_RINOS)
 #    define HAS_ASM_INTERPRETER 1
 #else
 #    define HAS_ASM_INTERPRETER 0

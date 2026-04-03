@@ -23,7 +23,9 @@
 #include <LibWeb/SRI/SRI.h>
 #include <LibWeb/TrustedTypes/RequireTrustedTypesForDirective.h>
 #include <LibWeb/TrustedTypes/TrustedTypePolicy.h>
+#if !defined(AK_OS_RINOS)
 #include <LibWeb/WebAssembly/WebAssembly.h>
+#endif
 
 namespace Web::ContentSecurityPolicy {
 
@@ -685,7 +687,11 @@ JS::ThrowCompletionOr<void> ensure_csp_does_not_block_wasm_byte_compilation(JS::
 
     // 4. If result is "Blocked", throw a WebAssembly.CompileError exception.
     if (result == Directives::Directive::Result::Blocked) {
+#if defined(AK_OS_RINOS)
+        return realm.vm().throw_completion<JS::TypeError>("WebAssembly is disabled on RinOS"sv);
+#else
         return realm.vm().throw_completion<WebAssembly::CompileError>("Blocked by Content Security Policy"sv);
+#endif
     }
 
     return {};

@@ -8,6 +8,7 @@
  */
 
 #include <AK/ByteString.h>
+#include <AK/LexicalPath.h>
 #include <AK/ScopeGuard.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
@@ -80,6 +81,11 @@ Process Process::current()
 {
     auto p = Process { getpid() };
     return p;
+}
+
+Process Process::from_pid(pid_t pid)
+{
+    return Process { pid };
 }
 
 ErrorOr<Process> Process::spawn(ProcessSpawnOptions const& options)
@@ -163,9 +169,12 @@ ErrorOr<String> Process::get_name()
     if (rc != 0)
         return Error::from_syscall("get_process_name"sv, rc);
     return String::from_utf8(StringView { buffer, strlen(buffer) });
-#elif defined(AK_LIBC_GLIBC) || (defined(AK_OS_LINUX) && !defined(AK_OS_ANDROID))
+#elif defined(AK_LIBC_GLIBC) || (defined(AK_OS_LINUX) && !defined(AK_OS_ANDROID) && !defined(AK_OS_RINOS))
     return String::from_utf8(StringView { program_invocation_name, strlen(program_invocation_name) });
-#elif defined(AK_OS_BSD_GENERIC) || defined(AK_OS_HAIKU) || defined(AK_OS_RINOS)
+#elif defined(AK_OS_RINOS)
+    auto path = TRY(Core::System::current_executable_path());
+    return String::from_utf8(AK::LexicalPath(path).title());
+#elif defined(AK_OS_BSD_GENERIC) || defined(AK_OS_HAIKU)
     auto const* progname = getprogname();
     return String::from_utf8(StringView { progname, strlen(progname) });
 #else
@@ -176,7 +185,11 @@ ErrorOr<String> Process::get_name()
 
 ErrorOr<bool> Process::is_being_debugged()
 {
-#if defined(AK_OS_LINUX)
+#if defined(AK_OS_RINOS)
+    // RinOS does not expose Linux's /proc/self/status interface yet.
+    // Report "not being debugged" until a native debugger detection path exists.
+    return false;
+#elif defined(AK_OS_LINUX)
     auto unbuffered_status_file = TRY(Core::File::open("/proc/self/status"sv, Core::File::OpenMode::Read));
     auto status_file = TRY(Core::InputBufferedFile::create(move(unbuffered_status_file)));
     auto buffer = TRY(ByteBuffer::create_uninitialized(4096));

@@ -44,6 +44,7 @@ public:
         auto* values = registers_and_constants_and_locals_and_arguments();
         for (size_t i = 0; i < registers_and_constants_and_locals_and_arguments_count; ++i)
             values[i] = js_special_empty_value();
+        arguments = { values + registers_and_locals_count + constants_count, arguments_count_ };
     }
 
     void operator delete(void* ptr);
@@ -54,6 +55,10 @@ public:
     GC::Ptr<Environment> lexical_environment;        // [[LexicalEnvironment]]
     GC::Ptr<Environment> variable_environment;       // [[VariableEnvironment]]
     GC::Ptr<PrivateEnvironment> private_environment; // [[PrivateEnvironment]]
+    GC::Ptr<Object> global_object;
+    GC::Ptr<DeclarativeEnvironment> global_declarative_environment;
+    Utf16FlyString const* identifier_table { nullptr };
+    PropertyKey const* property_key_table { nullptr };
 
     u32 program_counter { 0 };
 
@@ -73,6 +78,8 @@ public:
     Optional<Value> this_value;
 
     GC::Ptr<Bytecode::Executable> executable;
+    Span<Value> arguments;
+    GC::Ptr<GC::Cell> context_owner;
 
     Span<Value> registers_and_constants_and_locals_and_arguments_span()
     {
@@ -86,19 +93,19 @@ public:
 
     Value argument(size_t index) const
     {
-        if (index >= argument_count) [[unlikely]]
+        if (index >= arguments.size()) [[unlikely]]
             return js_undefined();
-        return arguments_data()[index];
+        return arguments[index];
     }
 
     Span<Value> arguments_span()
     {
-        return { arguments_data(), argument_count };
+        return arguments;
     }
 
     ReadonlySpan<Value> arguments_span() const
     {
-        return { arguments_data(), argument_count };
+        return arguments;
     }
 
     Value* arguments_data()
@@ -134,6 +141,28 @@ public:
 };
 
 static_assert(IsTriviallyDestructible<ExecutionContext>);
+
+#define ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK_WITHOUT_CLEARING_ARGS(execution_context, \
+    registers_and_locals_count,                                                             \
+    constants_count,                                                                        \
+    arguments_count)                                                                        \
+    auto execution_context_size = sizeof(JS::ExecutionContext)                              \
+        + (((registers_and_locals_count) + (constants_count) + (arguments_count))           \
+            * sizeof(JS::Value));                                                           \
+                                                                                           \
+    void* execution_context_memory = __builtin_alloca(execution_context_size);              \
+                                                                                           \
+    execution_context = new (execution_context_memory)                                      \
+        JS::ExecutionContext((registers_and_locals_count), (constants_count), (arguments_count));
+
+#define ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(execution_context, registers_and_locals_count, \
+    constants_count, arguments_count)                                                             \
+    ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK_WITHOUT_CLEARING_ARGS(execution_context,           \
+        registers_and_locals_count, constants_count, arguments_count);                            \
+    do {                                                                                          \
+        for (size_t i = 0; i < execution_context->arguments.size(); ++i)                          \
+            execution_context->arguments[i] = JS::js_undefined();                                 \
+    } while (0)
 
 struct StackTraceElement {
     ExecutionContext* execution_context { nullptr };

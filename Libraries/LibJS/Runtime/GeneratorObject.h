@@ -17,7 +17,7 @@ class GeneratorObject : public Object {
     GC_DECLARE_ALLOCATOR(GeneratorObject);
 
 public:
-    static GC::Ref<GeneratorObject> create(Realm&, Variant<GC::Ref<ECMAScriptFunctionObject>, GC::Ref<NativeJavaScriptBackedFunction>>, NonnullOwnPtr<ExecutionContext>);
+    static GC::Ref<GeneratorObject> create(Realm&, Value initial_value, Variant<GC::Ref<ECMAScriptFunctionObject>, GC::Ref<NativeJavaScriptBackedFunction>>, NonnullOwnPtr<ExecutionContext>);
     virtual ~GeneratorObject() override = default;
     void visit_edges(Cell::Visitor&) override;
 

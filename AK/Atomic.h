@@ -220,7 +220,7 @@ public:
 
 template<Integral T, MemoryOrder DefaultMemoryOrder>
 class Atomic<T, DefaultMemoryOrder> {
-    T m_value { 0 };
+    alignas(sizeof(T) > alignof(T) ? sizeof(T) : alignof(T)) T m_value { 0 };
 
 public:
     Atomic() noexcept = default;

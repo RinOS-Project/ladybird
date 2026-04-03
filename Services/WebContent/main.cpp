@@ -61,7 +61,7 @@
 #    include <SDL3/SDL_init.h>
 #endif
 
-#if !defined(AK_OS_WINDOWS)
+#if !defined(AK_OS_WINDOWS) && !defined(AK_OS_RINOS)
 #    include <signal.h>
 static void crash_signal_handler(int signo)
 {
@@ -114,7 +114,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 {
     AK::set_rich_debug_enabled(true);
 
-#if !defined(AK_OS_WINDOWS)
+#if !defined(AK_OS_WINDOWS) && !defined(AK_OS_RINOS)
     install_crash_signal_handlers();
 #endif
 
@@ -209,13 +209,13 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 
     // Always use the CPU backend for tests, as the GPU backend is not deterministic
     if (force_cpu_painting) {
-        WebContent::PageClient::set_use_skia_painter(WebContent::PageClient::UseSkiaPainter::CPUBackend);
+        WebContent::PageClient::set_painter_backend_preference(WebContent::PageClient::PainterBackendPreference::CPUBackend);
     } else {
 #if RINOS_USE_SKIA_GRAPHICS
         Gfx::SkiaBackendContext::initialize_gpu_backend();
-        WebContent::PageClient::set_use_skia_painter(WebContent::PageClient::UseSkiaPainter::GPUBackendIfAvailable);
+        WebContent::PageClient::set_painter_backend_preference(WebContent::PageClient::PainterBackendPreference::GPUBackendIfAvailable);
 #else
-        WebContent::PageClient::set_use_skia_painter(WebContent::PageClient::UseSkiaPainter::CPUBackend);
+        WebContent::PageClient::set_painter_backend_preference(WebContent::PageClient::PainterBackendPreference::CPUBackend);
 #endif
     }
 

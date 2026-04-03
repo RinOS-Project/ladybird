@@ -9,6 +9,9 @@
 #include <LibCore/StandardPaths.h>
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/Font/FontDatabase.h>
+#ifdef AK_OS_RINOS
+#    include <LibGfx/Font/TypefaceRinOS.h>
+#endif
 #ifndef AK_OS_RINOS
 #include <LibGfx/Font/TypefaceSkia.h>
 #endif
@@ -57,7 +60,7 @@ RefPtr<Gfx::Font> FontDatabase::get_font_for_code_point(u32 code_point, float po
     CodePointFallbackKey key { code_point, weight, width, slope };
     auto& entry = m_code_point_fallback_cache.ensure(key, [&]() -> CodePointFallbackEntry {
 #ifdef AK_OS_RINOS
-        return { {}, nullptr };
+        return { TypefaceRinOS::the().family(), static_cast<Typeface const&>(TypefaceRinOS::the()) };
 #else
         auto typeface_or_error = TypefaceSkia::find_typeface_for_code_point(code_point, weight, width, slope);
         if (typeface_or_error.is_error() || !typeface_or_error.value())

@@ -11,11 +11,12 @@
 #include <AK/StringBuilder.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/ECMAScriptFunctionObject.h>
+#include <LibJS/Runtime/FunctionConstructor.h>
 #include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/ObjectEnvironment.h>
+#include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/VM.h>
-#include <LibJS/RustIntegration.h>
 #include <LibWeb/Bindings/EventTargetPrototype.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
@@ -428,32 +429,23 @@ WebIDL::CallbackType* EventTarget::get_current_value_of_event_handler(FlyString 
         // 6. Let settings object be the relevant settings object of document.
         auto& settings_object = document->relevant_settings_object();
 
-        // Build source text and parameter strings for the event handler function.
-        StringBuilder source_builder;
-        StringView parameters_string;
-
-        // sourceText / ParameterList
-        if (name == HTML::EventNames::error && is<HTML::Window>(this)) {
-            //  -> If name is onerror and eventTarget is a Window object
-            //      Let the function have five arguments, named event, source, lineno, colno, and error.
-            source_builder.appendff("function {}(event, source, lineno, colno, error) {{\n{}\n}}", name, body);
-            parameters_string = "event, source, lineno, colno, error"sv;
-        } else {
-            //  -> Otherwise
-            //      Let the function have a single argument called event.
-            source_builder.appendff("function {}(event) {{\n{}\n}}", name, body);
-            parameters_string = "event"sv;
-        }
-
-        auto source_text = source_builder.to_byte_string();
-
         auto& vm = Bindings::main_thread_vm();
-
-        auto rust_compilation = JS::RustIntegration::compile_dynamic_function(
-            vm, source_text, parameters_string, body, JS::FunctionKind::Normal);
+        Vector<JS::Value> parameter_args;
+        if (name == HTML::EventNames::error && is<HTML::Window>(this)) {
+            parameter_args.ensure_capacity(5);
+            parameter_args.append(JS::PrimitiveString::create(vm, "event"sv));
+            parameter_args.append(JS::PrimitiveString::create(vm, "source"sv));
+            parameter_args.append(JS::PrimitiveString::create(vm, "lineno"sv));
+            parameter_args.append(JS::PrimitiveString::create(vm, "colno"sv));
+            parameter_args.append(JS::PrimitiveString::create(vm, "error"sv));
+        } else {
+            parameter_args.append(JS::PrimitiveString::create(vm, "event"sv));
+        }
+        auto compiled_function = JS::FunctionConstructor::compile_dynamic_function(
+            vm, JS::FunctionKind::Normal, parameter_args, JS::PrimitiveString::create(vm, body));
 
         // 7. If body is not parsable as FunctionBody or if parsing detects an early error, then follow these substeps:
-        if (!rust_compilation.has_value() || rust_compilation->is_error()) {
+        if (compiled_function.is_throw_completion()) {
             // 1. Set eventHandler's value to null.
             handler_map.remove(event_handler_iterator);
 
@@ -489,9 +481,10 @@ WebIDL::CallbackType* EventTarget::get_current_value_of_event_handler(FlyString 
         // 9. Let function be the result of calling OrdinaryFunctionCreate.
         auto function = JS::ECMAScriptFunctionObject::create_from_function_data(
             realm,
-            rust_compilation->value(),
+            compiled_function.release_value(),
             scope,
             nullptr);
+        function->set_name(Utf16FlyString::from_utf8(name));
 
         // 10. Remove settings object's realm execution context from the JavaScript execution context stack.
         VERIFY(vm.execution_context_stack().last() == &settings_object.realm_execution_context());

@@ -15,6 +15,25 @@ namespace Core {
 HashMap<ByteString, int> s_overtaken_sockets {};
 bool s_overtaken_sockets_parsed { false };
 
+#if defined(AK_OS_RINOS)
+static ErrorOr<int> find_single_inherited_socket_fallback()
+{
+    Optional<int> candidate;
+
+    for (int fd = 3; fd < 1024; ++fd) {
+        if (!System::is_socket(fd))
+            continue;
+        if (candidate.has_value())
+            return Error::from_string_literal("Multiple inherited sockets found without takeover metadata");
+        candidate = fd;
+    }
+
+    if (!candidate.has_value())
+        return Error::from_string_literal("No inherited socket found without takeover metadata");
+    return candidate.release_value();
+}
+#endif
+
 static void parse_sockets_from_system_server()
 {
     VERIFY(!s_overtaken_sockets_parsed);
@@ -46,8 +65,18 @@ ErrorOr<NonnullOwnPtr<Core::LocalSocket>> take_over_socket_from_system_server(By
     int fd;
     if (socket_path.is_empty()) {
         // We want the first (and only) socket.
-        VERIFY(s_overtaken_sockets.size() == 1);
-        fd = s_overtaken_sockets.begin()->value;
+        if (s_overtaken_sockets.size() == 1) {
+            fd = s_overtaken_sockets.begin()->value;
+        }
+#if defined(AK_OS_RINOS)
+        else {
+            fd = TRY(find_single_inherited_socket_fallback());
+        }
+#else
+        else {
+            return Error::from_string_literal("Expected exactly one socket takeover entry");
+        }
+#endif
     } else {
         auto it = s_overtaken_sockets.find(socket_path);
         if (it == s_overtaken_sockets.end())

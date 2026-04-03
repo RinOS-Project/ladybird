@@ -53,8 +53,10 @@
 #include <LibWeb/UIEvents/PointerEvent.h>
 #include <LibWeb/UIEvents/WheelEvent.h>
 
-#include <SDL3/SDL_events.h>
-#include <SDL3/SDL_joystick.h>
+#if !defined(AK_OS_RINOS)
+#    include <SDL3/SDL_events.h>
+#    include <SDL3/SDL_joystick.h>
+#endif
 
 namespace Web {
 
@@ -1929,36 +1931,49 @@ EventResult EventHandler::handle_paste(Utf16String const& text)
 
 void EventHandler::handle_gamepad_connected(SDL_JoystickID sdl_joystick_id)
 {
+#if defined(AK_OS_RINOS)
+    (void)sdl_joystick_id;
+#else
     auto active_document = m_navigable->active_document();
     if (active_document)
         active_document->window()->navigator()->handle_gamepad_connected(sdl_joystick_id);
 
     for (auto const& child_navigable : m_navigable->child_navigables())
         child_navigable->event_handler().handle_gamepad_connected(sdl_joystick_id);
+#endif
 }
 
 void EventHandler::handle_gamepad_updated(SDL_JoystickID sdl_joystick_id)
 {
+#if defined(AK_OS_RINOS)
+    (void)sdl_joystick_id;
+#else
     auto active_document = m_navigable->active_document();
     if (active_document)
         active_document->window()->navigator()->handle_gamepad_updated({}, sdl_joystick_id);
 
     for (auto const& child_navigable : m_navigable->child_navigables())
         child_navigable->event_handler().handle_gamepad_updated(sdl_joystick_id);
+#endif
 }
 
 void EventHandler::handle_gamepad_disconnected(SDL_JoystickID sdl_joystick_id)
 {
+#if defined(AK_OS_RINOS)
+    (void)sdl_joystick_id;
+#else
     auto active_document = m_navigable->active_document();
     if (active_document)
         active_document->window()->navigator()->handle_gamepad_disconnected({}, sdl_joystick_id);
 
     for (auto const& child_navigable : m_navigable->child_navigables())
         child_navigable->event_handler().handle_gamepad_disconnected(sdl_joystick_id);
+#endif
 }
 
 void EventHandler::handle_sdl_input_events()
 {
+#if !defined(AK_OS_RINOS)
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
@@ -1975,6 +1990,7 @@ void EventHandler::handle_sdl_input_events()
             break;
         }
     }
+#endif
 }
 
 CSSPixelPoint EventHandler::compute_mouse_event_page_offset(CSSPixelPoint event_client_offset) const

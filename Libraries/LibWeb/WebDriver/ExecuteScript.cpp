@@ -6,11 +6,11 @@
  */
 
 #include <LibJS/Runtime/ECMAScriptFunctionObject.h>
+#include <LibJS/Runtime/FunctionConstructor.h>
 #include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/ObjectEnvironment.h>
-#include <LibJS/Runtime/PromiseConstructor.h>
+#include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/SharedFunctionInstanceData.h>
-#include <LibJS/RustIntegration.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
@@ -44,23 +44,21 @@ static JS::ThrowCompletionOr<JS::Value> execute_a_function_body(HTML::BrowsingCo
     // 2. Let environment settings be the environment settings object for window.
     auto& environment_settings = Web::HTML::relevant_settings_object(*window);
 
-    // 3. Let global scope be environment settings realm’s global environment.
     auto& realm = environment_settings.realm();
-    auto& global_scope = realm.global_environment();
 
     // FIXME: This does not handle scripts which contain `await` statements. It is not as as simple as declaring this
     //        function async, unfortunately. See: https://github.com/w3c/webdriver/issues/1436
-    auto source_text = ByteString::formatted(
-        R"~~~(function() {{
-            {}
-        }})~~~",
-        body);
-
-    auto rust_compilation = JS::RustIntegration::compile_dynamic_function(
-        realm.vm(), source_text, ""sv, body, JS::FunctionKind::Normal);
+    Vector<JS::Value> parameter_args;
+    auto function_or_error = JS::FunctionConstructor::create_dynamic_function(
+        realm.vm(),
+        realm.intrinsics().function_constructor(),
+        nullptr,
+        JS::FunctionKind::Normal,
+        parameter_args,
+        JS::PrimitiveString::create(realm.vm(), body));
 
     // 4. If body is not parsable as a FunctionBody or if parsing detects an early error, return Completion { [[Type]]: normal, [[Value]]: null, [[Target]]: empty }.
-    if (!rust_compilation.has_value() || rust_compilation->is_error())
+    if (function_or_error.is_throw_completion())
         return JS::js_null();
 
     // 6. Prepare to run a script with realm.
@@ -70,11 +68,7 @@ static JS::ThrowCompletionOr<JS::Value> execute_a_function_body(HTML::BrowsingCo
     HTML::prepare_to_run_callback(realm);
 
     // 8. Let function be the result of calling FunctionCreate.
-    auto function = JS::ECMAScriptFunctionObject::create_from_function_data(
-        realm,
-        rust_compilation->value(),
-        &global_scope,
-        nullptr);
+    auto function = function_or_error.release_value();
 
     // 9. Let completion be Function.[[Call]](window, parameters) with function as the this value.
     // NOTE: This is not entirely clear, but I don't think they mean actually passing `function` as

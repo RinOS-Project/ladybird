@@ -15,7 +15,9 @@
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Font/PathFontProvider.h>
 #include <LibGfx/Font/Typeface.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/Font/TypefaceSkia.h>
+#endif
 #include <LibWeb/Platform/FontPlugin.h>
 
 namespace Web::Platform {
@@ -157,11 +159,13 @@ FlyString FontPlugin::compute_generic_font_name(GenericFont generic_font, int we
         VERIFY_NOT_REACHED();
     }
 
+#ifndef AK_OS_RINOS
     auto name = Gfx::TypefaceSkia::resolve_generic_family(generic_family_name, weight, slope);
     if (name.has_value()) {
         if (Gfx::FontDatabase::the().get(name.value(), 16, weight, Gfx::FontWidth::Normal, slope))
             return FlyString { name.release_value() };
     }
+#endif
 
     // Score each fallback family based on how well it can satisfy the requested style.
     // Higher score = better match.

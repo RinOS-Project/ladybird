@@ -18,7 +18,7 @@ namespace JS {
 
 GC_DEFINE_ALLOCATOR(AsyncGenerator);
 
-GC::Ref<AsyncGenerator> AsyncGenerator::create(Realm& realm, Variant<GC::Ref<ECMAScriptFunctionObject>, GC::Ref<NativeJavaScriptBackedFunction>> generating_function, NonnullOwnPtr<ExecutionContext> execution_context)
+GC::Ref<AsyncGenerator> AsyncGenerator::create(Realm& realm, [[maybe_unused]] Value initial_value, Variant<GC::Ref<ECMAScriptFunctionObject>, GC::Ref<NativeJavaScriptBackedFunction>> generating_function, NonnullOwnPtr<ExecutionContext> execution_context)
 {
     auto& vm = realm.vm();
     // This is "g1.prototype" in figure-2 (https://tc39.es/ecma262/img/figure-2.png)

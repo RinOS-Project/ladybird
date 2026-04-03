@@ -73,6 +73,7 @@ GC::Ref<ClassicScript> ClassicScript::create(ByteString filename, StringView sou
     return script;
 }
 
+#ifndef AK_OS_RINOS
 GC::Ref<ClassicScript> ClassicScript::create_from_pre_parsed(ByteString filename, NonnullRefPtr<JS::SourceCode const> source_code, JS::Realm& realm, URL::URL base_url, JS::FFI::ParsedProgram* parsed, MutedErrors muted_errors)
 {
     auto& vm = realm.vm();
@@ -104,6 +105,7 @@ GC::Ref<ClassicScript> ClassicScript::create_from_pre_parsed(ByteString filename
 
     return script;
 }
+#endif
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#run-a-classic-script
 // https://whatpr.org/html/9893/webappapis.html#run-a-classic-script

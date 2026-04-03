@@ -36,6 +36,7 @@ static ErrorOr<NonnullRefPtr<ClientType>> launch_server_process(
         arguments.append("--wait-for-debugger"sv);
 
     for (auto [i, path] : enumerate(candidate_server_paths)) {
+        dbgln("[HELPER] {} candidate {} -> {}", server_name, i, path);
         Core::ProcessSpawnOptions options { .name = server_name, .arguments = arguments };
 
         if (browser_options.profile_helper_process == process_type) {
@@ -50,6 +51,7 @@ static ErrorOr<NonnullRefPtr<ClientType>> launch_server_process(
         auto result = WebView::Process::spawn<ClientType>(process_type, move(options), capture_output, forward<ClientArguments>(client_arguments)...);
 
         if (!result.is_error()) {
+            dbgln("[HELPER] {} spawned via {}", server_name, path);
             auto&& [process, client] = result.release_value();
 
             if constexpr (requires { client->set_pid(pid_t {}); })
@@ -71,6 +73,8 @@ static ErrorOr<NonnullRefPtr<ClientType>> launch_server_process(
 
             return move(client);
         }
+
+        dbgln("[HELPER] {} failed via {}: {}", server_name, path, result.error());
 
         if (i == candidate_server_paths.size() - 1) {
             warnln("Could not launch any of {}: {}", candidate_server_paths, result.error());

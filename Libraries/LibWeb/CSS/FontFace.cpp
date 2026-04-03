@@ -11,7 +11,9 @@
 #include <LibGfx/Font/FontSupport.h>
 #include <LibGfx/Font/Typeface.h>
 #include <LibGfx/Font/WOFF/Loader.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/Font/WOFF2/Loader.h>
+#endif
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/FontFacePrototype.h>
@@ -65,11 +67,13 @@ static NonnullRefPtr<Core::Promise<NonnullRefPtr<Gfx::Typeface const>>> load_vec
             promise->resolve(woff.release_value());
             return;
         }
+#ifndef AK_OS_RINOS
         auto woff2 = WOFF2::try_load_from_bytes(data);
         if (!woff2.is_error()) {
             promise->resolve(woff2.release_value());
             return;
         }
+#endif
         promise->reject(Error::from_string_literal("Automatic format detection failed"));
     }));
 

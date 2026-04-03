@@ -56,7 +56,11 @@ if(ENABLE_ALL_THE_DEBUG_MACROS)
     include(all_the_debug_macros)
 endif()
 
-find_package(Threads REQUIRED)
+if (AK_OS_RINOS AND CMAKE_CROSSCOMPILING)
+    add_library(Threads::Threads INTERFACE IMPORTED)
+else()
+    find_package(Threads REQUIRED)
+endif()
 # FIXME: This global link libraries is required to workaround linker issues (on some systems)
 # from the Ladybird import. See https://github.com/SerenityOS/serenity/issues/16847
 link_libraries(Threads::Threads)

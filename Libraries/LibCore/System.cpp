@@ -18,12 +18,19 @@
 #include <stdlib.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
+#if defined(AK_OS_RINOS)
+#    include <sys/syscall.h>
+#    if !defined(SYS_SPAWN_PROCESS)
+#        define SYS_SPAWN_PROCESS 140
+#    endif
+#endif
 
-#if defined(AK_OS_LINUX) && !defined(MFD_CLOEXEC)
+#if defined(AK_OS_LINUX) && !defined(AK_OS_RINOS) && !defined(MFD_CLOEXEC)
 #    include <linux/memfd.h>
 #    include <sys/syscall.h>
 
@@ -33,7 +40,7 @@ static int memfd_create(char const* name, unsigned int flags)
 }
 #endif
 
-#if defined(AK_OS_LINUX)
+#if defined(AK_OS_LINUX) && !defined(AK_OS_RINOS)
 #    include <sys/sendfile.h>
 #endif
 
@@ -145,7 +152,12 @@ ErrorOr<void> munmap(void* address, size_t size)
 ErrorOr<int> anon_create([[maybe_unused]] size_t size, [[maybe_unused]] int options)
 {
     int fd = -1;
-#if defined(AK_OS_LINUX) || defined(AK_OS_FREEBSD) || defined(AK_OS_RINOS)
+#if defined(AK_OS_RINOS)
+    char template_path[] = "/tmp/ladybird-anon-XXXXXX";
+    fd = ::mkstemp(template_path);
+    if (fd >= 0)
+        (void)::unlink(template_path);
+#elif defined(AK_OS_LINUX) || defined(AK_OS_FREEBSD)
     // FIXME: Support more options on Linux.
     auto linux_options = ((options & O_CLOEXEC) > 0) ? MFD_CLOEXEC : 0;
     fd = memfd_create("", linux_options);
@@ -361,6 +373,30 @@ ErrorOr<pid_t> posix_spawn(StringView path, posix_spawn_file_actions_t const* fi
 ErrorOr<pid_t> posix_spawnp(StringView path, posix_spawn_file_actions_t* const file_actions, posix_spawnattr_t* const attr, char* const arguments[], char* const envp[])
 {
     return posix_spawn_wrapper(path, file_actions, attr, arguments, envp, "posix_spawnp"sv, ::posix_spawnp);
+}
+
+ErrorOr<pid_t> spawn_process(StringView path, char* const arguments[], char* const envp[], int takeover_fd, StringView takeover_name)
+{
+#if defined(AK_OS_RINOS)
+    ByteString path_string = path;
+    ByteString takeover_name_string = takeover_name;
+    long pid = syscall(SYS_SPAWN_PROCESS,
+        path_string.characters(),
+        arguments,
+        envp,
+        takeover_fd,
+        takeover_name_string.characters());
+    if (pid < 0)
+        return Error::from_syscall("spawn_process"sv, errno);
+    return static_cast<pid_t>(pid);
+#else
+    (void)path;
+    (void)arguments;
+    (void)envp;
+    (void)takeover_fd;
+    (void)takeover_name;
+    return Error::from_errno(ENOSYS);
+#endif
 }
 
 ErrorOr<off_t> lseek(int fd, off_t offset, int whence)
@@ -630,7 +666,7 @@ ErrorOr<Array<int, 2>> pipe2(int flags)
 {
     Array<int, 2> fds;
 
-#if defined(__unix__)
+#if defined(__unix__) || defined(AK_OS_RINOS)
     if (::pipe2(fds.data(), flags) < 0)
         return Error::from_syscall("pipe2"sv, errno);
 #else
@@ -683,7 +719,7 @@ ErrorOr<ByteString> readlink(StringView pathname)
     // TODO: Get rid of this copy here.
     return ByteString::copy(buffer);
 #else
-    char data[PATH_MAX];
+    char data[4096];
     ByteString path_string = pathname;
     int rc = ::readlink(path_string.characters(), data, sizeof(data));
     if (rc == -1)
@@ -801,7 +837,19 @@ int getpid()
 bool is_socket(int fd)
 {
     auto result = fstat(fd);
-    return !result.is_error() && S_ISSOCK(result.value().st_mode);
+    if (!result.is_error() && S_ISSOCK(result.value().st_mode))
+        return true;
+
+#if defined(AK_OS_RINOS)
+    int socket_type = 0;
+    socklen_t socket_type_size = sizeof(socket_type);
+    auto saved_errno = errno;
+    auto is_socket_fd = ::getsockopt(fd, SOL_SOCKET, SO_TYPE, &socket_type, &socket_type_size) == 0;
+    errno = saved_errno;
+    return is_socket_fd;
+#else
+    return false;
+#endif
 }
 
 ErrorOr<void> sleep_ms(u32 milliseconds)
@@ -826,7 +874,7 @@ ErrorOr<void> set_close_on_exec(int fd, bool enabled)
 
 ErrorOr<size_t> transfer_file_through_socket(int source_fd, int target_fd, size_t source_offset, size_t source_length)
 {
-#if defined(AK_OS_LINUX)
+#if defined(AK_OS_LINUX) && !defined(AK_OS_RINOS)
     auto sent = ::sendfile(target_fd, source_fd, reinterpret_cast<off_t*>(&source_offset), source_length);
     if (sent < 0)
         return Error::from_syscall("sendfile"sv, errno);

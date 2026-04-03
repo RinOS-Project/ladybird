@@ -28,6 +28,8 @@
 
 namespace JS {
 
+class FunctionDeclaration;
+
 GC::Ref<DeclarativeEnvironment> new_declarative_environment(Environment&);
 JS_API GC::Ref<ObjectEnvironment> new_object_environment(Object&, bool is_with_environment, Environment*);
 GC::Ref<FunctionEnvironment> new_function_environment(ECMAScriptFunctionObject&, Object* new_target);
@@ -95,7 +97,7 @@ struct EvalDeclarationData {
     Vector<Utf16FlyString> var_names;
 
     struct FunctionToInitialize {
-        GC::Root<SharedFunctionInstanceData> shared_data;
+        GC::Ref<SharedFunctionInstanceData> shared_data;
         Utf16FlyString name;
     };
     Vector<FunctionToInitialize> functions_to_initialize;
@@ -103,13 +105,15 @@ struct EvalDeclarationData {
 
     Vector<Utf16FlyString> var_scoped_names;
 
-    Vector<Utf16FlyString> annex_b_candidate_names;
+    Vector<NonnullRefPtr<FunctionDeclaration>> annex_b_candidates;
 
     struct LexicalBinding {
         Utf16FlyString name;
         bool is_constant { false };
     };
     Vector<LexicalBinding> lexical_bindings;
+
+    static EvalDeclarationData create(VM&, Program const&, bool strict);
 };
 
 ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, EvalDeclarationData&, Environment* variable_environment, Environment* lexical_environment, PrivateEnvironment* private_environment, bool strict);

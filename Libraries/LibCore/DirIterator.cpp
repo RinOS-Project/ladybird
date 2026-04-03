@@ -6,8 +6,10 @@
  */
 
 #include <LibCore/DirIterator.h>
+#include <AK/StringBuilder.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <string.h>
 #include <sys/stat.h>
 
 namespace Core {
@@ -86,7 +88,17 @@ bool DirIterator::advance_next()
             // the calling code will be given the raw unknown type.
             if ((m_flags & Flags::NoStat) == 0 && m_next->type == DirectoryEntry::Type::Unknown) {
                 struct stat statbuf;
+#ifdef AK_OS_RINOS
+                StringBuilder builder;
+                builder.append(m_path);
+                if (!m_path.ends_with('/'))
+                    builder.append('/');
+                builder.append(de->d_name, strlen(de->d_name));
+                auto full_path = builder.to_byte_string();
+                if (lstat(full_path.characters(), &statbuf) < 0) {
+#else
                 if (fstatat(dirfd(m_dir), de->d_name, &statbuf, AT_SYMLINK_NOFOLLOW) < 0) {
+#endif
                     m_error = Error::from_errno(errno);
                     dbgln("DirIteration error: {}", m_error.value());
                     return false;

@@ -1271,7 +1271,10 @@ DecoderErrorOr<String> Streamer::read_string()
     auto string_length = TRY(read_variable_size_integer());
     auto string_data = TRY(read_raw_octets(string_length));
     auto const* string_data_raw = reinterpret_cast<char const*>(string_data.data());
-    auto string_value = String::from_utf8(ReadonlyBytes(string_data.data(), strnlen(string_data_raw, string_length)));
+    size_t actual_length = 0;
+    while (actual_length < string_length && string_data_raw[actual_length] != '\0')
+        ++actual_length;
+    auto string_value = String::from_utf8(ReadonlyBytes(string_data.data(), actual_length));
     if (string_value.is_error())
         return DecoderError::format(DecoderErrorCategory::Invalid, "String is not valid UTF-8");
     return string_value.release_value();

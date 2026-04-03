@@ -17,7 +17,11 @@ namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/canvas.html#offscreenrenderingcontext
 // NOTE: This is the Variant created by the IDL wrapper generator, and needs to be updated accordingly.
+#if defined(AK_OS_RINOS)
+using OffscreenRenderingContext = GC::Ptr<OffscreenCanvasRenderingContext2D>;
+#else
 using OffscreenRenderingContext = Variant<GC::Root<OffscreenCanvasRenderingContext2D>, GC::Root<WebGL::WebGLRenderingContext>, GC::Root<WebGL::WebGL2RenderingContext>, Empty>;
+#endif
 
 // https://html.spec.whatwg.org/multipage/canvas.html#imageencodeoptions
 struct ImageEncodeOptions {
@@ -82,7 +86,11 @@ private:
     void reset_context_to_default_state();
     WebIDL::ExceptionOr<void> set_new_bitmap_size(Gfx::IntSize new_size);
 
+#if defined(AK_OS_RINOS)
+    Variant<GC::Ref<HTML::OffscreenCanvasRenderingContext2D>, Empty> m_context;
+#else
     Variant<GC::Ref<HTML::OffscreenCanvasRenderingContext2D>, GC::Ref<WebGL::WebGLRenderingContext>, GC::Ref<WebGL::WebGL2RenderingContext>, Empty> m_context;
+#endif
 
     RefPtr<Gfx::Bitmap> m_bitmap;
 };

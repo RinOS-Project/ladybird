@@ -357,8 +357,8 @@ private:
 };
 
 enum class DisplayListPlayerType {
-    SkiaGPUIfAvailable,
-    SkiaCPU,
+    GPUIfAvailable,
+    CPU,
 };
 
 class PageClient : public JS::Cell {

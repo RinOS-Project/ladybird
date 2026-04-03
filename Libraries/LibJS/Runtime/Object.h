@@ -191,6 +191,40 @@ public:
     [[nodiscard]] bool may_interfere_with_indexed_property_access() const { return m_flags & Flag::MayInterfereWithIndexedPropertyAccess; }
     void set_may_interfere_with_indexed_property_access() { m_flags |= Flag::MayInterfereWithIndexedPropertyAccess; }
 
+    class IndexedPropertiesConstAdapter {
+    public:
+        explicit IndexedPropertiesConstAdapter(Object const& object)
+            : m_object(object)
+        {
+        }
+
+        [[nodiscard]] size_t array_like_size() const { return m_object.indexed_array_like_size(); }
+        [[nodiscard]] bool is_empty() const { return m_object.indexed_real_size() == 0; }
+
+    private:
+        Object const& m_object;
+    };
+
+    class IndexedPropertiesAdapter : public IndexedPropertiesConstAdapter {
+    public:
+        explicit IndexedPropertiesAdapter(Object& object)
+            : IndexedPropertiesConstAdapter(object)
+            , m_object(object)
+        {
+        }
+
+        void put(u32 index, Value value, PropertyAttributes attributes = default_attributes)
+        {
+            m_object.indexed_put(index, value, attributes);
+        }
+
+    private:
+        Object& m_object;
+    };
+
+    IndexedPropertiesAdapter indexed_properties() { return IndexedPropertiesAdapter(*this); }
+    IndexedPropertiesConstAdapter indexed_properties() const { return IndexedPropertiesConstAdapter(*this); }
+
     ThrowCompletionOr<bool> ordinary_set_with_own_descriptor(PropertyKey const&, Value, Value, Optional<PropertyDescriptor>, CacheableSetPropertyMetadata* = nullptr, PropertyLookupPhase = PropertyLookupPhase::OwnProperty);
 
     // 10.4.7 Immutable Prototype Exotic Objects, https://tc39.es/ecma262/#sec-immutable-prototype-exotic-objects

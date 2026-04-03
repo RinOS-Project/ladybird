@@ -29,7 +29,11 @@ public:
     ~RenderingThread();
 
     void start(DisplayListPlayerType);
-    void set_skia_player(OwnPtr<Painting::DisplayListPlayerSkia>&& player);
+#if defined(AK_OS_RINOS)
+    void set_display_list_player(OwnPtr<Painting::DisplayListPlayerAquamarine>&& player);
+#else
+    void set_display_list_player(OwnPtr<Painting::DisplayListPlayerSkia>&& player);
+#endif
 
     void update_display_list(NonnullRefPtr<Painting::DisplayList>, Painting::ScrollStateSnapshotByDisplayList&&);
     void update_backing_stores(RefPtr<Gfx::PaintingSurface> front, RefPtr<Gfx::PaintingSurface> back, i32 front_id, i32 back_id);

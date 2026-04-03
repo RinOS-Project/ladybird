@@ -496,6 +496,8 @@ ErrorOr<pid_t> LocalSocket::peer_pid() const
 #elif defined(AK_OS_SOLARIS)
     ucred_t* creds = NULL;
     socklen_t creds_size = sizeof(creds);
+#elif defined(AK_OS_RINOS)
+    return Error::from_errno(ENOTSUP);
 #elif defined(AK_OS_GNU_HURD)
     return Error::from_errno(ENOTSUP);
 #else
@@ -515,6 +517,8 @@ ErrorOr<pid_t> LocalSocket::peer_pid() const
 #elif defined(AK_OS_SOLARIS)
     TRY(System::getsockopt(m_helper.fd(), SOL_SOCKET, SO_RECVUCRED, &creds, &creds_size));
     return ucred_getpid(creds);
+#elif defined(AK_OS_RINOS)
+    return Error::from_errno(ENOTSUP);
 #elif !defined(AK_OS_GNU_HURD)
     TRY(System::getsockopt(m_helper.fd(), SOL_SOCKET, SO_PEERCRED, &creds, &creds_size));
     return creds.pid;

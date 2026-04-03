@@ -80,6 +80,13 @@ add_cxx_compile_options(-Wno-unused-command-line-argument)
 
 add_cxx_compile_options(-Werror)
 
+if (AK_OS_RINOS)
+    add_cxx_compile_options(-Wno-error=cast-qual)
+    add_cxx_compile_options(-Wno-error=inline-new-delete)
+    add_cxx_compile_options(-Wno-error=unused-private-field)
+    add_cxx_compile_options(-Wno-error=unused-parameter)
+endif()
+
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "18")
     add_cxx_compile_options(-Wpadded-bitfield)
 endif()

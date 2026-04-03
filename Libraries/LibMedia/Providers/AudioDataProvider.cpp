@@ -7,9 +7,12 @@
 #include <AK/Debug.h>
 #include <LibCore/EventLoop.h>
 #include <LibMedia/Audio/SampleSpecification.h>
+#include <LibMedia/AudioDecoder.h>
 #include <LibMedia/Demuxer.h>
+#ifndef AK_OS_RINOS
 #include <LibMedia/FFmpeg/FFmpegAudioConverter.h>
 #include <LibMedia/FFmpeg/FFmpegAudioDecoder.h>
+#endif
 #include <LibMedia/Sinks/AudioSink.h>
 #include <LibThreading/Mutex.h>
 #include <LibThreading/Thread.h>
@@ -20,6 +23,12 @@ namespace Media {
 
 DecoderErrorOr<NonnullRefPtr<AudioDataProvider>> AudioDataProvider::try_create(NonnullRefPtr<Core::WeakEventLoopReference> const& main_thread_event_loop, NonnullRefPtr<Demuxer> const& demuxer, Track const& track)
 {
+#ifdef AK_OS_RINOS
+    (void)main_thread_event_loop;
+    (void)demuxer;
+    (void)track;
+    return DecoderError::with_description(DecoderErrorCategory::NotImplemented, "RinOS disables audio decoding in the Ladybird target build"sv);
+#else
     auto converter = DECODER_TRY_ALLOC(FFmpeg::FFmpegAudioConverter::try_create());
 
     TRY(demuxer->create_context_for_track(track));
@@ -42,6 +51,7 @@ DecoderErrorOr<NonnullRefPtr<AudioDataProvider>> AudioDataProvider::try_create(N
     thread->detach();
 
     return provider;
+#endif
 }
 
 AudioDataProvider::AudioDataProvider(NonnullRefPtr<ThreadData> const& thread_data)
@@ -157,11 +167,15 @@ void AudioDataProvider::ThreadData::start()
 
 DecoderErrorOr<void> AudioDataProvider::ThreadData::create_decoder()
 {
+#ifdef AK_OS_RINOS
+    return DecoderError::with_description(DecoderErrorCategory::NotImplemented, "RinOS disables audio decoding in the Ladybird target build"sv);
+#else
     auto codec_id = TRY(m_demuxer->get_codec_id_for_track(m_track));
     auto const& sample_specification = m_track.audio_data().sample_specification;
     auto codec_initialization_data = TRY(m_demuxer->get_codec_initialization_data_for_track(m_track));
     m_decoder = TRY(FFmpeg::FFmpegAudioDecoder::try_create(codec_id, sample_specification, codec_initialization_data));
     return {};
+#endif
 }
 
 void AudioDataProvider::ThreadData::suspend()

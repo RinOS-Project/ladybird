@@ -200,7 +200,11 @@ private:
     };
 };
 
+#if ARCH(I386)
+static_assert(sizeof(PropertyKey) == sizeof(u64));
+#else
 static_assert(sizeof(PropertyKey) == sizeof(uintptr_t));
+#endif
 
 }
 

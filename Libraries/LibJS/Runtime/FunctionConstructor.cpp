@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibJS/Lexer.h>
+#include <LibJS/Parser.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/ECMAScriptFunctionObject.h>
 #include <LibJS/Runtime/Error.h>
@@ -13,8 +15,6 @@
 #include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Realm.h>
-#include <LibJS/RustIntegration.h>
-#include <LibJS/SourceCode.h>
 
 namespace JS {
 
@@ -105,72 +105,17 @@ ThrowCompletionOr<GC::Ref<ECMAScriptFunctionObject>> FunctionConstructor::create
         VERIFY_NOT_REACHED();
     }
 
-    // 6. Let argCount be the number of elements in parameterArgs.
-    auto arg_count = parameter_args.size();
-
-    // 7. Let parameterStrings be a new empty List.
-    Vector<String> parameter_strings;
-    parameter_strings.ensure_capacity(arg_count);
-
-    // 8. For each element arg of parameterArgs, do
-    for (auto const& parameter_value : parameter_args) {
-        // a. Append ? ToString(arg) to parameterStrings.
-        parameter_strings.unchecked_append(TRY(parameter_value.to_string(vm)));
-    }
-
-    // 9. Let bodyString be ? ToString(bodyArg).
-    auto body_string = TRY(body_arg.to_string(vm));
-
-    // 10. Let currentRealm be the current Realm Record.
+    auto function_data = TRY(compile_dynamic_function(vm, kind, parameter_args, body_arg));
     auto& realm = *vm.current_realm();
-
-    // 11. Let P be the empty String.
-    String parameters_string;
-
-    // 12. If argCount > 0, then
-    if (arg_count > 0) {
-        // a. Set P to parameterStrings[0].
-        // b. Let k be 1.
-        // c. Repeat, while k < argCount,
-        //     i. Let nextArgString be parameterStrings[k].
-        //     ii. Set P to the string-concatenation of P, "," (a comma), and nextArgString.
-        //     iii. Set k to k + 1.
-        parameters_string = MUST(String::join(',', parameter_strings));
-    }
-
-    // 13. Let bodyParseString be the string-concatenation of 0x000A (LINE FEED), bodyString, and 0x000A (LINE FEED).
-    auto body_parse_string = ByteString::formatted("\n{}\n", body_string);
-
-    // 14. Let sourceString be the string-concatenation of prefix, " anonymous(", P, 0x000A (LINE FEED), ") {", bodyParseString, and "}".
-    // 15. Let sourceText be StringToCodePoints(sourceString).
-    auto source_text = ByteString::formatted("{} anonymous({}\n) {{{}}}", prefix, parameters_string, body_parse_string);
-
-    // 16. Perform ? HostEnsureCanCompileStrings(currentRealm, parameterStrings, bodyString, sourceString, FUNCTION, parameterArgs, bodyArg).
-    TRY(vm.host_ensure_can_compile_strings(realm, parameter_strings, body_string, source_text, CompilationType::Function, parameter_args, body_arg));
-
-    GC::Ptr<SharedFunctionInstanceData> function_data;
-
-    auto rust_compilation = RustIntegration::compile_dynamic_function(vm, source_text, parameters_string, body_parse_string, kind);
-    if (!rust_compilation.has_value())
-        return vm.throw_completion<SyntaxError>("Failed to compile dynamic function"_string);
-    if (rust_compilation->is_error())
-        return vm.throw_completion<SyntaxError>(rust_compilation->release_error());
-    function_data = rust_compilation->value();
 
     // 25. Let proto be ? GetPrototypeFromConstructor(newTarget, fallbackProto).
     auto* prototype = TRY(get_prototype_from_constructor(vm, *new_target, fallback_prototype));
 
-    // 26. Let env be currentRealm.[[GlobalEnv]].
-    auto& environment = realm.global_environment();
-
-    // 27. Let privateEnv be null.
-    PrivateEnvironment* private_environment = nullptr;
-
     auto function = ECMAScriptFunctionObject::create_from_function_data(
-        realm,
-        *function_data,
-        &environment,
-        private_environment,
+        *vm.current_realm(),
+        function_data,
+        &vm.current_realm()->global_environment(),
+        nullptr,
         *prototype);
 
     // FIXME: Remove the name argument from create() and do this instead.
@@ -206,6 +151,95 @@ ThrowCompletionOr<GC::Ref<ECMAScriptFunctionObject>> FunctionConstructor::create
     return function;
 }
 
+ThrowCompletionOr<GC::Ref<SharedFunctionInstanceData>> FunctionConstructor::compile_dynamic_function(VM& vm, FunctionKind kind, ReadonlySpan<Value> parameter_args, Value body_arg)
+{
+    StringView prefix;
+
+    switch (kind) {
+    case FunctionKind::Normal:
+        prefix = "function"sv;
+        break;
+    case FunctionKind::Generator:
+        prefix = "function*"sv;
+        break;
+    case FunctionKind::Async:
+        prefix = "async function"sv;
+        break;
+    case FunctionKind::AsyncGenerator:
+        prefix = "async function*"sv;
+        break;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+
+    auto arg_count = parameter_args.size();
+
+    Vector<String> parameter_strings;
+    parameter_strings.ensure_capacity(arg_count);
+    for (auto const& parameter_value : parameter_args)
+        parameter_strings.unchecked_append(TRY(parameter_value.to_string(vm)));
+
+    auto body_string = TRY(body_arg.to_string(vm));
+    auto& realm = *vm.current_realm();
+
+    String parameters_string;
+    if (arg_count > 0)
+        parameters_string = MUST(String::join(',', parameter_strings));
+
+    auto body_parse_string = ByteString::formatted("\n{}\n", body_string);
+    auto source_text = ByteString::formatted("{} anonymous({}\n) {{{}}}", prefix, parameters_string, body_parse_string);
+
+    TRY(vm.host_ensure_can_compile_strings(realm, parameter_strings, body_string, source_text, CompilationType::Function, parameter_args, body_arg));
+
+    u8 parse_options = FunctionNodeParseOptions::CheckForFunctionAndName;
+    if (kind == FunctionKind::Async || kind == FunctionKind::AsyncGenerator)
+        parse_options |= FunctionNodeParseOptions::IsAsyncFunction;
+    if (kind == FunctionKind::Generator || kind == FunctionKind::AsyncGenerator)
+        parse_options |= FunctionNodeParseOptions::IsGeneratorFunction;
+
+    i32 function_length = 0;
+    auto parameters_parser = Parser(Lexer(SourceCode::create({}, Utf16String::from_utf8(parameters_string))));
+    auto parameters = parameters_parser.parse_formal_parameters(function_length, parse_options);
+    if (parameters_parser.has_errors()) {
+        auto error = parameters_parser.errors()[0];
+        return vm.throw_completion<SyntaxError>(error.to_string());
+    }
+
+    FunctionParsingInsights parsing_insights;
+    auto body_parser = Parser::parse_function_body_from_string(body_parse_string, parse_options, parameters, kind, parsing_insights);
+    if (body_parser.has_errors()) {
+        auto error = body_parser.errors()[0];
+        return vm.throw_completion<SyntaxError>(error.to_string());
+    }
+
+    auto source_parser = Parser(Lexer(SourceCode::create({}, Utf16String::from_utf8(source_text))));
+    auto expr = source_parser.parse_function_node<FunctionExpression>();
+    source_parser.run_scope_analysis();
+    if (source_parser.has_errors()) {
+        auto error = source_parser.errors()[0];
+        return vm.throw_completion<SyntaxError>(error.to_string());
+    }
+
+    parsing_insights.might_need_arguments_object = true;
+
+    auto function_data = vm.heap().allocate<SharedFunctionInstanceData>(
+        vm,
+        expr->kind(),
+        "anonymous"_utf16_fly_string,
+        expr->function_length(),
+        expr->parameters(),
+        expr->body(),
+        Utf16View {},
+        expr->is_strict_mode(),
+        false,
+        parsing_insights,
+        expr->local_variables_names());
+    function_data->m_source_text_owner = Utf16String::from_utf8(source_text);
+    function_data->m_source_text = function_data->m_source_text_owner.utf16_view();
+
+    return function_data;
+}
+
 // 20.2.1.1 Function ( p1, p2, … , pn, body ), https://tc39.es/ecma262/#sec-function-p1-p2-pn-body
 ThrowCompletionOr<Value> FunctionConstructor::call()
 {
@@ -217,7 +251,7 @@ ThrowCompletionOr<GC::Ref<Object>> FunctionConstructor::construct(FunctionObject
 {
     auto& vm = this->vm();
 
-    ReadonlySpan<Value> arguments = vm.running_execution_context().arguments_span();
+    ReadonlySpan<Value> arguments = vm.running_execution_context().arguments;
 
     ReadonlySpan<Value> parameter_args = arguments;
     if (!parameter_args.is_empty())

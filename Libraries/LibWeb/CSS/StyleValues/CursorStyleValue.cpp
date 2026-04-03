@@ -15,7 +15,11 @@
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Page/Page.h>
+#if defined(AK_OS_RINOS)
+#    include <LibWeb/Painting/DisplayListPlayerAquamarine.h>
+#else
 #include <LibWeb/Painting/DisplayListPlayerSkia.h>
+#endif
 #include <LibWeb/Painting/DisplayListRecorder.h>
 
 namespace Web::CSS {
@@ -116,10 +120,14 @@ Optional<Gfx::ImageCursor> CursorStyleValue::make_image_cursor(Layout::NodeWithS
         image.paint(paint_context, DevicePixelRect { bitmap.rect() }, ImageRendering::Auto);
 
         switch (document.page().client().display_list_player_type()) {
-        case DisplayListPlayerType::SkiaGPUIfAvailable:
-        case DisplayListPlayerType::SkiaCPU: {
+        case DisplayListPlayerType::GPUIfAvailable:
+        case DisplayListPlayerType::CPU: {
             auto painting_surface = Gfx::PaintingSurface::wrap_bitmap(bitmap);
+#if defined(AK_OS_RINOS)
+            Painting::DisplayListPlayerAquamarine display_list_player;
+#else
             Painting::DisplayListPlayerSkia display_list_player;
+#endif
             display_list_player.execute(*display_list, {}, painting_surface);
             break;
         }

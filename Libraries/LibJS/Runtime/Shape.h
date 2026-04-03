@@ -148,7 +148,9 @@ private:
     u32 m_dictionary_generation { 0 };
 };
 
-#if !defined(AK_OS_WINDOWS)
+#if !defined(AK_OS_WINDOWS) && ARCH(I386)
+static_assert(sizeof(Shape) <= 64, "Keep the size of JS::Shape down on i386!");
+#elif !defined(AK_OS_WINDOWS)
 static_assert(sizeof(Shape) == 96, "Keep the size of JS::Shape down!");
 #endif
 

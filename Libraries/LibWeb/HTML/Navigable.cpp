@@ -51,7 +51,11 @@
 #include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Loader/GeneratedPagesLoader.h>
 #include <LibWeb/Page/Page.h>
-#include <LibWeb/Painting/DisplayListPlayerSkia.h>
+#if defined(AK_OS_RINOS)
+#    include <LibWeb/Painting/DisplayListPlayerAquamarine.h>
+#else
+#    include <LibWeb/Painting/DisplayListPlayerSkia.h>
+#endif
 #include <LibWeb/Painting/NavigableContainerViewportPaintable.h>
 #include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/Painting/PaintableBox.h>
@@ -292,7 +296,11 @@ Navigable::Navigable(GC::Ref<Page> page, bool is_svg_page)
 
     if (!m_is_svg_page) {
         auto display_list_player_type = page->client().display_list_player_type();
-        m_rendering_thread.set_skia_player(make<Painting::DisplayListPlayerSkia>());
+#if defined(AK_OS_RINOS)
+        m_rendering_thread.set_display_list_player(make<Painting::DisplayListPlayerAquamarine>());
+#else
+        m_rendering_thread.set_display_list_player(make<Painting::DisplayListPlayerSkia>());
+#endif
         m_rendering_thread.start(display_list_player_type);
     }
 }

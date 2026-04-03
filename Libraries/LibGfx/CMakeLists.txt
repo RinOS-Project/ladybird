@@ -59,7 +59,33 @@ if (AK_OS_RINOS)
     list(REMOVE_ITEM SOURCES
         Font/WOFF2/Loader.cpp
         ImageFormats/AVIFLoader.cpp
+        ImageFormats/JPEGLoader.cpp
+        ImageFormats/JPEGWriter.cpp
         ImageFormats/JPEGXLLoader.cpp
+        ImageFormats/PNGLoader.cpp
+        ImageFormats/PNGWriter.cpp
+        ImageFormats/WebPLoader.cpp
+        ImageFormats/WebPWriter.cpp
+        ImageFormats/WebPWriterLossless.cpp
+    )
+    list(APPEND SOURCES
+        Font/TypefaceRinOS.cpp
+        ImageFormats/JPEGLoaderRinOS.cpp
+        PathAquamarine.cpp
+        ImageFormats/PNGLoaderRinOS.cpp
+        ImageFormats/PNGWriterRinOS.cpp
+        ImageFormats/WebPLoaderRinOS.cpp
+        ../../../png/rpng.c
+        ../../../webp/src/dec/webp_dec.c
+        ../../../webp/src/dec/vp8_dec.c
+        ../../../webp/src/dec/vp8l_dec.c
+    )
+    set_source_files_properties(
+        ../../../png/rpng.c
+        ../../../webp/src/dec/webp_dec.c
+        ../../../webp/src/dec/vp8_dec.c
+        ../../../webp/src/dec/vp8l_dec.c
+        PROPERTIES COMPILE_OPTIONS "-Wno-missing-prototypes;-Wno-unused-parameter;-Wno-unused-function;-Wno-unused-variable;-Wno-unused-but-set-variable;-Wno-missing-field-initializers"
     )
 endif()
 
@@ -154,6 +180,12 @@ else()
     # RinOS: native image decoders (png, jpeg, webp) and aquamarine font engine
     # are linked externally; AVIF/JXL/WOFF2 are excluded from the feature set.
     message(STATUS "RinOS policy: LibGfx image/font deps provided by RinOS native libraries.")
+    target_include_directories(LibGfx PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../jpeg
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../png
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../webp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../webp/src
+    )
 endif()
 if (RINOS_USE_SKIA_GRAPHICS)
     target_link_libraries(LibGfx PRIVATE skia)

@@ -102,7 +102,7 @@ StackInfo::StackInfo()
 
     m_top = m_base + m_size;
 
-#if defined(AK_OS_LINUX) && !defined(AK_OS_ANDROID) && !defined(AK_LIBC_GLIBC)
+#if defined(AK_OS_LINUX) && !defined(AK_OS_ANDROID) && !defined(AK_LIBC_GLIBC) && !defined(AK_OS_RINOS)
     // Note: musl libc always gives the initial size of the main thread's stack
     if (getpid() == static_cast<pid_t>(gettid())) {
         rlimit limit;

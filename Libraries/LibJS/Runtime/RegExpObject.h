@@ -13,12 +13,14 @@
 #include <LibJS/Export.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibRegex/ECMAScriptRegex.h>
+#include <LibRegex/RegexOptions.h>
 
 namespace JS {
 
 JS_API ThrowCompletionOr<GC::Ref<RegExpObject>> regexp_create(VM&, Value pattern, Value flags);
 ThrowCompletionOr<GC::Ref<RegExpObject>> regexp_alloc(VM&, FunctionObject& new_target);
 
+Result<regex::RegexOptions<ECMAScriptFlags>, String> regex_flags_from_string(Utf16View const& flags);
 struct ParseRegexPatternError {
     String error;
 };
@@ -30,6 +32,12 @@ class JS_API RegExpObject : public Object {
     GC_DECLARE_ALLOCATOR(RegExpObject);
 
 public:
+    static constexpr regex::RegexOptions<ECMAScriptFlags> default_flags {
+        static_cast<regex::ECMAScriptFlags>(regex::AllFlags::SingleMatch)
+        | static_cast<regex::ECMAScriptFlags>(regex::AllFlags::Global)
+        | regex::ECMAScriptFlags::BrowserExtended
+    };
+
     enum class Flags {
         HasIndices = 1 << 0,
         Global = 1 << 1,

@@ -116,4 +116,7 @@ private:
 
 JS_API extern bool g_dump_bytecode;
 
+GC::Ref<Bytecode::Executable> compile(VM&, ASTNode const&, JS::FunctionKind kind, Utf16FlyString const& name);
+GC::Ref<Bytecode::Executable> compile(VM&, GC::Ref<SharedFunctionInstanceData const>, BuiltinAbstractOperationsEnabled builtin_abstract_operations_enabled);
+
 }

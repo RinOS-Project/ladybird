@@ -265,6 +265,25 @@ set(SOURCES
     SyntheticModule.cpp
 )
 
+if (AK_OS_RINOS)
+    list(REMOVE_ITEM SOURCES
+        Bytecode/AsmInterpreter/AsmInterpreter.cpp
+        RustIntegration.cpp
+    )
+    list(APPEND SOURCES
+        AST.cpp
+        ASTDump.cpp
+        Bytecode/ASTCodegen.cpp
+        Bytecode/Builtins.cpp
+        Bytecode/Generator.cpp
+        Bytecode/ScopedOperand.cpp
+        Lexer.cpp
+        Parser.cpp
+        ScopeCollector.cpp
+        Token.cpp
+    )
+endif()
+
 generate_bytecode_def_derived()
 
 set(GENERATED_SOURCES Bytecode/Op.cpp)
@@ -299,7 +318,7 @@ endif()
 
 target_link_libraries(LibJS PUBLIC JSClangPlugin)
 
-if (ENABLE_RUST)
+if (ENABLE_RUST AND NOT AK_OS_RINOS)
     import_rust_crate(MANIFEST_PATH Rust/Cargo.toml CRATE_NAME libjs_rust)
     target_link_libraries(LibJS PRIVATE libjs_rust)
     target_compile_definitions(LibJS PRIVATE ENABLE_RUST)
@@ -307,7 +326,7 @@ if (ENABLE_RUST)
     # The Rust library and LibJS have a circular dependency (C++ calls Rust
     # entry points, Rust calls C++ callbacks). For static builds, merge the
     # Rust archive into the LibJS archive so all symbols are in one place.
-    if(NOT BUILD_SHARED_LIBS)
+    if(NOT BUILD_SHARED_LIBS AND NOT AK_OS_RINOS)
         add_custom_command(TARGET LibJS POST_BUILD
             COMMAND ${CMAKE_AR} -x $<TARGET_FILE:libjs_rust>
             COMMAND ${CMAKE_AR} -qS $<TARGET_FILE:LibJS> *.o
@@ -318,12 +337,17 @@ if (ENABLE_RUST)
         )
         file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rust_merge_tmp)
     endif()
+elseif (AK_OS_RINOS)
+    message(STATUS "RinOS policy: LibJS uses the restored C++ parser/bytecode pipeline and does not import Rust crates.")
 endif()
 
 # AsmInterpreter: generate platform-specific assembly from DSL
+# NB: RinOS cross builds use the C++ bytecode interpreter only.
 # NB: Win64 uses a different ABI (shadow space, different arg registers)
 #     from SysV AMD64, and the x86_64 backend only supports SysV for now.
-if (NOT WIN32 AND ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64"))
+if (AK_OS_RINOS)
+    unset(ASMINT_ARCH)
+elseif (NOT WIN32 AND ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64"))
     set(ASMINT_ARCH "x86_64")
 elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "aarch64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "arm64")
     set(ASMINT_ARCH "aarch64")

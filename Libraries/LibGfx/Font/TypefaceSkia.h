@@ -41,7 +41,7 @@ private:
 
     TypefaceSkia(NonnullOwnPtr<Impl>, ReadonlyBytes, u32 ttc_index = 0);
 
-    virtual bool is_skia() const override { return true; }
+    virtual bool has_platform_typeface() const override { return true; }
 
     OwnPtr<FontData> m_font_data;
     ReadonlyBytes m_buffer;
@@ -66,6 +66,6 @@ private:
 };
 
 template<>
-inline bool Typeface::fast_is<TypefaceSkia>() const { return is_skia(); }
+inline bool Typeface::fast_is<TypefaceSkia>() const { return has_platform_typeface(); }
 
 }

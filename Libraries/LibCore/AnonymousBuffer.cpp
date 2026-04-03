@@ -14,8 +14,27 @@ namespace Core {
 
 ErrorOr<AnonymousBuffer> AnonymousBuffer::create_with_size(size_t size)
 {
+#if defined(AK_OS_RINOS)
+    auto impl = TRY(AnonymousBufferImpl::create(size));
+    return AnonymousBuffer(move(impl));
+#else
     auto fd = TRY(Core::System::anon_create(size, O_CLOEXEC));
     return create_from_anon_fd(fd, size);
+#endif
+}
+
+ErrorOr<NonnullRefPtr<AnonymousBufferImpl>> AnonymousBufferImpl::create(size_t size)
+{
+#if defined(AK_OS_RINOS)
+    auto rounded_size = round_up_to_power_of_two(size, PAGE_SIZE);
+    auto* data = mmap(nullptr, rounded_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (data == MAP_FAILED)
+        return Error::from_errno(errno);
+    return AK::adopt_nonnull_ref_or_enomem(new (nothrow) AnonymousBufferImpl(-1, size, data));
+#else
+    auto fd = TRY(Core::System::anon_create(size, O_CLOEXEC));
+    return AnonymousBufferImpl::create(fd, size);
+#endif
 }
 
 ErrorOr<NonnullRefPtr<AnonymousBufferImpl>> AnonymousBufferImpl::create(int fd, size_t size)

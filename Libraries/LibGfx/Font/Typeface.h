@@ -82,7 +82,7 @@ public:
     template<typename T>
     bool fast_is() const = delete;
 
-    virtual bool is_skia() const { return false; }
+    virtual bool has_platform_typeface() const { return false; }
 
 protected:
     Typeface();

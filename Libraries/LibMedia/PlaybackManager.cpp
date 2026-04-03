@@ -6,7 +6,9 @@
 
 #include <LibMedia/Containers/Matroska/MatroskaDemuxer.h>
 #include <LibMedia/Demuxer.h>
+#ifndef AK_OS_RINOS
 #include <LibMedia/FFmpeg/FFmpegDemuxer.h>
+#endif
 #include <LibMedia/PlaybackStates/BufferingStateHandler.h>
 #include <LibMedia/Providers/AudioDataProvider.h>
 #include <LibMedia/Providers/GenericTimeProvider.h>
@@ -23,6 +25,12 @@ namespace Media {
 
 DecoderErrorOr<void> PlaybackManager::prepare_playback_from_media_data(WeakPlaybackManager const& self, NonnullRefPtr<IncrementallyPopulatedStream> stream, NonnullRefPtr<Core::WeakEventLoopReference> const& main_thread_event_loop_reference)
 {
+#ifdef AK_OS_RINOS
+    (void)self;
+    (void)stream;
+    (void)main_thread_event_loop_reference;
+    return DecoderError::with_description(DecoderErrorCategory::NotImplemented, "RinOS disables LibMedia playback in the Ladybird target build"sv);
+#else
     auto demuxer = TRY([&] -> DecoderErrorOr<NonnullRefPtr<Demuxer>> {
         if (Matroska::Reader::is_matroska_or_webm(stream->create_cursor()))
             return Matroska::MatroskaDemuxer::from_stream(stream);
@@ -120,6 +128,7 @@ DecoderErrorOr<void> PlaybackManager::prepare_playback_from_media_data(WeakPlayb
     });
 
     return {};
+#endif
 }
 
 NonnullOwnPtr<PlaybackManager> PlaybackManager::create()

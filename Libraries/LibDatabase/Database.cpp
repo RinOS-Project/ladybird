@@ -16,8 +16,13 @@ namespace Database {
 
 static constexpr StringView sql_error(int error_code)
 {
+#if defined(AK_OS_RINOS)
+    (void)error_code;
+    return "sqlite error"sv;
+#else
     char const* _sql_error = sqlite3_errstr(error_code);
     return { _sql_error, __builtin_strlen(_sql_error) };
+#endif
 }
 
 #define SQL_TRY(expression)                                                \

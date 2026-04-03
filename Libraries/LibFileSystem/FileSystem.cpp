@@ -18,7 +18,7 @@
 
 #    if !defined(AK_OS_IOS) && defined(AK_OS_BSD_GENERIC)
 #        include <sys/disk.h>
-#    elif defined(AK_OS_LINUX)
+#    elif defined(AK_OS_LINUX) && !defined(AK_OS_RINOS)
 #        include <linux/fs.h>
 #    endif
 #endif
@@ -37,7 +37,7 @@ ErrorOr<ByteString> current_working_directory()
 
 ErrorOr<ByteString> absolute_path(StringView path)
 {
-#ifndef AK_OS_WINDOWS
+#if !defined(AK_OS_WINDOWS) && !defined(AK_OS_RINOS)
     if (exists(path))
         return real_path(path);
 #endif
@@ -55,6 +55,9 @@ ErrorOr<ByteString> real_path(StringView path)
     if (path.is_null())
         return Error::from_errno(ENOENT);
 
+#    if defined(AK_OS_RINOS)
+    return absolute_path(path);
+#    else
     ByteString dep_path = path;
     char* real_path = realpath(dep_path.characters(), nullptr);
     ScopeGuard free_path = [real_path]() { free(real_path); };
@@ -63,6 +66,7 @@ ErrorOr<ByteString> real_path(StringView path)
         return Error::from_syscall("realpath"sv, errno);
 
     return ByteString { real_path, strlen(real_path) };
+#    endif
 }
 #else
 // NOTE: real_path on Windows does not resolve symlinks
@@ -206,6 +210,9 @@ ErrorOr<void> copy_file(StringView destination_path, StringView source_path, str
 #    if defined(AK_OS_MACOS) || defined(AK_OS_IOS)
             source_stat.st_atimespec,
             source_stat.st_mtimespec,
+#    elif defined(AK_OS_RINOS)
+            { source_stat.st_atime, 0 },
+            { source_stat.st_mtime, 0 },
 #    else
             source_stat.st_atim,
             source_stat.st_mtim,
@@ -254,6 +261,9 @@ ErrorOr<void> copy_directory(StringView destination_path, StringView source_path
 #    if defined(AK_OS_MACOS) || defined(AK_OS_IOS)
             source_stat.st_atimespec,
             source_stat.st_mtimespec,
+#    elif defined(AK_OS_RINOS)
+            { source_stat.st_atime, 0 },
+            { source_stat.st_mtime, 0 },
 #    else
             source_stat.st_atim,
             source_stat.st_mtim,

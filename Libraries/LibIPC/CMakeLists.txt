@@ -14,7 +14,7 @@ if (APPLE AND NOT IOS)
         Message.cpp
         TransportBootstrapMach.cpp
         TransportMachPort.cpp)
-elseif (UNIX)
+elseif (UNIX OR AK_OS_RINOS)
     list(APPEND SOURCES
         Attachment.cpp
         File.cpp

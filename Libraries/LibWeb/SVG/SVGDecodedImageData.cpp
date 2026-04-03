@@ -17,7 +17,11 @@
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WindowProxy.h>
 #include <LibWeb/Page/Page.h>
+#if defined(AK_OS_RINOS)
+#    include <LibWeb/Painting/DisplayListPlayerAquamarine.h>
+#else
 #include <LibWeb/Painting/DisplayListPlayerSkia.h>
+#endif
 #include <LibWeb/Painting/DisplayListRecordingContext.h>
 #include <LibWeb/SVG/SVGDecodedImageData.h>
 #include <LibWeb/SVG/SVGSVGElement.h>
@@ -129,9 +133,13 @@ RefPtr<Gfx::PaintingSurface> SVGDecodedImageData::render_to_surface(Gfx::IntSize
         return nullptr;
 
     switch (m_page_client->display_list_player_type()) {
-    case DisplayListPlayerType::SkiaGPUIfAvailable:
-    case DisplayListPlayerType::SkiaCPU: {
+    case DisplayListPlayerType::GPUIfAvailable:
+    case DisplayListPlayerType::CPU: {
+#if defined(AK_OS_RINOS)
+        Painting::DisplayListPlayerAquamarine display_list_player;
+#else
         Painting::DisplayListPlayerSkia display_list_player;
+#endif
         display_list_player.execute(*display_list, {}, surface);
         break;
     }

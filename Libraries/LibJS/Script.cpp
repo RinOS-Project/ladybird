@@ -4,60 +4,89 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/Bytecode/Executable.h>
+#include <LibJS/AST.h>
+#include <LibJS/Lexer.h>
+#include <LibJS/Parser.h>
 #include <LibJS/Runtime/ECMAScriptFunctionObject.h>
 #include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/SharedFunctionInstanceData.h>
 #include <LibJS/Runtime/VM.h>
-#include <LibJS/RustIntegration.h>
 #include <LibJS/Script.h>
-#include <LibJS/SourceCode.h>
 
 namespace JS {
-
-bool g_dump_ast = false;
-bool g_dump_ast_use_color = false;
 
 GC_DEFINE_ALLOCATOR(Script);
 
 // 16.1.5 ParseScript ( sourceText, realm, hostDefined ), https://tc39.es/ecma262/#sec-parse-script
 Result<GC::Ref<Script>, Vector<ParserError>> Script::parse(StringView source_text, Realm& realm, StringView filename, HostDefined* host_defined, size_t line_number_offset)
 {
-    auto rust_compilation = RustIntegration::compile_script(source_text, realm, filename, line_number_offset);
-    if (!rust_compilation.has_value())
-        return Vector<ParserError> {};
-    if (rust_compilation->is_error())
-        return rust_compilation->release_error();
-    return realm.heap().allocate<Script>(realm, filename, move(rust_compilation->value()), host_defined);
+    // 1. Let script be ParseText(sourceText, Script).
+    auto parser = Parser(Lexer(SourceCode::create(String::from_utf8(filename).release_value_but_fixme_should_propagate_errors(), Utf16String::from_utf8(source_text)), line_number_offset));
+    auto script = parser.parse_program();
+
+    // 2. If script is a List of errors, return body.
+    if (parser.has_errors())
+        return parser.errors();
+
+    // 3. Return Script Record { [[Realm]]: realm, [[ECMAScriptCode]]: script, [[HostDefined]]: hostDefined }.
+    return realm.heap().allocate<Script>(realm, filename, move(script), host_defined);
 }
 
-Result<GC::Ref<Script>, Vector<ParserError>> Script::create_from_parsed(FFI::ParsedProgram* parsed, NonnullRefPtr<SourceCode const> source_code, Realm& realm, HostDefined* host_defined)
-{
-    auto filename = source_code->filename();
-    auto rust_compilation = RustIntegration::compile_parsed_script(parsed, move(source_code), realm);
-    if (!rust_compilation.has_value())
-        return Vector<ParserError> {};
-    if (rust_compilation->is_error())
-        return rust_compilation->release_error();
-    return realm.heap().allocate<Script>(realm, filename, move(rust_compilation->value()), host_defined);
-}
-
-Script::Script(Realm& realm, StringView filename, RustIntegration::ScriptResult&& result, HostDefined* host_defined)
+Script::Script(Realm& realm, StringView filename, RefPtr<Program> parse_node, HostDefined* host_defined)
     : m_realm(realm)
-    , m_executable(result.executable)
-    , m_lexical_names(move(result.lexical_names))
-    , m_var_names(move(result.var_names))
-    , m_declared_function_names(move(result.declared_function_names))
-    , m_var_scoped_names(move(result.var_scoped_names))
-    , m_annex_b_candidate_names(move(result.annex_b_candidate_names))
-    , m_lexical_bindings(move(result.lexical_bindings))
-    , m_is_strict_mode(result.is_strict_mode)
+    , m_parse_node(move(parse_node))
     , m_filename(filename)
     , m_host_defined(host_defined)
 {
-    m_functions_to_initialize.ensure_capacity(result.functions_to_initialize.size());
-    for (auto& f : result.functions_to_initialize)
-        m_functions_to_initialize.append({ *f.shared_data, move(f.name) });
+    auto& vm = realm.vm();
+    auto& program = *m_parse_node;
+
+    m_is_strict_mode = program.is_strict_mode();
+
+    // Pre-compute lexically declared names (GDI step 3).
+    MUST(program.for_each_lexically_declared_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
+        m_lexical_names.append(identifier.string());
+        return {};
+    }));
+
+    // Pre-compute var declared names (GDI step 4).
+    MUST(program.for_each_var_declared_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
+        m_var_names.append(identifier.string());
+        return {};
+    }));
+
+    // Pre-compute functions to initialize and declared function names (GDI steps 7-8).
+    MUST(program.for_each_var_function_declaration_in_reverse_order([&](FunctionDeclaration const& function) -> ThrowCompletionOr<void> {
+        auto function_name = function.name();
+        if (m_declared_function_names.set(function_name) != AK::HashSetResult::InsertedNewEntry)
+            return {};
+        m_functions_to_initialize.append({ SharedFunctionInstanceData::create_for_function_node(vm, function), function_name });
+        return {};
+    }));
+
+    // Pre-compute var scoped variable names (GDI step 10).
+    MUST(program.for_each_var_scoped_variable_declaration([&](VariableDeclaration const& declaration) {
+        return declaration.for_each_bound_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
+            m_var_scoped_names.append(identifier.string());
+            return {};
+        });
+    }));
+
+    // Pre-compute AnnexB candidates (GDI step 13).
+    if (!m_is_strict_mode) {
+        MUST(program.for_each_function_hoistable_with_annexB_extension([&](FunctionDeclaration& function_declaration) -> ThrowCompletionOr<void> {
+            m_annex_b_candidates.append(function_declaration);
+            return {};
+        }));
+    }
+
+    // Pre-compute lexical bindings (GDI step 15).
+    MUST(program.for_each_lexically_scoped_declaration([&](Declaration const& declaration) {
+        return declaration.for_each_bound_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
+            m_lexical_bindings.append({ identifier.string(), declaration.is_constant_declaration() });
+            return {};
+        });
+    }));
 }
 
 // 16.1.7 GlobalDeclarationInstantiation ( script, env ), https://tc39.es/ecma262/#sec-globaldeclarationinstantiation
@@ -128,9 +157,9 @@ ThrowCompletionOr<void> Script::global_declaration_instantiation(VM& vm, GlobalE
     if (!m_is_strict_mode) {
         // a. Let declaredFunctionOrVarNames be the list-concatenation of declaredFunctionNames and declaredVarNames.
         // b. For each FunctionDeclaration f that is directly contained in the StatementList of a Block, CaseClause, or DefaultClause Contained within script, do
-        for (size_t i = 0; i < m_annex_b_candidate_names.size(); ++i) {
+        for (auto& function_declaration : m_annex_b_candidates) {
             // i. Let F be StringValue of the BindingIdentifier of f.
-            auto& function_name = m_annex_b_candidate_names[i];
+            auto function_name = function_declaration->name();
 
             // 1. If env.HasLexicalDeclaration(F) is false, then
             if (global_environment.has_lexical_declaration(function_name))
@@ -147,6 +176,9 @@ ThrowCompletionOr<void> Script::global_declaration_instantiation(VM& vm, GlobalE
                 // i. Perform ? env.CreateGlobalVarBinding(F, false).
                 TRY(global_environment.create_global_var_binding(function_name, false));
             }
+
+            // iii. When the FunctionDeclaration f is evaluated, perform the following steps in place of the FunctionDeclaration Evaluation algorithm provided in 15.2.6:
+            function_declaration->set_should_do_additional_annexB_steps();
         }
     }
 
@@ -191,6 +223,12 @@ ThrowCompletionOr<void> Script::global_declaration_instantiation(VM& vm, GlobalE
 
     // 18. Return unused.
     return {};
+}
+
+void Script::drop_ast()
+{
+    m_parse_node = nullptr;
+    m_annex_b_candidates.clear();
 }
 
 Script::~Script()

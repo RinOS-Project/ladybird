@@ -8,6 +8,7 @@
 #pragma once
 
 #include <AK/Forward.h>
+#include <compare>
 #include <iterator>
 
 namespace AK {

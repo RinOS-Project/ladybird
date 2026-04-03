@@ -57,6 +57,7 @@ public:
 
     static ErrorOr<Process> spawn(ProcessSpawnOptions const& options);
     static Process current();
+    static Process from_pid(pid_t pid);
 
     static ErrorOr<Process> spawn(StringView path, ReadonlySpan<ByteString> arguments);
     static ErrorOr<Process> spawn(StringView path, ReadonlySpan<StringView> arguments);

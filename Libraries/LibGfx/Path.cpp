@@ -5,7 +5,9 @@
  */
 
 #include <LibGfx/Path.h>
-#ifndef AK_OS_RINOS
+#ifdef AK_OS_RINOS
+#include <LibGfx/PathAquamarine.h>
+#else
 #include <LibGfx/PathSkia.h>
 #endif
 
@@ -14,7 +16,7 @@ namespace Gfx {
 #ifdef AK_OS_RINOS
 NonnullOwnPtr<Gfx::PathImpl> PathImpl::create()
 {
-    VERIFY_NOT_REACHED(); // TODO: Implement PathImplAquamarine
+    return PathImplAquamarine::create();
 }
 #else
 NonnullOwnPtr<Gfx::PathImpl> PathImpl::create()

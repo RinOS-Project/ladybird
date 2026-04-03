@@ -11,10 +11,11 @@
 #include <LibGC/Function.h>
 #include <LibGC/Root.h>
 #include <LibJS/Runtime/ModuleRequest.h>
-#include <LibJS/RustIntegration.h>
 #include <LibJS/SourceCode.h>
 #include <LibTextCodec/Decoder.h>
+#ifndef AK_OS_RINOS
 #include <LibThreading/ThreadPool.h>
+#endif
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
 #include <LibWeb/DOM/Document.h>
@@ -39,15 +40,7 @@
 
 namespace Web::HTML {
 
-// Submit a parse_program() call to the thread pool, then bounce back to
-// the main thread via deferred_invoke once parsing completes.
-// `on_parsed` is called on the main thread with the Rust ParsedProgram*
-// and the SourceCode.
-// NB: The SourceCode stays on the main thread (inside the heap-allocated
-//     callback). The worker thread only receives raw UTF-16 data pointers.
-//     The callback is heap-allocated so that if the event loop is
-//     destroyed during parsing, we leak it (and any GC::Root objects it
-//     captures) rather than destroying them on the worker thread.
+#ifndef AK_OS_RINOS
 static void parse_off_thread(NonnullRefPtr<JS::SourceCode const> source_code, JS::RustIntegration::ProgramType type, size_t line_number_offset, Function<void(JS::FFI::ParsedProgram*, NonnullRefPtr<JS::SourceCode const>)> on_parsed)
 {
     // Extract the raw data the parser needs while still on the main thread.
@@ -81,6 +74,7 @@ static void parse_off_thread(NonnullRefPtr<JS::SourceCode const> source_code, JS
         });
     });
 }
+#endif
 
 GC_DEFINE_ALLOCATOR(FetchContext);
 
@@ -430,7 +424,7 @@ void fetch_classic_script(GC::Ref<HTMLScriptElement> element, URL::URL const& ur
         // FIXME: Pass options.
         auto response_url = response->url().value_or({});
 
-        // If the Rust pipeline is available, parse off the main thread.
+#ifndef AK_OS_RINOS
         if (JS::RustIntegration::rust_pipeline_available()) {
             auto on_complete_root = GC::make_root(on_complete);
             auto realm_root = GC::make_root(settings_object.realm());
@@ -446,7 +440,9 @@ void fetch_classic_script(GC::Ref<HTMLScriptElement> element, URL::URL const& ur
                     auto script = ClassicScript::create_from_pre_parsed(move(response_url_string), move(source_code), *realm_root, move(response_url), parsed, muted_errors);
                     on_complete_root->function()(script);
                 });
-        } else {
+        } else
+#endif
+        {
             auto script = ClassicScript::create(response_url.to_byte_string(), source_text, settings_object.realm(), response_url, 1, muted_errors);
 
             // 8. Run onComplete given script.
@@ -781,7 +777,7 @@ void fetch_single_module_script(JS::Realm& realm,
         // 7. If mimeType is a JavaScript MIME type and moduleType is "javascript", then set moduleScript to the result of creating a JavaScript module script given sourceText, moduleMapRealm, response's URL, and options.
         // FIXME: Pass options.
         if (mime_type.has_value() && mime_type->is_javascript() && module_type == "javascript") {
-            // If the Rust pipeline is available, parse off the main thread.
+#ifndef AK_OS_RINOS
             if (JS::RustIntegration::rust_pipeline_available()) {
                 auto on_complete_root = GC::make_root(on_complete);
                 auto realm_root = GC::make_root(&module_map_realm);
@@ -804,6 +800,7 @@ void fetch_single_module_script(JS::Realm& realm,
                     });
                 return;
             }
+#endif
             module_script = JavaScriptModuleScript::create(url.to_byte_string(), source_text, module_map_realm, response->url().value_or({})).release_value_but_fixme_should_propagate_errors();
         }
 

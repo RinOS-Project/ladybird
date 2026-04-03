@@ -27,9 +27,12 @@
 #include <LibWeb/Layout/CanvasBox.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
-#include <LibWeb/WebGL/WebGL2RenderingContext.h>
-#include <LibWeb/WebGL/WebGLRenderingContext.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
+
+#if !defined(AK_OS_RINOS)
+#    include <LibWeb/WebGL/WebGL2RenderingContext.h>
+#    include <LibWeb/WebGL/WebGLRenderingContext.h>
+#endif
 
 namespace Web::HTML {
 
@@ -64,12 +67,14 @@ void HTMLCanvasElement::visit_edges(Cell::Visitor& visitor)
         [&](GC::Ref<CanvasRenderingContext2D>& context) {
             visitor.visit(context);
         },
+#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             visitor.visit(context);
         },
         [&](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             visitor.visit(context);
         },
+#endif
         [](Empty) {
         });
 }
@@ -154,12 +159,14 @@ void HTMLCanvasElement::reset_context_to_default_state()
         [](GC::Ref<CanvasRenderingContext2D>& context) {
             context->reset_to_default_state();
         },
+#if !defined(AK_OS_RINOS)
         [](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             context->reset_to_default_state();
         },
         [](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             context->reset_to_default_state();
         },
+#endif
         [](Empty) {
             // Do nothing.
         });
@@ -171,12 +178,14 @@ void HTMLCanvasElement::notify_context_about_canvas_size_change()
         [&](GC::Ref<CanvasRenderingContext2D>& context) {
             context->set_size(bitmap_size_for_canvas());
         },
+#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             context->set_size(bitmap_size_for_canvas());
         },
         [&](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             context->set_size(bitmap_size_for_canvas());
         },
+#endif
         [](Empty) {
             // Do nothing.
         });
@@ -234,6 +243,7 @@ JS::ThrowCompletionOr<HTMLCanvasElement::HasOrCreatedContext> HTMLCanvasElement:
     return HasOrCreatedContext::Yes;
 }
 
+#if !defined(AK_OS_RINOS)
 template<typename ContextType>
 JS::ThrowCompletionOr<HTMLCanvasElement::HasOrCreatedContext> HTMLCanvasElement::create_webgl_context(JS::Value options)
 {
@@ -247,6 +257,7 @@ JS::ThrowCompletionOr<HTMLCanvasElement::HasOrCreatedContext> HTMLCanvasElement:
     m_context = GC::Ref<ContextType>(*maybe_context);
     return HasOrCreatedContext::Yes;
 }
+#endif
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-getcontext
 JS::ThrowCompletionOr<HTMLCanvasElement::RenderingContext> HTMLCanvasElement::get_context(String const& type, JS::Value options)
@@ -262,11 +273,16 @@ JS::ThrowCompletionOr<HTMLCanvasElement::RenderingContext> HTMLCanvasElement::ge
     // NOTE: See the spec for the full table.
     if (type == "2d"sv) {
         if (TRY(create_2d_context(options)) == HasOrCreatedContext::Yes)
+#if defined(AK_OS_RINOS)
+            return m_context.get<GC::Ref<HTML::CanvasRenderingContext2D>>();
+#else
             return GC::make_root(*m_context.get<GC::Ref<HTML::CanvasRenderingContext2D>>());
+#endif
 
-        return Empty {};
+        return nullptr;
     }
 
+#if !defined(AK_OS_RINOS)
     // NOTE: The WebGL spec says "experimental-webgl" is also acceptable and must be equivalent to "webgl". Other engines accept this, so we do too.
     if (type.is_one_of("webgl"sv, "experimental-webgl"sv)) {
         if (TRY(create_webgl_context<WebGL::WebGLRenderingContext>(options)) == HasOrCreatedContext::Yes)
@@ -281,8 +297,13 @@ JS::ThrowCompletionOr<HTMLCanvasElement::RenderingContext> HTMLCanvasElement::ge
 
         return Empty {};
     }
+#endif
 
+#if defined(AK_OS_RINOS)
+    return nullptr;
+#else
     return Empty {};
+#endif
 }
 
 Gfx::IntSize HTMLCanvasElement::bitmap_size_for_canvas(size_t minimum_width, size_t minimum_height) const
@@ -417,12 +438,14 @@ void HTMLCanvasElement::present()
         [](GC::Ref<CanvasRenderingContext2D>&) {
             // Do nothing, CRC2D writes directly to the canvas bitmap.
         },
+#if !defined(AK_OS_RINOS)
         [](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             context->present();
         },
         [](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             context->present();
         },
+#endif
         [](Empty) {
             // Do nothing.
         });
@@ -440,12 +463,14 @@ RefPtr<Gfx::PaintingSurface> HTMLCanvasElement::surface() const
         [&](GC::Ref<CanvasRenderingContext2D> const& context) {
             return context->surface();
         },
+#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGLRenderingContext> const& context) -> RefPtr<Gfx::PaintingSurface> {
             return context->surface();
         },
         [&](GC::Ref<WebGL::WebGL2RenderingContext> const& context) -> RefPtr<Gfx::PaintingSurface> {
             return context->surface();
         },
+#endif
         [](Empty) -> RefPtr<Gfx::PaintingSurface> {
             return {};
         });
@@ -457,12 +482,14 @@ void HTMLCanvasElement::allocate_painting_surface_if_needed()
         [&](GC::Ref<CanvasRenderingContext2D>& context) {
             context->allocate_painting_surface_if_needed();
         },
+#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             context->allocate_painting_surface_if_needed();
         },
         [&](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             context->allocate_painting_surface_if_needed();
         },
+#endif
         [](Empty) {
             // Do nothing.
         });

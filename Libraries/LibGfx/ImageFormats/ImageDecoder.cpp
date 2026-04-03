@@ -4,17 +4,20 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGfx/ImageFormats/AVIFLoader.h>
 #include <LibGfx/ImageFormats/BMPLoader.h>
 #include <LibGfx/ImageFormats/GIFLoader.h>
 #include <LibGfx/ImageFormats/ICOLoader.h>
 #include <LibGfx/ImageFormats/ImageDecoder.h>
 #include <LibGfx/ImageFormats/JPEGLoader.h>
-#include <LibGfx/ImageFormats/JPEGXLLoader.h>
 #include <LibGfx/ImageFormats/PNGLoader.h>
 #include <LibGfx/ImageFormats/TIFFLoader.h>
 #include <LibGfx/ImageFormats/TinyVGLoader.h>
 #include <LibGfx/ImageFormats/WebPLoader.h>
+
+#if !defined(AK_OS_RINOS)
+#    include <LibGfx/ImageFormats/AVIFLoader.h>
+#    include <LibGfx/ImageFormats/JPEGXLLoader.h>
+#endif
 
 namespace Gfx {
 
@@ -30,12 +33,16 @@ static ErrorOr<OwnPtr<ImageDecoderPlugin>> probe_and_sniff_for_appropriate_plugi
         { GIFImageDecoderPlugin::sniff, GIFImageDecoderPlugin::create },
         { ICOImageDecoderPlugin::sniff, ICOImageDecoderPlugin::create },
         { JPEGImageDecoderPlugin::sniff, JPEGImageDecoderPlugin::create },
+#if !defined(AK_OS_RINOS)
         { JPEGXLImageDecoderPlugin::sniff, JPEGXLImageDecoderPlugin::create },
+#endif
         { PNGImageDecoderPlugin::sniff, PNGImageDecoderPlugin::create },
         { TIFFImageDecoderPlugin::sniff, TIFFImageDecoderPlugin::create },
         { TinyVGImageDecoderPlugin::sniff, TinyVGImageDecoderPlugin::create },
         { WebPImageDecoderPlugin::sniff, WebPImageDecoderPlugin::create },
+#if !defined(AK_OS_RINOS)
         { AVIFImageDecoderPlugin::sniff, AVIFImageDecoderPlugin::create }
+#endif
     };
 
     for (auto& plugin : s_initializers) {

@@ -111,17 +111,23 @@ NonnullOwnPtr<ExecutionContext> ExecutionContext::copy() const
     copy->lexical_environment = lexical_environment;
     copy->variable_environment = variable_environment;
     copy->private_environment = private_environment;
+    copy->global_object = global_object;
+    copy->global_declarative_environment = global_declarative_environment;
+    copy->identifier_table = identifier_table;
+    copy->property_key_table = property_key_table;
     copy->program_counter = program_counter;
     copy->yield_continuation = yield_continuation;
     copy->yield_is_await = yield_is_await;
     copy->caller_is_construct = caller_is_construct;
     copy->this_value = this_value;
     copy->executable = executable;
+    copy->context_owner = context_owner;
     copy->passed_argument_count = passed_argument_count;
     copy->registers_and_constants_and_locals_and_arguments_count = registers_and_constants_and_locals_and_arguments_count;
     for (size_t i = 0; i < registers_and_constants_and_locals_and_arguments_count; ++i)
         copy->registers_and_constants_and_locals_and_arguments()[i] = registers_and_constants_and_locals_and_arguments()[i];
     copy->argument_count = argument_count;
+    copy->arguments = { copy->arguments_data(), argument_count };
     return copy;
 }
 
@@ -132,8 +138,11 @@ void ExecutionContext::visit_edges(Cell::Visitor& visitor)
     visitor.visit(variable_environment);
     visitor.visit(lexical_environment);
     visitor.visit(private_environment);
+    visitor.visit(global_object);
+    visitor.visit(global_declarative_environment);
     visitor.visit(this_value);
     visitor.visit(executable);
+    visitor.visit(context_owner);
     visitor.visit(registers_and_constants_and_locals_and_arguments_span());
     script_or_module.visit(
         [](Empty) {},

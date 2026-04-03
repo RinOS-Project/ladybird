@@ -599,7 +599,7 @@ private:
     }
     ALWAYS_INLINE bool word() // Alphanumeric strings that are not date "keywords".
     {
-        std::ignore = consume_while(isalpha);
+        (void)consume_while(isalpha);
         // Just like Firefox and Chrome:
         // - Ignore junk (bare words) at the beginning (before time or a date fragment has been read).
         // - Fail if a word is read later in the date string (exception: final time zone name, in brackets).

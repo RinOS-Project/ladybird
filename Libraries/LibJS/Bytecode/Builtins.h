@@ -42,6 +42,8 @@ enum class Builtin : u8 {
         __Count,
 };
 
+Optional<Builtin> get_builtin(MemberExpression const& expression);
+
 static StringView builtin_name(Builtin value)
 {
     switch (value) {

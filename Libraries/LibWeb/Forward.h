@@ -43,7 +43,11 @@ namespace Web::Painting {
 class BackingStore;
 class DevicePixelConverter;
 class DisplayList;
+#if defined(AK_OS_RINOS)
+class DisplayListPlayerAquamarine;
+#else
 class DisplayListPlayerSkia;
+#endif
 class DisplayListRecorder;
 class ExternalContentSource;
 class SVGGradientPaintStyle;

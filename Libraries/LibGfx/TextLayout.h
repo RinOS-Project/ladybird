@@ -55,7 +55,7 @@ public:
     void ensure_text_blob(float scale) const;
 
     FloatRect cached_blob_bounds() const;
-    SkTextBlob* cached_skia_text_blob() const;
+    SkTextBlob* cached_text_blob() const;
 
     [[nodiscard]] Vector<float> get_glyph_intercepts(float scale, float y_top, float y_bottom) const;
 

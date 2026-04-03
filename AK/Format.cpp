@@ -22,6 +22,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#if defined(AK_OS_RINOS)
+#    include <sys/syscall.h>
+#    include <unistd.h>
+#endif
 
 #if defined(AK_OS_SERENITY)
 #    include <serenity.h>
@@ -1251,8 +1255,10 @@ void vout(LogLevel log_level, StringView fmtstr, TypeErasedFormatParams& params,
     if (rc != 0)
         return ByteString {};
     return StringView { buffer, strlen(buffer) };
-#elif defined(AK_LIBC_GLIBC) || (defined(AK_OS_LINUX) && !defined(AK_OS_ANDROID))
+#elif defined(AK_LIBC_GLIBC) || (defined(AK_OS_LINUX) && !defined(AK_OS_ANDROID) && !defined(AK_OS_RINOS))
     return StringView { program_invocation_name, strlen(program_invocation_name) };
+#elif defined(AK_OS_RINOS)
+    return "rinos"sv;
 #elif defined(AK_OS_BSD_GENERIC) || defined(AK_OS_HAIKU)
     auto const* progname = getprogname();
     return StringView { progname, strlen(progname) };
@@ -1316,8 +1322,10 @@ static auto current_process_id()
 
 static auto current_thread_id()
 {
-#if defined(AK_OS_LINUX)
+#if defined(AK_OS_LINUX) && !defined(AK_OS_RINOS)
     return gettid();
+#elif defined(AK_OS_RINOS)
+    return syscall(SYS_gettid);
 #elif defined(AK_OS_WINDOWS)
     return GetCurrentThreadId();
 #elif defined(AK_OS_MACOS)

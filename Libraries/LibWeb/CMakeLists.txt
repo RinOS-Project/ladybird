@@ -14,7 +14,7 @@ if (RINOS_USE_SKIA_GRAPHICS)
     )
 else()
     list(APPEND SKIA_SOURCES
-        Painting/DisplayListPlayerSkiaAquamarineStub.cpp
+        Painting/DisplayListPlayerAquamarine.cpp
     )
 endif()
 
@@ -30,6 +30,21 @@ if (NOT AK_OS_RINOS)
 else()
     set(ANGLE_TARGETS "")
     message(STATUS "RinOS policy: ANGLE/WebGL is disabled (no GPU backend).")
+endif()
+
+set(LIBWEB_WASM_SOURCES
+    WebAssembly/Global.cpp
+    WebAssembly/Instance.cpp
+    WebAssembly/Memory.cpp
+    WebAssembly/Module.cpp
+    WebAssembly/Table.cpp
+    WebAssembly/WebAssembly.cpp
+)
+set(LIBWEB_WASM_DEPENDENCY LibWasm)
+if (AK_OS_RINOS)
+    set(LIBWEB_WASM_SOURCES "")
+    set(LIBWEB_WASM_DEPENDENCY "")
+    message(STATUS "RinOS feature profile: LibWeb WebAssembly bindings are disabled.")
 endif()
 
 set(SOURCES
@@ -1068,12 +1083,7 @@ set(SOURCES
     UserTiming/PerformanceMark.cpp
     UserTiming/PerformanceMeasure.cpp
     ViewTransition/ViewTransition.cpp
-    WebAssembly/Global.cpp
-    WebAssembly/Instance.cpp
-    WebAssembly/Memory.cpp
-    WebAssembly/Module.cpp
-    WebAssembly/Table.cpp
-    WebAssembly/WebAssembly.cpp
+    ${LIBWEB_WASM_SOURCES}
     WebAudio/AnalyserNode.cpp
     WebAudio/AudioBuffer.cpp
     WebAudio/AudioBufferSourceNode.cpp
@@ -1191,6 +1201,22 @@ set(SOURCES
 )
 list(APPEND SOURCES ${SKIA_SOURCES})
 
+if (AK_OS_RINOS)
+    list(FILTER SOURCES EXCLUDE REGEX "^WebGL/")
+    list(REMOVE_ITEM SOURCES
+        Gamepad/Gamepad.cpp
+        Gamepad/GamepadHapticActuator.cpp
+        Gamepad/NavigatorGamepad.cpp
+        Internals/InternalGamepad.cpp
+    )
+    list(APPEND SOURCES
+        Gamepad/GamepadRinOS.cpp
+        Gamepad/GamepadHapticActuatorRinOS.cpp
+        Gamepad/NavigatorGamepadRinOS.cpp
+        Internals/InternalGamepadRinOS.cpp
+    )
+endif()
+
 compile_ipc(Worker/WebWorkerClient.ipc Worker/WebWorkerClientEndpoint.h)
 compile_ipc(Worker/WebWorkerServer.ipc Worker/WebWorkerServerEndpoint.h)
 
@@ -1238,10 +1264,10 @@ ladybird_lib(LibWeb web EXPLICIT_SYMBOL_EXPORT)
 
 if (NOT AK_OS_RINOS)
     find_package(LibXml2 REQUIRED)
-    target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia LibWasm LibXML LibIDL LibURL LibTLS LibRequests LibGC LibThreading ${ANGLE_TARGETS} SDL3::SDL3 LibXml2::LibXml2)
+    target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia ${LIBWEB_WASM_DEPENDENCY} LibXML LibIDL LibURL LibTLS LibRequests LibGC LibThreading ${ANGLE_TARGETS} SDL3::SDL3 LibXml2::LibXml2)
 else()
     # RinOS: SDL3, LibXml2 external deps excluded; display is aquamarine, XML is built-in
-    target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia LibWasm LibXML LibIDL LibURL LibTLS LibRequests LibGC LibThreading)
+    target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia ${LIBWEB_WASM_DEPENDENCY} LibXML LibIDL LibURL LibTLS LibRequests LibGC LibThreading)
     message(STATUS "RinOS policy: LibXml2/SDL3 excluded from LibWeb link.")
 endif()
 if (RINOS_USE_SKIA_GRAPHICS)

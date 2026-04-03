@@ -15,8 +15,11 @@
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
-#include <LibWeb/WebGL/WebGL2RenderingContext.h>
-#include <LibWeb/WebGL/WebGLRenderingContext.h>
+
+#if !defined(AK_OS_RINOS)
+#    include <LibWeb/WebGL/WebGL2RenderingContext.h>
+#    include <LibWeb/WebGL/WebGLRenderingContext.h>
+#endif
 
 namespace Web::HTML {
 
@@ -126,12 +129,14 @@ void OffscreenCanvas::reset_context_to_default_state()
         [](GC::Ref<OffscreenCanvasRenderingContext2D>& context) {
             context->reset_to_default_state();
         },
+#if !defined(AK_OS_RINOS)
         [](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             context->reset_to_default_state();
         },
         [](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             context->reset_to_default_state();
         },
+#endif
         [](Empty) {
             // Do nothing.
         });
@@ -155,12 +160,14 @@ WebIDL::ExceptionOr<void> OffscreenCanvas::set_new_bitmap_size(Gfx::IntSize new_
         [&](GC::Ref<OffscreenCanvasRenderingContext2D>& context) {
             context->set_size(new_size);
         },
+#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             context->set_size(new_size);
         },
         [&](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             context->set_size(new_size);
         },
+#endif
         [](Empty) {
             // Do nothing.
         });
@@ -212,24 +219,28 @@ JS::ThrowCompletionOr<OffscreenRenderingContext> OffscreenCanvas::get_context(Bi
     // NOTE: See the spec for the full table.
     if (contextId == Bindings::OffscreenRenderingContextId::_2d) {
         if (TRY(create_2d_context(options)) == HasOrCreatedContext::Yes)
+#if defined(AK_OS_RINOS)
+            return m_context.get<GC::Ref<HTML::OffscreenCanvasRenderingContext2D>>();
+#else
             return GC::make_root(*m_context.get<GC::Ref<HTML::OffscreenCanvasRenderingContext2D>>());
+#endif
 
-        return Empty {};
+        return nullptr;
     }
 
     if (contextId == Bindings::OffscreenRenderingContextId::Webgl) {
         dbgln("(STUBBED) OffscreenCanvas::get_context(Webgl)");
 
-        return Empty {};
+        return nullptr;
     }
 
     if (contextId == Bindings::OffscreenRenderingContextId::Webgl2) {
         dbgln("(STUBBED) OffscreenCanvas::get_context(Webgl2)");
 
-        return Empty {};
+        return nullptr;
     }
 
-    return Empty {};
+    return nullptr;
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-offscreencanvas-transfertoimagebitmap
@@ -360,12 +371,14 @@ void OffscreenCanvas::visit_edges(Cell::Visitor& visitor)
         [&](GC::Ref<OffscreenCanvasRenderingContext2D>& context) {
             visitor.visit(context);
         },
+#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             visitor.visit(context);
         },
         [&](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             visitor.visit(context);
         },
+#endif
         [](Empty) {
         });
 }

@@ -12,7 +12,9 @@
 #include <AK/NonnullRawPtr.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Font/WOFF/Loader.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/Font/WOFF2/Loader.h>
+#endif
 #include <LibWeb/CSS/CSSFontFaceRule.h>
 #include <LibWeb/CSS/CSSFontFeatureValuesRule.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
@@ -230,11 +232,13 @@ ErrorOr<NonnullRefPtr<Gfx::Typeface const>> FontLoader::try_load_font(Fetch::Inf
                 return result;
             }
         }
+#ifndef AK_OS_RINOS
         if (mime_type->essence() == "font/woff2"sv || mime_type->essence() == "application/font-woff2"sv) {
             if (auto result = WOFF2::try_load_from_bytes(bytes); !result.is_error()) {
                 return result;
             }
         }
+#endif
     }
 
     return Error::from_string_literal("Automatic format detection failed");

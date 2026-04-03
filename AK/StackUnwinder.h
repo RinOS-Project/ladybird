@@ -32,6 +32,9 @@ void unwind_stack_from_frame_pointer(FlatPtr frame_pointer, CallableAs<Optional<
 #if ARCH(AARCH64) || ARCH(X86_64)
     static constexpr ptrdiff_t FRAME_POINTER_RETURN_ADDRESS_OFFSET = 8;
     static constexpr ptrdiff_t FRAME_POINTER_PREVIOUS_FRAME_POINTER_OFFSET = 0;
+#elif ARCH(I386)
+    static constexpr ptrdiff_t FRAME_POINTER_RETURN_ADDRESS_OFFSET = 4;
+    static constexpr ptrdiff_t FRAME_POINTER_PREVIOUS_FRAME_POINTER_OFFSET = 0;
 #elif ARCH(RISCV64)
     static constexpr ptrdiff_t FRAME_POINTER_RETURN_ADDRESS_OFFSET = -8;
     static constexpr ptrdiff_t FRAME_POINTER_PREVIOUS_FRAME_POINTER_OFFSET = -16;

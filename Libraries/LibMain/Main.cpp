@@ -32,7 +32,9 @@ void set_return_code_for_errors(int code)
 
 int main(int argc, char** argv)
 {
+#if !defined(AK_OS_RINOS)
     tzset();
+#endif
 
 #if defined(AK_OS_WINDOWS)
     windows_init();

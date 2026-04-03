@@ -1,5 +1,7 @@
 include(audio)
-include(SDL3)
+if (NOT AK_OS_RINOS)
+    include(SDL3)
+endif()
 
 set(SOURCES
     ConnectionFromClient.cpp
@@ -43,6 +45,15 @@ endif()
 add_executable(WebContent main.cpp)
 
 target_link_libraries(WebContent PRIVATE webcontentservice LibURL)
+
+if (AK_OS_RINOS)
+    add_library(rinoswebcontentbridge STATIC RinOSCompatBridge.cpp)
+    target_include_directories(rinoswebcontentbridge PRIVATE
+        ${LADYBIRD_SOURCE_DIR}/../../src/shared
+        ${LADYBIRD_SOURCE_DIR}/../../src/apps/common
+    )
+    target_link_libraries(rinoswebcontentbridge PUBLIC LibCore LibGfx LibMain LibURL LibWeb LibWebView)
+endif()
 
 if(WIN32)
     lagom_windows_bin(WebContent CONSOLE)

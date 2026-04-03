@@ -100,7 +100,7 @@ void DisplayListPlayerSkia::flush()
 
 void DisplayListPlayerSkia::draw_glyph_run(DrawGlyphRun const& command)
 {
-    auto* blob = command.glyph_run->cached_skia_text_blob();
+    auto* blob = command.glyph_run->cached_text_blob();
     if (!blob)
         return;
 

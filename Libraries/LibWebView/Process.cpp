@@ -48,6 +48,13 @@ ErrorOr<Process::ProcessAndIPCTransport> Process::spawn_and_connect_to_process(C
 
     Core::ProcessSpawnOptions spawn_options = options;
 
+#if defined(AK_OS_RINOS)
+    if (capture_output)
+        return Error::from_string_literal("RinOS helper output capture is not supported yet");
+    if (!spawn_options.file_actions.is_empty())
+        return Error::from_string_literal("RinOS helper file actions are not supported yet");
+#endif
+
     if (capture_output) {
         stdout_pipe = TRY(Core::System::pipe2(O_CLOEXEC));
         stderr_pipe = TRY(Core::System::pipe2(O_CLOEXEC));
@@ -77,7 +84,9 @@ ErrorOr<Process::ProcessAndIPCTransport> Process::spawn_and_connect_to_process(C
     auto transport = make<IPC::Transport>(move(port_a_recv), move(port_b_send));
 #else
     int socket_fds[2] {};
+    dbgln("[HELPER-SPAWN] socketpair begin executable='{}' name='{}'", spawn_options.executable, options.name);
     TRY(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, socket_fds));
+    dbgln("[HELPER-SPAWN] socketpair ok executable='{}' parent_fd={} child_fd={}", spawn_options.executable, socket_fds[0], socket_fds[1]);
 
     ArmedScopeGuard guard_fd_0 { [&] { MUST(Core::System::close(socket_fds[0])); } };
     ArmedScopeGuard guard_fd_1 { [&] { MUST(Core::System::close(socket_fds[1])); } };
@@ -85,10 +94,31 @@ ErrorOr<Process::ProcessAndIPCTransport> Process::spawn_and_connect_to_process(C
     // Note: Core::System::socketpair creates inheritable sockets both on Linux and Windows unless SOCK_CLOEXEC is specified.
     TRY(Core::System::set_close_on_exec(socket_fds[0], true));
 
+#    if defined(AK_OS_RINOS)
+    Vector<char*> argv;
+    argv.ensure_capacity(spawn_options.arguments.size() + 2);
+    argv.append(const_cast<char*>(spawn_options.executable.characters()));
+    for (auto const& argument : spawn_options.arguments)
+        argv.append(const_cast<char*>(argument.characters()));
+    argv.append(nullptr);
+
+    auto takeover_name = options.name.is_empty() ? spawn_options.executable.view() : options.name;
+    dbgln("[HELPER-SPAWN] spawn_process begin executable='{}' takeover='{}' child_fd={}", spawn_options.executable, takeover_name, socket_fds[1]);
+    auto child_pid = TRY(Core::System::spawn_process(
+        spawn_options.executable.view(),
+        argv.data(),
+        Core::Environment::raw_environ(),
+        socket_fds[1],
+        takeover_name));
+    dbgln("[HELPER-SPAWN] spawn_process ok executable='{}' pid={}", spawn_options.executable, child_pid);
+
+    auto process = Core::Process::from_pid(child_pid);
+#    else
     auto takeover_string = MUST(String::formatted("{}:{}", options.name, socket_fds[1]));
     TRY(Core::Environment::set("SOCKET_TAKEOVER"sv, takeover_string, Core::Environment::Overwrite::Yes));
 
     auto process = TRY(Core::Process::spawn(spawn_options));
+#    endif
 
     auto ipc_socket = TRY(Core::LocalSocket::adopt_fd(socket_fds[0]));
     guard_fd_0.disarm();

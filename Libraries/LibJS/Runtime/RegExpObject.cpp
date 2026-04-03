@@ -49,6 +49,33 @@ static Result<RegExpObject::Flags, String> validate_flags(Utf16View const& flags
     return flag_bits;
 }
 
+Result<regex::RegexOptions<ECMAScriptFlags>, String> regex_flags_from_string(Utf16View const& flags)
+{
+    auto validated_flags_or_error = validate_flags(flags);
+    if (validated_flags_or_error.is_error())
+        return validated_flags_or_error.release_error();
+
+    auto flag_bits = validated_flags_or_error.release_value();
+    auto regex_flags = RegExpObject::default_flags;
+
+    if (has_flag(flag_bits, RegExpObject::Flags::Global))
+        regex_flags |= ECMAScriptFlags::Global;
+    if (has_flag(flag_bits, RegExpObject::Flags::IgnoreCase))
+        regex_flags |= ECMAScriptFlags::Insensitive;
+    if (has_flag(flag_bits, RegExpObject::Flags::Multiline))
+        regex_flags |= ECMAScriptFlags::Multiline;
+    if (has_flag(flag_bits, RegExpObject::Flags::DotAll))
+        regex_flags |= ECMAScriptFlags::SingleLine;
+    if (has_flag(flag_bits, RegExpObject::Flags::Unicode))
+        regex_flags |= ECMAScriptFlags::Unicode;
+    if (has_flag(flag_bits, RegExpObject::Flags::UnicodeSets))
+        regex_flags |= ECMAScriptFlags::UnicodeSets;
+    if (has_flag(flag_bits, RegExpObject::Flags::Sticky))
+        regex_flags |= ECMAScriptFlags::Sticky;
+
+    return regex_flags;
+}
+
 // 22.2.3.4 Static Semantics: ParsePattern ( patternText, u, v ), https://tc39.es/ecma262/#sec-parsepattern
 ErrorOr<String, ParseRegexPatternError> parse_regex_pattern(Utf16View const& pattern, bool unicode, bool unicode_sets)
 {

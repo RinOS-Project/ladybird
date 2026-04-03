@@ -191,7 +191,12 @@ ErrorOr<void> encode(Encoder& encoder, Core::AnonymousBuffer const& buffer)
 
     if (buffer.is_valid()) {
         TRY(encoder.encode_size(buffer.size()));
+#if defined(AK_OS_RINOS)
+        auto bytes = buffer.bytes();
+        TRY(encoder.append(bytes.data(), bytes.size()));
+#else
         TRY(encoder.encode(TRY(IPC::File::clone_fd(buffer.fd()))));
+#endif
     }
 
     return {};

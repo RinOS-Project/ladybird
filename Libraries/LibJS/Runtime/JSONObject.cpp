@@ -6,6 +6,8 @@
 
 #include <AK/Function.h>
 #include <AK/GenericLexer.h>
+#include <AK/JsonArray.h>
+#include <AK/JsonObject.h>
 #include <AK/StringBuilder.h>
 #include <AK/StringConversions.h>
 #include <AK/TypeCasts.h>
@@ -25,7 +27,11 @@
 #include <LibJS/Runtime/StringObject.h>
 #include <LibJS/Runtime/ValueInlines.h>
 
+#if defined(AK_OS_RINOS)
+#include <AK/JsonParser.h>
+#else
 #include <simdjson.h>
+#endif
 
 namespace JS {
 
@@ -463,7 +469,7 @@ JS_DEFINE_NATIVE_FUNCTION(JSONObject::parse)
 // Unescape a JSON string, properly handling \uXXXX escape sequences including lone surrogates.
 // simdjson validates UTF-8 strictly and rejects lone surrogates, but JSON allows them.
 // Returns {} on malformed escape sequences.
-static Optional<Utf16String> unescape_json_string(StringView raw)
+[[maybe_unused]] static Optional<Utf16String> unescape_json_string(StringView raw)
 {
     StringBuilder builder(StringBuilder::Mode::UTF16, raw.length());
 
@@ -567,6 +573,7 @@ static Optional<Utf16String> unescape_json_string(StringView raw)
     return builder.to_utf16_string();
 }
 
+#if !defined(AK_OS_RINOS)
 template<typename T>
 static ALWAYS_INLINE ThrowCompletionOr<void> ensure_simdjson_fully_parsed(VM& vm, T& value)
 {
@@ -769,6 +776,45 @@ static ThrowCompletionOr<Value> parse_simdjson_document(VM& vm, simdjson::ondema
 
     VERIFY_NOT_REACHED();
 }
+#else
+static ThrowCompletionOr<Value> parse_ak_json_value(VM& vm, JsonValue const& value)
+{
+    auto& realm = *vm.current_realm();
+
+    if (value.is_null())
+        return js_null();
+    if (value.is_bool())
+        return Value(value.as_bool());
+    if (value.is_string())
+        return PrimitiveString::create(vm, value.as_string());
+    if (value.is_number()) {
+        auto number = value.as_number().visit([](auto const& number_value) {
+            return static_cast<double>(number_value);
+        });
+        return Value(number);
+    }
+    if (value.is_array()) {
+        auto array = MUST(Array::create(realm, 0));
+        auto const& values = value.as_array().values();
+        for (size_t i = 0; i < values.size(); ++i) {
+            auto parsed = TRY(parse_ak_json_value(vm, values[i]));
+            array->define_direct_property(i, parsed, default_attributes);
+        }
+        return array;
+    }
+    if (value.is_object()) {
+        auto object = Object::create(realm, realm.intrinsics().object_prototype());
+        TRY(value.as_object().try_for_each_member([&](String const& key, JsonValue const& member) -> ThrowCompletionOr<void> {
+            auto parsed = TRY(parse_ak_json_value(vm, member));
+            object->define_direct_property(Utf16String::from_utf8(key), parsed, default_attributes);
+            return {};
+        }));
+        return object;
+    }
+
+    VERIFY_NOT_REACHED();
+}
+#endif
 
 // 25.5.1.1 ParseJSON ( text ), https://tc39.es/ecma262/#sec-ParseJSON
 ThrowCompletionOr<Value> JSONObject::parse_json(VM& vm, StringView text)
@@ -782,6 +828,12 @@ ThrowCompletionOr<Value> JSONObject::parse_json(VM& vm, StringView text)
         return vm.throw_completion<SyntaxError>(ErrorType::JsonMalformed);
     }
 
+#if defined(AK_OS_RINOS)
+    auto parsed = JsonParser::parse(text);
+    if (parsed.is_error())
+        return vm.throw_completion<SyntaxError>(ErrorType::JsonMalformed);
+    return TRY(parse_ak_json_value(vm, parsed.release_value()));
+#else
     simdjson::ondemand::parser parser;
     simdjson::padded_string padded(text.characters_without_null_termination(), text.length());
 
@@ -801,6 +853,7 @@ ThrowCompletionOr<Value> JSONObject::parse_json(VM& vm, StringView text)
 
     // 9. Return result.
     return result;
+#endif
 }
 
 // 25.5.1.1 InternalizeJSONProperty ( holder, name, reviver ), https://tc39.es/ecma262/#sec-internalizejsonproperty
@@ -856,6 +909,15 @@ JS_DEFINE_NATIVE_FUNCTION(JSONObject::raw_json)
     if (invalid_code_points.contains_slow(first_char) || invalid_code_points.contains_slow(last_char))
         return vm.throw_completion<SyntaxError>(ErrorType::JsonMalformed);
 
+#if defined(AK_OS_RINOS)
+    auto parsed = JsonParser::parse(json_string.bytes_as_string_view());
+    if (parsed.is_error())
+        return vm.throw_completion<SyntaxError>(ErrorType::JsonMalformed);
+
+    auto const& parsed_value = parsed.value();
+    if (parsed_value.is_array() || parsed_value.is_object())
+        return vm.throw_completion<SyntaxError>(ErrorType::JsonRawJSONNonPrimitive);
+#else
     // 3. Parse StringToCodePoints(jsonString) as a JSON text as specified in ECMA-404. Throw a SyntaxError exception
     //    if it is not a valid JSON text as defined in that specification, or if its outermost value is an object or
     //    array as defined in that specification.
@@ -893,6 +955,7 @@ JS_DEFINE_NATIVE_FUNCTION(JSONObject::raw_json)
 
     if (!doc.at_end())
         return vm.throw_completion<SyntaxError>(ErrorType::JsonMalformed);
+#endif
 
     // 4. Let internalSlotsList be « [[IsRawJSON]] ».
     // 5. Let obj be OrdinaryObjectCreate(null, internalSlotsList).

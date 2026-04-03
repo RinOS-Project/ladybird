@@ -72,6 +72,23 @@ struct ApplicationBookmarkStoreObserver final : public BookmarkStoreObserver {
     }
 };
 
+static ErrorOr<String> resolve_web_content_executable_path()
+{
+#if defined(AK_OS_RINOS)
+    auto executable_path = Core::System::current_executable_path();
+    if (executable_path.is_error())
+        return String {};
+
+    auto path = executable_path.release_value();
+    if (path.is_empty())
+        return String {};
+
+    return String::from_byte_string(path);
+#else
+    return String::from_byte_string(TRY(Core::System::current_executable_path()));
+#endif
+}
+
 Application::Application(Optional<ByteString> ladybird_binary_path)
     : m_settings(Settings::create({}))
     , m_bookmark_store(BookmarkStore::create({}))
@@ -315,7 +332,7 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
 
     m_web_content_options = {
         .command_line = MUST(String::join(' ', m_arguments.strings)),
-        .executable_path = MUST(String::from_byte_string(MUST(Core::System::current_executable_path()))),
+        .executable_path = TRY(resolve_web_content_executable_path()),
         .user_agent_preset = move(user_agent_preset),
         .is_test_mode = enable_test_mode ? IsTestMode::Yes : IsTestMode::No,
         .log_all_js_exceptions = log_all_js_exceptions ? LogAllJSExceptions::Yes : LogAllJSExceptions::No,

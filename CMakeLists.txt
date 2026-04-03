@@ -30,6 +30,8 @@ project(ladybird
         HOMEPAGE_URL "https://ladybird.org"
 )
 
+option(RINOS_HELPER_SERVICES_ONLY "Build helper services without the desktop Ladybird frontend" OFF)
+
 if (ANDROID OR IOS)
     set(BUILD_SHARED_LIBS OFF)
 endif()
@@ -64,7 +66,7 @@ if (AK_OS_RINOS)
         ${LADYBIRD_SOURCE_DIR}/../libc
     )
     if (CMAKE_CROSSCOMPILING)
-        target_compile_definitions(RinTLSShim PRIVATE RIN_USERSPACE=1 RIN_FREESTANDING=0)
+        target_compile_definitions(RinTLSShim PRIVATE RIN_USERSPACE=1)
     else()
         target_compile_definitions(RinTLSShim PRIVATE RIN_USERSPACE=1 RIN_FREESTANDING=0 RINTLS_HOST_LIBC=1)
     endif()
@@ -112,7 +114,11 @@ include(CTest) # for BUILD_TESTING option, default ON
 
 if (ENABLE_GUI_TARGETS)
     add_subdirectory(Services)
-    add_subdirectory(UI)
+    if (RINOS_HELPER_SERVICES_ONLY)
+        message(STATUS "RinOS helper-services-only build enabled; skipping Ladybird UI frontend.")
+    else()
+        add_subdirectory(UI)
+    endif()
 endif()
 
 add_custom_target(lint-shell-scripts

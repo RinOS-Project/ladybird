@@ -16,6 +16,7 @@ class FunctionConstructor final : public NativeFunction {
     GC_DECLARE_ALLOCATOR(FunctionConstructor);
 
 public:
+    static ThrowCompletionOr<GC::Ref<SharedFunctionInstanceData>> compile_dynamic_function(VM&, FunctionKind kind, ReadonlySpan<Value> parameter_args, Value body_arg);
     static ThrowCompletionOr<GC::Ref<ECMAScriptFunctionObject>> create_dynamic_function(VM&, FunctionObject& constructor, FunctionObject* new_target, FunctionKind kind, ReadonlySpan<Value> parameter_args, Value body_arg);
 
     virtual void initialize(Realm&) override;

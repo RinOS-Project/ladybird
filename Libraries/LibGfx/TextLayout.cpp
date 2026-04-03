@@ -15,8 +15,8 @@
 #ifndef AK_OS_RINOS
 #include <core/SkFont.h>
 #include <core/SkTextBlob.h>
-#endif
 #include <harfbuzz/hb.h>
+#endif
 
 namespace Gfx {
 
@@ -120,12 +120,12 @@ FloatRect GlyphRun::cached_blob_bounds() const
 }
 
 #ifdef AK_OS_RINOS
-SkTextBlob* GlyphRun::cached_skia_text_blob() const
+SkTextBlob* GlyphRun::cached_text_blob() const
 {
     return nullptr;
 }
 #else
-SkTextBlob* GlyphRun::cached_skia_text_blob() const
+SkTextBlob* GlyphRun::cached_text_blob() const
 {
     if (!m_cached_text_blob || !m_cached_text_blob->blob)
         return nullptr;
@@ -145,7 +145,7 @@ Vector<float> GlyphRun::get_glyph_intercepts(float scale, float y_top, float y_b
 Vector<float> GlyphRun::get_glyph_intercepts(float scale, float y_top, float y_bottom) const
 {
     ensure_text_blob(scale);
-    auto* blob = cached_skia_text_blob();
+    auto* blob = cached_text_blob();
     if (!blob)
         return {};
 
@@ -200,18 +200,17 @@ Vector<NonnullRefPtr<GlyphRun>> shape_text(FloatPoint baseline_start, Utf16View 
     return runs;
 }
 
+#ifndef AK_OS_RINOS
 static hb_buffer_t* setup_text_shaping(Utf16View const& string, Font const& font, GlyphRun::TextType text_type)
 {
     hb_buffer_t* buffer = hb_buffer_create();
 
     if (string.has_ascii_storage()) {
         hb_buffer_add_utf8(buffer, string.ascii_span().data(), string.length_in_code_units(), 0, -1);
-        // Fast path for ASCII: we know it's Latin script, LTR direction.
         hb_buffer_set_script(buffer, HB_SCRIPT_LATIN);
         hb_buffer_set_direction(buffer, HB_DIRECTION_LTR);
     } else {
         hb_buffer_add_utf16(buffer, reinterpret_cast<u16 const*>(string.utf16_span().data()), string.length_in_code_units(), 0, -1);
-        // For non-ASCII, set direction from text_type if known, otherwise guess.
         if (text_type == GlyphRun::TextType::Ltr) {
             hb_buffer_set_direction(buffer, HB_DIRECTION_LTR);
             hb_buffer_guess_segment_properties(buffer);
@@ -240,12 +239,53 @@ static hb_buffer_t* setup_text_shaping(Utf16View const& string, Font const& font
     }
 
     hb_shape(hb_font, buffer, hb_features_data, font.features().size());
-
     return buffer;
 }
+#endif
 
 NonnullRefPtr<GlyphRun> shape_text(FloatPoint baseline_start, float letter_spacing, Utf16View const& string, Font const& font, GlyphRun::TextType text_type)
 {
+#ifdef AK_OS_RINOS
+    (void)text_type;
+    auto const& metrics = font.pixel_metrics();
+    auto fallback_advance = metrics.advance_of_ascii_zero > 0 ? metrics.advance_of_ascii_zero : max(font.pixel_size() * 0.6f, 1.0f);
+
+    Vector<DrawGlyph> glyph_run;
+    FloatPoint point = baseline_start;
+
+    auto it = string.begin();
+    while (it != string.end()) {
+        auto code_point = *it;
+        auto current_offset = string.iterator_offset(it);
+        auto next = it;
+        ++next;
+        auto next_offset = string.iterator_offset(next);
+        auto length_in_code_units = next_offset - current_offset;
+
+        auto glyph_id = font.glyph_id_for_code_point(code_point);
+        if (glyph_id == 0)
+            glyph_id = font.glyph_id_for_code_point('?');
+
+        auto advance = fallback_advance;
+        if (code_point == ' ')
+            advance *= 0.6f;
+        else if (code_point == '\t')
+            advance *= 2.4f;
+
+        auto position = point - FloatPoint { 0, metrics.ascent };
+        glyph_run.unchecked_append({
+            .position = position,
+            .length_in_code_units = length_in_code_units,
+            .glyph_width = advance + letter_spacing,
+            .glyph_id = glyph_id,
+        });
+
+        point.translate_by(advance + letter_spacing, 0);
+        it = next;
+    }
+
+    return adopt_ref(*new GlyphRun(move(glyph_run), font, text_type, point.x() - baseline_start.x()));
+#else
     auto const& metrics = font.pixel_metrics();
     auto& shaping_cache = font.shaping_cache();
 
@@ -317,10 +357,28 @@ NonnullRefPtr<GlyphRun> shape_text(FloatPoint baseline_start, float letter_spaci
     }
 
     return adopt_ref(*new GlyphRun(move(glyph_run), font, text_type, point.x() - baseline_start.x()));
+#endif
 }
 
 float measure_text_width(Utf16View const& string, Font const& font, float letter_spacing)
 {
+#ifdef AK_OS_RINOS
+    auto const& metrics = font.pixel_metrics();
+    auto fallback_advance = metrics.advance_of_ascii_zero > 0 ? metrics.advance_of_ascii_zero : max(font.pixel_size() * 0.6f, 1.0f);
+    float width = 0;
+    auto it = string.begin();
+    while (it != string.end()) {
+        auto code_point = *it;
+        auto advance = fallback_advance;
+        if (code_point == ' ')
+            advance *= 0.6f;
+        else if (code_point == '\t')
+            advance *= 2.4f;
+        width += advance + letter_spacing;
+        ++it;
+    }
+    return width;
+#else
     auto* buffer = setup_text_shaping(string, font, GlyphRun::TextType::Common);
 
     u32 glyph_count;
@@ -332,6 +390,7 @@ float measure_text_width(Utf16View const& string, Font const& font, float letter
 
     hb_buffer_destroy(buffer);
     return point_x / text_shaping_resolution + glyph_count * letter_spacing;
+#endif
 }
 
 }

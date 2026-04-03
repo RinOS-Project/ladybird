@@ -9,7 +9,9 @@
 
 #include <AK/Debug.h>
 #include <AK/Function.h>
-#include <LibGC/DeferGC.h>
+#include <LibJS/AST.h>
+#include <LibJS/Bytecode/BasicBlock.h>
+#include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Array.h>
@@ -27,7 +29,6 @@
 #include <LibJS/Runtime/PromiseConstructor.h>
 #include <LibJS/Runtime/Value.h>
 #include <LibJS/Runtime/ValueInlines.h>
-#include <LibJS/RustIntegration.h>
 
 namespace JS {
 
@@ -46,6 +47,83 @@ static GC::Ref<Object> prototype_for_function_kind(Realm& realm, FunctionKind ki
         return realm.intrinsics().async_generator_function_prototype();
     }
     VERIFY_NOT_REACHED();
+}
+
+GC::Ref<ECMAScriptFunctionObject> ECMAScriptFunctionObject::create(Realm& realm, Utf16FlyString name, Utf16String source_text, Statement const& ecmascript_code, NonnullRefPtr<FunctionParameters const> parameters, i32 function_length, Vector<LocalVariable> local_variables_names, Environment* parent_environment, PrivateEnvironment* private_environment, FunctionKind kind, bool is_strict, FunctionParsingInsights parsing_insights, bool is_arrow_function, Variant<PropertyKey, PrivateName, Empty> class_field_initializer_name)
+{
+    auto prototype = prototype_for_function_kind(realm, kind);
+
+    auto shared_data = realm.heap().allocate<SharedFunctionInstanceData>(
+        realm.vm(),
+        kind,
+        move(name),
+        function_length,
+        *parameters,
+        ecmascript_code,
+        Utf16View {},
+        is_strict,
+        is_arrow_function,
+        parsing_insights,
+        move(local_variables_names));
+
+    shared_data->m_class_field_initializer_name = move(class_field_initializer_name);
+
+    shared_data->m_source_text_owner = move(source_text);
+    shared_data->m_source_text = shared_data->m_source_text_owner.utf16_view();
+
+    return realm.create<ECMAScriptFunctionObject>(
+        move(shared_data),
+        parent_environment,
+        private_environment,
+        *prototype);
+}
+
+GC::Ref<ECMAScriptFunctionObject> ECMAScriptFunctionObject::create(Realm& realm, Utf16FlyString name, Utf16View source_text, Statement const& ecmascript_code, NonnullRefPtr<FunctionParameters const> parameters, i32 function_length, Vector<LocalVariable> local_variables_names, Environment* parent_environment, PrivateEnvironment* private_environment, FunctionKind kind, bool is_strict, FunctionParsingInsights parsing_insights, bool is_arrow_function, Variant<PropertyKey, PrivateName, Empty> class_field_initializer_name)
+{
+    auto prototype = prototype_for_function_kind(realm, kind);
+
+    auto shared_data = realm.heap().allocate<SharedFunctionInstanceData>(
+        realm.vm(),
+        kind,
+        move(name),
+        function_length,
+        *parameters,
+        ecmascript_code,
+        source_text,
+        is_strict,
+        is_arrow_function,
+        parsing_insights,
+        move(local_variables_names));
+
+    shared_data->m_class_field_initializer_name = move(class_field_initializer_name);
+
+    return realm.create<ECMAScriptFunctionObject>(
+        move(shared_data),
+        parent_environment,
+        private_environment,
+        *prototype);
+}
+
+GC::Ref<ECMAScriptFunctionObject> ECMAScriptFunctionObject::create(Realm& realm, Utf16FlyString name, Object& prototype, Utf16View source_text, Statement const& ecmascript_code, NonnullRefPtr<FunctionParameters const> parameters, i32 function_length, Vector<LocalVariable> local_variables_names, Environment* parent_environment, PrivateEnvironment* private_environment, FunctionKind kind, bool is_strict, FunctionParsingInsights parsing_insights, bool is_arrow_function, Variant<PropertyKey, PrivateName, Empty> class_field_initializer_name)
+{
+    auto shared_data = realm.heap().allocate<SharedFunctionInstanceData>(
+        realm.vm(),
+        kind,
+        move(name),
+        function_length,
+        *parameters,
+        ecmascript_code,
+        source_text,
+        is_strict,
+        is_arrow_function,
+        parsing_insights,
+        move(local_variables_names));
+    shared_data->m_class_field_initializer_name = move(class_field_initializer_name);
+    return realm.create<ECMAScriptFunctionObject>(
+        move(shared_data),
+        parent_environment,
+        private_environment,
+        prototype);
 }
 
 GC::Ref<ECMAScriptFunctionObject> ECMAScriptFunctionObject::create_from_function_data(
@@ -82,7 +160,6 @@ ECMAScriptFunctionObject::ECMAScriptFunctionObject(
     , m_environment(parent_environment)
     , m_private_environment(private_environment)
 {
-    set_is_ecmascript_function_object();
     if (!is_arrow_function() && kind() == FunctionKind::Normal)
         unsafe_set_shape(realm()->intrinsics().normal_function_shape());
 
@@ -140,12 +217,11 @@ void ECMAScriptFunctionObject::get_stack_frame_size(size_t& registers_and_locals
 {
     auto& executable = shared_data().m_executable;
     if (!executable) {
-        auto rust_executable = RustIntegration::compile_function(vm(), *m_shared_data, false);
-        VERIFY(rust_executable);
-        executable = rust_executable;
-        executable->name = m_shared_data->m_name;
-        if (Bytecode::g_dump_bytecode)
-            executable->dump();
+        if (is_module_wrapper()) {
+            executable = Bytecode::compile(vm(), ecmascript_code(), kind(), name());
+        } else {
+            executable = Bytecode::compile(vm(), shared_data(), Bytecode::BuiltinAbstractOperationsEnabled::No);
+        }
         m_shared_data->clear_compile_inputs();
     }
     registers_and_locals_count = executable->registers_and_locals_count;
@@ -323,7 +399,6 @@ void ECMAScriptFunctionObject::make_method(Object& home_object)
 {
     // 1. Set F.[[HomeObject]] to homeObject.
     m_home_object = &home_object;
-    m_is_method = true;
 
     // 2. Return unused.
 }
@@ -459,11 +534,17 @@ void async_block_start(VM& vm, T const& async_body, PromiseCapability const& pro
         // a. Let acAsyncContext be the running execution context.
 
         // b. If asyncBody is a Parse Node, then
-        //    i. Let result be Completion(Evaluation of asyncBody).
+        if constexpr (!IsSame<T, GC::Function<Completion()>>) {
+            // i. Let result be Completion(Evaluation of asyncBody).
+            auto executable = Bytecode::compile(vm, async_body, FunctionKind::Async, "AsyncBlockStart"_utf16_fly_string);
+            result = vm.bytecode_interpreter().run_executable(vm.running_execution_context(), *executable, {});
+        }
         // c. Else,
-        //    i. Assert: asyncBody is an Abstract Closure with no parameters.
-        //    ii. Let result be asyncBody().
-        result = async_body.function()();
+        else {
+            // i. Assert: asyncBody is an Abstract Closure with no parameters.
+            // ii. Let result be asyncBody().
+            result = async_body.function()();
+        }
         // d. Assert: If we return here, the async function either threw an exception or performed an implicit or explicit return; all awaiting is done.
         // e. Remove acAsyncContext from the execution context stack and restore the execution context that is at the top of the execution context stack as the running execution context.
         vm.pop_execution_context();
@@ -509,6 +590,9 @@ void async_block_start(VM& vm, T const& async_body, PromiseCapability const& pro
     // 8. Return unused.
 }
 
+template void async_block_start(VM&, NonnullRefPtr<Statement const> const& async_body, PromiseCapability const&, ExecutionContext&);
+template void async_function_start(VM&, PromiseCapability const&, NonnullRefPtr<Statement const> const& async_function_body);
+
 template void async_block_start(VM&, GC::Function<Completion()> const& async_body, PromiseCapability const&, ExecutionContext&);
 template void async_function_start(VM&, PromiseCapability const&, GC::Function<Completion()> const& async_function_body);
 
@@ -524,11 +608,12 @@ ThrowCompletionOr<Value> ECMAScriptFunctionObject::ordinary_call_evaluate_body(V
         return result;
 
     if (kind() == FunctionKind::AsyncGenerator)
-        return AsyncGenerator::create(*context.realm, GC::Ref { *this }, context.copy());
+        return AsyncGenerator::create(*context.realm, result, GC::Ref { *this }, context.copy());
 
-    auto generator_object = GeneratorObject::create(*context.realm, GC::Ref { *this }, context.copy());
+    auto generator_object = GeneratorObject::create(*context.realm, result, GC::Ref { *this }, context.copy());
 
-    // NOTE: Async functions are entirely transformed to generator functions, and wrapped in a custom driver that returns a promise.
+    // NOTE: Async functions are entirely transformed to generator functions, and wrapped in a custom driver that returns a promise
+    //       See AwaitExpression::generate_bytecode() for the transformation.
     if (kind() == FunctionKind::Async)
         return AsyncFunctionDriverWrapper::create(*context.realm, generator_object);
 
