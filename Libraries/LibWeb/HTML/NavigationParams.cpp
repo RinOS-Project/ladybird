@@ -22,7 +22,7 @@ void NavigationParams::visit_edges(Visitor& visitor)
     Base::visit_edges(visitor);
     visitor.visit(navigable);
     visitor.visit(request);
-    visitor.visit(response);
+    visitor.visit(m_response_references);
     visitor.visit(fetch_controller);
     visitor.visit(commit_early_hints);
     visitor.visit(reserved_environment);

@@ -33,11 +33,13 @@
 #include <LibWeb/HTML/HTMLSlotElement.h>
 #include <LibWeb/HTML/Location.h>
 #include <LibWeb/HTML/PromiseRejectionEvent.h>
+#include <LibWeb/HTML/UniversalGlobalScope.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
 #include <LibWeb/HTML/Scripting/Fetching.h>
 #include <LibWeb/HTML/Scripting/ModuleScript.h>
+#include <LibWeb/HTML/WindowOrWorkerGlobalScope.h>
 #include <LibWeb/HTML/Scripting/Script.h>
 #include <LibWeb/HTML/Scripting/SimilarOriginWindowAgent.h>
 #include <LibWeb/HTML/Scripting/SyntheticRealmSettings.h>
@@ -166,24 +168,25 @@ void initialize_main_thread_vm(AgentType type)
         auto& realm = script ? script->realm() : *vm.current_realm();
 
         // 5. Let global be realm's global object.
-        auto& global_mixin = as<HTML::UniversalGlobalScopeMixin>(realm.global_object());
-        auto& global = global_mixin.this_impl();
+        auto* global_mixin = HTML::universal_global_scope_mixin_from(realm.global_object());
+        VERIFY(global_mixin);
+        auto& global = global_mixin->this_impl();
 
         switch (operation) {
         // 6. If operation is "reject",
         case JS::Promise::RejectionOperation::Reject:
             // 1. Append promise to global's about-to-be-notified rejected promises list.
-            global_mixin.push_onto_about_to_be_notified_rejected_promises_list(promise);
+            global_mixin->push_onto_about_to_be_notified_rejected_promises_list(promise);
             break;
         // 7. If operation is "handle",
         case JS::Promise::RejectionOperation::Handle: {
             // 1. If global's about-to-be-notified rejected promises list contains promise, then remove promise from that list and return.
-            bool removed_about_to_be_notified_rejected_promise = global_mixin.remove_from_about_to_be_notified_rejected_promises_list(promise);
+            bool removed_about_to_be_notified_rejected_promise = global_mixin->remove_from_about_to_be_notified_rejected_promises_list(promise);
             if (removed_about_to_be_notified_rejected_promise)
                 return;
 
             // 3. Remove promise from global's outstanding rejected promises weak set.
-            bool removed_outstanding_rejected_promise = global_mixin.remove_from_outstanding_rejected_promises_weak_set(&promise);
+            bool removed_outstanding_rejected_promise = global_mixin->remove_from_outstanding_rejected_promises_weak_set(&promise);
 
             // 2. If global's outstanding rejected promises weak set does not contain promise, then return.
             // NOTE: This is done out of order because removed_outstanding_rejected_promise will be false if the promise wasn't in the set or true if it was and got removed.
@@ -848,8 +851,9 @@ void invoke_custom_element_reactions(Vector<GC::Weak<DOM::Element>>& element_que
                         auto& realm = callback.callback->shape().realm();
                         auto& global = realm.global_object();
 
-                        auto& window_or_worker = as<HTML::WindowOrWorkerGlobalScopeMixin>(global);
-                        window_or_worker.report_an_exception(maybe_exception.error_value());
+                        auto* window_or_worker = HTML::window_or_worker_global_scope_mixin_from(global);
+                        VERIFY(window_or_worker);
+                        window_or_worker->report_an_exception(maybe_exception.error_value());
                     }
                 },
                 [&](DOM::CustomElementCallbackReaction& custom_element_callback_reaction) -> void {

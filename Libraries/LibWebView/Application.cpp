@@ -389,6 +389,9 @@ static ErrorOr<NonnullRefPtr<WebContentClient>> create_web_content_client(Option
 
 ErrorOr<NonnullRefPtr<WebContentClient>> Application::launch_web_content_process(ViewImplementation& view)
 {
+    if (m_browser_options.disable_spare_web_content_processes == DisableSpareWebContentProcesses::Yes)
+        return create_web_content_client(view);
+
     if (m_spare_web_content_process) {
         auto web_content_client = m_spare_web_content_process.release_nonnull();
         launch_spare_web_content_process();
@@ -403,6 +406,9 @@ ErrorOr<NonnullRefPtr<WebContentClient>> Application::launch_web_content_process
 
 void Application::launch_spare_web_content_process()
 {
+    if (browser_options().disable_spare_web_content_processes == DisableSpareWebContentProcesses::Yes)
+        return;
+
     // Spare WebContent processes inherit the active WebDriver endpoint, but they are not part of the
     // session and can race browser shutdown while bootstrapping.
     if (browser_options().webdriver_endpoint.has_value())
@@ -617,7 +623,10 @@ ErrorOr<int> Application::execute()
     OwnPtr<HeadlessWebView> view;
     RefPtr<Core::Timer> screenshot_timer;
 
-    if (m_browser_options.headless_mode.has_value()) {
+    bool should_create_implicit_headless_bootstrap_view = m_browser_options.headless_mode.has_value()
+        && m_browser_options.skip_implicit_headless_bootstrap_view == SkipImplicitHeadlessBootstrapView::No;
+
+    if (should_create_implicit_headless_bootstrap_view) {
         auto theme_path = LexicalPath::join(WebView::s_ladybird_resource_root, "themes"sv, "Default.ini"sv);
         auto theme = TRY(Gfx::load_system_theme(theme_path.string()));
 

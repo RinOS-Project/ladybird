@@ -30,6 +30,7 @@
 #include <unicode/ucal.h>
 #else
 #include <LibUnicode/RinICUBridge.h>
+#include <LibUnicode/TimeZone.h>
 #endif
 
 namespace Unicode {
@@ -1046,6 +1047,56 @@ WeekInfo week_info_of_locale(StringView locale)
 
 #else // AK_OS_RINOS
 
+static CalendarPattern rin_pattern_from_date_and_time_style(Optional<HourCycle> const& hour_cycle, Optional<bool> const& hour12, Optional<DateTimeStyle> const& date_style, Optional<DateTimeStyle> const& time_style)
+{
+    CalendarPattern pattern;
+    pattern.hour_cycle = hour_cycle;
+    pattern.hour12 = hour12;
+
+    if (date_style.has_value()) {
+        pattern.year = CalendarPatternStyle::Numeric;
+        pattern.day = CalendarPatternStyle::Numeric;
+
+        switch (*date_style) {
+        case DateTimeStyle::Full:
+            pattern.weekday = CalendarPatternStyle::Long;
+            [[fallthrough]];
+        case DateTimeStyle::Long:
+            pattern.month = CalendarPatternStyle::Long;
+            break;
+        case DateTimeStyle::Medium:
+            pattern.month = CalendarPatternStyle::Short;
+            break;
+        case DateTimeStyle::Short:
+            pattern.month = CalendarPatternStyle::Numeric;
+            break;
+        }
+    }
+
+    if (time_style.has_value()) {
+        pattern.hour = CalendarPatternStyle::Numeric;
+        pattern.minute = CalendarPatternStyle::TwoDigit;
+
+        switch (*time_style) {
+        case DateTimeStyle::Full:
+            pattern.time_zone_name = CalendarPatternStyle::Long;
+            [[fallthrough]];
+        case DateTimeStyle::Long:
+            pattern.second = CalendarPatternStyle::TwoDigit;
+            if (!pattern.time_zone_name.has_value())
+                pattern.time_zone_name = CalendarPatternStyle::Short;
+            break;
+        case DateTimeStyle::Medium:
+            pattern.second = CalendarPatternStyle::TwoDigit;
+            break;
+        case DateTimeStyle::Short:
+            break;
+        }
+    }
+
+    return pattern;
+}
+
 // RinOS: date/time formatting via rinicu IPC
 class RinDateTimeFormatImpl : public DateTimeFormat {
 public:
@@ -1066,10 +1117,11 @@ public:
 
     virtual Utf16String format(double time) const override
     {
-        ensure_handle();
+        auto epoch_ms = static_cast<i64>(time);
+        ensure_handle(epoch_ms);
         char buf[256];
         size_t len = 0;
-        if (rin_icu_datetime_formatter_format_epoch_ms(&rin_icu_client(), m_handle, time, buf, sizeof(buf), &len) == 0 && len > 0)
+        if (m_handle != 0 && rin_icu_datetime_formatter_format_epoch_ms(&rin_icu_client(), m_handle, epoch_ms, buf, sizeof(buf), &len) == 0 && len > 0)
             return Utf16String::from_utf8(StringView { buf, len });
         return {};
     }
@@ -1121,41 +1173,76 @@ public:
     }
 
 private:
-    void ensure_handle() const
+    static u32 formatter_kind(CalendarPattern const& pattern)
     {
-        if (m_handle != 0)
+        auto has_date_fields = pattern.era.has_value() || pattern.year.has_value() || pattern.month.has_value() || pattern.weekday.has_value() || pattern.day.has_value();
+        auto has_time_fields = pattern.day_period.has_value() || pattern.hour.has_value() || pattern.minute.has_value() || pattern.second.has_value() || pattern.fractional_second_digits.has_value() || pattern.time_zone_name.has_value();
+
+        if (has_date_fields && has_time_fields)
+            return RIN_ICU_DATETIME_STYLE_DATETIME;
+        if (has_date_fields)
+            return RIN_ICU_DATETIME_STYLE_DATE;
+        return RIN_ICU_DATETIME_STYLE_TIME;
+    }
+
+    int time_zone_offset_minutes_for(i64 epoch_ms) const
+    {
+        auto offset = time_zone_offset(m_time_zone, UnixDateTime::from_milliseconds_since_epoch(epoch_ms));
+        if (!offset.has_value())
+            return 0;
+        return static_cast<int>(offset->offset.to_milliseconds() / 60000);
+    }
+
+    bool options_match(rin_icu_datetime_formatter_options_t const& options) const
+    {
+        return m_have_cached_options
+            && m_cached_options.style == options.style
+            && m_cached_options.tz_offset_minutes == options.tz_offset_minutes
+            && m_cached_options.hour_cycle == options.hour_cycle;
+    }
+
+    void ensure_handle(i64 epoch_ms) const
+    {
+        rin_icu_datetime_formatter_options_t options {};
+        options.style = formatter_kind(m_pattern);
+        options.tz_offset_minutes = time_zone_offset_minutes_for(epoch_ms);
+        options.hour_cycle = rin_icu_hour_cycle(m_pattern.hour_cycle, m_pattern.hour12);
+
+        if (m_handle != 0 && options_match(options))
             return;
-        uint32_t kind = 3; // DATETIME
-        if (!m_pattern.hour.has_value() && !m_pattern.minute.has_value() && !m_pattern.second.has_value())
-            kind = 1; // DATE
-        else if (!m_pattern.year.has_value() && !m_pattern.month.has_value() && !m_pattern.day.has_value())
-            kind = 2; // TIME
+
+        if (m_handle != 0) {
+            rin_icu_datetime_formatter_destroy(&rin_icu_client(), m_handle);
+            m_handle = 0;
+        }
 
         ByteString locale_z(m_locale);
-        ByteString tz_z(m_time_zone);
-        rin_icu_datetime_formatter_create(&rin_icu_client(), locale_z.characters(), kind, 0, 0, &m_handle);
+        if (rin_icu_datetime_formatter_create(&rin_icu_client(), locale_z.characters(), &options, &m_handle) == 0 && m_handle != 0) {
+            m_cached_options = options;
+            m_have_cached_options = true;
+            return;
+        }
+
+        m_have_cached_options = false;
     }
 
     String m_locale;
     String m_time_zone;
     CalendarPattern m_pattern;
     mutable rin_icu_handle_t m_handle { 0 };
+    mutable rin_icu_datetime_formatter_options_t m_cached_options {};
+    mutable bool m_have_cached_options { false };
 };
 
 NonnullOwnPtr<DateTimeFormat> DateTimeFormat::create_for_date_and_time_style(
     StringView locale,
     StringView time_zone_identifier,
-    Optional<HourCycle> const&,
-    Optional<bool> const&,
-    Optional<DateTimeStyle> const&,
-    Optional<DateTimeStyle> const&)
+    Optional<HourCycle> const& hour_cycle,
+    Optional<bool> const& hour12,
+    Optional<DateTimeStyle> const& date_style,
+    Optional<DateTimeStyle> const& time_style)
 {
-    CalendarPattern pattern;
-    pattern.year = CalendarPatternStyle::Numeric;
-    pattern.month = CalendarPatternStyle::Numeric;
-    pattern.day = CalendarPatternStyle::Numeric;
-    pattern.hour = CalendarPatternStyle::Numeric;
-    pattern.minute = CalendarPatternStyle::TwoDigit;
+    auto pattern = rin_pattern_from_date_and_time_style(hour_cycle, hour12, date_style, time_style);
     return adopt_own(*new RinDateTimeFormatImpl(MUST(String::from_utf8(locale)), MUST(String::from_utf8(time_zone_identifier)), move(pattern)));
 }
 

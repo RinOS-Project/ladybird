@@ -60,12 +60,13 @@ void ReadableStreamDefaultReader::visit_edges(Cell::Visitor& visitor)
 }
 
 // https://streams.spec.whatwg.org/#read-loop
-ReadLoopReadRequest::ReadLoopReadRequest(JS::Realm& realm, ReadableStreamDefaultReader& reader, GC::Ref<SuccessSteps> success_steps, GC::Ref<FailureSteps> failure_steps, GC::Ptr<ChunkSteps> chunk_steps)
+ReadLoopReadRequest::ReadLoopReadRequest(JS::Realm& realm, ReadableStreamDefaultReader& reader, GC::Ref<SuccessSteps> success_steps, GC::Ref<FailureSteps> failure_steps, GC::Ptr<ChunkSteps> chunk_steps, GC::Ptr<JS::Cell> extra_root)
     : m_realm(realm)
     , m_reader(reader)
     , m_success_steps(success_steps)
     , m_failure_steps(failure_steps)
     , m_chunk_steps(chunk_steps)
+    , m_extra_root(extra_root)
 {
 }
 
@@ -77,6 +78,7 @@ void ReadLoopReadRequest::visit_edges(Visitor& visitor)
     visitor.visit(m_success_steps);
     visitor.visit(m_failure_steps);
     visitor.visit(m_chunk_steps);
+    visitor.visit(m_extra_root);
 }
 
 // chunk steps, given chunk
@@ -199,13 +201,13 @@ void ReadableStreamDefaultReader::read_a_chunk(Fetch::Infrastructure::Incrementa
 }
 
 // https://streams.spec.whatwg.org/#readablestreamdefaultreader-read-all-bytes
-void ReadableStreamDefaultReader::read_all_bytes(GC::Ref<ReadLoopReadRequest::SuccessSteps> success_steps, GC::Ref<ReadLoopReadRequest::FailureSteps> failure_steps)
+void ReadableStreamDefaultReader::read_all_bytes(GC::Ref<ReadLoopReadRequest::SuccessSteps> success_steps, GC::Ref<ReadLoopReadRequest::FailureSteps> failure_steps, GC::Ptr<JS::Cell> extra_root)
 {
     auto& realm = this->realm();
 
     // 1. Let readRequest be a new read request with the following items:
     //    NOTE: items and steps in ReadLoopReadRequest.
-    auto read_request = heap().allocate<ReadLoopReadRequest>(realm, *this, success_steps, failure_steps);
+    auto read_request = heap().allocate<ReadLoopReadRequest>(realm, *this, success_steps, failure_steps, nullptr, extra_root);
 
     // 2. Perform ! ReadableStreamDefaultReaderRead(this, readRequest).
     readable_stream_default_reader_read(*this, read_request);

@@ -21,6 +21,7 @@
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/DecodedImageData.h>
 #include <LibWeb/HTML/HTMLMediaElement.h>
@@ -296,26 +297,26 @@ void HTMLObjectElement::queue_element_task_to_run_object_representation_steps()
             fetch_algorithms_input.process_response = [this](GC::Ref<Fetch::Infrastructure::Response> response) {
                 auto& realm = this->realm();
                 auto& global = document().realm().global_object();
+                auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
+                auto public_response = rooted_responses->response();
+                auto internal_response = rooted_responses->internal_response();
 
-                if (response->is_network_error() || !Fetch::Infrastructure::is_ok_status(response->status())) {
+                if (public_response->is_network_error() || !Fetch::Infrastructure::is_ok_status(public_response->status())) {
                     resource_did_fail();
                     return;
                 }
 
-                if (response->type() == Fetch::Infrastructure::Response::Type::Opaque || response->type() == Fetch::Infrastructure::Response::Type::OpaqueRedirect) {
-                    auto& filtered_response = static_cast<Fetch::Infrastructure::FilteredResponse&>(*response);
-                    response = filtered_response.internal_response();
-                }
-
-                auto on_data_read = GC::create_function(realm.heap(), [this, response](ByteBuffer data) {
-                    resource_did_load(response, data);
+                auto on_data_read = GC::create_function(realm.heap(), [this, rooted_responses](ByteBuffer data) {
+                    resource_did_load(*rooted_responses->internal_response(), data);
                 });
-                auto on_error = GC::create_function(realm.heap(), [this](JS::Value) {
+                auto on_error = GC::create_function(realm.heap(), [this, rooted_responses](JS::Value) {
+                    (void)rooted_responses;
                     resource_did_fail();
                 });
 
-                VERIFY(response->body());
-                response->body()->fully_read(realm, on_data_read, on_error, GC::Ref { global });
+                VERIFY(internal_response->body());
+                // AD-HOC (RinOS Round 10): Pin ResponseReferenceHolder through ReadLoopReadRequest::m_extra_root.
+                internal_response->body()->fully_read(realm, on_data_read, on_error, GC::Ref { global }, rooted_responses.ptr());
             };
 
             // 5. Fetch request.

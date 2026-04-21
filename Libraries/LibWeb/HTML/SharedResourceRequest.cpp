@@ -13,6 +13,7 @@
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Statuses.h>
 #include <LibWeb/HTML/AnimatedDecodedImageData.h>
@@ -87,26 +88,28 @@ void SharedResourceRequest::fetch_resource(JS::Realm& realm, GC::Ref<Fetch::Infr
 {
     Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
     fetch_algorithms_input.process_response = [this, &realm, request](GC::Ref<Fetch::Infrastructure::Response> response) {
-        // FIXME: If the response is CORS cross-origin, we must use its internal response to query any of its data. See:
-        //        https://github.com/whatwg/html/issues/9355
-        response = response->unsafe_response();
+        auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
+        auto internal_response = rooted_responses->internal_response();
 
-        auto process_body = GC::create_function(heap(), [this, request, response](ByteBuffer data) {
+        auto process_body = GC::create_function(heap(), [this, request, rooted_responses](ByteBuffer data) {
+            auto response = rooted_responses->internal_response();
             auto extracted_mime_type = Fetch::Infrastructure::extract_mime_type(response->header_list());
             auto mime_type = extracted_mime_type.has_value() ? extracted_mime_type.value().essence().bytes_as_string_view() : StringView {};
             handle_successful_fetch(request->url(), mime_type, move(data));
         });
-        auto process_body_error = GC::create_function(heap(), [this](JS::Value) {
+        auto process_body_error = GC::create_function(heap(), [this, rooted_responses](JS::Value) {
+            (void)rooted_responses;
             handle_failed_fetch();
         });
 
         // Check for failed fetch response
-        if (!Fetch::Infrastructure::is_ok_status(response->status()) || !response->body()) {
+        if (!Fetch::Infrastructure::is_ok_status(internal_response->status()) || !internal_response->body()) {
             handle_failed_fetch();
             return;
         }
 
-        response->body()->fully_read(realm, process_body, process_body_error, GC::Ref { realm.global_object() });
+        // AD-HOC (RinOS Round 10): Pin ResponseReferenceHolder through ReadLoopReadRequest::m_extra_root.
+        internal_response->body()->fully_read(realm, process_body, process_body_error, GC::Ref { realm.global_object() }, rooted_responses.ptr());
     };
 
     m_state = State::Fetching;

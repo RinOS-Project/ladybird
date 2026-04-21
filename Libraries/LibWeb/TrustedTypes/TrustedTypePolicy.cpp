@@ -207,7 +207,9 @@ WebIDL::ExceptionOr<Optional<TrustedType>> process_value_with_a_default_policy(T
     auto& realm = HTML::relevant_realm(global);
 
     // 1. Let defaultPolicy be the value of global’s trusted type policy factory’s default policy.
-    auto const& default_policy = as<HTML::WindowOrWorkerGlobalScopeMixin>(global).trusted_types()->default_policy();
+    auto* window_or_worker = HTML::window_or_worker_global_scope_mixin_from(global);
+    VERIFY(window_or_worker);
+    auto const& default_policy = window_or_worker->trusted_types()->default_policy();
 
     // This algorithm routes a value to be assigned to an injection sink through a default policy, should one exist.
     // FIXME: Open an issue upstream. It is not immediately clear what to do if the default policy does not exist.

@@ -17,6 +17,7 @@
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/HTML/CORSSettingAttribute.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
@@ -94,13 +95,11 @@ WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::construct_impl(JS::Realm&
 
     fetch_algorithms_input.process_response = [event_source](GC::Ref<Fetch::Infrastructure::Response> response) {
         auto& realm = event_source->realm();
-
-        // FIXME: If the response is CORS cross-origin, we must use its internal response to query any of its data. See:
-        //        https://github.com/whatwg/html/issues/9355
-        response = response->unsafe_response();
+        auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
+        auto internal_response = rooted_responses->internal_response();
 
         auto content_type_is_text_event_stream = [&]() {
-            auto content_type = Fetch::Infrastructure::extract_mime_type(response->header_list());
+            auto content_type = Fetch::Infrastructure::extract_mime_type(internal_response->header_list());
             if (!content_type.has_value())
                 return false;
 
@@ -108,24 +107,25 @@ WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::construct_impl(JS::Realm&
         };
 
         // 1. If res is an aborted network error, then fail the connection.
-        if (response->is_aborted_network_error()) {
+        if (internal_response->is_aborted_network_error()) {
             event_source->fail_the_connection();
         }
         // 2. Otherwise, if res is a network error, then reestablish the connection, unless the user agent knows that
         //    to be futile, in which case the user agent may fail the connection.
-        else if (response->is_network_error()) {
+        else if (internal_response->is_network_error()) {
             event_source->reestablish_the_connection();
         }
         // 3. Otherwise, if res's status is not 200, or if res's `Content-Type` is not `text/event-stream`, then fail
         //    the connection.
-        else if (response->status() != 200 || !content_type_is_text_event_stream()) {
+        else if (internal_response->status() != 200 || !content_type_is_text_event_stream()) {
             event_source->fail_the_connection();
         }
         // 4. Otherwise, announce the connection and interpret res's body line by line.
         else {
             event_source->announce_the_connection();
 
-            auto process_body_chunk = GC::create_function(realm.heap(), [event_source, pending_data = ByteBuffer()](ByteBuffer body) mutable {
+            auto process_body_chunk = GC::create_function(realm.heap(), [event_source, rooted_responses, pending_data = ByteBuffer()](ByteBuffer body) mutable {
+                (void)rooted_responses;
                 if (pending_data.is_empty())
                     pending_data = move(body);
                 else
@@ -141,14 +141,19 @@ WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::construct_impl(JS::Realm&
                 pending_data = MUST(pending_data.slice(end_index, pending_data.size() - end_index));
             });
 
-            auto process_end_of_body = GC::create_function(realm.heap(), []() {
+            auto process_end_of_body = GC::create_function(realm.heap(), [rooted_responses]() {
+                (void)rooted_responses;
                 // This case is handled by `process_event_source_end_of_body` above.
             });
-            auto process_body_error = GC::create_function(realm.heap(), [](JS::Value) {
+            auto process_body_error = GC::create_function(realm.heap(), [rooted_responses](JS::Value) {
+                (void)rooted_responses;
                 // This case is handled by `process_event_source_end_of_body` above.
             });
 
-            response->body()->incrementally_read(process_body_chunk, process_end_of_body, process_body_error, { realm.global_object() });
+            VERIFY(internal_response->body());
+            // AD-HOC (RinOS Round 11): Pin ResponseReferenceHolder via the deterministic
+            // read-request GC edge so Response survives conservative-scan gaps.
+            internal_response->body()->incrementally_read(process_body_chunk, process_end_of_body, process_body_error, { realm.global_object() }, rooted_responses.ptr());
         }
     };
 
@@ -171,8 +176,9 @@ void EventSource::initialize(JS::Realm& realm)
     WEB_SET_PROTOTYPE_FOR_INTERFACE(EventSource);
     Base::initialize(realm);
 
-    auto& relevant_global = as<HTML::WindowOrWorkerGlobalScopeMixin>(HTML::relevant_global_object(*this));
-    relevant_global.register_event_source({}, *this);
+    auto* relevant_global = HTML::window_or_worker_global_scope_mixin_from(HTML::relevant_global_object(*this));
+    VERIFY(relevant_global);
+    relevant_global->register_event_source({}, *this);
 }
 
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#garbage-collection
@@ -187,8 +193,9 @@ void EventSource::finalize()
             m_fetch_controller->abort(realm(), {});
     }
 
-    auto& relevant_global = as<HTML::WindowOrWorkerGlobalScopeMixin>(HTML::relevant_global_object(*this));
-    relevant_global.unregister_event_source({}, *this);
+    auto* relevant_global = HTML::window_or_worker_global_scope_mixin_from(HTML::relevant_global_object(*this));
+    VERIFY(relevant_global);
+    relevant_global->unregister_event_source({}, *this);
 }
 
 void EventSource::visit_edges(Cell::Visitor& visitor)

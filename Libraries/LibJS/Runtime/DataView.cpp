@@ -37,6 +37,13 @@ DataViewWithBufferWitness make_data_view_with_buffer_witness_record(DataView con
 
     ByteLength byte_length { 0 };
 
+    // NOTE: Guard against a null or clearly-invalid buffer pointer (can occur
+    //       when GC relocates / collects the backing ArrayBuffer while a stale
+    //       DataView is still reachable).
+    if (!buffer || reinterpret_cast<uintptr_t>(buffer) < 0x10000) {
+        return { .object = data_view, .cached_buffer_byte_length = ByteLength::detached() };
+    }
+
     // 2. If IsDetachedBuffer(buffer) is true, then
     if (buffer->is_detached()) {
         // a. Let byteLength be detached.
@@ -90,8 +97,16 @@ bool is_view_out_of_bounds(DataViewWithBufferWitness const& view_record)
     // 2. Let bufferByteLength be viewRecord.[[CachedBufferByteLength]].
     auto const& buffer_byte_length = view_record.cached_buffer_byte_length;
 
+    // NOTE: Guard against a null or clearly-invalid buffer pointer (can occur
+    //       when GC relocates / collects the backing ArrayBuffer while a stale
+    //       DataView is still reachable).
+    auto* buffer = view.viewed_array_buffer();
+    if (!buffer || reinterpret_cast<uintptr_t>(buffer) < 0x10000) {
+        return true;
+    }
+
     // 3. Assert: IsDetachedBuffer(view.[[ViewedArrayBuffer]]) is true if and only if bufferByteLength is detached.
-    VERIFY(view.viewed_array_buffer()->is_detached() == buffer_byte_length.is_detached());
+    VERIFY(buffer->is_detached() == buffer_byte_length.is_detached());
 
     // 4. If bufferByteLength is detached, return true.
     if (buffer_byte_length.is_detached())

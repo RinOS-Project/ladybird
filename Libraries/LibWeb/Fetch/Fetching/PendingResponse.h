@@ -9,6 +9,7 @@
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Cell.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 
 namespace Web::Fetch::Fetching {
@@ -22,25 +23,26 @@ class PendingResponse : public JS::Cell {
     GC_DECLARE_ALLOCATOR(PendingResponse);
 
 public:
-    using Callback = Function<void(GC::Ref<Infrastructure::Response>)>;
+    using Callback = Function<void(Infrastructure::RootedResponseReferences)>;
 
     [[nodiscard]] static GC::Ref<PendingResponse> create(JS::VM&, GC::Ref<Infrastructure::Request>);
-    [[nodiscard]] static GC::Ref<PendingResponse> create(JS::VM&, GC::Ref<Infrastructure::Request>, GC::Ref<Infrastructure::Response>);
+    [[nodiscard]] static GC::Ref<PendingResponse> create(JS::VM&, GC::Ref<Infrastructure::Request>, Infrastructure::RootedResponseReferences);
 
     void when_loaded(Callback);
-    void resolve(GC::Ref<Infrastructure::Response>);
-    bool is_resolved() const { return m_response != nullptr; }
+    void resolve(Infrastructure::RootedResponseReferences);
+    bool is_resolved() const { return m_rooted_response_references.has_value(); }
+    [[nodiscard]] Infrastructure::OptionalRootedResponseReferences const& rooted_response_references() const { return m_rooted_response_references; }
 
 private:
-    PendingResponse(GC::Ref<Infrastructure::Request>, GC::Ptr<Infrastructure::Response> = {});
+    PendingResponse(GC::Ref<Infrastructure::Request>);
 
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
     void run_callback();
 
-    GC::Ptr<GC::Function<void(GC::Ref<Infrastructure::Response>)>> m_callback;
+    GC::Ptr<GC::Function<void(Infrastructure::RootedResponseReferences)>> m_callback;
     GC::Ref<Infrastructure::Request> m_request;
-    GC::Ptr<Infrastructure::Response> m_response;
+    Infrastructure::OptionalRootedResponseReferences m_rooted_response_references;
 };
 
 }

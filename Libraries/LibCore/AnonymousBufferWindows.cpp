@@ -12,10 +12,11 @@
 
 namespace Core {
 
-AnonymousBufferImpl::AnonymousBufferImpl(int fd, size_t size, void* data)
+AnonymousBufferImpl::AnonymousBufferImpl(int fd, size_t size, void* data, BackingKind backing_kind)
     : m_fd(fd)
     , m_size(size)
     , m_data(data)
+    , m_backing_kind(backing_kind)
 {
 }
 

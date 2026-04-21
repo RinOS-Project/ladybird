@@ -49,29 +49,13 @@ String normalize(StringView string, NormalizationForm form)
 {
 #ifdef AK_OS_RINOS
     // RinOS: use rinicu normalize IPC
-    char const* form_str = nullptr;
-    switch (form) {
-    case NormalizationForm::NFD:
-        form_str = "NFD";
-        break;
-    case NormalizationForm::NFC:
-        form_str = "NFC";
-        break;
-    case NormalizationForm::NFKD:
-        form_str = "NFKD";
-        break;
-    case NormalizationForm::NFKC:
-        form_str = "NFKC";
-        break;
-    }
-
     char result_buf[4096];
     size_t result_len = 0;
 
     // Null-terminate input for rinicu
     ByteString input_z(string);
 
-    if (rin_icu_normalize(&rin_icu_client(), form_str, input_z.characters(), result_buf, sizeof(result_buf), &result_len) == 0 && result_len > 0)
+    if (rin_icu_normalize(&rin_icu_client(), rin_icu_normalization_form(form), input_z.characters(), result_buf, sizeof(result_buf), &result_len) == 0 && result_len > 0)
         return MUST(String::from_utf8(StringView { result_buf, result_len }));
 
     return MUST(String::from_utf8(string));

@@ -887,9 +887,10 @@ NonnullOwnPtr<NumberFormat> NumberFormat::create(
 // RinOS: number formatting via rinicu IPC
 class RinNumberFormatImpl : public NumberFormat {
 public:
-    RinNumberFormatImpl(String locale, DisplayOptions display_options, bool is_unit)
+    RinNumberFormatImpl(String locale, DisplayOptions display_options, RoundingOptions rounding_options, bool is_unit)
         : m_locale(move(locale))
         , m_display_options(move(display_options))
+        , m_rounding_options(move(rounding_options))
         , m_is_unit(is_unit)
     {
     }
@@ -905,14 +906,16 @@ public:
     virtual Utf16String format(Value const& value) const override
     {
         ensure_handle();
-        auto val_str = value_to_string(value);
+        auto number = value_to_number(value);
+        if (!number.has_value())
+            return Utf16String::from_utf8(value_to_string(value));
 
         char buf[512];
         size_t len = 0;
-        if (rin_icu_number_formatter_format(&rin_icu_client(), m_handle, val_str.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+        if (m_handle != 0 && rin_icu_number_formatter_format(&rin_icu_client(), m_handle, *number, buf, sizeof(buf), &len) == 0 && len > 0)
             return Utf16String::from_utf8(StringView { buf, len });
 
-        return Utf16String::from_utf8(val_str);
+        return Utf16String::from_utf8(value_to_string(value));
     }
 
     virtual Vector<Partition> format_to_parts(Value const& value) const override
@@ -964,25 +967,41 @@ public:
 
     virtual void create_plural_rules(PluralForm plural_form) override
     {
-        uint32_t type = (plural_form == PluralForm::Ordinal) ? 2 : 1;
+        if (m_plural_handle != 0) {
+            rin_icu_plural_rules_destroy(&rin_icu_client(), m_plural_handle);
+            m_plural_handle = 0;
+        }
+
+        rin_icu_plural_rules_options_t options {};
+        options.kind = rin_icu_plural_kind(plural_form);
+
         ByteString locale_z(m_locale);
-        rin_icu_plural_rules_create(&rin_icu_client(), locale_z.characters(), type, &m_plural_handle);
+        (void)rin_icu_plural_rules_create(&rin_icu_client(), locale_z.characters(), &options, &m_plural_handle);
     }
 
     virtual PluralCategory select_plural(Value const& value) const override
     {
         if (m_plural_handle == 0)
             return PluralCategory::Other;
-        auto val_str = value_to_string(value);
+
+        auto number = value_to_number(value);
+        if (!number.has_value())
+            return PluralCategory::Other;
+
         char buf[32];
         size_t len = 0;
-        if (rin_icu_plural_rules_select(&rin_icu_client(), m_plural_handle, val_str.characters(), buf, sizeof(buf), &len) == 0 && len > 0) {
+        if (rin_icu_plural_rules_select(&rin_icu_client(), m_plural_handle, *number, buf, sizeof(buf), &len) == 0 && len > 0) {
             auto sv = StringView { buf, len };
-            if (sv == "zero"sv) return PluralCategory::Zero;
-            if (sv == "one"sv) return PluralCategory::One;
-            if (sv == "two"sv) return PluralCategory::Two;
-            if (sv == "few"sv) return PluralCategory::Few;
-            if (sv == "many"sv) return PluralCategory::Many;
+            if (sv == "zero"sv)
+                return PluralCategory::Zero;
+            if (sv == "one"sv)
+                return PluralCategory::One;
+            if (sv == "two"sv)
+                return PluralCategory::Two;
+            if (sv == "few"sv)
+                return PluralCategory::Few;
+            if (sv == "many"sv)
+                return PluralCategory::Many;
         }
         return PluralCategory::Other;
     }
@@ -1002,19 +1021,29 @@ private:
     {
         if (m_handle != 0)
             return;
-        uint32_t style = 1; // DECIMAL
-        switch (m_display_options.style) {
-        case NumberFormatStyle::Percent:
-            style = 2;
-            break;
-        case NumberFormatStyle::Currency:
-            style = 3;
-            break;
-        default:
-            break;
+
+        rin_icu_number_formatter_options_t options {};
+        options.style = rin_icu_number_style(m_display_options.style);
+        options.use_grouping = m_display_options.grouping != Grouping::False;
+        options.min_fraction_digits = m_rounding_options.min_fraction_digits.value_or(-1);
+        options.max_fraction_digits = m_rounding_options.max_fraction_digits.value_or(-1);
+
+        if (m_display_options.currency.has_value()) {
+            auto currency = m_display_options.currency->bytes_as_string_view();
+            auto copy_length = currency.length() < (RIN_ICU_CURRENCY_CODE_MAX - 1) ? currency.length() : (RIN_ICU_CURRENCY_CODE_MAX - 1);
+            __builtin_memcpy(options.currency_code, currency.characters_without_null_termination(), copy_length);
+            options.currency_code[copy_length] = '\0';
         }
+
         ByteString locale_z(m_locale);
-        rin_icu_number_formatter_create(&rin_icu_client(), locale_z.characters(), style, &m_handle);
+        (void)rin_icu_number_formatter_create(&rin_icu_client(), locale_z.characters(), &options, &m_handle);
+    }
+
+    static Optional<double> value_to_number(Value const& value)
+    {
+        return value.visit(
+            [](double number) -> Optional<double> { return number; },
+            [](String const& number) -> Optional<double> { return number.to_number<double>(); });
     }
 
     static ByteString value_to_string(Value const& value)
@@ -1026,6 +1055,7 @@ private:
 
     String m_locale;
     DisplayOptions m_display_options;
+    RoundingOptions m_rounding_options;
     bool m_is_unit { false };
     mutable rin_icu_handle_t m_handle { 0 };
     rin_icu_handle_t m_plural_handle { 0 };
@@ -1034,10 +1064,10 @@ private:
 NonnullOwnPtr<NumberFormat> NumberFormat::create(
     StringView locale,
     DisplayOptions const& display_options,
-    RoundingOptions const&)
+    RoundingOptions const& rounding_options)
 {
     bool is_unit = display_options.style == NumberFormatStyle::Unit;
-    return adopt_own(*new RinNumberFormatImpl(MUST(String::from_utf8(locale)), display_options, is_unit));
+    return adopt_own(*new RinNumberFormatImpl(MUST(String::from_utf8(locale)), display_options, rounding_options, is_unit));
 }
 
 #endif // AK_OS_RINOS

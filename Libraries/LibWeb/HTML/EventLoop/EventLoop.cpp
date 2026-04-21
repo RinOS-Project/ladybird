@@ -5,6 +5,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifdef AK_OS_RINOS
+#include <unistd.h>
+#include <cstdio>
+static void el_serial(const char* msg) { write(2, msg, __builtin_strlen(msg)); }
+#endif
 #include <AK/TemporaryChange.h>
 #include <LibCore/EventLoop.h>
 #include <LibJS/Runtime/VM.h>
@@ -240,24 +245,54 @@ void EventLoop::queue_task_to_update_the_rendering()
 
     // OPTIMIZATION: If there are already rendering tasks in the queue, we don't need to queue another one.
     if (m_task_queue->has_rendering_tasks()) {
+#ifdef AK_OS_RINOS
+        static int skip1_count = 0;
+        if (skip1_count < 3) { el_serial("[EventLoop] queue_task_to_update_rendering: already has rendering tasks\n"); skip1_count++; }
+#endif
         return;
     }
 
+#ifdef AK_OS_RINOS
+    static int qtur_count = 0;
+    bool qtur_log = (qtur_count < 5);
+    if (qtur_log) { el_serial("[EventLoop] queue_task_to_update_rendering: scanning navigables\n"); }
+#endif
     // 3. For each navigable that has a rendering opportunity, queue a global task on the rendering task source given navigable's active window to update the rendering:
     for (auto& navigable : all_navigables()) {
-        if (!navigable->is_traversable())
+#ifdef AK_OS_RINOS
+        if (qtur_log) { el_serial("[EventLoop]   navigable found\n"); }
+#endif
+        if (!navigable->is_traversable()) {
+#ifdef AK_OS_RINOS
+            if (qtur_log) { el_serial("[EventLoop]   SKIP: not traversable\n"); }
+#endif
             continue;
-        if (!navigable->has_a_rendering_opportunity())
+        }
+        if (!navigable->has_a_rendering_opportunity()) {
+#ifdef AK_OS_RINOS
+            if (qtur_log) { el_serial("[EventLoop]   SKIP: no rendering opportunity\n"); }
+#endif
             continue;
+        }
 
         auto document = navigable->active_document();
-        if (!document)
+        if (!document) {
+#ifdef AK_OS_RINOS
+            if (qtur_log) { el_serial("[EventLoop]   SKIP: no active document\n"); }
+#endif
             continue;
+        }
         if (document->is_decoded_svg())
             continue;
 
+#ifdef AK_OS_RINOS
+        if (qtur_log) { el_serial("[EventLoop]   QUEUING rendering task\n"); }
+#endif
         queue_global_task(Task::Source::Rendering, *navigable->active_window(), *m_rendering_task_function);
     }
+#ifdef AK_OS_RINOS
+    if (qtur_log) { qtur_count++; }
+#endif
 }
 
 void EventLoop::process_input_events() const
@@ -341,6 +376,12 @@ void EventLoop::process_input_events() const
 // https://html.spec.whatwg.org/multipage/webappapis.html#update-the-rendering
 void EventLoop::update_the_rendering()
 {
+#ifdef AK_OS_RINOS
+    static uint64_t s_utr_seq = 0;
+    static uint64_t s_utr_last_logged = 0;
+    s_utr_seq++;
+    bool utr_should_log = (s_utr_seq <= 5) || (s_utr_seq - s_utr_last_logged >= 60);
+#endif
     VERIFY(!m_running_rendering_task);
     m_running_rendering_task = true;
     ScopeGuard const guard = [this] {
@@ -352,35 +393,87 @@ void EventLoop::update_the_rendering()
     // 1. Let frameTimestamp be eventLoop's last render opportunity time.
     auto frame_timestamp = m_last_render_opportunity_time;
 
+#ifdef AK_OS_RINOS
+    int rinos_total_docs = 0;
+    int rinos_skip_inactive = 0;
+    int rinos_skip_render_blocked = 0;
+    int rinos_skip_hidden = 0;
+    int rinos_skip_suppressed = 0;
+    int rinos_skip_no_navigable = 0;
+    int rinos_skip_no_opportunity = 0;
+#endif
+
     // FIXME: 2. Let docs be all fully active Document objects whose relevant agent's event loop is eventLoop, sorted arbitrarily except that the following conditions must be met:
     // 3. Filter non-renderable documents: Remove from docs any Document object doc for which any of the following are true:
     auto docs = documents_in_this_event_loop_matching([&](auto const& document) {
-        if (!document.is_fully_active())
+#ifdef AK_OS_RINOS
+        rinos_total_docs++;
+#endif
+        if (!document.is_fully_active()) {
+#ifdef AK_OS_RINOS
+            rinos_skip_inactive++;
+#endif
             return false;
+        }
 
         // doc is render-blocked;
         if (document.is_render_blocked()) {
+#ifdef AK_OS_RINOS
+            rinos_skip_render_blocked++;
+#endif
             return false;
         }
 
         // doc's visibility state is "hidden";
-        if (document.hidden())
+        if (document.hidden()) {
+#ifdef AK_OS_RINOS
+            rinos_skip_hidden++;
+#endif
             return false;
+        }
 
         // doc's rendering is suppressed for view transitions; or
-        if (document.rendering_suppression_for_view_transitions())
+        if (document.rendering_suppression_for_view_transitions()) {
+#ifdef AK_OS_RINOS
+            rinos_skip_suppressed++;
+#endif
             return false;
+        }
 
         auto navigable = document.navigable();
-        if (!navigable)
+        if (!navigable) {
+#ifdef AK_OS_RINOS
+            rinos_skip_no_navigable++;
+#endif
             return false;
+        }
 
         // doc's node navigable doesn't currently have a rendering opportunity.
-        if (!navigable->has_a_rendering_opportunity())
+        if (!navigable->has_a_rendering_opportunity()) {
+#ifdef AK_OS_RINOS
+            rinos_skip_no_opportunity++;
+#endif
             return false;
+        }
 
         return true;
     });
+
+#ifdef AK_OS_RINOS
+    if (utr_should_log) {
+        s_utr_last_logged = s_utr_seq;
+        char buf[256];
+        int n = snprintf(buf, sizeof(buf),
+                         "[EventLoop] update_the_rendering seq=%llu total=%d pass=%d "
+                         "skip(inactive=%d blocked=%d hidden=%d suppressed=%d no_nav=%d no_opp=%d)\n",
+                         (unsigned long long)s_utr_seq,
+                         rinos_total_docs, static_cast<int>(docs.size()),
+                         rinos_skip_inactive, rinos_skip_render_blocked,
+                         rinos_skip_hidden, rinos_skip_suppressed,
+                         rinos_skip_no_navigable, rinos_skip_no_opportunity);
+        if (n > 0) write(2, buf, static_cast<size_t>(n));
+    }
+#endif
 
     // AD-HOC: Update all the displayed video frames on HTMLMediaElements in documents' pages.
     for (auto& document : docs)

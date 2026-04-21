@@ -18,6 +18,11 @@
 
 namespace Web::HTML {
 
+class UniversalGlobalScopeMixin;
+
+WEB_API UniversalGlobalScopeMixin* universal_global_scope_mixin_from(JS::Object&);
+WEB_API UniversalGlobalScopeMixin const* universal_global_scope_mixin_from(JS::Object const&);
+
 // https://whatpr.org/html/9893/webappapis.html#universalglobalscope-mixin
 class UniversalGlobalScopeMixin {
 public:

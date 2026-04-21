@@ -8,6 +8,7 @@
 
 #include <AK/Badge.h>
 #include <AK/HashMap.h>
+#include <AK/Vector.h>
 #include <AK/WeakPtr.h>
 #include <LibGC/Function.h>
 #include <LibGC/Ptr.h>
@@ -22,6 +23,8 @@
 #include <LibWeb/HTML/StructuredSerializeTypes.h>
 
 namespace Web::Fetch::Infrastructure {
+
+class ResponseReferenceHolder;
 
 // https://fetch.spec.whatwg.org/#fetch-controller
 class WEB_API FetchController : public JS::Cell {
@@ -63,6 +66,25 @@ public:
     void fetch_task_queued(u64 fetch_task_id, HTML::TaskID event_id);
     void fetch_task_complete(u64 fetch_task_id);
 
+    // AD-HOC (RinOS Round 11): Append holders instead of overwriting. A single
+    // controller may see multiple responses during a fetch (redirect chain,
+    // SRI-validated replacement, network-error substitution). Overwriting would
+    // make the previous holder unreachable through deterministic GC edges while
+    // async tasks (process_response, process_response_end_of_body, transform
+    // stream flush) still hold GC::Function captures that only survive via
+    // unreliable conservative stack scanning. Appending keeps every holder
+    // reachable until the controller itself is collected.
+    void add_response_reference_holder(GC::Ref<ResponseReferenceHolder> holder)
+    {
+        for (auto const& existing : m_response_reference_holders) {
+            if (existing.ptr() == holder.ptr())
+                return;
+        }
+        m_response_reference_holders.append(holder);
+    }
+    // Backwards-compatible alias.
+    void set_response_reference_holder(GC::Ref<ResponseReferenceHolder> holder) { add_response_reference_holder(holder); }
+
 private:
     FetchController();
 
@@ -99,6 +121,14 @@ private:
 
     HashMap<u64, HTML::TaskID> m_ongoing_fetch_tasks;
     u64 m_next_fetch_task_id { 0 };
+
+    // Prevent GC from collecting response objects during async body consumption.
+    // Without this, the conservative stack scanner may miss the response references
+    // buried inside GC::Function capture chains, leading to use-after-free.
+    //
+    // AD-HOC (RinOS Round 11): Vector so holders accumulate instead of being
+    // overwritten. See add_response_reference_holder() above.
+    Vector<GC::Ptr<ResponseReferenceHolder>> m_response_reference_holders;
 };
 
 class FetchControllerHolder : public JS::Cell {

@@ -21,6 +21,7 @@
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/HTML/Window.h>
 
@@ -151,6 +152,9 @@ void CSSImportRule::fetch()
     };
     (void)fetch_a_style_resource(URL { href() }, rule_or_declaration, Fetch::Infrastructure::Request::Destination::Style, CorsMode::NoCors,
         [strong_this = GC::Ref { *this }, parent_style_sheet = GC::Ref { parent_style_sheet }, document = m_document](auto response, auto maybe_byte_stream) {
+            auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
+            auto internal_response = rooted_responses->internal_response();
+
             // AD-HOC: Stop delaying the load event.
             ScopeGuard guard = [strong_this, document] {
                 document->remove_pending_css_import_rule({}, strong_this);
@@ -185,7 +189,7 @@ void CSSImportRule::fetch()
             // FIXME: Tidy up our parsing API. For now, do the decoding here.
             // FIXME: Spec issue: parsedURL is not defined - we instead need to get that from the response.
             //        https://github.com/w3c/csswg-drafts/issues/12288
-            auto url = response->unsafe_response()->url().value();
+            auto url = internal_response->url().value();
 
             Optional<String> mime_type_charset;
             if (auto extracted_mime_type = Fetch::Infrastructure::extract_mime_type(response->header_list()); extracted_mime_type.has_value()) {

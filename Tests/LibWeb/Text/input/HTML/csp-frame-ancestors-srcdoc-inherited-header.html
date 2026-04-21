@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    asyncTest(async (done) => {
+        const server = httpTestServer();
+        const testName = "csp-frame-ancestors-srcdoc-inherited-header";
+
+        const popupUrl = await server.createEcho("GET", "/csp-frame-ancestors-srcdoc-inherited-header", {
+            status: 200,
+            headers: {
+                "Content-Type": "text/html",
+                "Content-Security-Policy": "frame-ancestors 'none'",
+            },
+            body: `<!DOCTYPE html>
+                <body>
+                    <script>
+                        let srcdocScriptExecuted = false;
+
+                        addEventListener("message", (event) => {
+                            if (event.data === "SRC_DOC_EXECUTED")
+                                srcdocScriptExecuted = true;
+                        });
+
+                        const frame = document.createElement("iframe");
+                        frame.onload = () => {
+                            setTimeout(() => {
+                                const contentDocumentIsNull = frame.contentDocument === null;
+                                const bodyContainsSentinel = frame.contentDocument?.body?.innerText?.includes("SRC_DOC_BODY") ?? false;
+
+                                opener.postMessage({
+                                    testName: "${testName}",
+                                    srcdocScriptExecuted,
+                                    contentDocumentIsNull,
+                                    bodyContainsSentinel,
+                                }, "*");
+                                window.close();
+                            }, 50);
+                        };
+
+                        document.body.appendChild(frame);
+                        frame.srcdoc = "<!DOCTYPE html><body>SRC_DOC_BODY<script>top.postMessage('SRC_DOC_EXECUTED', '*');<\\/script></body>";
+                    <\/script>
+                </body>`,
+        });
+
+        let onMessage = null;
+        const timeoutId = setTimeout(() => {
+            if (onMessage)
+                removeEventListener("message", onMessage);
+            println("popup result timed out");
+            done();
+        }, 3000);
+
+        onMessage = function onMessage(event) {
+            if (!event.data || event.data.testName !== testName)
+                return;
+
+            clearTimeout(timeoutId);
+            removeEventListener("message", onMessage);
+
+            println(`popup created: true`);
+            println(`srcdoc script executed: ${event.data.srcdocScriptExecuted}`);
+            println(`iframe contentDocument is null: ${event.data.contentDocumentIsNull}`);
+            println(`iframe body contains sentinel: ${event.data.bodyContainsSentinel}`);
+            done();
+        };
+        addEventListener("message", onMessage);
+
+        const popup = window.open(popupUrl, "_blank");
+        if (!popup) {
+            clearTimeout(timeoutId);
+            removeEventListener("message", onMessage);
+            println("popup created: false");
+            done();
+        }
+    });
+</script>

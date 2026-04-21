@@ -166,17 +166,14 @@ ErrorOr<Core::AnonymousBuffer> decode(Decoder& decoder)
     if (auto valid = TRY(decoder.decode<bool>()); !valid)
         return Core::AnonymousBuffer {};
 
-#if defined(AK_OS_RINOS)
-    auto size = TRY(decoder.decode_size());
-    auto buffer = TRY(Core::AnonymousBuffer::create_with_size(size));
-    if (size > 0)
-        TRY(decoder.decode_into({ buffer.data<u8>(), size }));
-    return buffer;
-#else
     // NOTE: We don't use decode_size() here since AnonymousBuffer is backed by
     // shared memory, not heap allocation. The MAX_DECODED_SIZE limit doesn't
     // apply because the memory is already allocated by the sender.
     auto size = static_cast<size_t>(TRY(decoder.decode<u32>()));
+#if defined(AK_OS_RINOS)
+    auto shm_name = TRY(decoder.decode<ByteString>());
+    return Core::AnonymousBuffer::create_from_shm_name(shm_name.view(), size);
+#else
     auto anon_file = TRY(decoder.decode<IPC::File>());
 
     return Core::AnonymousBuffer::create_from_anon_fd(anon_file.take_fd(), size);

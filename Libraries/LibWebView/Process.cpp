@@ -84,9 +84,7 @@ ErrorOr<Process::ProcessAndIPCTransport> Process::spawn_and_connect_to_process(C
     auto transport = make<IPC::Transport>(move(port_a_recv), move(port_b_send));
 #else
     int socket_fds[2] {};
-    dbgln("[HELPER-SPAWN] socketpair begin executable='{}' name='{}'", spawn_options.executable, options.name);
     TRY(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, socket_fds));
-    dbgln("[HELPER-SPAWN] socketpair ok executable='{}' parent_fd={} child_fd={}", spawn_options.executable, socket_fds[0], socket_fds[1]);
 
     ArmedScopeGuard guard_fd_0 { [&] { MUST(Core::System::close(socket_fds[0])); } };
     ArmedScopeGuard guard_fd_1 { [&] { MUST(Core::System::close(socket_fds[1])); } };
@@ -103,14 +101,12 @@ ErrorOr<Process::ProcessAndIPCTransport> Process::spawn_and_connect_to_process(C
     argv.append(nullptr);
 
     auto takeover_name = options.name.is_empty() ? spawn_options.executable.view() : options.name;
-    dbgln("[HELPER-SPAWN] spawn_process begin executable='{}' takeover='{}' child_fd={}", spawn_options.executable, takeover_name, socket_fds[1]);
     auto child_pid = TRY(Core::System::spawn_process(
         spawn_options.executable.view(),
         argv.data(),
         Core::Environment::raw_environ(),
         socket_fds[1],
         takeover_name));
-    dbgln("[HELPER-SPAWN] spawn_process ok executable='{}' pid={}", spawn_options.executable, child_pid);
 
     auto process = Core::Process::from_pid(child_pid);
 #    else

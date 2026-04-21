@@ -34,6 +34,9 @@ ErrorOr<NonnullOwnPtr<MappedFile>> MappedFile::map_from_fd_and_close(int fd, [[m
     auto stat = TRY(Core::System::fstat(fd));
     auto size = stat.st_size;
 
+    if (size == 0)
+        return adopt_own(*new MappedFile(nullptr, 0, mode, false));
+
     int protection;
     int flags;
     switch (mode) {
@@ -49,19 +52,22 @@ ErrorOr<NonnullOwnPtr<MappedFile>> MappedFile::map_from_fd_and_close(int fd, [[m
     }
 
     auto* ptr = TRY(Core::System::mmap(nullptr, size, protection, flags, fd, 0, 0, path));
-
-    return adopt_own(*new MappedFile(ptr, size, mode));
+    return adopt_own(*new MappedFile(ptr, size, mode, true));
 }
 
-MappedFile::MappedFile(void* ptr, size_t size, Mode mode)
+MappedFile::MappedFile(void* ptr, size_t size, Mode mode, bool is_memory_mapped)
     : FixedMemoryStream(Bytes { ptr, size }, mode)
     , m_data(ptr)
     , m_size(size)
+    , m_is_memory_mapped(is_memory_mapped)
 {
 }
 
 MappedFile::~MappedFile()
 {
+    if (!m_is_memory_mapped)
+        return;
+
     auto res = Core::System::munmap(m_data, m_size);
     if (res.is_error())
         dbgln("Failed to unmap MappedFile (@ {:p}): {}", m_data, res.error());

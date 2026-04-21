@@ -18,6 +18,13 @@
 #endif
 #include <RequestServer/ConnectionFromClient.h>
 #include <RequestServer/Request.h>
+
+#if defined(AK_OS_RINOS)
+#    include <unistd.h>
+static void rs_serial(char const* msg) { ::write(2, msg, __builtin_strlen(msg)); }
+#else
+static void rs_serial(char const*) { }
+#endif
 #include <RequestServer/Resolver.h>
 #include <RequestServer/ResourceSubstitutionMap.h>
 
@@ -177,6 +184,7 @@ void Request::notify_request_unblocked(Badge<HTTP::DiskCache>)
 
 void Request::notify_retrieved_http_cookie(Badge<ConnectionFromClient>, StringView cookie)
 {
+    rs_serial("[RS] cookie response received\n");
     if (!cookie.is_empty()) {
         auto header = HTTP::Header::isomorphic_encode("Cookie"sv, cookie);
         m_request_headers->append(move(header));
@@ -478,6 +486,7 @@ void Request::handle_dns_lookup_state()
                 self.m_network_error = Requests::NetworkError::UnableToResolveHost;
                 self.transition_to_state(State::Error);
             } else if (first_is_one_of(self.m_type, Type::Fetch, Type::BackgroundRevalidation)) {
+                rs_serial("[RS] DNS resolved, transitioning to RetrieveCookie\n");
                 self.m_dns_result = move(dns_result);
                 self.transition_to_state(State::RetrieveCookie);
             } else {
@@ -489,13 +498,16 @@ void Request::handle_dns_lookup_state()
 void Request::handle_retrieve_cookie_state()
 {
     if (m_include_credentials == HTTP::Cookie::IncludeCredentials::No) {
+        rs_serial("[RS] cookie skip (no credentials)\n");
         transition_to_state(State::Fetch);
         return;
     }
 
     if (auto connection = ConnectionFromClient::primary_connection(); connection.has_value()) {
+        rs_serial("[RS] cookie IPC sent\n");
         connection->async_retrieve_http_cookie(m_client.client_id(), m_request_id, m_url);
     } else {
+        rs_serial("[RS] cookie IPC FAILED: no primary connection\n");
         m_network_error = Requests::NetworkError::RequestServerDied;
         transition_to_state(State::Error);
     }
@@ -535,6 +547,7 @@ void Request::handle_connect_state()
 
 void Request::handle_fetch_state()
 {
+    rs_serial("[RS] fetch starting\n");
     dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: DNS lookup successful");
 
 #if defined(AK_OS_RINOS)
@@ -893,23 +906,29 @@ void Request::transfer_headers_to_client_if_needed()
 
 ErrorOr<void> Request::write_queued_bytes_without_blocking()
 {
-    Vector<u8> bytes_to_send;
-    bytes_to_send.resize(m_response_buffer.used_buffer_size());
-    m_response_buffer.peek_some(bytes_to_send);
+    // 固定サイズのスタックスクラッチで peek → write → discard を繰り返す。
+    // 以前は m_response_buffer.used_buffer_size() 全体を Vector<u8> に new していた
+    // ため、producer 側が inner loop で詰め込むと毎回巨大な malloc/free が発生し、
+    // ユーザヒープが二次関数的に膨張して OOM に至っていた。このチャンク化で
+    // RSS を「パイプで送れていない残量 + 16KiB」に抑える。
+    constexpr size_t SCRATCH_SIZE = 16 * 1024;
+    u8 scratch[SCRATCH_SIZE];
 
-    auto write_bytes_to_disk_cache = [&](size_t byte_count) {
+    auto write_bytes_to_disk_cache = [&](ReadonlyBytes bytes) {
         if (!m_cache_entry_writer.has_value())
             return;
-
-        auto bytes_to_write = bytes_to_send.span().slice(0, byte_count);
-
-        if (m_cache_entry_writer->write_data(bytes_to_write).is_error())
+        if (m_cache_entry_writer->write_data(bytes).is_error())
             m_cache_entry_writer.clear();
     };
 
     if (m_type == Type::BackgroundRevalidation) {
-        write_bytes_to_disk_cache(bytes_to_send.size());
-        MUST(m_response_buffer.discard(bytes_to_send.size()));
+        while (m_response_buffer.used_buffer_size() > 0) {
+            size_t chunk = min(SCRATCH_SIZE, m_response_buffer.used_buffer_size());
+            Bytes span { scratch, chunk };
+            m_response_buffer.peek_some(span);
+            write_bytes_to_disk_cache(ReadonlyBytes { scratch, chunk });
+            MUST(m_response_buffer.discard(chunk));
+        }
 
 #if defined(AK_OS_RINOS)
         if (m_response_buffer.is_eof() && m_rin_result_code.has_value())
@@ -931,19 +950,38 @@ ErrorOr<void> Request::write_queued_bytes_without_blocking()
         });
     }
 
-    auto result = m_client_request_pipe->write(bytes_to_send);
-    if (result.is_error()) {
-        if (!first_is_one_of(result.error().code(), EAGAIN, EWOULDBLOCK))
-            return result.release_error();
+    while (m_response_buffer.used_buffer_size() > 0) {
+        size_t chunk = min(SCRATCH_SIZE, m_response_buffer.used_buffer_size());
+        Bytes span { scratch, chunk };
+        m_response_buffer.peek_some(span);
+        ReadonlyBytes send_bytes { scratch, chunk };
 
-        m_client_writer_notifier->set_enabled(true);
-        return {};
+        auto result = m_client_request_pipe->write(send_bytes);
+        if (result.is_error()) {
+            if (!first_is_one_of(result.error().code(), EAGAIN, EWOULDBLOCK))
+                return result.release_error();
+
+            m_client_writer_notifier->set_enabled(true);
+            return {};
+        }
+
+        size_t written = result.value();
+        if (written == 0) {
+            // 送れない (fd closed 等) - notifier に任せて離脱。
+            m_client_writer_notifier->set_enabled(true);
+            return {};
+        }
+
+        write_bytes_to_disk_cache(send_bytes.slice(0, written));
+        MUST(m_response_buffer.discard(written));
+        m_bytes_transferred_to_client += written;
+
+        if (written < chunk) {
+            // パイプが飽和 (部分書き込み)。notifier を有効化してリトライを待つ。
+            m_client_writer_notifier->set_enabled(true);
+            return {};
+        }
     }
-
-    write_bytes_to_disk_cache(result.value());
-    MUST(m_response_buffer.discard(result.value()));
-
-    m_bytes_transferred_to_client += result.value();
 
     m_client_writer_notifier->set_enabled(!m_response_buffer.is_eof());
 #if defined(AK_OS_RINOS)

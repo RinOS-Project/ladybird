@@ -847,7 +847,10 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(NullableDocumentOrXMLHttpRequestB
 
             // 13. Incrementally read this’s response’s body, given processBodyChunk, processEndOfBody, processBodyError, and this’s relevant global object.
             auto global_object = GC::Ref<JS::Object> { HTML::relevant_global_object(*this) };
-            response->body()->incrementally_read(process_body_chunks, process_end_of_body, process_body_error, global_object);
+            // AD-HOC (RinOS Round 11): Pin this XHR via the deterministic read-request
+            // GC edge so the Response captured by m_response stays live across
+            // incrementally-read loop iterations regardless of conservative stack scan.
+            response->body()->incrementally_read(process_body_chunks, process_end_of_body, process_body_error, global_object, this);
         };
 
         // 10. Set this’s fetch controller to the result of fetching req with processRequestBodyChunkLength set to processRequestBodyChunkLength, processRequestEndOfBody set to processRequestEndOfBody, and processResponse set to processResponse.

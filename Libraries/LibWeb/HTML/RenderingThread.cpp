@@ -4,6 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifdef AK_OS_RINOS
+#include <unistd.h>
+static void rt_serial(const char* msg) { write(2, msg, __builtin_strlen(msg)); }
+#endif
 #include <LibCore/EventLoop.h>
 #include <LibGfx/PaintingSurface.h>
 #include <LibThreading/Thread.h>
@@ -178,6 +182,9 @@ public:
                 }
 
                 if (m_cached_display_list && m_backing_stores.is_valid()) {
+#ifdef AK_OS_RINOS
+                    rt_serial("[RenderingThread] RASTERIZING frame\n");
+#endif
                     m_display_list_player->execute(*m_cached_display_list, Painting::ScrollStateSnapshotByDisplayList(m_cached_scroll_state_snapshot), *m_backing_stores.back_store);
                     i32 rendered_bitmap_id = m_backing_stores.back_bitmap_id;
                     m_backing_stores.swap();
@@ -185,9 +192,21 @@ public:
                     m_queued_rasterization_tasks++;
 
                     invoke_on_main_thread([this, viewport_rect, rendered_bitmap_id]() {
+#ifdef AK_OS_RINOS
+                        rt_serial("[RenderingThread] deferred_invoke FIRED on main thread\n");
+#endif
                         m_presentation_callback(viewport_rect, rendered_bitmap_id);
                     });
                 }
+#ifdef AK_OS_RINOS
+                else {
+                    rt_serial("[RenderingThread] present SKIP: display_list=");
+                    rt_serial(m_cached_display_list ? "yes" : "no");
+                    rt_serial(" backing_valid=");
+                    rt_serial(m_backing_stores.is_valid() ? "yes" : "no");
+                    rt_serial("\n");
+                }
+#endif
             }
         }
     }
@@ -196,11 +215,22 @@ private:
     template<typename Invokee>
     void invoke_on_main_thread(Invokee invokee)
     {
-        if (m_exit)
+        if (m_exit) {
+#ifdef AK_OS_RINOS
+            rt_serial("[RenderingThread] invoke_on_main_thread: m_exit=true, SKIPPING\n");
+#endif
             return;
+        }
         auto event_loop = m_main_thread_event_loop->take();
-        if (!event_loop)
+        if (!event_loop) {
+#ifdef AK_OS_RINOS
+            rt_serial("[RenderingThread] invoke_on_main_thread: event_loop=null, SKIPPING\n");
+#endif
             return;
+        }
+#ifdef AK_OS_RINOS
+        rt_serial("[RenderingThread] invoke_on_main_thread: scheduling deferred_invoke\n");
+#endif
         event_loop->deferred_invoke([self = NonnullRefPtr(*this), invokee = move(invokee)]() mutable {
             invokee();
         });
@@ -253,12 +283,21 @@ RenderingThread::~RenderingThread()
 void RenderingThread::start(DisplayListPlayerType)
 {
     VERIFY(m_thread_data->has_display_list_player());
+#ifdef AK_OS_RINOS
+    rt_serial("[RenderingThread] start() called\n");
+#endif
     m_thread = Threading::Thread::construct("Renderer"sv, [thread_data = m_thread_data] {
+#ifdef AK_OS_RINOS
+        rt_serial("[RenderingThread] compositor_loop ENTER\n");
+#endif
         thread_data->compositor_loop();
         return static_cast<intptr_t>(0);
     });
     m_thread->start();
     m_thread->detach();
+#ifdef AK_OS_RINOS
+    rt_serial("[RenderingThread] thread started+detached\n");
+#endif
 }
 
 void RenderingThread::set_display_list_player(

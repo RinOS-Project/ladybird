@@ -602,6 +602,13 @@ TypedArrayWithBufferWitness make_typed_array_with_buffer_witness_record(TypedArr
 
     ByteLength byte_length { 0 };
 
+    // NOTE: Guard against a null or clearly-invalid buffer pointer (can occur
+    //       when GC relocates / collects the backing ArrayBuffer while a stale
+    //       TypedArray is still reachable).
+    if (!buffer || reinterpret_cast<uintptr_t>(buffer) < 0x10000) {
+        return { .object = typed_array, .cached_buffer_byte_length = ByteLength::detached() };
+    }
+
     // 2. If IsDetachedBuffer(buffer) is true, then
     if (buffer->is_detached()) {
         // a. Let byteLength be detached.
@@ -686,8 +693,16 @@ bool is_typed_array_out_of_bounds(TypedArrayWithBufferWitness const& typed_array
     // 2. Let bufferByteLength be taRecord.[[CachedBufferByteLength]].
     auto const& buffer_byte_length = typed_array_record.cached_buffer_byte_length;
 
+    // NOTE: Guard against a null or clearly-invalid buffer pointer (can occur
+    //       when GC relocates / collects the backing ArrayBuffer while a stale
+    //       TypedArray is still reachable).
+    auto* buffer = object->viewed_array_buffer();
+    if (!buffer || reinterpret_cast<uintptr_t>(buffer) < 0x10000) {
+        return true;
+    }
+
     // 3. Assert: IsDetachedBuffer(O.[[ViewedArrayBuffer]]) is true if and only if bufferByteLength is detached.
-    VERIFY(object->viewed_array_buffer()->is_detached() == buffer_byte_length.is_detached());
+    VERIFY(buffer->is_detached() == buffer_byte_length.is_detached());
 
     // 4. If bufferByteLength is detached, return true.
     if (buffer_byte_length.is_detached())
@@ -729,6 +744,10 @@ bool is_typed_array_fixed_length(TypedArrayBase const& typed_array)
 
     // 2. Let buffer be O.[[ViewedArrayBuffer]].
     auto const* buffer = typed_array.viewed_array_buffer();
+
+    // NOTE: Guard against invalid buffer pointer from GC corruption.
+    if (!buffer || reinterpret_cast<uintptr_t>(buffer) < 0x10000)
+        return true;
 
     // 3. If IsFixedLengthArrayBuffer(buffer) is false and IsSharedArrayBuffer(buffer) is false, return false.
     if (!buffer->is_fixed_length() && !buffer->is_shared_array_buffer())

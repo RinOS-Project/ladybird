@@ -47,7 +47,7 @@ ErrorOr<GC::Ref<SVGDecodedImageData>> SVGDecodedImageData::create(JS::Realm& rea
     auto navigation_params = navigable->heap().allocate<HTML::NavigationParams>(OptionalNone {},
         navigable,
         nullptr,
-        response,
+        Fetch::Infrastructure::root_response_references(response, response),
         nullptr,
         nullptr,
         HTML::OpenerPolicyEnforcementResult { .url = url, .origin = origin, .opener_policy = HTML::OpenerPolicy {} },

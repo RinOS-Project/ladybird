@@ -58,8 +58,9 @@ HighResolutionTime::DOMHighResTimeStamp convert_fetch_timestamp(HighResolutionTi
 void PerformanceResourceTiming::mark_resource_timing(GC::Ref<Fetch::Infrastructure::FetchTimingInfo> timing_info, String const& requested_url, FlyString const& initiator_type, JS::Object& global, Optional<Fetch::Infrastructure::Response::CacheState> const& cache_mode, Fetch::Infrastructure::Response::BodyInfo body_info, Fetch::Infrastructure::Status response_status, FlyString delivery_type)
 {
     // 1. Create a PerformanceResourceTiming object entry in global's realm.
-    auto& window_or_worker = as<HTML::WindowOrWorkerGlobalScopeMixin>(global);
-    auto& realm = window_or_worker.this_impl().realm();
+    auto* window_or_worker = HTML::window_or_worker_global_scope_mixin_from(global);
+    VERIFY(window_or_worker);
+    auto& realm = window_or_worker->this_impl().realm();
 
     // https://w3c.github.io/resource-timing/#dfn-name
     // name
@@ -80,10 +81,10 @@ void PerformanceResourceTiming::mark_resource_timing(GC::Ref<Fetch::Infrastructu
     entry->setup_the_resource_timing_entry(initiator_type, requested_url, timing_info, cache_mode, move(body_info), response_status, delivery_type);
 
     // 3. Queue entry.
-    window_or_worker.queue_performance_entry(entry);
+    window_or_worker->queue_performance_entry(entry);
 
     // 4. Add entry to global's performance entry buffer.
-    window_or_worker.add_resource_timing_entry({}, entry);
+    window_or_worker->add_resource_timing_entry({}, entry);
 }
 
 // https://www.w3.org/TR/resource-timing/#dfn-setup-the-resource-timing-entry

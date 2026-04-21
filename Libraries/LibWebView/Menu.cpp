@@ -127,11 +127,11 @@ NonnullRefPtr<Menu> Menu::create_group(ActionText title)
     return menu;
 }
 
-void Menu::add_action(NonnullRefPtr<Action> action)
+void Menu::add_action(NonnullRefPtr<Action> const& action)
 {
     if (m_is_group)
         action->set_group({}, *this);
-    m_items.append(move(action));
+    m_items.append(action);
 }
 
 }

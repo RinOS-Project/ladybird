@@ -36,6 +36,20 @@ private:
     int m_value { 456 };
 };
 
+class WeakMemberHolder : public RefCounted<WeakMemberHolder> {
+public:
+    void set(SimpleWeakable const& object)
+    {
+        m_weak = object;
+    }
+
+    bool is_null() const { return m_weak.is_null(); }
+    SimpleWeakable* ptr() const { return m_weak.strong_ref().ptr(); }
+
+private:
+    WeakPtr<SimpleWeakable> m_weak;
+};
+
 #if defined(AK_COMPILER_CLANG)
 #    pragma clang diagnostic pop
 #endif
@@ -144,4 +158,28 @@ TEST_CASE(weak_callback_non_ref_counted_dead)
     }();
 
     cb();
+}
+
+TEST_CASE(weakptr_member_assignment_and_owner_destruction)
+{
+    auto holder = adopt_ref(*new WeakMemberHolder);
+
+    {
+        auto first = adopt_ref(*new SimpleWeakable);
+        holder->set(*first);
+        EXPECT_EQ(holder->ptr(), first.ptr());
+
+        {
+            auto second = adopt_ref(*new SimpleWeakable);
+            holder->set(*second);
+            EXPECT_EQ(holder->ptr(), second.ptr());
+        }
+
+        EXPECT_EQ(holder->is_null(), true);
+
+        holder->set(*first);
+        EXPECT_EQ(holder->ptr(), first.ptr());
+    }
+
+    EXPECT_EQ(holder->is_null(), true);
 }

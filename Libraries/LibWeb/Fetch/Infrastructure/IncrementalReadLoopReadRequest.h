@@ -17,7 +17,7 @@ class IncrementalReadLoopReadRequest : public Streams::ReadRequest {
     GC_DECLARE_ALLOCATOR(IncrementalReadLoopReadRequest);
 
 public:
-    IncrementalReadLoopReadRequest(GC::Ref<Body>, GC::Ref<Streams::ReadableStreamDefaultReader>, TaskDestination, Body::ProcessBodyChunkCallback, Body::ProcessEndOfBodyCallback, Body::ProcessBodyErrorCallback);
+    IncrementalReadLoopReadRequest(GC::Ref<Body>, GC::Ref<Streams::ReadableStreamDefaultReader>, TaskDestination, Body::ProcessBodyChunkCallback, Body::ProcessEndOfBodyCallback, Body::ProcessBodyErrorCallback, GC::Ptr<JS::Cell> extra_root = {});
 
     virtual void on_chunk(JS::Value chunk) override;
     virtual void on_close() override;
@@ -32,6 +32,12 @@ private:
     Body::ProcessBodyChunkCallback m_process_body_chunk;
     Body::ProcessEndOfBodyCallback m_process_end_of_body;
     Body::ProcessBodyErrorCallback m_process_body_error;
+
+    // AD-HOC (RinOS Round 11): Deterministic GC root for any object that must stay
+    // live while this read request is in flight. Typically the fetch's
+    // ResponseReferenceHolder so Response and its internal_response survive any GC
+    // triggered by reader allocations or processBodyChunk side effects.
+    GC::Ptr<JS::Cell> m_extra_root;
 };
 
 }

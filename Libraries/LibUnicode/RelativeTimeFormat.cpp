@@ -263,25 +263,28 @@ NonnullOwnPtr<RelativeTimeFormat> RelativeTimeFormat::create(StringView locale, 
 // RinOS: relative time formatting via rinicu IPC
 class RinRelativeTimeFormatImpl : public RelativeTimeFormat {
 public:
-    RinRelativeTimeFormatImpl(String locale)
+    RinRelativeTimeFormatImpl(String locale, Style style)
         : m_locale(move(locale))
+        , m_style(style)
     {
     }
 
     virtual ~RinRelativeTimeFormatImpl() override = default;
 
-    virtual Utf16String format(double time, TimeUnit unit, NumericDisplay) const override
+    virtual Utf16String format(double time, TimeUnit unit, NumericDisplay numeric_display) const override
     {
-        auto unit_str = time_unit_to_string(unit);
         ByteString locale_z(m_locale);
-        ByteString unit_z(unit_str);
         char buf[256];
         size_t len = 0;
-        auto time_str = ByteString::formatted("{}", time);
-        if (rin_icu_relative_time_format(&rin_icu_client(), locale_z.characters(), unit_z.characters(), time_str.characters(), buf, sizeof(buf), &len) == 0 && len > 0)
+
+        if (rin_icu_relative_time_format(&rin_icu_client(), locale_z.characters(), rin_icu_style(m_style), rin_icu_numeric_display(numeric_display), rin_icu_time_unit(unit), time, buf, sizeof(buf), &len) == 0 && len > 0)
             return Utf16String::from_utf8(StringView { buf, len });
+
         // Fallback
-        auto fallback = MUST(String::formatted("{} {} ago", -time, unit_str));
+        auto unit_str = time_unit_to_string(unit);
+        auto fallback = time < 0
+            ? MUST(String::formatted("{} {} ago", -time, unit_str))
+            : MUST(String::formatted("in {} {}", time, unit_str));
         return Utf16String::from_utf8(fallback);
     }
 
@@ -300,11 +303,12 @@ public:
 
 private:
     String m_locale;
+    Style m_style { Style::Long };
 };
 
-NonnullOwnPtr<RelativeTimeFormat> RelativeTimeFormat::create(StringView locale, Style)
+NonnullOwnPtr<RelativeTimeFormat> RelativeTimeFormat::create(StringView locale, Style style)
 {
-    return make<RinRelativeTimeFormatImpl>(MUST(String::from_utf8(locale)));
+    return make<RinRelativeTimeFormatImpl>(MUST(String::from_utf8(locale)), style);
 }
 
 #endif // AK_OS_RINOS

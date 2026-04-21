@@ -8,6 +8,9 @@
 #include <LibCore/System.h>
 #include <LibRequests/Request.h>
 #include <LibRequests/RequestClient.h>
+#if defined(AK_OS_RINOS)
+#    include <unistd.h>
+#endif
 
 namespace Requests {
 
@@ -111,11 +114,13 @@ void RequestClient::headers_became_available(u64 request_id, Vector<HTTP::Header
 
 void RequestClient::retrieve_http_cookie(int client_id, u64 request_id, URL::URL url)
 {
+    ::write(2, "[bridge] cookie request received\n", 34);
     String cookie;
 
     if (on_retrieve_http_cookie)
         cookie = on_retrieve_http_cookie(url);
 
+    ::write(2, "[bridge] cookie response sending\n", 34);
     async_retrieved_http_cookie(client_id, request_id, cookie);
 }
 

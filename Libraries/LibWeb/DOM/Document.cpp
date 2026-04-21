@@ -10,6 +10,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifdef AK_OS_RINOS
+#include <unistd.h>
+#include <cstdio>
+#endif
 #include <AK/Bitmap.h>
 #include <AK/CharacterTypes.h>
 #include <AK/Debug.h>
@@ -165,6 +169,7 @@
 #include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/HTML/WindowOrWorkerGlobalScope.h>
 #include <LibWeb/HTML/WindowProxy.h>
 #include <LibWeb/HighResolutionTime/Performance.h>
 #include <LibWeb/HighResolutionTime/TimeOrigin.h>
@@ -300,7 +305,7 @@ WebIDL::ExceptionOr<GC::Ref<Document>> Document::create_and_initialize(Type type
     // FIXME: 2. Let permissionsPolicy be the result of creating a permissions policy from a response given navigationParams's navigable's container, navigationParams's origin, and navigationParams's response.
 
     // 3. Let creationURL be navigationParams's response's URL.
-    auto creation_url = navigation_params.response->url();
+    auto creation_url = navigation_params.response()->url();
 
     // 4. If navigationParams's request is non-null, then set creationURL to navigationParams's request's current URL.
     if (navigation_params.request) {
@@ -385,7 +390,7 @@ WebIDL::ExceptionOr<GC::Ref<Document>> Document::create_and_initialize(Type type
     DOM::DocumentLoadTimingInfo load_timing_info;
     // AD-HOC: The response object no longer has an associated timing info object. For now, we use response's non-standard response time property,
     //         which represents the time that the time that the response object was created.
-    auto response_creation_time = navigation_params.response->monotonic_response_time().nanoseconds() / 1e6;
+    auto response_creation_time = navigation_params.response()->monotonic_response_time().nanoseconds() / 1e6;
     load_timing_info.navigation_start_time = HighResolutionTime::coarsen_time(response_creation_time, HTML::relevant_settings_object(*window).cross_origin_isolated_capability());
 
     // 9. Let document be a new Document, with
@@ -424,14 +429,14 @@ WebIDL::ExceptionOr<GC::Ref<Document>> Document::create_and_initialize(Type type
     document->m_window = window;
 
     // NOTE: Non-standard: Pull out the Last-Modified header for use in the lastModified property.
-    if (auto maybe_last_modified = navigation_params.response->header_list()->get("Last-Modified"sv); maybe_last_modified.has_value()) {
+    if (auto maybe_last_modified = navigation_params.response()->header_list()->get("Last-Modified"sv); maybe_last_modified.has_value()) {
         // rfc9110, 8.8.2: The Last-Modified header field must be in GMT time zone.
         // document->m_last_modified is in local time zone.
         document->m_last_modified = AK::UnixDateTime::parse("%a, %d %b %Y %H:%M:%S GMT"sv, maybe_last_modified.value(), true);
     }
 
     // NOTE: Non-standard: Pull out the Content-Language header to determine the document's language.
-    if (auto maybe_http_content_language = navigation_params.response->header_list()->get("Content-Language"sv); maybe_http_content_language.has_value()) {
+    if (auto maybe_http_content_language = navigation_params.response()->header_list()->get("Content-Language"sv); maybe_http_content_language.has_value()) {
         if (auto maybe_content_language = String::from_byte_string(maybe_http_content_language.value()); !maybe_content_language.is_error())
             document->m_http_content_language = maybe_content_language.release_value();
     }
@@ -462,7 +467,7 @@ WebIDL::ExceptionOr<GC::Ref<Document>> Document::create_and_initialize(Type type
     //            navigationParams's response's service worker timing info.
 
     // 15. If navigationParams's response has a `Refresh` header, then:
-    if (auto maybe_refresh = navigation_params.response->header_list()->get("Refresh"sv); maybe_refresh.has_value()) {
+    if (auto maybe_refresh = navigation_params.response()->header_list()->get("Refresh"sv); maybe_refresh.has_value()) {
         // 1. Let value be the isomorphic decoding of the value of the header.
         auto value = TextCodec::isomorphic_decode(maybe_refresh.value());
 
@@ -4476,11 +4481,12 @@ Vector<GC::Root<HTML::Navigable>> Document::document_tree_child_navigables()
 void Document::run_unloading_cleanup_steps()
 {
     // 1. Let window be document's relevant global object.
-    auto& window = as<HTML::WindowOrWorkerGlobalScopeMixin>(HTML::relevant_global_object(*this));
+    auto* window = HTML::window_or_worker_global_scope_mixin_from(HTML::relevant_global_object(*this));
+    VERIFY(window);
 
     // 2. For each WebSocket object webSocket whose relevant global object is window, make disappear webSocket.
     //    If this affected any WebSocket objects, then make document unsalvageable given document and "websocket".
-    auto affected_any_web_sockets = window.make_disappear_all_web_sockets();
+    auto affected_any_web_sockets = window->make_disappear_all_web_sockets();
     if (affected_any_web_sockets == HTML::WindowOrWorkerGlobalScopeMixin::AffectedAnyWebSockets::Yes)
         make_unsalvageable("websocket"_string);
 
@@ -4489,10 +4495,10 @@ void Document::run_unloading_cleanup_steps()
     // 4. If document's salvageable state is false, then:
     if (!m_salvageable) {
         // 1. For each EventSource object eventSource whose relevant global object is equal to window, forcibly close eventSource.
-        window.forcibly_close_all_event_sources();
+        window->forcibly_close_all_event_sources();
 
         // 2. Clear window's map of active timers.
-        window.clear_map_of_active_timers();
+        window->clear_map_of_active_timers();
     }
 
     FileAPI::run_unloading_cleanup_steps(*this);
@@ -6833,17 +6839,59 @@ bool Document::is_render_blocked() const
 
     // NOTE: This timeout is implementation-defined.
     //       Other browsers are willing to wait longer, but let's start with 30 seconds.
+#ifdef AK_OS_RINOS
+    // RinOS: 一般ユーザ向け体感速度を優先し、5 秒で強制 unblock。
+    // render-blocking script の fetch 完了が遅延しても、空白画面で待ち続けないための保険。
+    static constexpr auto max_time_to_block_rendering_in_ms = 5000.0;
+#else
     static constexpr auto max_time_to_block_rendering_in_ms = 30000.0;
+#endif
 
     auto now = HighResolutionTime::current_high_resolution_time(relevant_global_object(*this));
-    if (now > max_time_to_block_rendering_in_ms)
+    if (now > max_time_to_block_rendering_in_ms) {
+#ifdef AK_OS_RINOS
+        {
+            static uint64_t s_timeout_seq = 0;
+            s_timeout_seq++;
+            if (s_timeout_seq <= 3) {
+                char buf[128];
+                int n = snprintf(buf, sizeof(buf),
+                                 "[Document] render-blocking timed out at %.0fms\n",
+                                 now);
+                if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+            }
+        }
+#endif
         return false;
+    }
+
+    bool blocked_by_import = !m_pending_css_import_rules.is_empty();
+    bool blocked_by_elements = !m_render_blocking_elements.is_empty() || allows_adding_render_blocking_elements();
+
+#ifdef AK_OS_RINOS
+    if (blocked_by_import || blocked_by_elements) {
+        static uint64_t s_rb_seq = 0;
+        static uint64_t s_rb_last_logged = 0;
+        s_rb_seq++;
+        if (s_rb_seq <= 5 || (s_rb_seq - s_rb_last_logged) >= 120) {
+            s_rb_last_logged = s_rb_seq;
+            char buf[192];
+            int n = snprintf(buf, sizeof(buf),
+                             "[Document] render_blocked seq=%llu now=%.0fms elements=%zu pending_imports=%zu allows_adding=%d\n",
+                             (unsigned long long)s_rb_seq, now,
+                             m_render_blocking_elements.size(),
+                             m_pending_css_import_rules.size(),
+                             allows_adding_render_blocking_elements() ? 1 : 0);
+            if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+        }
+    }
+#endif
 
     // AD-HOC: Consider pending CSS @import rules as render-blocking
-    if (!m_pending_css_import_rules.is_empty())
+    if (blocked_by_import)
         return true;
 
-    return !m_render_blocking_elements.is_empty() || allows_adding_render_blocking_elements();
+    return blocked_by_elements;
 }
 
 // https://html.spec.whatwg.org/multipage/dom.html#allows-adding-render-blocking-elements
@@ -6856,11 +6904,57 @@ bool Document::allows_adding_render_blocking_elements() const
 void Document::add_render_blocking_element(GC::Ref<Element> element)
 {
     m_render_blocking_elements.set(element);
+#ifdef AK_OS_RINOS
+    {
+        auto tag = element->local_name();
+        auto src = element->attribute(HTML::AttributeNames::src).value_or({});
+        auto href = element->attribute(HTML::AttributeNames::href).value_or({});
+        auto rel = element->attribute(HTML::AttributeNames::rel).value_or({});
+        auto tag_sv = tag.bytes_as_string_view();
+        auto src_sv = src.bytes_as_string_view();
+        auto href_sv = href.bytes_as_string_view();
+        auto rel_sv = rel.bytes_as_string_view();
+        size_t tag_len = tag_sv.length() > 32 ? 32 : tag_sv.length();
+        size_t src_len = src_sv.length() > 160 ? 160 : src_sv.length();
+        size_t href_len = href_sv.length() > 160 ? 160 : href_sv.length();
+        size_t rel_len = rel_sv.length() > 32 ? 32 : rel_sv.length();
+        char buf[512];
+        int n = snprintf(buf, sizeof(buf),
+                         "[RB+] tag=%.*s src=%.*s href=%.*s rel=%.*s total=%zu\n",
+                         (int)tag_len, tag_sv.characters_without_null_termination(),
+                         (int)src_len, src_sv.characters_without_null_termination(),
+                         (int)href_len, href_sv.characters_without_null_termination(),
+                         (int)rel_len, rel_sv.characters_without_null_termination(),
+                         m_render_blocking_elements.size());
+        if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+    }
+#endif
 }
 
 void Document::remove_render_blocking_element(GC::Ref<Element> element)
 {
     m_render_blocking_elements.remove(element);
+#ifdef AK_OS_RINOS
+    {
+        auto tag = element->local_name();
+        auto src = element->attribute(HTML::AttributeNames::src).value_or({});
+        auto href = element->attribute(HTML::AttributeNames::href).value_or({});
+        auto tag_sv = tag.bytes_as_string_view();
+        auto src_sv = src.bytes_as_string_view();
+        auto href_sv = href.bytes_as_string_view();
+        size_t tag_len = tag_sv.length() > 32 ? 32 : tag_sv.length();
+        size_t src_len = src_sv.length() > 160 ? 160 : src_sv.length();
+        size_t href_len = href_sv.length() > 160 ? 160 : href_sv.length();
+        char buf[512];
+        int n = snprintf(buf, sizeof(buf),
+                         "[RB-] tag=%.*s src=%.*s href=%.*s remaining=%zu\n",
+                         (int)tag_len, tag_sv.characters_without_null_termination(),
+                         (int)src_len, src_sv.characters_without_null_termination(),
+                         (int)href_len, href_sv.characters_without_null_termination(),
+                         m_render_blocking_elements.size());
+        if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+    }
+#endif
 }
 
 // https://fullscreen.spec.whatwg.org/#run-the-fullscreen-steps

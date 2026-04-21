@@ -123,8 +123,9 @@ void WebSocket::initialize(JS::Realm& realm)
     WEB_SET_PROTOTYPE_FOR_INTERFACE(WebSocket);
     Base::initialize(realm);
 
-    auto& relevant_global = as<HTML::WindowOrWorkerGlobalScopeMixin>(HTML::relevant_global_object(*this));
-    relevant_global.register_web_socket({}, *this);
+    auto* relevant_global = HTML::window_or_worker_global_scope_mixin_from(HTML::relevant_global_object(*this));
+    VERIFY(relevant_global);
+    relevant_global->register_web_socket({}, *this);
 }
 
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#garbage-collection
@@ -141,8 +142,9 @@ void WebSocket::finalize()
         m_websocket->close(1000);
     }
 
-    auto& relevant_global = as<HTML::WindowOrWorkerGlobalScopeMixin>(HTML::relevant_global_object(*this));
-    relevant_global.unregister_web_socket({}, *this);
+    auto* relevant_global = HTML::window_or_worker_global_scope_mixin_from(HTML::relevant_global_object(*this));
+    VERIFY(relevant_global);
+    relevant_global->unregister_web_socket({}, *this);
 }
 
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#garbage-collection
@@ -193,8 +195,9 @@ ErrorOr<void> WebSocket::establish_web_socket_connection(URL::URL const& url_rec
 {
     // FIXME: Integrate properly with FETCH as per https://fetch.spec.whatwg.org/#websocket-opening-handshake
 
-    auto& window_or_worker = as<HTML::WindowOrWorkerGlobalScopeMixin>(client.global_object());
-    auto origin_string = window_or_worker.origin().to_byte_string();
+    auto* window_or_worker = HTML::window_or_worker_global_scope_mixin_from(client.global_object());
+    VERIFY(window_or_worker);
+    auto origin_string = window_or_worker->origin().to_byte_string();
 
     Vector<ByteString> protocol_byte_strings;
     for (auto const& protocol : protocols)

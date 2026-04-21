@@ -769,6 +769,21 @@ void WebContentClient::did_update_navigation_buttons_state(u64 page_id, bool bac
 
 void WebContentClient::did_allocate_backing_stores(u64 page_id, i32 front_bitmap_id, Web::SharedBackingStore front_backing_store, i32 back_bitmap_id, Web::SharedBackingStore back_backing_store)
 {
+    auto front_valid = front_backing_store.bitmap().is_valid();
+    auto back_valid = back_backing_store.bitmap().is_valid();
+#ifdef AK_OS_RINOS
+    dbgln("[webcontent] did_allocate_backing_stores page={} front_id={} back_id={} front_valid={} back_valid={}",
+        page_id, front_bitmap_id, back_bitmap_id, front_valid, back_valid);
+#endif
+
+    if (!front_valid || !back_valid) {
+#ifdef AK_OS_RINOS
+        dbgln("[webcontent] did_allocate_backing_stores accept failure page={} front_valid={} back_valid={}",
+            page_id, front_valid, back_valid);
+#endif
+        return;
+    }
+
     if (auto view = view_for_page_id(page_id); view.has_value())
         view->did_allocate_backing_stores({}, front_bitmap_id, move(front_backing_store), back_bitmap_id, move(back_backing_store));
 }

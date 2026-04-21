@@ -16,6 +16,7 @@
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/Fetch/Infrastructure/URL.h>
+#include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/PolicyContainers.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
@@ -328,11 +329,15 @@ Directives::Directive::Result should_navigation_response_to_navigation_request_o
     // 1. Let result be "Allowed".
     auto result = Directives::Directive::Result::Allowed;
 
-    // FIXME: File spec issue stating that the request can be null (e.g. from a srcdoc resource).
-    if (!navigation_request) {
-        dbgln("FIXME: Handle null navigation_request in navigation response Content Security Policy check.");
-        return result;
-    }
+    auto& response_violation_realm = [&]() -> JS::Realm& {
+        if (navigation_request)
+            return navigation_request->client()->realm();
+
+        // Srcdoc navigation params intentionally carry a null request.
+        auto active_window = target->active_window();
+        VERIFY(active_window);
+        return active_window->realm();
+    }();
 
     // 2. For each policy of response CSP list:
     for (auto policy : response_csp_list->policies()) {
@@ -340,15 +345,13 @@ Directives::Directive::Result should_navigation_response_to_navigation_request_o
         // 1. For each directive of policy:
         for (auto directive : policy->directives()) {
             // 1. If directive’s navigation response check returns "Allowed" when executed upon navigation request, type, navigation response, target, "response", and policy skip to the next directive.
-            auto directive_result = directive->navigation_response_check(*navigation_request, navigation_type, navigation_response, target, Directives::Directive::CheckType::Response, policy);
+            auto directive_result = directive->navigation_response_check(navigation_request, navigation_type, navigation_response, target, Directives::Directive::CheckType::Response, policy);
             if (directive_result == Directives::Directive::Result::Allowed)
                 continue;
 
             // 2. Otherwise, let violation be the result of executing § 2.4.1 Create a violation object for global, policy, and directive on null, policy, and directive’s name.
             // Spec Note: We use null for the global object, as no global exists: we haven’t processed the navigation to create a Document yet.
-            // FIXME: What should the realm be here?
-            auto& realm = navigation_request->client()->realm();
-            auto violation = Violation::create_a_violation_object_for_global_policy_and_directive(realm, nullptr, policy, directive->name());
+            auto violation = Violation::create_a_violation_object_for_global_policy_and_directive(response_violation_realm, nullptr, policy, directive->name());
 
             // 3. Set violation’s resource to navigation response’s URL.
             if (navigation_response->url().has_value()) {
@@ -358,13 +361,18 @@ Directives::Directive::Result should_navigation_response_to_navigation_request_o
             }
 
             // 4. Execute § 5.5 Report a violation on violation.
-            violation->report_a_violation(realm);
+            violation->report_a_violation(response_violation_realm);
 
             // 5. If policy’s disposition is "enforce", then set result to "Blocked".
             if (policy->disposition() == Policy::Disposition::Enforce)
                 result = Directives::Directive::Result::Blocked;
         }
     }
+
+    // Srcdoc navigation params intentionally omit the initiating request, so there is no request policy container to
+    // run source-side checks against.
+    if (!navigation_request)
+        return result;
 
     // 3. For each policy of navigation request’s policy container’s CSP list:
     auto request_policy_container = navigation_request->policy_container().get<GC::Ref<HTML::PolicyContainer>>();
@@ -373,7 +381,7 @@ Directives::Directive::Result should_navigation_response_to_navigation_request_o
         // 1. For each directive of policy:
         for (auto directive : policy->directives()) {
             // 1. If directive’s navigation response check returns "Allowed" when executed upon navigation request, type, navigation response, target, "source", and policy skip to the next directive.
-            auto directive_result = directive->navigation_response_check(*navigation_request, navigation_type, navigation_response, target, Directives::Directive::CheckType::Source, policy);
+            auto directive_result = directive->navigation_response_check(navigation_request, navigation_type, navigation_response, target, Directives::Directive::CheckType::Source, policy);
             if (directive_result == Directives::Directive::Result::Allowed)
                 continue;
 

@@ -209,46 +209,47 @@ public:
     FilteredResponse(GC::Ref<Response>, NonnullRefPtr<HTTP::HeaderList>);
     virtual ~FilteredResponse() = 0;
 
-    [[nodiscard]] virtual Type type() const override { return m_internal_response->type(); }
+    [[nodiscard]] virtual Type type() const override { return has_internal_response() ? m_internal_response->type() : Type::Error; }
 
-    [[nodiscard]] virtual bool aborted() const override { return m_internal_response->aborted(); }
-    virtual void set_aborted(bool aborted) override { m_internal_response->set_aborted(aborted); }
+    [[nodiscard]] virtual bool aborted() const override { return has_internal_response() ? m_internal_response->aborted() : true; }
+    virtual void set_aborted(bool aborted) override { if (has_internal_response()) m_internal_response->set_aborted(aborted); }
 
-    [[nodiscard]] virtual Vector<URL::URL> const& url_list() const override { return m_internal_response->url_list(); }
-    [[nodiscard]] virtual Vector<URL::URL>& url_list() override { return m_internal_response->url_list(); }
-    virtual void set_url_list(Vector<URL::URL> url_list) override { m_internal_response->set_url_list(move(url_list)); }
+    [[nodiscard]] virtual Vector<URL::URL> const& url_list() const override { return has_internal_response() ? m_internal_response->url_list() : Response::url_list(); }
+    [[nodiscard]] virtual Vector<URL::URL>& url_list() override { return has_internal_response() ? m_internal_response->url_list() : Response::url_list(); }
+    virtual void set_url_list(Vector<URL::URL> url_list) override { if (has_internal_response()) m_internal_response->set_url_list(move(url_list)); }
 
-    [[nodiscard]] virtual Status status() const override { return m_internal_response->status(); }
-    virtual void set_status(Status status) override { m_internal_response->set_status(status); }
+    [[nodiscard]] virtual Status status() const override { return has_internal_response() ? m_internal_response->status() : 0; }
+    virtual void set_status(Status status) override { if (has_internal_response()) m_internal_response->set_status(status); }
 
-    [[nodiscard]] virtual ByteString const& status_message() const override { return m_internal_response->status_message(); }
-    virtual void set_status_message(ByteString status_message) override { m_internal_response->set_status_message(move(status_message)); }
+    [[nodiscard]] virtual ByteString const& status_message() const override { return has_internal_response() ? m_internal_response->status_message() : Response::status_message(); }
+    virtual void set_status_message(ByteString status_message) override { if (has_internal_response()) m_internal_response->set_status_message(move(status_message)); }
 
-    virtual NonnullRefPtr<HTTP::HeaderList> const& header_list() const override { return m_internal_response->header_list(); }
-    virtual void set_header_list(NonnullRefPtr<HTTP::HeaderList> header_list) override { m_internal_response->set_header_list(header_list); }
+    virtual NonnullRefPtr<HTTP::HeaderList> const& header_list() const override { return has_internal_response() ? m_internal_response->header_list() : Response::header_list(); }
+    virtual void set_header_list(NonnullRefPtr<HTTP::HeaderList> header_list) override { if (has_internal_response()) m_internal_response->set_header_list(header_list); }
 
-    [[nodiscard]] virtual GC::Ptr<Body> body() const override { return m_internal_response->body(); }
-    virtual void set_body(GC::Ptr<Body> body) override { m_internal_response->set_body(body); }
+    [[nodiscard]] virtual GC::Ptr<Body> body() const override { return has_internal_response() ? m_internal_response->body() : nullptr; }
+    virtual void set_body(GC::Ptr<Body> body) override { if (has_internal_response()) m_internal_response->set_body(body); }
 
-    [[nodiscard]] virtual Optional<CacheState> const& cache_state() const override { return m_internal_response->cache_state(); }
-    virtual void set_cache_state(Optional<CacheState> cache_state) override { m_internal_response->set_cache_state(move(cache_state)); }
+    [[nodiscard]] virtual Optional<CacheState> const& cache_state() const override { return has_internal_response() ? m_internal_response->cache_state() : Response::cache_state(); }
+    virtual void set_cache_state(Optional<CacheState> cache_state) override { if (has_internal_response()) m_internal_response->set_cache_state(move(cache_state)); }
 
-    [[nodiscard]] virtual Vector<ByteString> const& cors_exposed_header_name_list() const override { return m_internal_response->cors_exposed_header_name_list(); }
-    virtual void set_cors_exposed_header_name_list(Vector<ByteString> cors_exposed_header_name_list) override { m_internal_response->set_cors_exposed_header_name_list(move(cors_exposed_header_name_list)); }
+    [[nodiscard]] virtual Vector<ByteString> const& cors_exposed_header_name_list() const override { return has_internal_response() ? m_internal_response->cors_exposed_header_name_list() : Response::cors_exposed_header_name_list(); }
+    virtual void set_cors_exposed_header_name_list(Vector<ByteString> cors_exposed_header_name_list) override { if (has_internal_response()) m_internal_response->set_cors_exposed_header_name_list(move(cors_exposed_header_name_list)); }
 
-    [[nodiscard]] virtual bool range_requested() const override { return m_internal_response->range_requested(); }
-    virtual void set_range_requested(bool range_requested) override { m_internal_response->set_range_requested(range_requested); }
+    [[nodiscard]] virtual bool range_requested() const override { return has_internal_response() ? m_internal_response->range_requested() : false; }
+    virtual void set_range_requested(bool range_requested) override { if (has_internal_response()) m_internal_response->set_range_requested(range_requested); }
 
-    [[nodiscard]] virtual bool request_includes_credentials() const override { return m_internal_response->request_includes_credentials(); }
-    virtual void set_request_includes_credentials(bool request_includes_credentials) override { m_internal_response->set_request_includes_credentials(request_includes_credentials); }
+    [[nodiscard]] virtual bool request_includes_credentials() const override { return has_internal_response() ? m_internal_response->request_includes_credentials() : false; }
+    virtual void set_request_includes_credentials(bool request_includes_credentials) override { if (has_internal_response()) m_internal_response->set_request_includes_credentials(request_includes_credentials); }
 
-    [[nodiscard]] virtual bool timing_allow_passed() const override { return m_internal_response->timing_allow_passed(); }
-    virtual void set_timing_allow_passed(bool timing_allow_passed) override { m_internal_response->set_timing_allow_passed(timing_allow_passed); }
+    [[nodiscard]] virtual bool timing_allow_passed() const override { return has_internal_response() ? m_internal_response->timing_allow_passed() : false; }
+    virtual void set_timing_allow_passed(bool timing_allow_passed) override { if (has_internal_response()) m_internal_response->set_timing_allow_passed(timing_allow_passed); }
 
-    [[nodiscard]] virtual BodyInfo const& body_info() const override { return m_internal_response->body_info(); }
-    virtual void set_body_info(BodyInfo body_info) override { m_internal_response->set_body_info(move(body_info)); }
+    [[nodiscard]] virtual BodyInfo const& body_info() const override { return has_internal_response() ? m_internal_response->body_info() : Response::body_info(); }
+    virtual void set_body_info(BodyInfo body_info) override { if (has_internal_response()) m_internal_response->set_body_info(move(body_info)); }
 
-    [[nodiscard]] GC::Ref<Response> internal_response() const { return m_internal_response; }
+    [[nodiscard]] GC::Ref<Response> internal_response() const;
+    [[nodiscard]] bool has_internal_response() const;
 
 protected:
     virtual void visit_edges(JS::Cell::Visitor&) override;

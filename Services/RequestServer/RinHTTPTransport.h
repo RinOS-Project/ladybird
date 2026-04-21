@@ -68,7 +68,9 @@ private:
     void finish_success();
 
     OwnPtr<Core::BufferedSocketBase> m_socket;
-    RefPtr<Core::Timer> m_timeout_timer;
+    RefPtr<Core::Timer> m_timeout_timer;  // 接続確立までのタイムアウト
+    RefPtr<Core::Timer> m_idle_timer;     // 接続後の連続無通信タイムアウト
+    bool m_connect_timer_stopped { false };
 
     enum class ResponseState {
         StatusLine,

@@ -34,8 +34,9 @@ ByteLengthQueuingStrategy::~ByteLengthQueuingStrategy() = default;
 GC::Ref<WebIDL::CallbackType> ByteLengthQueuingStrategy::size()
 {
     // 1. Return this's relevant global object's byte length queuing strategy size function.
-    auto& global = as<HTML::UniversalGlobalScopeMixin>(HTML::relevant_global_object(*this));
-    return global.byte_length_queuing_strategy_size_function();
+    auto* global = HTML::universal_global_scope_mixin_from(HTML::relevant_global_object(*this));
+    VERIFY(global);
+    return global->byte_length_queuing_strategy_size_function();
 }
 
 void ByteLengthQueuingStrategy::initialize(JS::Realm& realm)

@@ -23,6 +23,7 @@ class PaletteImpl : public RefCounted<PaletteImpl> {
 public:
     ~PaletteImpl() = default;
     static NonnullRefPtr<PaletteImpl> create_with_anonymous_buffer(Core::AnonymousBuffer);
+    static NonnullRefPtr<PaletteImpl> create_with_system_theme(SystemTheme const&);
     NonnullRefPtr<PaletteImpl> clone() const;
 
     Color color(ColorRole role) const
@@ -45,14 +46,17 @@ public:
 
     int metric(MetricRole) const;
     ByteString path(PathRole) const;
-    SystemTheme const& theme() const { return *m_theme_buffer.data<SystemTheme>(); }
+    SystemTheme const& theme() const { return m_uses_theme_storage ? m_theme_storage : *m_theme_buffer.data<SystemTheme>(); }
 
     void replace_internal_buffer(Core::AnonymousBuffer);
 
 private:
     explicit PaletteImpl(Core::AnonymousBuffer);
+    explicit PaletteImpl(SystemTheme const&);
 
     Core::AnonymousBuffer m_theme_buffer;
+    SystemTheme m_theme_storage {};
+    bool m_uses_theme_storage { false };
 };
 
 class Palette {

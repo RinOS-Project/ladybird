@@ -9,6 +9,10 @@
 
 #include <AK/ByteBuffer.h>
 #include <AK/Debug.h>
+#ifdef AK_OS_RINOS
+#    include <unistd.h>
+#    include <cstdio>
+#endif
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibTextCodec/Decoder.h>
@@ -27,6 +31,7 @@
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/EventNames.h>
@@ -431,9 +436,8 @@ void HTMLLinkElement::default_fetch_and_process_linked_resource()
     // 7. Fetch request with processResponseConsumeBody set to the following steps given response response and null, failure, or a byte sequence bodyBytes:
     Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
     fetch_algorithms_input.process_response_consume_body = [this](auto response, auto body_bytes) {
-        // FIXME: If the response is CORS cross-origin, we must use its internal response to query any of its data. See:
-        //        https://github.com/whatwg/html/issues/9355
-        response = response->unsafe_response();
+        auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
+        auto internal_response = rooted_responses->internal_response();
 
         // 1. Let success be true.
         bool success = true;
@@ -445,7 +449,7 @@ void HTMLLinkElement::default_fetch_and_process_linked_resource()
         // then set success to false.
         body_bytes.visit(
             [&](ByteBuffer& body_bytes) {
-                if (Fetch::Infrastructure::is_ok_status(response->status()))
+                if (Fetch::Infrastructure::is_ok_status(internal_response->status()))
                     successful_body_bytes = move(body_bytes);
                 else
                     success = false;
@@ -455,7 +459,7 @@ void HTMLLinkElement::default_fetch_and_process_linked_resource()
         // FIXME: 3. Otherwise, wait for the link resource's critical subresources to finish loading.
 
         // 4. Process the linked resource given el, success, response, and bodyBytes.
-        process_linked_resource(success, response, move(successful_body_bytes));
+        process_linked_resource(success, internal_response, move(successful_body_bytes));
     };
 
     if (m_fetch_controller)
@@ -577,6 +581,20 @@ bool HTMLLinkElement::stylesheet_linked_resource_fetch_setup_steps(Fetch::Infras
     // FIXME: We currently don't set the destination for stylesheets, so we do it here.
     //        File a spec issue that the destination for stylesheets is not actually set if the `as` attribute is missing.
     request.set_destination(Fetch::Infrastructure::Request::Destination::Style);
+
+#ifdef AK_OS_RINOS
+    {
+        auto href = attribute(AttributeNames::href).value_or({});
+        auto href_sv = href.bytes_as_string_view();
+        size_t href_len = href_sv.length() > 200 ? 200 : href_sv.length();
+        char buf[320];
+        int n = snprintf(buf, sizeof(buf),
+                         "[StyleFetch] start rb=%d href=%.*s\n",
+                         document().is_render_blocking_element(*this) ? 1 : 0,
+                         (int)href_len, href_sv.characters_without_null_termination());
+        if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+    }
+#endif
 
     // 5. Return true.
     return true;
@@ -712,9 +730,8 @@ void HTMLLinkElement::preload(LinkProcessingOptions& options, GC::Ptr<GC::Functi
     //     given a response response and null, failure, or a byte sequence bodyBytes:
     Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
     fetch_algorithms_input.process_response_consume_body = [&realm, options = GC::Ref { options }, process_response, entry, report_timing](GC::Ref<Fetch::Infrastructure::Response> response, Fetch::Infrastructure::FetchAlgorithms::BodyBytes body_bytes) {
-        // FIXME: If the response is CORS cross-origin, we must use its internal response to query any of its data. See:
-        //        https://github.com/whatwg/html/issues/9355
-        response = response->unsafe_response();
+        auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
+        response = rooted_responses->internal_response();
 
         // 1. If bodyBytes is a byte sequence, then set response's body to bodyBytes as a body.
         if (auto* byte_sequence = body_bytes.get_pointer<ByteBuffer>())
@@ -884,6 +901,20 @@ void HTMLLinkElement::process_stylesheet_resource(bool success, Fetch::Infrastru
     // 7. Unblock rendering on el.
     unblock_rendering();
 
+#ifdef AK_OS_RINOS
+    {
+        auto href = attribute(AttributeNames::href).value_or({});
+        auto href_sv = href.bytes_as_string_view();
+        size_t href_len = href_sv.length() > 200 ? 200 : href_sv.length();
+        char buf[320];
+        int n = snprintf(buf, sizeof(buf),
+                         "[StyleFetch] complete loaded=%d href=%.*s\n",
+                         m_loaded_style_sheet ? 1 : 0,
+                         (int)href_len, href_sv.characters_without_null_termination());
+        if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+    }
+#endif
+
     if (m_loaded_style_sheet) {
         auto style_sheet_loading_state = m_loaded_style_sheet->loading_state();
         if (style_sheet_loading_state == CSS::CSSStyleSheet::LoadingState::Loaded || style_sheet_loading_state == CSS::CSSStyleSheet::LoadingState::Error) {
@@ -995,21 +1026,26 @@ void HTMLLinkElement::load_fallback_favicon_if_needed(GC::Ref<DOM::Document> doc
     fetch_algorithms_input.process_response = [document, request](GC::Ref<Fetch::Infrastructure::Response> response) {
         auto& realm = document->realm();
         auto global = GC::Ref { realm.global_object() };
+        auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
+        auto internal_response = rooted_responses->internal_response();
 
-        auto process_body = GC::create_function(realm.heap(), [document, request](ByteBuffer body) {
+        auto process_body = GC::create_function(realm.heap(), [document, request, rooted_responses](ByteBuffer body) {
+            (void)rooted_responses;
             (void)decode_favicon(body, request->url(), document);
         });
-        auto process_body_error = GC::create_function(realm.heap(), [](JS::Value) {
+        auto process_body_error = GC::create_function(realm.heap(), [rooted_responses](JS::Value) {
+            (void)rooted_responses;
         });
 
         // Check for failed favicon response
-        if (!Fetch::Infrastructure::is_ok_status(response->status()) || !response->body()) {
+        if (!Fetch::Infrastructure::is_ok_status(internal_response->status()) || !internal_response->body()) {
             return;
         }
 
         // 3. Use response's unsafe response as an icon as if it had been declared using the icon keyword.
-        if (auto body = response->unsafe_response()->body())
-            body->fully_read(realm, process_body, process_body_error, global);
+        if (auto body = internal_response->body())
+            // AD-HOC (RinOS Round 10): Pin ResponseReferenceHolder through ReadLoopReadRequest::m_extra_root.
+            body->fully_read(realm, process_body, process_body_error, global, rooted_responses.ptr());
     };
 
     Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));

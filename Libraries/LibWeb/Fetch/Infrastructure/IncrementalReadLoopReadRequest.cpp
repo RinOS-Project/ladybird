@@ -32,13 +32,15 @@ void IncrementalReadLoopReadRequest::on_chunk(JS::Value chunk)
         // NOTE: Implementations are strongly encouraged to use an implementation strategy that avoids this copy where possible.
         auto bytes = MUST(ByteBuffer::copy(uint8_array->data()));
         // 2. Set continueAlgorithm to these steps:
-        continue_algorithm = GC::create_function(realm.heap(), [bytes = move(bytes), body = m_body, reader = m_reader, task_destination = m_task_destination, process_body_chunk = m_process_body_chunk, process_end_of_body = m_process_end_of_body, process_body_error = m_process_body_error] {
+        continue_algorithm = GC::create_function(realm.heap(), [bytes = move(bytes), body = m_body, reader = m_reader, task_destination = m_task_destination, process_body_chunk = m_process_body_chunk, process_end_of_body = m_process_end_of_body, process_body_error = m_process_body_error, extra_root = m_extra_root] {
             HTML::TemporaryExecutionContext execution_context { reader->realm(), HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
             // 1. Run processBodyChunk given bytes.
             process_body_chunk->function()(move(bytes));
 
             // 2. Perform the incrementally-read loop given reader, taskDestination, processBodyChunk, processEndOfBody, and processBodyError.
-            body->incrementally_read_loop(reader, task_destination, process_body_chunk, process_end_of_body, process_body_error);
+            // AD-HOC (RinOS Round 11): Propagate extra_root into the re-entrant loop so
+            // the Response/holder remains pinned across every chunk read.
+            body->incrementally_read_loop(reader, task_destination, process_body_chunk, process_end_of_body, process_body_error, extra_root);
         });
     }
 
@@ -62,13 +64,14 @@ void IncrementalReadLoopReadRequest::on_error(JS::Value error)
     }));
 }
 
-IncrementalReadLoopReadRequest::IncrementalReadLoopReadRequest(GC::Ref<Body> body, GC::Ref<Streams::ReadableStreamDefaultReader> reader, TaskDestination task_destination, Body::ProcessBodyChunkCallback process_body_chunk, Body::ProcessEndOfBodyCallback process_end_of_body, Body::ProcessBodyErrorCallback process_body_error)
+IncrementalReadLoopReadRequest::IncrementalReadLoopReadRequest(GC::Ref<Body> body, GC::Ref<Streams::ReadableStreamDefaultReader> reader, TaskDestination task_destination, Body::ProcessBodyChunkCallback process_body_chunk, Body::ProcessEndOfBodyCallback process_end_of_body, Body::ProcessBodyErrorCallback process_body_error, GC::Ptr<JS::Cell> extra_root)
     : m_body(body)
     , m_reader(reader)
     , m_task_destination(task_destination)
     , m_process_body_chunk(process_body_chunk)
     , m_process_end_of_body(process_end_of_body)
     , m_process_body_error(process_body_error)
+    , m_extra_root(extra_root)
 {
 }
 
@@ -82,6 +85,7 @@ void IncrementalReadLoopReadRequest::visit_edges(Visitor& visitor)
     visitor.visit(m_process_body_chunk);
     visitor.visit(m_process_end_of_body);
     visitor.visit(m_process_body_error);
+    visitor.visit(m_extra_root);
 }
 
 }

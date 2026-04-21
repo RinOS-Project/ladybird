@@ -25,7 +25,7 @@ FrameAncestorsDirective::FrameAncestorsDirective(String name, Vector<String> val
 }
 
 // https://w3c.github.io/webappsec-csp/#frame-ancestors-navigation-response
-Directive::Result FrameAncestorsDirective::navigation_response_check(GC::Ref<Fetch::Infrastructure::Request const>, NavigationType, GC::Ref<Fetch::Infrastructure::Response const> navigation_response, GC::Ref<HTML::Navigable const> target, CheckType check_type, GC::Ref<Policy const> policy) const
+Directive::Result FrameAncestorsDirective::navigation_response_check(GC::Ptr<Fetch::Infrastructure::Request const>, NavigationType, GC::Ref<Fetch::Infrastructure::Response const> navigation_response, GC::Ref<HTML::Navigable const> target, CheckType check_type, GC::Ref<Policy const> policy) const
 {
     // 1. If navigation response’s URL is local, return "Allowed".
     VERIFY(navigation_response->url().has_value());

@@ -17,6 +17,7 @@
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/HTML/AudioTrackList.h>
 #include <LibWeb/HTML/HTMLVideoElement.h>
@@ -147,16 +148,15 @@ WebIDL::ExceptionOr<void> HTMLVideoElement::determine_element_poster_frame(Optio
 
         auto& realm = this->realm();
         auto& global = document().realm().global_object();
+        auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
+        auto public_response = rooted_responses->response();
+        auto internal_response = rooted_responses->internal_response();
 
-        if (response->is_network_error())
+        if (public_response->is_network_error())
             return;
 
-        if (response->type() == Fetch::Infrastructure::Response::Type::Opaque || response->type() == Fetch::Infrastructure::Response::Type::OpaqueRedirect) {
-            auto& filtered_response = static_cast<Fetch::Infrastructure::FilteredResponse&>(*response);
-            response = filtered_response.internal_response();
-        }
-
-        auto on_image_data_read = GC::create_function(heap(), [this](ByteBuffer image_data) mutable {
+        auto on_image_data_read = GC::create_function(heap(), [this, rooted_responses](ByteBuffer image_data) mutable {
+            (void)rooted_responses;
             m_fetch_controller = nullptr;
 
             // 6. If an image is thus obtained, the poster frame is that image. Otherwise, there is no poster frame.
@@ -170,10 +170,13 @@ WebIDL::ExceptionOr<void> HTMLVideoElement::determine_element_poster_frame(Optio
                 [](auto&) {});
         });
 
-        VERIFY(response->body());
-        auto empty_algorithm = GC::create_function(heap(), [](JS::Value) { });
+        VERIFY(internal_response->body());
+        auto empty_algorithm = GC::create_function(heap(), [rooted_responses](JS::Value) {
+            (void)rooted_responses;
+        });
 
-        response->body()->fully_read(realm, on_image_data_read, empty_algorithm, GC::Ref { global });
+        // AD-HOC (RinOS Round 10): Pin ResponseReferenceHolder through ReadLoopReadRequest::m_extra_root.
+        internal_response->body()->fully_read(realm, on_image_data_read, empty_algorithm, GC::Ref { global }, rooted_responses.ptr());
     };
 
     m_fetch_controller = Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));

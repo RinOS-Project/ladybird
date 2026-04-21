@@ -42,6 +42,8 @@ BlockAllocator::~BlockAllocator()
             warnln("{}", Error::from_windows_error());
             VERIFY_NOT_REACHED();
         }
+#elif defined(AK_OS_RINOS)
+        munmap(block, HeapBlock::BLOCK_SIZE);
 #else
         free(block);
 #endif
@@ -84,6 +86,27 @@ void* BlockAllocator::allocate_block([[maybe_unused]] char const* name)
 #elif defined(AK_OS_WINDOWS)
     auto* block = VirtualAlloc(NULL, HeapBlock::BLOCK_SIZE, MEM_COMMIT, PAGE_READWRITE);
     VERIFY(block);
+#elif defined(AK_OS_RINOS)
+    // On RinOS, use mmap to isolate GC heap blocks from the general kernel heap.
+    // posix_memalign uses platform_kmalloc which shares the flat heap with all
+    // other allocations — adjacent buffer overflows can corrupt HeapBlock headers.
+    // mmap provides page-granularity isolation, preventing heap corruption.
+    constexpr size_t block_size = HeapBlock::BLOCK_SIZE; // 16 KiB
+    // Allocate 2x to guarantee we can find a block_size-aligned region within.
+    void* raw = mmap(nullptr, block_size * 2, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VERIFY(raw != MAP_FAILED);
+    auto raw_addr = reinterpret_cast<uintptr_t>(raw);
+    auto aligned_addr = (raw_addr + block_size - 1) & ~(block_size - 1);
+    // Release the leading portion before the aligned address.
+    if (aligned_addr > raw_addr)
+        munmap(raw, aligned_addr - raw_addr);
+    // Release the trailing portion after the aligned block.
+    auto tail_start = aligned_addr + block_size;
+    auto tail_end = raw_addr + block_size * 2;
+    if (tail_end > tail_start)
+        munmap(reinterpret_cast<void*>(tail_start), tail_end - tail_start);
+    auto* block = reinterpret_cast<void*>(aligned_addr);
 #else
     void* block = nullptr;
     auto rc = posix_memalign(&block, HeapBlock::BLOCK_SIZE, HeapBlock::BLOCK_SIZE);
@@ -122,6 +145,10 @@ void BlockAllocator::deallocate_block(void* block)
 
     ASAN_POISON_MEMORY_REGION(block, HeapBlock::BLOCK_SIZE);
     LSAN_UNREGISTER_ROOT_REGION(block, HeapBlock::BLOCK_SIZE);
+    // On RinOS, zero the header area to prevent stale m_heap references.
+#if defined(AK_OS_RINOS)
+    __builtin_memset(block, 0, 64);
+#endif
     m_blocks.append(block);
 }
 

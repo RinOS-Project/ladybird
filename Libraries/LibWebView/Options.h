@@ -23,12 +23,22 @@ enum class HeadlessMode {
     Test,
 };
 
+enum class SkipImplicitHeadlessBootstrapView {
+    No,
+    Yes,
+};
+
 enum class NewWindow {
     No,
     Yes,
 };
 
 enum class ForceNewProcess {
+    No,
+    Yes,
+};
+
+enum class DisableSpareWebContentProcesses {
     No,
     Yes,
 };
@@ -78,10 +88,12 @@ struct BrowserOptions {
     Vector<URL::URL> urls;
     Vector<ByteString> raw_urls;
     Optional<HeadlessMode> headless_mode;
+    SkipImplicitHeadlessBootstrapView skip_implicit_headless_bootstrap_view { SkipImplicitHeadlessBootstrapView::No };
     int window_width { 800 };
     int window_height { 600 };
     NewWindow new_window { NewWindow::No };
     ForceNewProcess force_new_process { ForceNewProcess::No };
+    DisableSpareWebContentProcesses disable_spare_web_content_processes { DisableSpareWebContentProcesses::No };
     AllowPopups allow_popups { AllowPopups::No };
     DisableScripting disable_scripting { DisableScripting::No };
     DisableSQLDatabase disable_sql_database { DisableSQLDatabase::No };

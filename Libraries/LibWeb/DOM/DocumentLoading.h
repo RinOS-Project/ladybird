@@ -62,7 +62,7 @@ GC::Ref<DOM::Document> create_document_for_inline_content(GC::Ptr<HTML::Navigabl
         move(navigation_id),
         navigable,
         nullptr,
-        response,
+        Fetch::Infrastructure::root_response_references(response, response),
         nullptr,
         nullptr,
         move(coop_enforcement_result),

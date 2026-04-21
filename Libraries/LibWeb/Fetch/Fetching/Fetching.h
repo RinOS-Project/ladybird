@@ -15,6 +15,7 @@
 #include <LibJS/Forward.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 
 namespace Web::Fetch::Fetching {
 
@@ -44,10 +45,10 @@ ENUMERATE_BOOL_PARAMS
 WEB_API GC::Ref<Infrastructure::FetchController> fetch(JS::Realm&, Infrastructure::Request&, Infrastructure::FetchAlgorithms const&, UseParallelQueue use_parallel_queue = UseParallelQueue::No);
 GC::Ptr<PendingResponse> main_fetch(JS::Realm&, Infrastructure::FetchParams const&, Recursive recursive = Recursive::No);
 void populate_request_from_client(JS::Realm const&, Infrastructure::Request&);
-void fetch_response_handover(JS::Realm&, Infrastructure::FetchParams const&, Infrastructure::Response&);
+void fetch_response_handover(JS::Realm&, Infrastructure::FetchParams const&, Infrastructure::RootedResponseReferences);
 GC::Ref<PendingResponse> scheme_fetch(JS::Realm&, Infrastructure::FetchParams const&);
 GC::Ref<PendingResponse> http_fetch(JS::Realm&, Infrastructure::FetchParams const&, MakeCORSPreflight make_cors_preflight = MakeCORSPreflight::No);
-GC::Ptr<PendingResponse> http_redirect_fetch(JS::Realm&, Infrastructure::FetchParams const&, Infrastructure::Response&);
+GC::Ptr<PendingResponse> http_redirect_fetch(JS::Realm&, Infrastructure::FetchParams const&, Infrastructure::RootedResponseReferences);
 GC::Ref<PendingResponse> http_network_or_cache_fetch(JS::Realm&, Infrastructure::FetchParams const&, IsAuthenticationFetch is_authentication_fetch = IsAuthenticationFetch::No, IsNewConnectionFetch is_new_connection_fetch = IsNewConnectionFetch::No);
 GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(JS::Realm&, Infrastructure::FetchParams const&, HTTP::Cookie::IncludeCredentials include_credentials = HTTP::Cookie::IncludeCredentials::No, IsNewConnectionFetch is_new_connection_fetch = IsNewConnectionFetch::No, RefPtr<HTTP::MemoryCache> = {});
 GC::Ref<PendingResponse> cors_preflight_fetch(JS::Realm&, Infrastructure::Request&);

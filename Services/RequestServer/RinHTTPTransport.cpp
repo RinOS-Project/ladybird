@@ -28,6 +28,9 @@ void RinHTTPFetch::cancel()
     if (m_timeout_timer)
         m_timeout_timer->stop();
     m_timeout_timer = nullptr;
+    if (m_idle_timer)
+        m_idle_timer->stop();
+    m_idle_timer = nullptr;
     if (m_socket) {
         m_socket->on_ready_to_read = nullptr;
         m_socket = nullptr;
@@ -79,13 +82,23 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     fetch->m_request_start_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
     fetch->send_request(url, method, request_headers, request_body);
 
-    // Timeout timer
+    // 接続確立タイマー: 相手のデータが届くまでを監視。最初の read で停止する。
     if (connect_timeout_seconds > 0) {
         fetch->m_timeout_timer = Core::Timer::create_single_shot(static_cast<int>(connect_timeout_seconds * 1000), [raw = fetch.ptr()] {
             raw->finish_with_error(28); // CURLE_OPERATION_TIMEDOUT
         });
         fetch->m_timeout_timer->start();
     }
+
+    // Idle タイマー: 受信が一定時間止まったらタイムアウト。
+    // 60 秒の連続無通信で切断する。データが流れるたびに restart する。
+    // ハンドシェイク直後にサーバが黙るケースにも備えて create() 時点で start しておく。
+    fetch->m_idle_timer = Core::Timer::create_single_shot(60 * 1000, [raw = fetch.ptr()] {
+        dbgln("[RinHTTP] idle_timer fired -> finish_with_error(28)");
+        raw->finish_with_error(28); // CURLE_OPERATION_TIMEDOUT
+    });
+    fetch->m_idle_timer->start();
+    dbgln("[RinHTTP] fetch created, idle_timer armed (60s)");
 
     // Set up async read
     fetch->m_socket->on_ready_to_read = [raw = fetch.ptr()] {
@@ -141,8 +154,19 @@ void RinHTTPFetch::on_socket_ready_to_read()
     if (m_response_state == ResponseState::Complete || m_response_state == ResponseState::Error)
         return;
 
+    // 初回の read で「接続確立」フェーズは終了。累積タイマーを停止し、
+    // 以降は idle timer だけでフロー中断を検知する。
+    if (!m_connect_timer_stopped) {
+        m_connect_timer_stopped = true;
+        if (m_timeout_timer) {
+            m_timeout_timer->stop();
+            m_timeout_timer = nullptr;
+        }
+    }
+    if (m_idle_timer)
+        m_idle_timer->restart();
+
     if (!m_socket || m_socket->is_eof()) {
-        // EOF while reading body without Content-Length → successful completion (HTTP/1.0 style)
         if (m_response_state == ResponseState::Body && !m_has_content_length && !m_chunked_encoding) {
             finish_success();
             return;
@@ -151,11 +175,29 @@ void RinHTTPFetch::on_socket_ready_to_read()
         return;
     }
 
+    // 1 回の ready_to_read 呼び出しで読み込む上限。これを超えたら break し、
+    // EventLoop を回して下流 (RequestPipe writer / WebContent consumer) がドレインできる
+    // ようにする。未処理の TCP/TLS データが残っていれば kernel から再び on_ready_to_read
+    // が発火する。この上限が無いと、インナーループが永久に回って producer がメモリを
+    // 二次関数的に積み上げ OOM に至る (旧実装の RequestServer クラッシュの原因)。
+    constexpr size_t MAX_BYTES_PER_INVOCATION = 256 * 1024;
+    constexpr int MAX_ITERATIONS_PER_INVOCATION = 16;
+
     u8 buf[65536];
+    size_t bytes_read_this_invocation = 0;
+    int iterations = 0;
     while (m_response_state != ResponseState::Complete && m_response_state != ResponseState::Error) {
-        auto result = m_socket->read_some({ buf, sizeof(buf) });
-        if (result.is_error())
+        if (iterations >= MAX_ITERATIONS_PER_INVOCATION || bytes_read_this_invocation >= MAX_BYTES_PER_INVOCATION)
             break;
+
+        iterations++;
+        auto result = m_socket->read_some({ buf, sizeof(buf) });
+        if (result.is_error()) {
+            auto err = result.release_error();
+            dbgln("[RinHTTP] read_some error at iter={}: {} (state={})",
+                iterations, err, (int)m_response_state);
+            break;
+        }
 
         auto bytes = result.value();
         if (bytes.is_empty()) {
@@ -167,6 +209,7 @@ void RinHTTPFetch::on_socket_ready_to_read()
             }
             break;
         }
+        bytes_read_this_invocation += bytes.size();
 
         if (m_response_state == ResponseState::StatusLine || m_response_state == ResponseState::Headers)
             process_line_buffered(bytes);
@@ -219,6 +262,12 @@ void RinHTTPFetch::process_line_buffered(ReadonlyBytes data)
 
                     m_response_state = m_chunked_encoding ? ResponseState::ChunkedSize : ResponseState::Body;
                     m_line_buffer.clear();
+
+                    // Content-Length: 0 の場合はこの時点で完了（body データは発生しない）
+                    if (m_response_state == ResponseState::Body && m_has_content_length && m_content_length == 0) {
+                        finish_success();
+                        return;
+                    }
 
                     // Forward remaining data to body parser
                     if (offset < data.size()) {
@@ -344,6 +393,8 @@ void RinHTTPFetch::process_chunked_data(ReadonlyBytes data)
 
 void RinHTTPFetch::finish_with_error(int code)
 {
+    dbgln("[RinHTTP] finish_with_error code={} state={} body={}/{}",
+        code, (int)m_response_state, m_body_bytes_received, m_content_length);
     m_response_state = ResponseState::Error;
     m_response_end_us = (MonotonicTime::now() - m_start_time).to_microseconds();
     cancel();
@@ -353,11 +404,16 @@ void RinHTTPFetch::finish_with_error(int code)
 
 void RinHTTPFetch::finish_success()
 {
+    dbgln("[RinHTTP] finish_success body={} status={}", m_body_bytes_received, m_status_code);
     m_response_state = ResponseState::Complete;
     m_response_end_us = (MonotonicTime::now() - m_start_time).to_microseconds();
     if (m_timeout_timer) {
         m_timeout_timer->stop();
         m_timeout_timer = nullptr;
+    }
+    if (m_idle_timer) {
+        m_idle_timer->stop();
+        m_idle_timer = nullptr;
     }
     if (on_complete)
         on_complete(0);

@@ -148,7 +148,7 @@ GC::Ref<Body> Body::clone(JS::Realm& realm)
 }
 
 // https://fetch.spec.whatwg.org/#body-fully-read
-void Body::fully_read(JS::Realm& realm, Web::Fetch::Infrastructure::Body::ProcessBodyCallback process_body, Web::Fetch::Infrastructure::Body::ProcessBodyErrorCallback process_body_error, TaskDestination task_destination) const
+void Body::fully_read(JS::Realm& realm, Web::Fetch::Infrastructure::Body::ProcessBodyCallback process_body, Web::Fetch::Infrastructure::Body::ProcessBodyErrorCallback process_body_error, TaskDestination task_destination, GC::Ptr<JS::Cell> extra_root) const
 {
     HTML::TemporaryExecutionContext execution_context { realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
 
@@ -182,11 +182,11 @@ void Body::fully_read(JS::Realm& realm, Web::Fetch::Infrastructure::Body::Proces
     }
 
     // 5. Read all bytes from reader, given successSteps and errorSteps.
-    reader.value()->read_all_bytes(GC::create_function(realm.heap(), move(success_steps)), GC::create_function(realm.heap(), move(error_steps)));
+    reader.value()->read_all_bytes(GC::create_function(realm.heap(), move(success_steps)), GC::create_function(realm.heap(), move(error_steps)), extra_root);
 }
 
 // https://fetch.spec.whatwg.org/#body-incrementally-read
-void Body::incrementally_read(ProcessBodyChunkCallback process_body_chunk, ProcessEndOfBodyCallback process_end_of_body, ProcessBodyErrorCallback process_body_error, TaskDestination task_destination)
+void Body::incrementally_read(ProcessBodyChunkCallback process_body_chunk, ProcessEndOfBodyCallback process_end_of_body, ProcessBodyErrorCallback process_body_error, TaskDestination task_destination, GC::Ptr<JS::Cell> extra_root)
 {
     HTML::TemporaryExecutionContext const execution_context { m_stream->realm(), HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
 
@@ -200,15 +200,15 @@ void Body::incrementally_read(ProcessBodyChunkCallback process_body_chunk, Proce
 
     // 3. Perform the incrementally-read loop given reader, taskDestination, processBodyChunk, processEndOfBody, and processBodyError.
     VERIFY(!task_destination.has<Empty>());
-    incrementally_read_loop(reader, task_destination.get<GC::Ref<JS::Object>>(), process_body_chunk, process_end_of_body, process_body_error);
+    incrementally_read_loop(reader, task_destination.get<GC::Ref<JS::Object>>(), process_body_chunk, process_end_of_body, process_body_error, extra_root);
 }
 
 // https://fetch.spec.whatwg.org/#incrementally-read-loop
-void Body::incrementally_read_loop(Streams::ReadableStreamDefaultReader& reader, TaskDestination task_destination, ProcessBodyChunkCallback process_body_chunk, ProcessEndOfBodyCallback process_end_of_body, ProcessBodyErrorCallback process_body_error)
+void Body::incrementally_read_loop(Streams::ReadableStreamDefaultReader& reader, TaskDestination task_destination, ProcessBodyChunkCallback process_body_chunk, ProcessEndOfBodyCallback process_end_of_body, ProcessBodyErrorCallback process_body_error, GC::Ptr<JS::Cell> extra_root)
 {
     auto& realm = reader.realm();
     // 1. Let readRequest be the following read request:
-    auto read_request = realm.create<IncrementalReadLoopReadRequest>(*this, reader, task_destination, process_body_chunk, process_end_of_body, process_body_error);
+    auto read_request = realm.create<IncrementalReadLoopReadRequest>(*this, reader, task_destination, process_body_chunk, process_end_of_body, process_body_error, extra_root);
 
     // 2. Read a chunk from reader given readRequest.
     reader.read_a_chunk(read_request);

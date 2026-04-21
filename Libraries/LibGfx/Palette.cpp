@@ -15,8 +15,19 @@ NonnullRefPtr<PaletteImpl> PaletteImpl::create_with_anonymous_buffer(Core::Anony
     return adopt_ref(*new PaletteImpl(move(buffer)));
 }
 
+NonnullRefPtr<PaletteImpl> PaletteImpl::create_with_system_theme(SystemTheme const& theme)
+{
+    return adopt_ref(*new PaletteImpl(theme));
+}
+
 PaletteImpl::PaletteImpl(Core::AnonymousBuffer buffer)
     : m_theme_buffer(move(buffer))
+{
+}
+
+PaletteImpl::PaletteImpl(SystemTheme const& theme)
+    : m_theme_storage(theme)
+    , m_uses_theme_storage(true)
 {
 }
 
@@ -39,7 +50,14 @@ ByteString PaletteImpl::path(PathRole role) const
 
 NonnullRefPtr<PaletteImpl> PaletteImpl::clone() const
 {
-    auto new_theme_buffer = Core::AnonymousBuffer::create_with_size(m_theme_buffer.size()).release_value();
+    if (m_uses_theme_storage)
+        return create_with_system_theme(theme());
+
+    auto new_theme_buffer_or_error = Core::AnonymousBuffer::create_with_size(m_theme_buffer.size());
+    if (new_theme_buffer_or_error.is_error())
+        return create_with_system_theme(theme());
+
+    auto new_theme_buffer = new_theme_buffer_or_error.release_value();
     memcpy(new_theme_buffer.data<SystemTheme>(), &theme(), m_theme_buffer.size());
     return adopt_ref(*new PaletteImpl(move(new_theme_buffer)));
 }
@@ -88,6 +106,7 @@ void Palette::set_path(PathRole role, ByteString path)
 void PaletteImpl::replace_internal_buffer(Core::AnonymousBuffer buffer)
 {
     m_theme_buffer = move(buffer);
+    m_uses_theme_storage = false;
 }
 
 }

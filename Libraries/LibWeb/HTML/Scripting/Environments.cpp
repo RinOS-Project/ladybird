@@ -57,7 +57,9 @@ void EnvironmentSettingsObject::initialize(JS::Realm& realm)
 {
     Base::initialize(realm);
     m_module_map = realm.heap().allocate<ModuleMap>();
-    m_universal_global_scope = &as<UniversalGlobalScopeMixin>(global_object());
+    auto* universal_global_scope = universal_global_scope_mixin_from(global_object());
+    VERIFY(universal_global_scope);
+    m_universal_global_scope = universal_global_scope;
 }
 
 void EnvironmentSettingsObject::visit_edges(Cell::Visitor& visitor)
@@ -554,29 +556,23 @@ JS::Object& entry_global_object()
 // https://html.spec.whatwg.org/multipage/webappapis.html#secure-context
 bool is_secure_context(Environment const& environment)
 {
-    // 1. If environment is an environment settings object, then:
-    if (auto const* environment_settings_object = as_if<EnvironmentSettingsObject>(environment)) {
-        // 1. Let global be environment's global object.
-        auto const& global = environment_settings_object->global_object();
-
-        // 2. If global is a WorkerGlobalScope, then:
-        if (auto const* worker = as_if<WorkerGlobalScope>(global)) {
-            // 1. If global's owner set[0]'s relevant settings object is a secure context, then return true.
-            // NOTE: We only need to check the 0th item since they will necessarily all be consistent.
-            if (worker->owner_set().at(0).visit([](auto const& owner) { return owner.relevant_settings_object_is_secure_context; }))
-                return true;
-
-            // 2. Return false.
-            return false;
-        }
-
-        // FIXME: 3. If global is a WorkletGlobalScope, then return true.
-        // NOTE: Worklets can only be created in secure contexts.
-    }
+    auto is_potentially_trustworthy = [](URL::URL const& url) {
+        return SecureContexts::is_url_potentially_trustworthy(url) == SecureContexts::Trustworthiness::PotentiallyTrustworthy;
+    };
 
     // 2. If the result of Is url potentially trustworthy? given environment's top-level creation URL is "Potentially Trustworthy", then return true.
-    if (SecureContexts::is_url_potentially_trustworthy(environment.top_level_creation_url.value()) == SecureContexts::Trustworthiness::PotentiallyTrustworthy)
+    if (environment.top_level_creation_url.has_value() && is_potentially_trustworthy(environment.top_level_creation_url.value()))
         return true;
+
+    // 1. If environment is an environment settings object, then:
+    if (auto const* environment_settings_object = as_if<EnvironmentSettingsObject>(environment)) {
+        if (is_potentially_trustworthy(environment_settings_object->creation_url))
+            return true;
+
+        // Startup and teardown fetch paths can ask this question while window/worker state is only partially
+        // initialized. Prefer a conservative answer over dereferencing document/global-object state here.
+        return false;
+    }
 
     // 3. Return false.
     return false;
@@ -591,17 +587,30 @@ bool is_non_secure_context(Environment const& environment)
 
 SerializedEnvironmentSettingsObject EnvironmentSettingsObject::serialize()
 {
-    auto serialized_global = [this]() -> SerializedGlobal {
-        bool relevant_settings_object_is_secure_context = is_secure_context(*this);
-        if (auto const* window = as_if<Window>(global_object())) {
+    auto relevant_settings_object_is_secure_context = [&]() {
+        if (top_level_creation_url.has_value()
+            && SecureContexts::is_url_potentially_trustworthy(top_level_creation_url.value()) == SecureContexts::Trustworthiness::PotentiallyTrustworthy) {
+            return true;
+        }
+
+        if (auto document = responsible_document(); document
+            && SecureContexts::is_url_potentially_trustworthy(document->url()) == SecureContexts::Trustworthiness::PotentiallyTrustworthy) {
+            return true;
+        }
+
+        return SecureContexts::is_url_potentially_trustworthy(creation_url) == SecureContexts::Trustworthiness::PotentiallyTrustworthy;
+    }();
+
+    auto serialized_global = [&]() -> SerializedGlobal {
+        if (auto document = responsible_document()) {
             return SerializedWindow {
                 .associated_document {
-                    .url = window->associated_document().url(),
+                    .url = document->url(),
                     .relevant_settings_object_is_secure_context = relevant_settings_object_is_secure_context,
                 }
             };
         }
-        VERIFY(is<WorkerGlobalScope>(global_object()));
+
         return SerializedWorkerGlobalScope {
             .relevant_settings_object_is_secure_context = relevant_settings_object_is_secure_context,
         };

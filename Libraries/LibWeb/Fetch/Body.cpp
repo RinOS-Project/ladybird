@@ -227,7 +227,13 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> consume_body(JS::Realm& realm, Bod
     }
     // 6. Otherwise, fully read object’s body given successSteps, errorSteps, and object’s relevant global object.
     else {
-        body->fully_read(realm, success_steps, error_steps, GC::Ref { HTML::relevant_global_object(object.as_platform_object()) });
+        // AD-HOC (RinOS Round 10): Pin the BodyMixin's owning platform object (Response/Request)
+        // through ReadLoopReadRequest::m_extra_root so it survives any GC triggered during the
+        // asynchronous body read, even if the caller's GC::Ref is register-only in optimized builds.
+        // NOTE: as_platform_object() on const BodyMixin returns a const reference; GC::Ptr<JS::Cell>
+        // requires a mutable pointer, and GC visitation does not mutate the cell, so const_cast is safe.
+        auto* platform_object_cell = const_cast<Bindings::PlatformObject*>(&object.as_platform_object());
+        body->fully_read(realm, success_steps, error_steps, GC::Ref { HTML::relevant_global_object(object.as_platform_object()) }, platform_object_cell);
     }
 
     // 7. Return promise.

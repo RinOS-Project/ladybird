@@ -6,6 +6,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifdef AK_OS_RINOS
+#include <unistd.h>
+#include <cstdio>
+#endif
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/SystemColor.h>
 #include <LibWeb/CSS/VisualViewport.h>
@@ -99,7 +103,20 @@ struct NavigationParamsFetchStateHolder : public JS::Cell {
     {
     }
 
-    GC::Ptr<Fetch::Infrastructure::Response> response;
+    void clear_response() { m_rooted_response_references.clear(); }
+    void set_response(GC::Ref<Fetch::Infrastructure::Response> response) { m_rooted_response_references = Fetch::Infrastructure::root_response_references(response, response); }
+    [[nodiscard]] bool has_response() const { return m_rooted_response_references.has_value(); }
+    [[nodiscard]] GC::Ref<Fetch::Infrastructure::Response> response() const
+    {
+        VERIFY(m_rooted_response_references.has_value());
+        return m_rooted_response_references.value()->response();
+    }
+    [[nodiscard]] GC::Ref<Fetch::Infrastructure::Response> internal_response() const
+    {
+        VERIFY(m_rooted_response_references.has_value());
+        return m_rooted_response_references.value()->internal_response();
+    }
+
     Optional<URL::Origin> response_origin;
     GC::Ptr<Fetch::Infrastructure::FetchController> fetch_controller;
     OpenerPolicyEnforcementResult coop_enforcement_result;
@@ -146,7 +163,8 @@ struct NavigationParamsFetchStateHolder : public JS::Cell {
     virtual void visit_edges(Cell::Visitor& visitor) override
     {
         Base::visit_edges(visitor);
-        visitor.visit(response);
+        if (m_rooted_response_references.has_value())
+            visitor.visit(m_rooted_response_references.value());
         visitor.visit(fetch_controller);
         visitor.visit(response_policy_container);
         visitor.visit(commit_early_hints);
@@ -159,6 +177,8 @@ struct NavigationParamsFetchStateHolder : public JS::Cell {
         visitor.visit(replacement_document_state);
         visitor.visit(continuation_steps);
     }
+
+    Fetch::Infrastructure::OptionalRootedResponseReferences m_rooted_response_references;
 };
 
 GC_DEFINE_ALLOCATOR(NavigationParamsFetchStateHolder);
@@ -990,7 +1010,7 @@ static GC::Ref<NavigationParams> create_navigation_params_from_a_srcdoc_resource
         move(navigation_id),
         navigable,
         nullptr,
-        response,
+        Fetch::Infrastructure::root_response_references(response, response),
         nullptr,
         nullptr,
         move(coop_enforcement_result),
@@ -1055,13 +1075,13 @@ static void perform_navigation_params_fetch(JS::Realm& realm, GC::Ref<Navigation
 
     // 3. If the result of should navigation request of type be blocked by Content Security Policy? given request and cspNavigationType is "Blocked", then set response to a network error and break. [CSP]
     if (ContentSecurityPolicy::should_navigation_request_of_type_be_blocked_by_content_security_policy(state_holder->request, state_holder->csp_navigation_type) == ContentSecurityPolicy::Directives::Directive::Result::Blocked) {
-        state_holder->response = Fetch::Infrastructure::Response::network_error(realm.vm(), "Blocked by Content Security Policy"_string);
+        state_holder->set_response(Fetch::Infrastructure::Response::network_error(realm.vm(), "Blocked by Content Security Policy"_string));
         fetch_completion_steps->function()();
         return;
     }
 
     // 4. Set response to null.
-    state_holder->response = nullptr;
+    state_holder->clear_response();
 
     // 5. If fetchController is null, then set fetchController to the result of fetching request,
     //    with processEarlyHintsResponse set to processEarlyHintsResponse as defined below, processResponse
@@ -1072,7 +1092,7 @@ static void perform_navigation_params_fetch(JS::Realm& realm, GC::Ref<Navigation
         // Let processResponse be the following algorithm given a response fetchedResponse:
         auto process_response = [state_holder](GC::Ref<Fetch::Infrastructure::Response> fetch_response) {
             // 1. Set response to fetchedResponse.
-            state_holder->response = fetch_response;
+            state_holder->set_response(fetch_response);
             VERIFY(state_holder->continuation_steps);
             state_holder->continuation_steps->function()(NavigationParamsFetchStateHolder::ContinuationReason::GotResponse);
         };
@@ -1130,18 +1150,18 @@ static void perform_navigation_params_fetch(JS::Realm& realm, GC::Ref<Navigation
         }
 
         // 9. Set responsePolicyContainer to the result of creating a policy container from a fetch response given response and request's reserved client.
-        state_holder->response_policy_container = create_a_policy_container_from_a_fetch_response(realm.heap(), *state_holder->response, state_holder->request->reserved_client());
+        state_holder->response_policy_container = create_a_policy_container_from_a_fetch_response(realm.heap(), state_holder->response(), state_holder->request->reserved_client());
 
         // 10. Set finalSandboxFlags to the union of targetSnapshotParams's sandboxing flags and responsePolicyContainer's CSP list's CSP-derived sandboxing flags.
         state_holder->final_sandbox_flags = state_holder->target_snapshot_params.sandboxing_flags | state_holder->response_policy_container->csp_list->csp_derived_sandboxing_flags();
 
         // 11. Set responseOrigin to the result of determining the origin given response's URL, finalSandboxFlags, and entry's document state's initiator origin.
-        state_holder->response_origin = determine_the_origin(state_holder->response->url(), state_holder->final_sandbox_flags, state_holder->initiator_origin);
+        state_holder->response_origin = determine_the_origin(state_holder->response()->url(), state_holder->final_sandbox_flags, state_holder->initiator_origin);
 
         // 12. If navigable is a top-level traversable, then:
         if (state_holder->navigable->is_top_level_traversable()) {
             // 1. Set responseCOOP to the result of obtaining an opener policy given response and request's reserved client.
-            state_holder->response_coop = obtain_an_opener_policy(*state_holder->response, state_holder->request->reserved_client());
+            state_holder->response_coop = obtain_an_opener_policy(state_holder->response(), state_holder->request->reserved_client());
 
             // FIXME: 2. Set coopEnforcementResult to the result of enforcing the response's opener policy given navigable's active browsing context,
             //    response's URL, responseOrigin, responseCOOP, coopEnforcementResult and request's referrer.
@@ -1158,7 +1178,7 @@ static void perform_navigation_params_fetch(JS::Realm& realm, GC::Ref<Navigation
         //       This is because we care about the same-originness of the embedded content against the parent context, not the navigation source.
 
         // 14. Set locationURL to response's location URL given currentURL's fragment.
-        state_holder->location_url = state_holder->response->location_url(state_holder->current_url.fragment());
+        state_holder->location_url = state_holder->response()->location_url(state_holder->current_url.fragment());
 
         // 15. If locationURL is failure or null, then break.
         if (state_holder->location_url.is_error() || !state_holder->location_url.value().has_value()) {
@@ -1426,9 +1446,9 @@ static void create_navigation_params_by_fetching(
         //       - locationURL is failure; or
         //       - locationURL is a URL whose scheme is a fetch scheme
         //     then return null.
-        if (state_holder->response->is_network_error()) {
+        if (state_holder->response()->is_network_error()) {
             // AD-HOC: We pass the error message if we have one in NullWithError
-            result->navigation_params = state_holder->response->network_error_message();
+            result->navigation_params = state_holder->response()->network_error_message();
             completion_steps->function()(*result);
             return;
         }
@@ -1441,18 +1461,18 @@ static void create_navigation_params_by_fetching(
 
         // 24. Assert: locationURL is null and response is not a network error.
         VERIFY(!state_holder->location_url.value().has_value());
-        VERIFY(!state_holder->response->is_network_error());
+        VERIFY(!state_holder->response()->is_network_error());
 
         // 25. Let resultPolicyContainer be the result of determining navigation params policy container given response's URL,
         //     entry's document state's history policy container, sourceSnapshotParams's source policy container, null, and responsePolicyContainer.
         GC::Ptr<PolicyContainer> history_policy_container = state_holder->history_policy_container.visit(
             [](GC::Ref<PolicyContainer> const& c) -> GC::Ptr<PolicyContainer> { return c; },
             [](DocumentState::Client) -> GC::Ptr<PolicyContainer> { return {}; });
-        auto result_policy_container = determine_navigation_params_policy_container(*state_holder->response->url(), realm.heap(), history_policy_container, state_holder->source_snapshot_params->source_policy_container, {}, state_holder->response_policy_container);
+        auto result_policy_container = determine_navigation_params_policy_container(*state_holder->response()->url(), realm.heap(), history_policy_container, state_holder->source_snapshot_params->source_policy_container, {}, state_holder->response_policy_container);
 
         // 26. If navigable's container is an iframe, and response's timing allow passed flag is set,
         //     then set navigable's container's pending resource-timing start time to null.
-        if (state_holder->navigable->container() && state_holder->response->timing_allow_passed()) {
+        if (state_holder->navigable->container() && state_holder->response()->timing_allow_passed()) {
             if (auto* iframe_element = as_if<HTML::HTMLIFrameElement>(*state_holder->navigable->container()))
                 iframe_element->set_pending_resource_start_time({});
         }
@@ -1477,7 +1497,7 @@ static void create_navigation_params_by_fetching(
             state_holder->navigation_id,
             state_holder->navigable,
             state_holder->request,
-            *state_holder->response,
+            state_holder->m_rooted_response_references.release_value(),
             state_holder->fetch_controller,
             state_holder->commit_early_hints,
             state_holder->coop_enforcement_result,
@@ -1523,7 +1543,7 @@ void Navigable::populate_session_history_entry_document(
 
     // 2. Assert: if navigationParams is non-null, then navigationParams's response is non-null.
     if (!navigation_params.has<NullOrError>())
-        VERIFY(navigation_params.has<GC::Ref<NavigationParams>>() && navigation_params.get<GC::Ref<NavigationParams>>()->response);
+        VERIFY(navigation_params.has<GC::Ref<NavigationParams>>());
 
     // 3. Let documentResource be entry's document state's resource.
     // NOTE: documentResource is passed as a parameter.
@@ -1577,12 +1597,12 @@ void Navigable::populate_session_history_entry_document(
             else if (navigation_params.visit(
                          [](NullOrError) { return true; },
                          [this, csp_navigation_type](GC::Ref<NavigationParams> navigation_params) {
-                             auto csp_result = ContentSecurityPolicy::should_navigation_response_to_navigation_request_of_type_in_target_be_blocked_by_content_security_policy(navigation_params->request, *navigation_params->response, navigation_params->policy_container->csp_list, csp_navigation_type, *this);
+                             auto csp_result = ContentSecurityPolicy::should_navigation_response_to_navigation_request_of_type_in_target_be_blocked_by_content_security_policy(navigation_params->request, navigation_params->response(), navigation_params->policy_container->csp_list, csp_navigation_type, *this);
                              if (csp_result == ContentSecurityPolicy::Directives::Directive::Result::Blocked)
                                  return true;
 
                              // FIXME: Pass in navigationParams's policy container's CSP list
-                             return !check_a_navigation_responses_adherence_to_x_frame_options(navigation_params->response, this, navigation_params->policy_container->csp_list, navigation_params->origin);
+                             return !check_a_navigation_responses_adherence_to_x_frame_options(navigation_params->response(), this, navigation_params->policy_container->csp_list, navigation_params->origin);
                          },
                          [](GC::Ref<NonFetchSchemeNavigationParams>) { return false; })) {
                 // 1. Set entry's document state's document to the result of creating a document for inline content that doesn't have a DOM, given navigable, null, navTimingType, and userInvolvement. The inline content should indicate to the user the sort of error that occurred.
@@ -1631,9 +1651,9 @@ void Navigable::populate_session_history_entry_document(
 
             // 6. Otherwise, if navigationParams's response's status is not 204 and is not 205, then set entry's document state's document to the result of
             //    loading a document given navigationParams, sourceSnapshotParams, and entry's document state's initiator origin.
-            else if (auto const& response = navigation_params.get<GC::Ref<NavigationParams>>()->response; response->status() != 204 && response->status() != 205) {
+            else if (auto response = navigation_params.get<GC::Ref<NavigationParams>>()->response(); response->status() != 204 && response->status() != 205) {
                 auto nav_params = navigation_params.get<GC::Ref<NavigationParams>>();
-                auto body = nav_params->response->body();
+                auto body = nav_params->response()->body();
 
                 // Get sniff bytes for MIME type detection. For streaming responses where bytes
                 // haven't arrived yet, we must wait asynchronously.
@@ -2319,7 +2339,7 @@ GC::Ptr<DOM::Document> Navigable::evaluate_javascript_url(URL::URL const& url, U
         navigation_id,
         this,
         nullptr,
-        response,
+        Fetch::Infrastructure::root_response_references(response, response),
         nullptr,
         nullptr,
         move(coop_enforcement_result),
@@ -3029,12 +3049,52 @@ void Navigable::record_display_list_and_scroll_state(PaintConfig paint_config)
 {
     m_needs_repaint = false;
     auto document = active_document();
-    if (!document)
+    if (!document) {
+#ifdef AK_OS_RINOS
+        static uint64_t s_no_doc_seq = 0;
+        s_no_doc_seq++;
+        if (s_no_doc_seq <= 5 || (s_no_doc_seq & 0x1F) == 0) {
+            char buf[96];
+            int n = snprintf(buf, sizeof(buf),
+                             "[Navigable] record_display_list: no document seq=%llu\n",
+                             (unsigned long long)s_no_doc_seq);
+            if (n > 0) write(2, buf, static_cast<size_t>(n));
+        }
+#endif
         return;
+    }
 
     auto display_list = document->record_display_list(paint_config);
-    if (!display_list)
+    if (!display_list) {
+#ifdef AK_OS_RINOS
+        static uint64_t s_null_seq = 0;
+        s_null_seq++;
+        if (s_null_seq <= 5 || (s_null_seq & 0x1F) == 0) {
+            char buf[96];
+            int n = snprintf(buf, sizeof(buf),
+                             "[Navigable] record_display_list: null seq=%llu\n",
+                             (unsigned long long)s_null_seq);
+            if (n > 0) write(2, buf, static_cast<size_t>(n));
+        }
+#endif
         return;
+    }
+
+#ifdef AK_OS_RINOS
+    {
+        static uint64_t s_ok_seq = 0;
+        static uint64_t s_ok_last_logged = 0;
+        s_ok_seq++;
+        if (s_ok_seq <= 5 || (s_ok_seq - s_ok_last_logged) >= 60) {
+            s_ok_last_logged = s_ok_seq;
+            char buf[96];
+            int n = snprintf(buf, sizeof(buf),
+                             "[Navigable] record_display_list: ok seq=%llu\n",
+                             (unsigned long long)s_ok_seq);
+            if (n > 0) write(2, buf, static_cast<size_t>(n));
+        }
+    }
+#endif
 
     auto& document_paintable = *document->paintable();
     Painting::ScrollStateSnapshotByDisplayList scroll_state_snapshot_by_display_list;
@@ -3073,6 +3133,25 @@ void Navigable::paint_next_frame()
 {
     if (!is_top_level_traversable())
         return;
+
+#ifdef AK_OS_RINOS
+    {
+        static uint64_t s_pnf_seq = 0;
+        static uint64_t s_pnf_last_logged = 0;
+        s_pnf_seq++;
+        bool should_log = (s_pnf_seq <= 5) ||
+                          (s_pnf_seq - s_pnf_last_logged >= 30);
+        if (should_log) {
+            s_pnf_last_logged = s_pnf_seq;
+            char buf[96];
+            int n = snprintf(buf, sizeof(buf),
+                             "[Navigable] paint_next_frame seq=%llu\n",
+                             (unsigned long long)s_pnf_seq);
+            if (n > 0)
+                write(2, buf, static_cast<size_t>(n));
+        }
+    }
+#endif
 
     auto viewport_rect = page().css_to_device_rect(this->viewport_rect()).to_type<int>();
     PaintConfig paint_config { .paint_overlay = true, .should_show_line_box_borders = m_should_show_line_box_borders, .canvas_fill_rect = Gfx::IntRect { {}, viewport_rect.size() } };

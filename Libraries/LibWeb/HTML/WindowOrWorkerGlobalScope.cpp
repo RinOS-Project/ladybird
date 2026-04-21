@@ -62,6 +62,20 @@
 
 namespace Web::HTML {
 
+WindowOrWorkerGlobalScopeMixin* window_or_worker_global_scope_mixin_from(JS::Object& object)
+{
+    if (auto* window = as_if<Window>(object))
+        return window;
+    if (auto* worker = as_if<WorkerGlobalScope>(object))
+        return worker;
+    return nullptr;
+}
+
+WindowOrWorkerGlobalScopeMixin const* window_or_worker_global_scope_mixin_from(JS::Object const& object)
+{
+    return window_or_worker_global_scope_mixin_from(const_cast<JS::Object&>(object));
+}
+
 WindowOrWorkerGlobalScopeMixin::~WindowOrWorkerGlobalScopeMixin() = default;
 
 void WindowOrWorkerGlobalScopeMixin::initialize(JS::Realm&)

@@ -189,7 +189,7 @@ public:
     static NonnullRefPtr<Menu> create(ActionText title);
     static NonnullRefPtr<Menu> create_group(ActionText title);
 
-    void add_action(NonnullRefPtr<Action> action);
+    void add_action(NonnullRefPtr<Action> const& action);
     void add_submenu(NonnullRefPtr<Menu> submenu) { m_items.append(move(submenu)); }
     void add_separator() { m_items.append(Separator {}); }
 

@@ -1,4 +1,5 @@
 set(TEST_SOURCES
+    TestMenu.cpp
     TestWebViewURL.cpp
 )
 

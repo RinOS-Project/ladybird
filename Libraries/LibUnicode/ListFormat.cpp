@@ -176,21 +176,16 @@ public:
     virtual Utf16String format(ReadonlySpan<Utf16String> list) const override
     {
         auto items = build_items(list);
-        uint32_t rin_type = (m_type == ListFormatType::Conjunction) ? 1 : (m_type == ListFormatType::Disjunction) ? 2 : 3;
         ByteString locale_z(m_locale);
+        Vector<char const*> item_ptrs;
+        item_ptrs.ensure_capacity(items.size());
+        for (auto const& item : items)
+            item_ptrs.unchecked_append(item.characters());
+
         char buf[4096];
         size_t len = 0;
 
-        // Build a null-separated list of items for rinicu
-        StringBuilder items_buf;
-        for (size_t i = 0; i < items.size(); ++i) {
-            if (i > 0)
-                items_buf.append('\0');
-            items_buf.append(items[i]);
-        }
-        auto items_str = MUST(items_buf.to_string());
-
-        if (rin_icu_list_format(&rin_icu_client(), locale_z.characters(), rin_type, items_str.bytes_as_string_view().characters_without_null_termination(), items_str.byte_count(), static_cast<uint32_t>(items.size()), buf, sizeof(buf), &len) == 0 && len > 0)
+        if (rin_icu_list_format(&rin_icu_client(), locale_z.characters(), rin_icu_list_format_type(m_type), rin_icu_style(m_style), item_ptrs.data(), item_ptrs.size(), buf, sizeof(buf), &len) == 0 && len > 0)
             return Utf16String::from_utf8(StringView { buf, len });
 
         // Fallback: comma-separated

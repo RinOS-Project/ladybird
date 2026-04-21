@@ -15,6 +15,11 @@
 #include <LibWeb/Painting/BackingStoreManager.h>
 #include <WebContent/PageClient.h>
 
+#ifdef AK_OS_RINOS
+#include <unistd.h>
+static void bsm_serial(const char* msg) { write(2, msg, __builtin_strlen(msg)); }
+#endif
+
 #ifdef AK_OS_MACOS
 #    include <LibCore/IOSurface.h>
 #endif
@@ -44,6 +49,9 @@ void BackingStoreManager::restart_resize_timer()
 
 void BackingStoreManager::reallocate_backing_stores(Gfx::IntSize size)
 {
+#ifdef AK_OS_RINOS
+    bsm_serial("[BSM] reallocate_backing_stores ENTER\n");
+#endif
 #ifndef AK_OS_RINOS
     auto skia_backend_context = Gfx::SkiaBackendContext::the();
 #endif
@@ -97,6 +105,9 @@ void BackingStoreManager::reallocate_backing_stores(Gfx::IntSize size)
 
     auto front_bitmap = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, size).release_value();
     auto back_bitmap = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, size).release_value();
+#ifdef AK_OS_RINOS
+    bsm_serial("[BSM] create_shareable OK\n");
+#endif
 
 #    ifdef USE_VULKAN
     if (skia_backend_context) {
@@ -116,29 +127,53 @@ void BackingStoreManager::reallocate_backing_stores(Gfx::IntSize size)
     if (!back_store)
         back_store = Gfx::PaintingSurface::wrap_bitmap(*back_bitmap);
 
+#ifdef AK_OS_RINOS
+    bsm_serial("[BSM] wrap_bitmap OK\n");
+#endif
+
     if (m_navigable->is_top_level_traversable()) {
+#ifdef AK_OS_RINOS
+        bsm_serial("[BSM] sending page_did_allocate_backing_stores IPC\n");
+#endif
         auto& page_client = m_navigable->top_level_traversable()->page().client();
         page_client.page_did_allocate_backing_stores(
             m_front_bitmap_id,
             Web::SharedBackingStore(front_bitmap->to_shareable_bitmap()),
             m_back_bitmap_id,
             Web::SharedBackingStore(back_bitmap->to_shareable_bitmap()));
+#ifdef AK_OS_RINOS
+        bsm_serial("[BSM] page_did_allocate_backing_stores IPC sent\n");
+#endif
     }
 
     m_allocated_size = size;
 
     m_navigable->rendering_thread().update_backing_stores(front_store, back_store, m_front_bitmap_id, m_back_bitmap_id);
+#ifdef AK_OS_RINOS
+    bsm_serial("[BSM] update_backing_stores done\n");
+#endif
 #endif
 }
 
 void BackingStoreManager::resize_backing_stores_if_needed(WindowResizingInProgress window_resize_in_progress)
 {
-    if (!m_navigable->is_top_level_traversable() || m_navigable->is_svg_page())
+#ifdef AK_OS_RINOS
+    bsm_serial("[BSM] resize_backing_stores_if_needed ENTER\n");
+#endif
+    if (!m_navigable->is_top_level_traversable() || m_navigable->is_svg_page()) {
+#ifdef AK_OS_RINOS
+        bsm_serial("[BSM] SKIP: not top-level or svg\n");
+#endif
         return;
+    }
 
     auto viewport_size = m_navigable->page().css_to_device_rect(m_navigable->viewport_rect()).size();
-    if (viewport_size.is_empty())
+    if (viewport_size.is_empty()) {
+#ifdef AK_OS_RINOS
+        bsm_serial("[BSM] SKIP: viewport_size empty\n");
+#endif
         return;
+    }
 
     Web::DevicePixelSize minimum_needed_size;
     bool force_reallocate = false;

@@ -12,6 +12,7 @@
 #include <LibCore/Timer.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ShareableBitmap.h>
+#include <LibGfx/SystemTheme.h>
 #include <LibHTTP/Cookie/ParsedCookie.h>
 #include <LibIPC/TransportHandle.h>
 #include <LibJS/Console.h>
@@ -40,6 +41,11 @@
 #include <WebContent/WebContentClientEndpoint.h>
 #include <WebContent/WebDriverConnection.h>
 #include <WebContent/WebUIConnection.h>
+
+#ifdef AK_OS_RINOS
+#include <unistd.h>
+static void pc_serial(const char* msg) { write(2, msg, __builtin_strlen(msg)); }
+#endif
 
 namespace WebContent {
 
@@ -81,10 +87,17 @@ PageClient::PageClient(PageHost& owner, u64 id)
     int refresh_interval = static_cast<int>(1000.0 / m_maximum_frames_per_second);
 
     m_paint_refresh_timer = Core::Timer::create_repeating(refresh_interval, [] {
+#ifdef AK_OS_RINOS
+        static int timer_count = 0;
+        if (timer_count < 5) { pc_serial("[PageClient] paint_refresh_timer FIRED\n"); timer_count++; }
+#endif
         Web::HTML::main_thread_event_loop().queue_task_to_update_the_rendering();
     });
 
     m_paint_refresh_timer->start();
+#ifdef AK_OS_RINOS
+    pc_serial("[PageClient] paint_refresh_timer STARTED\n");
+#endif
 }
 
 PageClient::~PageClient() = default;
@@ -113,14 +126,12 @@ void PageClient::set_has_focus(bool has_focus)
 
 void PageClient::setup_palette()
 {
-    // FIXME: Get the proper palette from our peer somehow
-    auto buffer_or_error = Core::AnonymousBuffer::create_with_size(sizeof(Gfx::SystemTheme));
-    VERIFY(!buffer_or_error.is_error());
-    auto buffer = buffer_or_error.release_value();
-    auto* theme = buffer.data<Gfx::SystemTheme>();
-    theme->color[to_underlying(Gfx::ColorRole::Window)] = Color(Color::Magenta).value();
-    theme->color[to_underlying(Gfx::ColorRole::WindowText)] = Color(Color::Cyan).value();
-    m_palette_impl = Gfx::PaletteImpl::create_with_anonymous_buffer(buffer);
+    if (Gfx::has_current_system_theme_buffer()) {
+        m_palette_impl = Gfx::PaletteImpl::create_with_anonymous_buffer(Gfx::current_system_theme_buffer());
+        return;
+    }
+
+    m_palette_impl = Gfx::PaletteImpl::create_with_system_theme(Gfx::default_system_theme());
 }
 
 bool PageClient::is_connection_open() const
@@ -782,6 +793,14 @@ void PageClient::page_did_mutate_dom(FlyString const& type, Web::DOM::Node const
 
 void PageClient::page_did_paint(Gfx::IntRect const& content_rect, i32 bitmap_id)
 {
+#ifdef AK_OS_RINOS
+    {
+        char buf[128];
+        int n = snprintf(buf, sizeof(buf), "[PageClient] page_did_paint id=%d bitmap_id=%d rect=%dx%d\n",
+            (int)m_id, (int)bitmap_id, content_rect.width(), content_rect.height());
+        if (n > 0) write(2, buf, n);
+    }
+#endif
     client().async_did_paint(m_id, content_rect, bitmap_id);
 }
 

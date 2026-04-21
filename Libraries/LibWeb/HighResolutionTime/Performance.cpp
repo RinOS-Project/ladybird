@@ -11,6 +11,7 @@
 #include <LibWeb/DOM/EventDispatcher.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/HTML/WindowOrWorkerGlobalScope.h>
 #include <LibWeb/HighResolutionTime/Performance.h>
 #include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/NavigationTiming/EntryNames.h>
@@ -393,7 +394,9 @@ WebIDL::ExceptionOr<Vector<GC::Root<PerformanceTimeline::PerformanceEntry>>> Per
 
 HTML::WindowOrWorkerGlobalScopeMixin& Performance::window_or_worker()
 {
-    return as<HTML::WindowOrWorkerGlobalScopeMixin>(realm().global_object());
+    auto* window_or_worker = HTML::window_or_worker_global_scope_mixin_from(realm().global_object());
+    VERIFY(window_or_worker);
+    return *window_or_worker;
 }
 
 HTML::WindowOrWorkerGlobalScopeMixin const& Performance::window_or_worker() const

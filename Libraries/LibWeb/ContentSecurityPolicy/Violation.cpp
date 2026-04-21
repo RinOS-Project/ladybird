@@ -18,6 +18,7 @@
 #include <LibWeb/Fetch/Infrastructure/URL.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
+#include <LibWeb/HTML/UniversalGlobalScope.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
 #include <LibWeb/Infra/JSON.h>
@@ -99,8 +100,9 @@ URL::URL Violation::url() const
     }
 
     // FIXME: File a spec issue about what to do for ShadowRealms here.
-    auto& universal_scope = as<HTML::UniversalGlobalScopeMixin>(*m_global_object);
-    auto& principal_global = HTML::relevant_principal_global_object(universal_scope.this_impl());
+    auto* universal_scope = HTML::universal_global_scope_mixin_from(*m_global_object);
+    VERIFY(universal_scope);
+    auto& principal_global = HTML::relevant_principal_global_object(universal_scope->this_impl());
 
     if (auto* window = as_if<HTML::Window>(principal_global)) {
         return window->associated_document().url();

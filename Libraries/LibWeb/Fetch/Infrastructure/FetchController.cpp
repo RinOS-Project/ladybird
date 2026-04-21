@@ -10,6 +10,7 @@
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
 #include <LibWeb/Fetch/Infrastructure/FetchParams.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/WebIDL/DOMException.h>
@@ -32,6 +33,8 @@ void FetchController::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_report_timing_steps);
     visitor.visit(m_next_manual_redirect_steps);
     visitor.visit(m_fetch_params);
+    for (auto& holder : m_response_reference_holders)
+        visitor.visit(holder);
 }
 
 void FetchController::set_pending_request(RefPtr<Requests::Request> const& request)
@@ -94,11 +97,14 @@ void FetchController::abort(JS::Realm& realm, Optional<JS::Value> error)
 
     // 4. Let serializedError be StructuredSerialize(error). If that threw an exception, catch it, and let serializedError be StructuredSerialize(fallbackError).
     // 5. Set controller’s serialized abort reason to serializedError
-    auto structured_serialize = [](JS::VM& vm, JS::Value error, JS::Value fallback_error) {
+    auto structured_serialize = [](JS::VM& vm, JS::Value error, JS::Value fallback_error) -> HTML::SerializationRecord {
         auto serialized_value_or_error = HTML::structured_serialize(vm, error);
-        return serialized_value_or_error.is_error()
-            ? HTML::structured_serialize(vm, fallback_error).value()
-            : serialized_value_or_error.value();
+        if (!serialized_value_or_error.is_error())
+            return serialized_value_or_error.value();
+        auto fallback_result = HTML::structured_serialize(vm, fallback_error);
+        if (!fallback_result.is_error())
+            return fallback_result.value();
+        return {};
     };
     m_serialized_abort_reason = structured_serialize(realm.vm(), error.value(), fallback_error);
 }

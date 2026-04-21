@@ -52,7 +52,7 @@ public:
     using ChunkSteps = GC::Function<void(ByteBuffer)>;
 
 private:
-    ReadLoopReadRequest(JS::Realm&, ReadableStreamDefaultReader&, GC::Ref<SuccessSteps>, GC::Ref<FailureSteps>, GC::Ptr<ChunkSteps> = {});
+    ReadLoopReadRequest(JS::Realm&, ReadableStreamDefaultReader&, GC::Ref<SuccessSteps>, GC::Ref<FailureSteps>, GC::Ptr<ChunkSteps> = {}, GC::Ptr<JS::Cell> extra_root = {});
 
     virtual void visit_edges(Visitor&) override;
 
@@ -66,6 +66,7 @@ private:
     GC::Ref<SuccessSteps> m_success_steps;
     GC::Ref<FailureSteps> m_failure_steps;
     GC::Ptr<ChunkSteps> m_chunk_steps;
+    GC::Ptr<JS::Cell> m_extra_root;
 };
 
 // https://streams.spec.whatwg.org/#readablestreamdefaultreader
@@ -93,7 +94,7 @@ public:
     GC::Ref<WebIDL::Promise> read();
 
     void read_a_chunk(Fetch::Infrastructure::IncrementalReadLoopReadRequest& read_request);
-    void read_all_bytes(GC::Ref<ReadLoopReadRequest::SuccessSteps>, GC::Ref<ReadLoopReadRequest::FailureSteps>);
+    void read_all_bytes(GC::Ref<ReadLoopReadRequest::SuccessSteps>, GC::Ref<ReadLoopReadRequest::FailureSteps>, GC::Ptr<JS::Cell> extra_root = {});
     GC::Ref<WebIDL::Promise> read_all_bytes_deprecated();
 
     void release_lock();

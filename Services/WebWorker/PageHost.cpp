@@ -5,6 +5,7 @@
  */
 
 #include <LibJS/Runtime/VM.h>
+#include <LibGfx/SystemTheme.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <WebWorker/ConnectionFromClient.h>
 #include <WebWorker/PageHost.h>
@@ -37,14 +38,12 @@ Gfx::Palette PageHost::palette() const
 
 void PageHost::setup_palette()
 {
-    // FIXME: We don't actually need a palette :thonk:
-    auto buffer_or_error = Core::AnonymousBuffer::create_with_size(sizeof(Gfx::SystemTheme));
-    VERIFY(!buffer_or_error.is_error());
-    auto buffer = buffer_or_error.release_value();
-    auto* theme = buffer.data<Gfx::SystemTheme>();
-    theme->color[to_underlying(Gfx::ColorRole::Window)] = Color(Color::Magenta).value();
-    theme->color[to_underlying(Gfx::ColorRole::WindowText)] = Color(Color::Cyan).value();
-    m_palette_impl = Gfx::PaletteImpl::create_with_anonymous_buffer(buffer);
+    if (Gfx::has_current_system_theme_buffer()) {
+        m_palette_impl = Gfx::PaletteImpl::create_with_anonymous_buffer(Gfx::current_system_theme_buffer());
+        return;
+    }
+
+    m_palette_impl = Gfx::PaletteImpl::create_with_system_theme(Gfx::default_system_theme());
 }
 
 bool PageHost::is_connection_open() const

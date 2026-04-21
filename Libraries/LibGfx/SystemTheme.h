@@ -288,6 +288,9 @@ struct SystemTheme {
     char path[(int)PathRole::__Count][256]; // TODO: PATH_MAX?
 };
 
+bool has_current_system_theme_buffer();
+SystemTheme default_system_theme();
+void populate_system_theme_with_default_values(SystemTheme&);
 Core::AnonymousBuffer& current_system_theme_buffer();
 void set_system_theme(Core::AnonymousBuffer);
 ErrorOr<Core::AnonymousBuffer> load_system_theme(Core::ConfigFile const&, Optional<ByteString> const& color_scheme = OptionalNone());

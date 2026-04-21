@@ -186,7 +186,7 @@ private:
     void fetch_resource(URL::URL const&, ESCAPING Function<void(String)> failure_callback);
     void fetch_resource(ByteRange const&);
 
-    Optional<String> verify_response_or_get_failure_reason(GC::Ref<Fetch::Infrastructure::Response>, ByteRange const&);
+    Optional<String> verify_response_or_get_failure_reason(GC::Ref<Fetch::Infrastructure::Response> internal_response, ByteRange const&);
 
     void restart_fetch_at_offset(u64 offset);
 

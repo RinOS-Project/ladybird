@@ -1,0 +1,4 @@
+popup created: true
+srcdoc script executed: false
+iframe contentDocument is null: true
+iframe body contains sentinel: false

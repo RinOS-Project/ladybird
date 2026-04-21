@@ -14,6 +14,7 @@
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
 #include <LibWeb/Fetch/Infrastructure/FetchTimingInfo.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/Fetch/Infrastructure/Task.h>
 
@@ -26,7 +27,7 @@ class WEB_API FetchParams : public JS::Cell {
 
 public:
     struct PreloadedResponseCandidatePendingTag { };
-    using PreloadedResponseCandidate = Variant<Empty, PreloadedResponseCandidatePendingTag, GC::Ref<Response>>;
+    using PreloadedResponseCandidate = Variant<Empty, PreloadedResponseCandidatePendingTag, RootedResponseReferences>;
 
     [[nodiscard]] static GC::Ref<FetchParams> create(JS::VM&, GC::Ref<Request>, GC::Ref<FetchTimingInfo>);
     [[nodiscard]] static GC::Ref<FetchParams> copy(FetchParams const&);
@@ -49,6 +50,8 @@ public:
     [[nodiscard]] PreloadedResponseCandidate& preloaded_response_candidate() { return m_preloaded_response_candidate; }
     [[nodiscard]] PreloadedResponseCandidate const& preloaded_response_candidate() const { return m_preloaded_response_candidate; }
     void set_preloaded_response_candidate(PreloadedResponseCandidate preloaded_response_candidate) { m_preloaded_response_candidate = move(preloaded_response_candidate); }
+    void set_preloaded_response_candidate(RootedResponseReferences response_references) { m_preloaded_response_candidate = move(response_references); }
+    void set_preloaded_response_candidate(GC::Ref<Response> response) { m_preloaded_response_candidate = root_response_references(response); }
 
     [[nodiscard]] bool is_aborted() const;
     [[nodiscard]] bool is_canceled() const;

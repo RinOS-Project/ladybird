@@ -14,7 +14,28 @@
 #    include <Windows.h>
 #endif
 
-#if defined(AK_OS_ANDROID) && (__ANDROID_API__ >= 33)
+#if defined(AK_OS_RINOS) && defined(RIN_FREESTANDING)
+#    include <stdint.h>
+#    define RIN_SYS_SERIAL_PRINT 110
+static inline void rin_print_error(char const* s)
+{
+    if (!s)
+        return;
+
+    while (*s) {
+        char chunk[240];
+        size_t len = 0;
+        while (s[len] && len < (sizeof(chunk) - 1)) {
+            chunk[len] = s[len];
+            ++len;
+        }
+        chunk[len] = '\0';
+        (void)_syscall2(RIN_SYS_SERIAL_PRINT, (unsigned long)chunk, (unsigned long)len);
+        s += len;
+    }
+}
+#    define PRINT_ERROR(s) rin_print_error((s))
+#elif defined(AK_OS_ANDROID) && (__ANDROID_API__ >= 33)
 #    include <android/log.h>
 #    define EXECINFO_BACKTRACE
 #    define PRINT_ERROR(s) __android_log_write(ANDROID_LOG_WARN, "AK", (s))
@@ -41,6 +62,23 @@
 #endif
 
 extern "C" {
+
+#if defined(AK_OS_RINOS)
+static void print_hex_uintptr(uintptr_t value)
+{
+    char buffer[2 + (sizeof(uintptr_t) * 2) + 1];
+    static char const digits[] = "0123456789ABCDEF";
+
+    buffer[0] = '0';
+    buffer[1] = 'x';
+    for (size_t i = 0; i < sizeof(uintptr_t) * 2; ++i) {
+        auto shift = (sizeof(uintptr_t) * 2 - 1 - i) * 4;
+        buffer[2 + i] = digits[(value >> shift) & 0xF];
+    }
+    buffer[2 + (sizeof(uintptr_t) * 2)] = '\0';
+    PRINT_ERROR(buffer);
+}
+#endif
 
 #if defined(AK_HAS_CPPTRACE)
 void dump_backtrace(unsigned frames_to_skip, unsigned max_depth)
@@ -163,27 +201,59 @@ static AssertionHandlerFunc get_custom_assertion_handler()
 
 void ak_verification_failed(char const* message)
 {
+#if !defined(AK_OS_RINOS)
     if (auto assertion_handler = get_custom_assertion_handler()) {
         assertion_handler(message);
     }
+#endif
+#if defined(AK_OS_RINOS)
+    auto caller = __builtin_return_address(0);
+    if (ak_colorize_output())
+        PRINT_ERROR("\033[31;1mVERIFICATION FAILED\033[0m: ");
+    else
+        PRINT_ERROR("VERIFICATION FAILED: ");
+    PRINT_ERROR(message);
+    PRINT_ERROR("\n[VERIFY_CALLER] ");
+    print_hex_uintptr((uintptr_t)caller);
+    PRINT_ERROR("\n");
+    if (auto assertion_handler = get_custom_assertion_handler()) {
+        assertion_handler(message);
+    }
+#else
     if (ak_colorize_output())
         ERRORLN("\033[31;1mVERIFICATION FAILED\033[0m: {}", message);
     else
         ERRORLN("VERIFICATION FAILED: {}", message);
-
+#endif
     ak_trap();
 }
 
 void ak_assertion_failed(char const* message)
 {
+#if !defined(AK_OS_RINOS)
     if (auto assertion_handler = get_custom_assertion_handler()) {
         assertion_handler(message);
     }
+#endif
+#if defined(AK_OS_RINOS)
+    auto caller = __builtin_return_address(0);
+    if (ak_colorize_output())
+        PRINT_ERROR("\033[31;1mASSERTION FAILED\033[0m: ");
+    else
+        PRINT_ERROR("ASSERTION FAILED: ");
+    PRINT_ERROR(message);
+    PRINT_ERROR("\n[ASSERT_CALLER] ");
+    print_hex_uintptr((uintptr_t)caller);
+    PRINT_ERROR("\n");
+    if (auto assertion_handler = get_custom_assertion_handler()) {
+        assertion_handler(message);
+    }
+#else
     if (ak_colorize_output())
         ERRORLN("\033[31;1mASSERTION FAILED\033[0m: {}", message);
     else
         ERRORLN("ASSERTION FAILED: {}", message);
-
+#endif
     ak_trap();
 }
 }

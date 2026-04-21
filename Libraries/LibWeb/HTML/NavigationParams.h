@@ -11,6 +11,7 @@
 #include <LibGC/Ptr.h>
 #include <LibURL/Origin.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/CrossOrigin/OpenerPolicy.h>
@@ -36,7 +37,9 @@ struct NavigationParams : GC::Cell {
     GC::Ptr<Fetch::Infrastructure::Request> request;
 
     // a response that ultimately was navigated to (potentially a network error)
-    GC::Ptr<Fetch::Infrastructure::Response> response;
+    [[nodiscard]] GC::Ref<Fetch::Infrastructure::Response> response() const { return m_response_references->response(); }
+    [[nodiscard]] GC::Ref<Fetch::Infrastructure::Response> internal_response() const { return m_response_references->internal_response(); }
+    [[nodiscard]] Fetch::Infrastructure::RootedResponseReferences const& response_references() const { return m_response_references; }
 
     // null or a fetch controller
     GC::Ptr<Fetch::Infrastructure::FetchController> fetch_controller { nullptr };
@@ -77,7 +80,7 @@ protected:
         Optional<String> id,
         GC::Ptr<Navigable> navigable,
         GC::Ptr<Fetch::Infrastructure::Request> request,
-        GC::Ptr<Fetch::Infrastructure::Response> response,
+        Fetch::Infrastructure::RootedResponseReferences response_references,
         GC::Ptr<Fetch::Infrastructure::FetchController> fetch_controller,
         GC::Ptr<GC::Function<void(DOM::Document&)>> commit_early_hints,
         OpenerPolicyEnforcementResult coop_enforcement_result,
@@ -91,7 +94,6 @@ protected:
         : id(move(id))
         , navigable(navigable)
         , request(request)
-        , response(response)
         , fetch_controller(fetch_controller)
         , commit_early_hints(commit_early_hints)
         , coop_enforcement_result(move(coop_enforcement_result))
@@ -102,8 +104,11 @@ protected:
         , opener_policy(opener_policy)
         , about_base_url(move(about_base_url))
         , user_involvement(user_involvement)
+        , m_response_references(move(response_references))
     {
     }
+
+    Fetch::Infrastructure::RootedResponseReferences m_response_references;
 };
 
 // https://html.spec.whatwg.org/multipage/browsing-the-web.html#non-fetch-scheme-navigation-params

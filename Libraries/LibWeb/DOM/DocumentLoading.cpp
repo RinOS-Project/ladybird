@@ -75,7 +75,7 @@ static WebIDL::ExceptionOr<GC::Ref<DOM::Document>> load_html_document(HTML::Navi
     // FIXME: The additional check for a non-empty body fixes issues with loading javascript urls in iframes, which
     //        default to an "about:blank" url. Is this a spec bug?
     if (document->url_string() == "about:blank"_string
-        && navigation_params.response->body()->length().value_or(0) == 0) {
+        && navigation_params.response()->body()->length().value_or(0) == 0) {
         TRY(document->populate_with_html_head_and_body());
         // NB: Nothing else is added to the document, so mark it as loaded and resolve the signal_to_continue_session_history_processing.
         signal_to_continue_session_history_processing->resolve({});
@@ -96,7 +96,7 @@ static WebIDL::ExceptionOr<GC::Ref<DOM::Document>> load_html_document(HTML::Navi
     //    causes a load event to be fired.
     else {
         // FIXME: Parse as we receive the document data, instead of waiting for the whole document to be fetched first.
-        auto process_body = GC::create_function(document->heap(), [document, signal_to_continue_session_history_processing, url = navigation_params.response->url().value(), mime_type = Fetch::Infrastructure::extract_mime_type(navigation_params.response->header_list())](ByteBuffer data) mutable {
+        auto process_body = GC::create_function(document->heap(), [document, signal_to_continue_session_history_processing, url = navigation_params.response()->url().value(), mime_type = Fetch::Infrastructure::extract_mime_type(navigation_params.response()->header_list())](ByteBuffer data) mutable {
             Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(document->heap(), [signal_to_continue_session_history_processing, document = document, data = move(data), url = url, mime_type = move(mime_type)] {
                 // NB: If document is part of a session history entry's traversal, resolve the signal_to_continue_session_history_processing.
                 signal_to_continue_session_history_processing->resolve({});
@@ -110,7 +110,8 @@ static WebIDL::ExceptionOr<GC::Ref<DOM::Document>> load_html_document(HTML::Navi
         });
 
         auto& realm = document->realm();
-        navigation_params.response->body()->fully_read(realm, process_body, process_body_error, GC::Ref { realm.global_object() });
+        // AD-HOC (RinOS Round 10): Pin navigationParams response through ReadLoopReadRequest::m_extra_root.
+        navigation_params.response()->body()->fully_read(realm, process_body, process_body_error, GC::Ref { realm.global_object() }, navigation_params.response().ptr());
     }
 
     // 4. Return document.
@@ -153,7 +154,7 @@ static WebIDL::ExceptionOr<GC::Ref<DOM::Document>> load_xml_document(HTML::Navig
     if (auto maybe_encoding = type.parameters().get("charset"sv); maybe_encoding.has_value())
         content_encoding = maybe_encoding.value();
 
-    auto process_body = GC::create_function(document->heap(), [document, signal_to_continue_session_history_processing, url = navigation_params.response->url().value(), content_encoding = move(content_encoding), mime = type](ByteBuffer data) {
+    auto process_body = GC::create_function(document->heap(), [document, signal_to_continue_session_history_processing, url = navigation_params.response()->url().value(), content_encoding = move(content_encoding), mime = type](ByteBuffer data) {
         Optional<TextCodec::Decoder&> decoder;
         // The actual HTTP headers and other metadata, not the headers as mutated or implied by the algorithms given in this specification,
         // are the ones that must be used when determining the character encoding according to the rules given in the above specifications.
@@ -207,7 +208,8 @@ static WebIDL::ExceptionOr<GC::Ref<DOM::Document>> load_xml_document(HTML::Navig
     });
 
     auto& realm = document->realm();
-    navigation_params.response->body()->fully_read(realm, process_body, process_body_error, GC::Ref { realm.global_object() });
+    // AD-HOC (RinOS Round 10): Pin navigationParams response through ReadLoopReadRequest::m_extra_root.
+    navigation_params.response()->body()->fully_read(realm, process_body, process_body_error, GC::Ref { realm.global_object() }, navigation_params.response().ptr());
 
     return document;
 }
@@ -240,7 +242,7 @@ static WebIDL::ExceptionOr<GC::Ref<DOM::Document>> load_text_document(HTML::Navi
     //    document's relevant global object to have the parser to process the implied EOF character, which eventually causes a
     //    load event to be fired.
     // FIXME: Parse as we receive the document data, instead of waiting for the whole document to be fetched first.
-    auto process_body = GC::create_function(document->heap(), [document, signal_to_continue_session_history_processing, url = navigation_params.response->url().value(), mime = type](ByteBuffer data) {
+    auto process_body = GC::create_function(document->heap(), [document, signal_to_continue_session_history_processing, url = navigation_params.response()->url().value(), mime = type](ByteBuffer data) {
         auto encoding = run_encoding_sniffing_algorithm(document, data, mime);
         dbgln_if(HTML_PARSER_DEBUG, "The encoding sniffing algorithm returned encoding '{}'", encoding);
 
@@ -273,7 +275,8 @@ static WebIDL::ExceptionOr<GC::Ref<DOM::Document>> load_text_document(HTML::Navi
     });
 
     auto& realm = document->realm();
-    navigation_params.response->body()->fully_read(realm, process_body, process_body_error, GC::Ref { realm.global_object() });
+    // AD-HOC (RinOS Round 10): Pin navigationParams response through ReadLoopReadRequest::m_extra_root.
+    navigation_params.response()->body()->fully_read(realm, process_body, process_body_error, GC::Ref { realm.global_object() }, navigation_params.response().ptr());
 
     // 6. Return document.
     return document;
@@ -363,14 +366,16 @@ static WebIDL::ExceptionOr<GC::Ref<DOM::Document>> load_media_document(HTML::Nav
     //        However, if we don't, then we get stuck in HTMLParser::the_end() waiting for the media file to load, which
     //        never happens.
     auto& realm = document->realm();
-    navigation_params.response->body()->fully_read(
+    navigation_params.response()->body()->fully_read(
         realm,
         GC::create_function(document->heap(), [document, signal_to_continue_session_history_processing](ByteBuffer) {
             // NB: If document is part of session history traversal, resolve the signal_to_continue_session_history_processing.
             signal_to_continue_session_history_processing->resolve({});
             HTML::HTMLParser::the_end(document); }),
         GC::create_function(document->heap(), [](JS::Value) {}),
-        GC::Ref { realm.global_object() });
+        GC::Ref { realm.global_object() },
+        // AD-HOC (RinOS Round 10): Pin navigationParams response through ReadLoopReadRequest::m_extra_root.
+        navigation_params.response().ptr());
 
     // 9. Return document.
     return document;
@@ -421,14 +426,14 @@ GC::Ptr<DOM::Document> load_document(HTML::NavigationParams const& navigation_pa
     // NB: Use Core::Promise to signal SessionHistoryTraversalQueue that it can continue to execute next entry.
 
     // 1. Let type be the computed type of navigationParams's response.
-    auto supplied_type = Fetch::Infrastructure::extract_mime_type(navigation_params.response->header_list());
+    auto supplied_type = Fetch::Infrastructure::extract_mime_type(navigation_params.response()->header_list());
     auto type = MimeSniff::Resource::sniff(
         sniff_bytes,
         MimeSniff::SniffingConfiguration {
             .sniffing_context = MimeSniff::SniffingContext::Browsing,
             .supplied_type = move(supplied_type) });
 
-    VERIFY(navigation_params.response->body());
+    VERIFY(navigation_params.response()->body());
 
     // 2. If the user agent has been configured to process resources of the given type using some mechanism other than
     //    rendering the content in a navigable, then skip this step.

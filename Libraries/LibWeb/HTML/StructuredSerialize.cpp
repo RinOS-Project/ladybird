@@ -194,16 +194,28 @@ static WebIDL::ExceptionOr<void> serialize_viewed_array_buffer(JS::VM& vm, Trans
     // 1. If IsArrayBufferViewOutOfBounds(value) is true, then throw a "DataCloneError" DOMException.
     if constexpr (IsSame<ViewType, JS::DataView>) {
         auto view_record = JS::make_data_view_with_buffer_witness_record(view, JS::ArrayBuffer::Order::SeqCst);
-        if (JS::is_view_out_of_bounds(view_record))
+        if (JS::is_view_out_of_bounds(view_record)) {
+            if (vm.execution_context_stack().is_empty())
+                return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot serialize a DataView that is out of bounds"sv };
             return WebIDL::DataCloneError::create(*vm.current_realm(), Utf16String::formatted(JS::ErrorType::BufferOutOfBounds.format(), "DataView"sv));
+        }
     } else {
         auto typed_array_record = JS::make_typed_array_with_buffer_witness_record(view, JS::ArrayBuffer::Order::SeqCst);
-        if (JS::is_typed_array_out_of_bounds(typed_array_record))
+        if (JS::is_typed_array_out_of_bounds(typed_array_record)) {
+            if (vm.execution_context_stack().is_empty())
+                return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot serialize a TypedArray that is out of bounds"sv };
             return WebIDL::DataCloneError::create(*vm.current_realm(), Utf16String::formatted(JS::ErrorType::BufferOutOfBounds.format(), "TypedArray"sv));
+        }
     }
 
     // 2. Let buffer be the value of value's [[ViewedArrayBuffer]] internal slot.
-    JS::Value buffer = view.viewed_array_buffer();
+    auto* raw_buffer = view.viewed_array_buffer();
+    if (!raw_buffer) {
+        if (vm.execution_context_stack().is_empty())
+            return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot serialize a view whose buffer is null"sv };
+        return WebIDL::DataCloneError::create(*vm.current_realm(), "Cannot serialize a view whose buffer is null"_utf16);
+    }
+    JS::Value buffer = raw_buffer;
 
     // 3. Let bufferSerialized be ? StructuredSerializeInternal(buffer, forStorage, memory).
     auto buffer_serialized = TRY(structured_serialize_internal(vm, buffer, for_storage, memory));

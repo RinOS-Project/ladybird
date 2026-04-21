@@ -24,6 +24,11 @@
 
 namespace Web::HTML {
 
+class WindowOrWorkerGlobalScopeMixin;
+
+WEB_API WindowOrWorkerGlobalScopeMixin* window_or_worker_global_scope_mixin_from(JS::Object&);
+WEB_API WindowOrWorkerGlobalScopeMixin const* window_or_worker_global_scope_mixin_from(JS::Object const&);
+
 // https://html.spec.whatwg.org/multipage/webappapis.html#timerhandler
 using TimerHandler = Variant<GC::Ref<WebIDL::CallbackType>, String>;
 

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Error.h>
 #include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
@@ -26,19 +27,36 @@ public:
     size_t size() const { return m_size; }
     void* data() { return m_data; }
     void const* data() const { return m_data; }
+#if defined(AK_OS_RINOS)
+    ByteString const& shm_name() const { return m_shm_name; }
+#endif
 
 private:
-    AnonymousBufferImpl(int fd, size_t, void*);
+    enum class BackingKind : u8 {
+        FileDescriptor,
+        RinSharedMemory,
+    };
+
+    AnonymousBufferImpl(int fd, size_t, void*, BackingKind = BackingKind::FileDescriptor);
+
+    friend class AnonymousBuffer;
 
     int m_fd { -1 };
     size_t m_size { 0 };
     void* m_data { nullptr };
+    BackingKind m_backing_kind { BackingKind::FileDescriptor };
+#if defined(AK_OS_RINOS)
+    ByteString m_shm_name;
+#endif
 };
 
 class CORE_API AnonymousBuffer {
 public:
     static ErrorOr<AnonymousBuffer> create_with_size(size_t);
     static ErrorOr<AnonymousBuffer> create_from_anon_fd(int fd, size_t);
+#if defined(AK_OS_RINOS)
+    static ErrorOr<AnonymousBuffer> create_from_shm_name(StringView name, size_t);
+#endif
 
     AnonymousBuffer() = default;
 
@@ -46,6 +64,13 @@ public:
 
     int fd() const { return m_impl ? m_impl->fd() : -1; }
     size_t size() const { return m_impl ? m_impl->size() : 0; }
+#if defined(AK_OS_RINOS)
+    ByteString const& shm_name() const
+    {
+        static ByteString const s_empty;
+        return m_impl ? m_impl->shm_name() : s_empty;
+    }
+#endif
 
     ReadonlyBytes bytes() const
     {

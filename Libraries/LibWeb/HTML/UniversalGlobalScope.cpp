@@ -15,17 +15,35 @@
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibTextCodec/Decoder.h>
 #include <LibWeb/HTML/PromiseRejectionEvent.h>
+#include <LibWeb/HTML/ShadowRealmGlobalScope.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/HTML/StructuredSerializeOptions.h>
 #include <LibWeb/HTML/UniversalGlobalScope.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/HTML/WorkerGlobalScope.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 #include <LibWeb/WebIDL/DOMException.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::HTML {
+
+UniversalGlobalScopeMixin* universal_global_scope_mixin_from(JS::Object& object)
+{
+    if (auto* window = as_if<Window>(object))
+        return window;
+    if (auto* worker = as_if<WorkerGlobalScope>(object))
+        return worker;
+    if (auto* shadow_realm = as_if<ShadowRealmGlobalScope>(object))
+        return shadow_realm;
+    return nullptr;
+}
+
+UniversalGlobalScopeMixin const* universal_global_scope_mixin_from(JS::Object const& object)
+{
+    return universal_global_scope_mixin_from(const_cast<JS::Object&>(object));
+}
 
 UniversalGlobalScopeMixin::~UniversalGlobalScopeMixin() = default;
 

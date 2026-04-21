@@ -541,7 +541,9 @@ static void define_locales_without_scripts(HashTable<String>& locales)
 bool is_locale_available(StringView locale)
 {
 #ifdef AK_OS_RINOS
-    static auto available_locales = []() {
+    static Optional<HashTable<String>> cached_available_locales;
+
+    if (!cached_available_locales.has_value()) {
         HashTable<String> available;
         char buf[4096];
         size_t len = 0;
@@ -553,13 +555,16 @@ bool is_locale_available(StringView locale)
                 if (!trimmed.is_empty())
                     available.set(MUST(String::from_utf8(trimmed)));
             });
+
+            define_locales_without_scripts(available);
+            cached_available_locales = move(available);
         }
+    }
 
-        define_locales_without_scripts(available);
-        return available;
-    }();
+    if (!cached_available_locales.has_value())
+        return false;
 
-    return available_locales.contains(locale);
+    return cached_available_locales->contains(locale);
 #else
     static auto available_locales = []() {
         i32 count = 0;

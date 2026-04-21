@@ -145,7 +145,8 @@ void SVGScriptElement::process_the_script_element()
             });
 
             VERIFY(response->body());
-            response->body()->fully_read(realm, on_data_read, on_error, GC::Ref { global });
+            // AD-HOC (RinOS Round 10): Pin Response through ReadLoopReadRequest::m_extra_root.
+            response->body()->fully_read(realm, on_data_read, on_error, GC::Ref { global }, response.ptr());
         };
 
         (void)Fetch::Fetching::fetch(realm(), request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));

@@ -7,6 +7,10 @@
 
 #include <AK/Debug.h>
 #include <AK/StringBuilder.h>
+#ifdef AK_OS_RINOS
+#    include <unistd.h>
+#    include <cstdio>
+#endif
 #include <LibTextCodec/Decoder.h>
 #include <LibWeb/Bindings/HTMLScriptElementPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
@@ -455,8 +459,35 @@ void HTMLScriptElement::prepare_script()
 
         // FIXME: 9. If el is currently render-blocking, then set options's render-blocking to true.
 
+#ifdef AK_OS_RINOS
+        {
+            auto url_str = url->to_byte_string();
+            auto url_sv = url_str.view();
+            size_t url_len = url_sv.length() > 200 ? 200 : url_sv.length();
+            char buf[320];
+            int n = snprintf(buf, sizeof(buf),
+                             "[ScriptFetch] start rb=%d type=classic url=%.*s\n",
+                             is_potentially_render_blocking() ? 1 : 0,
+                             (int)url_len, url_sv.characters_without_null_termination());
+            if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+        }
+#endif
+
         // 10. Let onComplete given result be the following steps:
         OnFetchScriptComplete on_complete = create_on_fetch_script_complete(heap(), [this](auto result) {
+#ifdef AK_OS_RINOS
+            {
+                auto src = attribute(HTML::AttributeNames::src).value_or({});
+                auto src_sv = src.bytes_as_string_view();
+                size_t src_len = src_sv.length() > 200 ? 200 : src_sv.length();
+                char buf[320];
+                int n = snprintf(buf, sizeof(buf),
+                                 "[ScriptFetch] complete ok=%d url=%.*s\n",
+                                 result ? 1 : 0,
+                                 (int)src_len, src_sv.characters_without_null_termination());
+                if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+            }
+#endif
             // 1. Mark as ready el given result.
             if (result)
                 mark_as_ready(Result { *result });

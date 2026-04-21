@@ -22,6 +22,16 @@ namespace Unicode {
 
 static Optional<String> cached_system_time_zone;
 
+#ifdef AK_OS_RINOS
+static Optional<Vector<String>> cached_available_time_zones;
+
+static Vector<String> const& fallback_available_time_zones()
+{
+    static Vector<String> fallback { "UTC"_string };
+    return fallback;
+}
+#endif
+
 #ifndef AK_OS_RINOS
 
 static String current_time_zone_impl(OwnPtr<icu::TimeZone> time_zone)
@@ -288,18 +298,24 @@ Optional<TimeZoneTransition> get_time_zone_transition(StringView time_zone, Unix
 // RinOS: timezone operations via rinicu IPC
 String current_time_zone()
 {
-    return cached_system_time_zone.ensure([] {
-        char buf[128];
-        size_t len = 0;
-        if (rin_icu_time_zone_current(&rin_icu_client(), buf, sizeof(buf), &len) == 0 && len > 0)
-            return MUST(String::from_utf8(StringView { buf, len }));
-        return "UTC"_string;
-    });
+    if (cached_system_time_zone.has_value())
+        return *cached_system_time_zone;
+
+    char buf[128];
+    size_t len = 0;
+    if (rin_icu_time_zone_current(&rin_icu_client(), buf, sizeof(buf), &len) == 0 && len > 0) {
+        auto time_zone = MUST(String::from_utf8(StringView { buf, len }));
+        cached_system_time_zone = time_zone;
+        return time_zone;
+    }
+
+    return "UTC"_string;
 }
 
 void clear_system_time_zone_cache()
 {
     cached_system_time_zone.clear();
+    cached_available_time_zones.clear();
 }
 
 ErrorOr<void> set_current_time_zone(StringView time_zone)
@@ -310,21 +326,27 @@ ErrorOr<void> set_current_time_zone(StringView time_zone)
 
 Vector<String> const& available_time_zones()
 {
-    static auto time_zones = [] {
-        Vector<String> result;
-        char buf[8192];
-        size_t len = 0;
-        if (rin_icu_time_zone_available(&rin_icu_client(), buf, sizeof(buf), &len) == 0 && len > 0) {
-            StringView zones_str { buf, len };
-            for (auto zone : zones_str.split_view(','))
-                result.append(MUST(String::from_utf8(zone)));
+    if (cached_available_time_zones.has_value())
+        return *cached_available_time_zones;
+
+    Vector<String> result;
+    char buf[8192];
+    size_t len = 0;
+    if (rin_icu_time_zone_available(&rin_icu_client(), buf, sizeof(buf), &len) == 0 && len > 0) {
+        StringView zones_str { buf, len };
+        for (auto zone : zones_str.split_view(',')) {
+            auto trimmed_zone = zone.trim_whitespace();
+            if (!trimmed_zone.is_empty())
+                result.append(MUST(String::from_utf8(trimmed_zone)));
         }
-        if (result.is_empty())
-            result.append("UTC"_string);
-        quick_sort(result);
-        return result;
-    }();
-    return time_zones;
+    }
+
+    if (result.is_empty())
+        return fallback_available_time_zones();
+
+    quick_sort(result);
+    cached_available_time_zones = move(result);
+    return *cached_available_time_zones;
 }
 
 Vector<String> available_time_zones_in_region(StringView)
@@ -340,11 +362,11 @@ Optional<String> resolve_primary_time_zone(StringView time_zone)
 Optional<TimeZoneOffset> time_zone_offset(StringView time_zone, UnixDateTime time)
 {
     ByteString tz_z(time_zone);
-    int32_t offset_ms = 0;
-    int32_t dst = 0;
-    if (rin_icu_time_zone_offset(&rin_icu_client(), tz_z.characters(), static_cast<double>(time.milliseconds_since_epoch()), &offset_ms, &dst) == 0) {
+    int offset_minutes = 0;
+    int dst = 0;
+    if (rin_icu_time_zone_offset(&rin_icu_client(), tz_z.characters(), time.milliseconds_since_epoch(), &offset_minutes, &dst) == 0) {
         return TimeZoneOffset {
-            .offset = AK::Duration::from_milliseconds(offset_ms),
+            .offset = AK::Duration::from_milliseconds(static_cast<i64>(offset_minutes) * 60 * 1000),
             .in_dst = dst != 0 ? TimeZoneOffset::InDST::Yes : TimeZoneOffset::InDST::No,
         };
     }

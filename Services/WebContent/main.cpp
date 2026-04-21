@@ -57,8 +57,32 @@
 #    include <objbase.h>
 #endif
 
+#if defined(AK_OS_RINOS)
+#    include <string.h>
+#    include <unistd.h>
+#endif
+
 #if !defined(AK_OS_RINOS)
 #    include <SDL3/SDL_init.h>
+#endif
+
+#if defined(AK_OS_RINOS)
+extern "C" void ak_assertion_handler(char const* message);
+
+extern "C" void ak_assertion_handler(char const* message)
+{
+    static char const prefix[] = "[webcontent] controlled assertion shutdown: ";
+    static char const fallback[] = "[webcontent] controlled assertion shutdown\n";
+
+    if (message && *message) {
+        (void)write(STDERR_FILENO, prefix, sizeof(prefix) - 1);
+        (void)write(STDERR_FILENO, message, strlen(message));
+        (void)write(STDERR_FILENO, "\n", 1);
+    } else {
+        (void)write(STDERR_FILENO, fallback, sizeof(fallback) - 1);
+    }
+    _exit(128);
+}
 #endif
 
 #if !defined(AK_OS_WINDOWS) && !defined(AK_OS_RINOS)
@@ -135,7 +159,11 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 
     Core::EventLoop event_loop;
 
+#if defined(AK_OS_RINOS)
+    WebView::platform_init(Optional<ByteString> { ByteString("/sys/apps/webcontent"sv) });
+#else
     WebView::platform_init();
+#endif
 
     Web::Platform::EventLoopPlugin::install(*new Web::Platform::EventLoopPlugin);
 

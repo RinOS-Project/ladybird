@@ -22,6 +22,7 @@
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/ResponseRooting.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/HTML/AudioPlayState.h>
 #include <LibWeb/HTML/AudioTrack.h>
@@ -1135,25 +1136,23 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
 
         fetch_algorithms_input.process_response = [self = GC::Ref(*this), byte_range = move(byte_range), fetch_generation](auto response) mutable {
             auto& fetch_data = self->m_fetch_data;
-
-            // FIXME: If the response is CORS cross-origin, we must use its internal response to query any of its data. See:
-            //        https://github.com/whatwg/html/issues/9355
-            response = response->unsafe_response();
+            auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
+            auto internal_response = rooted_responses->internal_response();
 
             // 1. Let global be the media element's node document's relevant global object.
             auto& global = self->document().realm().global_object();
 
-            if (auto content_length = response->header_list()->extract_length(); content_length.template has<u64>()) {
+            if (auto content_length = internal_response->header_list()->extract_length(); content_length.template has<u64>()) {
                 auto actual_length = fetch_data->offset + content_length.template get<u64>();
                 fetch_data->stream->set_expected_size(actual_length);
             }
 
-            if (auto accept_ranges = response->header_list()->extract_header_list_values("Accept-Ranges"sv); accept_ranges.template has<Vector<ByteString>>())
+            if (auto accept_ranges = internal_response->header_list()->extract_header_list_values("Accept-Ranges"sv); accept_ranges.template has<Vector<ByteString>>())
                 fetch_data->accepts_byte_ranges = accept_ranges.template get<Vector<ByteString>>().contains([](auto const& units) { return units == "bytes"sv; });
 
             // 4. If the result of verifying response given the current media resource and byteRange is false, then abort these steps.
             // NOTE: We do this step before creating the updateMedia task so that we can invoke the failure callback.
-            auto maybe_verify_response_failure = self->verify_response_or_get_failure_reason(response, byte_range);
+            auto maybe_verify_response_failure = self->verify_response_or_get_failure_reason(internal_response, byte_range);
             if (maybe_verify_response_failure.has_value()) {
                 fetch_data->failure_callback(maybe_verify_response_failure.value());
                 return;
@@ -1162,7 +1161,8 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
             // 2. Let updateMedia be to queue a media element task given the media element to run the first appropriate steps from the media data processing
             //    steps list below. (A new task is used for this so that the work described below occurs relative to the appropriate media element event task
             //    source rather than using the networking task source.)
-            auto update_media = GC::create_function(self->heap(), [weak_self = GC::Weak(self), fetch_generation](ByteBuffer media_data) mutable {
+            auto update_media = GC::create_function(self->heap(), [weak_self = GC::Weak(self), fetch_generation, rooted_responses](ByteBuffer media_data) mutable {
+                (void)rooted_responses;
                 if (!weak_self)
                     return;
                 if (fetch_generation != weak_self->m_current_fetch_generation)
@@ -1184,7 +1184,8 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
             //    and if all of the data is available to the user agent without network access, then, the user agent must move on to the final step below.
             //    This might never happen, e.g. when streaming an infinite resource such as web radio, or if the resource is longer than the user agent's
             //    ability to cache data.
-            auto process_end_of_media = GC::create_function(self->heap(), [weak_self = GC::Weak(self), fetch_generation] {
+            auto process_end_of_media = GC::create_function(self->heap(), [weak_self = GC::Weak(self), fetch_generation, rooted_responses] {
+                (void)rooted_responses;
                 if (!weak_self)
                     return;
                 if (fetch_generation != weak_self->m_current_fetch_generation)
@@ -1199,7 +1200,8 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
             // 5. Otherwise, incrementally read response's body given updateMedia, processEndOfMedia, an empty algorithm, and global.
 
             // AD-HOC: We need to pass a non-empty error algorithm in order to invoke the requisite steps.
-            auto process_body_error = GC::create_function(self->heap(), [weak_self = GC::Weak(self), fetch_generation](JS::Value) {
+            auto process_body_error = GC::create_function(self->heap(), [weak_self = GC::Weak(self), fetch_generation, rooted_responses](JS::Value) {
+                (void)rooted_responses;
                 if (!weak_self)
                     return;
                 if (fetch_generation != weak_self->m_current_fetch_generation)
@@ -1209,8 +1211,10 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
                 });
             });
 
-            VERIFY(response->body());
-            response->body()->incrementally_read(update_media, process_end_of_media, process_body_error, GC::Ref { global });
+            VERIFY(internal_response->body());
+            // AD-HOC (RinOS Round 11): Pin ResponseReferenceHolder via the deterministic
+            // read-request GC edge so Response survives across media body chunks.
+            internal_response->body()->incrementally_read(update_media, process_end_of_media, process_body_error, GC::Ref { global }, rooted_responses.ptr());
         };
 
         m_fetch_data->fetch_controller = Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
@@ -1236,20 +1240,17 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#verify-a-media-response
-Optional<String> HTMLMediaElement::verify_response_or_get_failure_reason(GC::Ref<Fetch::Infrastructure::Response> response, ByteRange const& byte_range)
+Optional<String> HTMLMediaElement::verify_response_or_get_failure_reason(GC::Ref<Fetch::Infrastructure::Response> internal_response, ByteRange const& byte_range)
 {
     // 1. If response is a network error, then return false.
-    if (response->is_network_error()) {
-        VERIFY(response->network_error_message().has_value());
-        return response->network_error_message();
+    if (internal_response->is_network_error()) {
+        VERIFY(internal_response->network_error_message().has_value());
+        return internal_response->network_error_message();
     }
 
     // 2. If byteRange is "entire resource", then return true.
     if (byte_range.has<EntireResource>())
         return {};
-
-    // 3. Let internalResponse be response's unsafe response.
-    auto internal_response = response->unsafe_response();
 
     // 4. If internalResponse's status is 200, then return true.
     if (internal_response->status() == 200)

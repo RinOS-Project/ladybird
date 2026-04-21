@@ -667,8 +667,9 @@ WebIDL::ExceptionOr<GC::Ref<Element>> create_element(Document& document, FlyStri
             if (upgrade_result.is_throw_completion()) {
                 // 1. Report exception for definition’s constructor’s corresponding JavaScript object’s associated
                 //    realm’s global object.
-                auto& window_or_worker = as<HTML::WindowOrWorkerGlobalScopeMixin>(HTML::relevant_global_object(definition->constructor().callback));
-                window_or_worker.report_an_exception(upgrade_result.error_value());
+                auto* window_or_worker = HTML::window_or_worker_global_scope_mixin_from(HTML::relevant_global_object(definition->constructor().callback));
+                VERIFY(window_or_worker);
+                window_or_worker->report_an_exception(upgrade_result.error_value());
 
                 // 2. Set result’s custom element state to "failed".
                 result->set_custom_element_state(CustomElementState::Failed);
@@ -742,8 +743,9 @@ WebIDL::ExceptionOr<GC::Ref<Element>> create_element(Document& document, FlyStri
             if (auto maybe_error = synchronously_upgrade_custom_element(); maybe_error.is_throw_completion()) {
                 // 1. Report exception for definition’s constructor’s corresponding JavaScript object’s associated
                 //    realm’s global object.
-                auto& window_or_worker = as<HTML::WindowOrWorkerGlobalScopeMixin>(HTML::relevant_global_object(definition->constructor().callback));
-                window_or_worker.report_an_exception(maybe_error.error_value());
+                auto* window_or_worker = HTML::window_or_worker_global_scope_mixin_from(HTML::relevant_global_object(definition->constructor().callback));
+                VERIFY(window_or_worker);
+                window_or_worker->report_an_exception(maybe_error.error_value());
 
                 // 2. Set result to the result of creating an element internal given document, HTMLUnknownElement,
                 //    localName, the HTML namespace, prefix, "failed", null, and registry.

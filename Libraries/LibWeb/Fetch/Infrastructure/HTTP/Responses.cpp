@@ -5,8 +5,10 @@
  */
 
 #include <AK/Debug.h>
+#include <AK/BitCast.h>
 #include <AK/TypeCasts.h>
 #include <LibGC/Heap.h>
+#include <LibGC/Root.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
@@ -153,15 +155,15 @@ GC::Ref<Response> Response::clone(JS::Realm& realm) const
 
     // 1. If response is a filtered response, then return a new identical filtered response whose internal response is a clone of response’s internal response.
     if (is<FilteredResponse>(*this)) {
-        auto internal_response = static_cast<FilteredResponse const&>(*this).internal_response()->clone(realm);
+        auto internal_response = GC::make_root(static_cast<FilteredResponse const&>(*this).internal_response()->clone(realm));
         if (is<BasicFilteredResponse>(*this))
-            return BasicFilteredResponse::create(vm, internal_response);
+            return BasicFilteredResponse::create(vm, *internal_response);
         if (is<CORSFilteredResponse>(*this))
-            return CORSFilteredResponse::create(vm, internal_response);
+            return CORSFilteredResponse::create(vm, *internal_response);
         if (is<OpaqueFilteredResponse>(*this))
-            return OpaqueFilteredResponse::create(vm, internal_response);
+            return OpaqueFilteredResponse::create(vm, *internal_response);
         if (is<OpaqueRedirectFilteredResponse>(*this))
-            return OpaqueRedirectFilteredResponse::create(vm, internal_response);
+            return OpaqueRedirectFilteredResponse::create(vm, *internal_response);
         VERIFY_NOT_REACHED();
     }
 
@@ -194,8 +196,11 @@ GC::Ref<Response> Response::clone(JS::Realm& realm) const
 GC::Ref<Response> Response::unsafe_response()
 {
     // A response's unsafe response is its internal response if it has one, and the response itself otherwise.
-    if (is<FilteredResponse>(this))
-        return static_cast<FilteredResponse&>(*this).internal_response();
+    if (is<FilteredResponse>(this)) {
+        auto& filtered = static_cast<FilteredResponse&>(*this);
+        if (filtered.has_internal_response())
+            return filtered.internal_response();
+    }
 
     return *this;
 }
@@ -231,6 +236,18 @@ FilteredResponse::~FilteredResponse()
 {
 }
 
+bool FilteredResponse::has_internal_response() const
+{
+    return bit_cast<Response const*>(m_internal_response) != nullptr;
+}
+
+GC::Ref<Response> FilteredResponse::internal_response() const
+{
+    auto* raw_internal_response = bit_cast<Response const*>(m_internal_response);
+    VERIFY(raw_internal_response);
+    return m_internal_response;
+}
+
 void FilteredResponse::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
@@ -239,16 +256,18 @@ void FilteredResponse::visit_edges(JS::Cell::Visitor& visitor)
 
 GC::Ref<BasicFilteredResponse> BasicFilteredResponse::create(JS::VM& vm, GC::Ref<Response> internal_response)
 {
+    auto rooted_internal_response = GC::make_root(internal_response);
+
     // A basic filtered response is a filtered response whose type is "basic" and header list excludes
     // any headers in internal response’s header list whose name is a forbidden response-header name.
     auto header_list = HTTP::HeaderList::create();
 
-    for (auto const& header : *internal_response->header_list()) {
+    for (auto const& header : *rooted_internal_response->header_list()) {
         if (!HTTP::is_forbidden_response_header_name(header.name))
             header_list->append(header);
     }
 
-    return vm.heap().allocate<BasicFilteredResponse>(internal_response, move(header_list));
+    return vm.heap().allocate<BasicFilteredResponse>(*rooted_internal_response, move(header_list));
 }
 
 BasicFilteredResponse::BasicFilteredResponse(GC::Ref<Response> internal_response, NonnullRefPtr<HTTP::HeaderList> header_list)
@@ -259,22 +278,24 @@ BasicFilteredResponse::BasicFilteredResponse(GC::Ref<Response> internal_response
 
 GC::Ref<CORSFilteredResponse> CORSFilteredResponse::create(JS::VM& vm, GC::Ref<Response> internal_response)
 {
+    auto rooted_internal_response = GC::make_root(internal_response);
+
     // A CORS filtered response is a filtered response whose type is "cors" and header list excludes
     // any headers in internal response’s header list whose name is not a CORS-safelisted response-header
     // name, given internal response’s CORS-exposed header-name list.
     Vector<StringView> cors_exposed_header_name_list;
-    cors_exposed_header_name_list.ensure_capacity(internal_response->cors_exposed_header_name_list().size());
+    cors_exposed_header_name_list.ensure_capacity(rooted_internal_response->cors_exposed_header_name_list().size());
 
-    for (auto const& header_name : internal_response->cors_exposed_header_name_list())
+    for (auto const& header_name : rooted_internal_response->cors_exposed_header_name_list())
         cors_exposed_header_name_list.unchecked_append(header_name);
 
     auto header_list = HTTP::HeaderList::create();
-    for (auto const& header : *internal_response->header_list()) {
+    for (auto const& header : *rooted_internal_response->header_list()) {
         if (is_cors_safelisted_response_header_name(header.name, cors_exposed_header_name_list))
             header_list->append(header);
     }
 
-    return vm.heap().allocate<CORSFilteredResponse>(internal_response, header_list);
+    return vm.heap().allocate<CORSFilteredResponse>(*rooted_internal_response, header_list);
 }
 
 CORSFilteredResponse::CORSFilteredResponse(GC::Ref<Response> internal_response, NonnullRefPtr<HTTP::HeaderList> header_list)
@@ -285,9 +306,11 @@ CORSFilteredResponse::CORSFilteredResponse(GC::Ref<Response> internal_response, 
 
 GC::Ref<OpaqueFilteredResponse> OpaqueFilteredResponse::create(JS::VM& vm, GC::Ref<Response> internal_response)
 {
+    auto rooted_internal_response = GC::make_root(internal_response);
+
     // An opaque filtered response is a filtered response whose type is "opaque", URL list is the empty list,
     // status is 0, status message is the empty byte sequence, header list is empty, and body is null.
-    return vm.heap().allocate<OpaqueFilteredResponse>(internal_response, HTTP::HeaderList::create());
+    return vm.heap().allocate<OpaqueFilteredResponse>(*rooted_internal_response, HTTP::HeaderList::create());
 }
 
 OpaqueFilteredResponse::OpaqueFilteredResponse(GC::Ref<Response> internal_response, NonnullRefPtr<HTTP::HeaderList> header_list)
@@ -298,9 +321,11 @@ OpaqueFilteredResponse::OpaqueFilteredResponse(GC::Ref<Response> internal_respon
 
 GC::Ref<OpaqueRedirectFilteredResponse> OpaqueRedirectFilteredResponse::create(JS::VM& vm, GC::Ref<Response> internal_response)
 {
+    auto rooted_internal_response = GC::make_root(internal_response);
+
     // An opaque-redirect filtered response is a filtered response whose type is "opaqueredirect",
     // status is 0, status message is the empty byte sequence, header list is empty, and body is null.
-    return vm.heap().allocate<OpaqueRedirectFilteredResponse>(internal_response, HTTP::HeaderList::create());
+    return vm.heap().allocate<OpaqueRedirectFilteredResponse>(*rooted_internal_response, HTTP::HeaderList::create());
 }
 
 OpaqueRedirectFilteredResponse::OpaqueRedirectFilteredResponse(GC::Ref<Response> internal_response, NonnullRefPtr<HTTP::HeaderList> header_list)

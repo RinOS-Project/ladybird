@@ -251,6 +251,7 @@ NonnullRefPtr<GlyphRun> shape_text(FloatPoint baseline_start, float letter_spaci
     auto fallback_advance = metrics.advance_of_ascii_zero > 0 ? metrics.advance_of_ascii_zero : max(font.pixel_size() * 0.6f, 1.0f);
 
     Vector<DrawGlyph> glyph_run;
+    glyph_run.ensure_capacity(string.length_in_code_points());
     FloatPoint point = baseline_start;
 
     auto it = string.begin();

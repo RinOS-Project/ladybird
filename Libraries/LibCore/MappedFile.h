@@ -33,10 +33,11 @@ public:
     ReadonlyBytes bytes() const LIFETIME_BOUND { return { m_data, m_size }; }
 
 private:
-    explicit MappedFile(void*, size_t, Mode);
+    explicit MappedFile(void*, size_t, Mode, bool is_memory_mapped);
 
     void* m_data { nullptr };
     size_t m_size { 0 };
+    bool m_is_memory_mapped { false };
 };
 
 class SharedMappedFile : public RefCounted<SharedMappedFile> {
