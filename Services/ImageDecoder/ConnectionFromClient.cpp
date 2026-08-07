@@ -212,6 +212,61 @@ void ConnectionFromClient::decode_image(Core::AnonymousBuffer encoded_buffer, Op
         return;
     }
 
+#ifdef AK_OS_RINOS
+    // RinOS 固有の上限: 決定論的に振る舞うため、サイズ/同時実行を制限する。
+    // これらに該当するリクエストは即座に失敗として返し、呼び出し元に
+    // プレースホルダ扱いさせる (layout を壊さずに先へ進む)。
+    constexpr size_t kRinosMaxEncodedBytes = 4 * 1024 * 1024;      // 4 MiB
+    constexpr int kRinosMaxIdealEdge = 512;                         // 512x512
+    constexpr size_t kRinosMaxDecodedBytes = 16 * 1024 * 1024;     // 16 MiB
+    constexpr size_t kRinosMaxPendingJobs = 8;
+
+    if (encoded_buffer.size() > kRinosMaxEncodedBytes) {
+        dbgln("[ImageDecoder] rejecting oversized input bytes={} (cap={})",
+            encoded_buffer.size(), kRinosMaxEncodedBytes);
+        async_did_fail_to_decode_image(request_id, "Encoded image exceeds RinOS size cap"_string);
+        return;
+    }
+
+    if (m_pending_jobs.size() >= kRinosMaxPendingJobs) {
+        dbgln("[ImageDecoder] rejecting request id={} pending={} (cap={})",
+            request_id, m_pending_jobs.size(), kRinosMaxPendingJobs);
+        async_did_fail_to_decode_image(request_id, "ImageDecoder queue full"_string);
+        return;
+    }
+
+    if (ideal_size.has_value()) {
+        auto size = ideal_size.value();
+        if (size.width() > kRinosMaxIdealEdge || size.height() > kRinosMaxIdealEdge) {
+            auto clamped_w = min(size.width(), kRinosMaxIdealEdge);
+            auto clamped_h = min(size.height(), kRinosMaxIdealEdge);
+            ideal_size = Gfx::IntSize { clamped_w, clamped_h };
+        }
+        // デコード後 pixel データ換算で上限超えは拒否 (BGRA 4 bytes/pixel)
+        auto const& clamped = ideal_size.value();
+        auto estimated_bytes = static_cast<size_t>(clamped.width()) * static_cast<size_t>(clamped.height()) * 4u;
+        if (estimated_bytes > kRinosMaxDecodedBytes) {
+            dbgln("[ImageDecoder] rejecting oversized decoded bytes est={} (cap={})",
+                estimated_bytes, kRinosMaxDecodedBytes);
+            async_did_fail_to_decode_image(request_id, "Decoded image exceeds RinOS size cap"_string);
+            return;
+        }
+    }
+
+    {
+        static uint64_t s_dec_seq = 0;
+        static uint64_t s_dec_last_logged = 0;
+        s_dec_seq++;
+        if (s_dec_seq <= 5 || (s_dec_seq - s_dec_last_logged) >= 60) {
+            s_dec_last_logged = s_dec_seq;
+            int iw = ideal_size.has_value() ? ideal_size.value().width() : -1;
+            int ih = ideal_size.has_value() ? ideal_size.value().height() : -1;
+            dbgln("[ImageDecoder] decode_image seq={} id={} bytes={} ideal={}x{} pending_before={}",
+                s_dec_seq, request_id, encoded_buffer.size(), iw, ih, m_pending_jobs.size());
+        }
+    }
+#endif
+
     auto set_result = m_pending_jobs.set(request_id, make_decode_image_job(request_id, move(encoded_buffer), ideal_size, move(mime_type)), AK::HashSetExistingEntryBehavior::Keep);
 
     if (set_result != HashSetResult::InsertedNewEntry) {

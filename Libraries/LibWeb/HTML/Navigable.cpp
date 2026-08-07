@@ -3143,10 +3143,38 @@ void Navigable::paint_next_frame()
                           (s_pnf_seq - s_pnf_last_logged >= 30);
         if (should_log) {
             s_pnf_last_logged = s_pnf_seq;
-            char buf[96];
+
+            // Diagnostic: DOM/layout snapshot so we can confirm whether the
+            // bitmap is empty because the document itself has no body/layout
+            // (Hypothesis A: DOM never constructed) or because paint is being
+            // called over a fully-laid-out but style-hidden tree.
+            auto* doc = active_document().ptr();
+            bool has_body = false;
+            int body_w = 0;
+            int body_h = 0;
+            bool has_layout_root = false;
+            bool has_paintable = false;
+            if (doc) {
+                if (auto* body = doc->body()) {
+                    has_body = true;
+                    if (auto const* box = body->paintable_box()) {
+                        auto rect = box->absolute_border_box_rect();
+                        body_w = rect.width().to_int();
+                        body_h = rect.height().to_int();
+                    }
+                }
+                has_layout_root = doc->layout_node() != nullptr;
+                has_paintable = doc->paintable() != nullptr;
+            }
+
+            char buf[224];
             int n = snprintf(buf, sizeof(buf),
-                             "[Navigable] paint_next_frame seq=%llu\n",
-                             (unsigned long long)s_pnf_seq);
+                             "[Navigable] paint_next_frame seq=%llu body=%d body_rect=%dx%d layout_root=%d paintable=%d\n",
+                             (unsigned long long)s_pnf_seq,
+                             has_body ? 1 : 0,
+                             body_w, body_h,
+                             has_layout_root ? 1 : 0,
+                             has_paintable ? 1 : 0);
             if (n > 0)
                 write(2, buf, static_cast<size_t>(n));
         }
@@ -3159,6 +3187,10 @@ void Navigable::paint_next_frame()
     record_display_list_and_scroll_state(paint_config);
 
     m_rendering_thread.present_frame(viewport_rect);
+
+#ifdef AK_OS_RINOS
+    note_paint_completed();
+#endif
 }
 
 void Navigable::render_screenshot(Gfx::PaintingSurface& painting_surface, PaintConfig paint_config, Function<void()>&& callback)

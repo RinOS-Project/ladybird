@@ -179,6 +179,11 @@ private:
     ErrorOr<void> revalidation_failed();
     void handle_fetch_complete_result(int result_code);
 
+#if defined(AK_OS_RINOS)
+    // Stage 3-A: DNS と Cookie IPC を並列発行する。両方が完了した時点で Fetch に遷移。
+    void maybe_advance_from_parallel();
+#endif
+
     bool is_cache_only_request() const;
 
     u32 acquire_status_code() const;
@@ -204,6 +209,12 @@ private:
 
     NonnullRefPtr<Resolver> m_resolver;
     RefPtr<DNS::LookupResult const> m_dns_result;
+
+#if defined(AK_OS_RINOS)
+    // Stage 3-A: DNS \u3068 Cookie IPC \u3092\u540c\u6642\u306b\u8d70\u3089\u305b\u3066\u3001\u4e21\u65b9\u5b8c\u4e86\u5f8c\u306b Fetch \u3078\u9032\u3080\u3002
+    bool m_dns_pending { false };
+    bool m_cookie_pending { false };
+#endif
 
     URL::URL m_url;
     ByteString m_method;

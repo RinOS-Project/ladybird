@@ -11,6 +11,7 @@
 static void el_serial(const char* msg) { write(2, msg, __builtin_strlen(msg)); }
 #endif
 #include <AK/TemporaryChange.h>
+#include <AK/Time.h>
 #include <LibCore/EventLoop.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
@@ -401,6 +402,10 @@ void EventLoop::update_the_rendering()
     int rinos_skip_suppressed = 0;
     int rinos_skip_no_navigable = 0;
     int rinos_skip_no_opportunity = 0;
+    // P2-1: inactive=1 の内訳を取るカウンタ
+    int rinos_inactive_no_navigable = 0;        // navigable() == nullptr
+    int rinos_inactive_not_top_or_container = 0; // top でも container が fully_active でもない
+    int rinos_inactive_not_active_document = 0;  // navigable->active_document() != this
 #endif
 
     // FIXME: 2. Let docs be all fully active Document objects whose relevant agent's event loop is eventLoop, sorted arbitrarily except that the following conditions must be met:
@@ -412,6 +417,17 @@ void EventLoop::update_the_rendering()
         if (!document.is_fully_active()) {
 #ifdef AK_OS_RINOS
             rinos_skip_inactive++;
+            // 分類: なぜ fully_active ではないのか？
+            auto nav = document.navigable();
+            if (!nav) {
+                rinos_inactive_no_navigable++;
+            } else if (nav->active_document() != &document) {
+                rinos_inactive_not_active_document++;
+            } else {
+                // navigable はあり、active_document も一致。
+                // しかし top-level traversable でなく、container_document も fully_active でない。
+                rinos_inactive_not_top_or_container++;
+            }
 #endif
             return false;
         }
@@ -462,15 +478,19 @@ void EventLoop::update_the_rendering()
 #ifdef AK_OS_RINOS
     if (utr_should_log) {
         s_utr_last_logged = s_utr_seq;
-        char buf[256];
+        char buf[384];
         int n = snprintf(buf, sizeof(buf),
                          "[EventLoop] update_the_rendering seq=%llu total=%d pass=%d "
-                         "skip(inactive=%d blocked=%d hidden=%d suppressed=%d no_nav=%d no_opp=%d)\n",
+                         "skip(inactive=%d blocked=%d hidden=%d suppressed=%d no_nav=%d no_opp=%d) "
+                         "inactive_why(no_nav=%d not_active_doc=%d not_top_or_container=%d)\n",
                          (unsigned long long)s_utr_seq,
                          rinos_total_docs, static_cast<int>(docs.size()),
                          rinos_skip_inactive, rinos_skip_render_blocked,
                          rinos_skip_hidden, rinos_skip_suppressed,
-                         rinos_skip_no_navigable, rinos_skip_no_opportunity);
+                         rinos_skip_no_navigable, rinos_skip_no_opportunity,
+                         rinos_inactive_no_navigable,
+                         rinos_inactive_not_active_document,
+                         rinos_inactive_not_top_or_container);
         if (n > 0) write(2, buf, static_cast<size_t>(n));
     }
 #endif
@@ -617,10 +637,87 @@ void EventLoop::update_the_rendering()
             continue;
         auto traversable = navigable->traversable_navigable();
         traversable->process_screenshot_requests();
+#ifdef AK_OS_RINOS
+        // RinOS: ロード中はどのサイトでも進捗が画面に出るよう、ドキュメントが
+        // Complete でない間は最低 2fps で強制ペイントする。これが無いと
+        // needs_repaint() が立たないタイプのページ (長時間 JS、
+        // スクリプト駆動レイアウト、画像ばかり) で 100 秒以上白画面になる。
+        bool force_paint_for_rinos = false;
+        if (document->readiness() != DocumentReadyState::Complete) {
+            auto now = AK::MonotonicTime::now();
+            auto since_last = now - navigable->last_paint_monotonic_time();
+            if (since_last >= AK::Duration::from_milliseconds(500))
+                force_paint_for_rinos = true;
+        }
+        if (!navigable->needs_repaint() && !force_paint_for_rinos)
+            continue;
+        if (force_paint_for_rinos && !navigable->needs_repaint()) {
+            static uint64_t s_hb_seq = 0;
+            s_hb_seq++;
+            if (s_hb_seq <= 5 || (s_hb_seq & 0x1F) == 0) {
+                char buf[128];
+                int n = snprintf(buf, sizeof(buf),
+                                 "[EventLoop] rinos heartbeat paint seq=%llu readiness=%d\n",
+                                 (unsigned long long)s_hb_seq,
+                                 static_cast<int>(document->readiness()));
+                if (n > 0) write(2, buf, static_cast<size_t>(n));
+            }
+            navigable->set_needs_repaint();
+        }
+#else
         if (!navigable->needs_repaint())
             continue;
+#endif
         navigable->paint_next_frame();
     }
+
+#ifdef AK_OS_RINOS
+    // P2-2: not_fully_active な document でも、top-level traversable navigable に
+    // なっているなら 500ms 毎に heartbeat paint を強制する。
+    // load finish 直後に is_fully_active()=false に落ちる navigable が観測されるので、
+    // そのまま何も描画しないと「白いまま永遠」になる。
+    // 主パスで既に塗られた navigable は needs_repaint() が落ちているので二重描画しない。
+    {
+        static uint64_t s_fallback_hb_seq = 0;
+        for (auto& navigable : all_navigables()) {
+            if (!navigable->is_traversable())
+                continue;
+            if (!navigable->is_top_level_traversable())
+                continue;
+            auto doc_ptr = navigable->active_document();
+            auto* doc = doc_ptr.ptr();
+            if (!doc)
+                continue;
+            // Skip if the doc was already rendered in the main pass (fully_active docs)
+            bool already_rendered = false;
+            for (auto& d : docs) {
+                if (d.ptr() == doc) { already_rendered = true; break; }
+            }
+            if (already_rendered)
+                continue;
+
+            // We only rescue top-level navigables whose active doc was skipped
+            // by the fully_active filter. 500ms heartbeat.
+            auto now = AK::MonotonicTime::now();
+            auto since_last = now - navigable->last_paint_monotonic_time();
+            if (since_last < AK::Duration::from_milliseconds(500))
+                continue;
+
+            s_fallback_hb_seq++;
+            if (s_fallback_hb_seq <= 5 || (s_fallback_hb_seq & 0x1F) == 0) {
+                char buf[192];
+                int n = snprintf(buf, sizeof(buf),
+                                 "[EventLoop] rinos fallback_heartbeat seq=%llu readiness=%d fully_active=%d\n",
+                                 (unsigned long long)s_fallback_hb_seq,
+                                 static_cast<int>(doc->readiness()),
+                                 doc->is_fully_active() ? 1 : 0);
+                if (n > 0) write(2, buf, static_cast<size_t>(n));
+            }
+            navigable->set_needs_repaint();
+            navigable->paint_next_frame();
+        }
+    }
+#endif
 
     // 23. For each doc of docs, process top layer removals given doc.
     for (auto& document : docs) {

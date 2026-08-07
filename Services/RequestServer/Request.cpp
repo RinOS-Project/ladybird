@@ -190,8 +190,30 @@ void Request::notify_retrieved_http_cookie(Badge<ConnectionFromClient>, StringVi
         m_request_headers->append(move(header));
     }
 
+#if defined(AK_OS_RINOS)
+    // Stage 3-A: \u4e26\u5217\u767a\u884c\u3057\u305f Cookie IPC \u306e\u5e30\u308a\u3002DNS \u3082\u5b8c\u4e86\u3057\u3066\u3044\u308c\u3070 Fetch \u3078\u3002
+    m_cookie_pending = false;
+    // DNS \u30a8\u30e9\u30fc\u7b49\u3067\u65e2\u306b Error \u306b\u9077\u79fb\u6e08\u307f\u306a\u3089\u30ce\u30fc\u30aa\u30d7\u3002
+    if (m_state == State::DNSLookup || m_state == State::RetrieveCookie) {
+        maybe_advance_from_parallel();
+    }
+#else
+    transition_to_state(State::Fetch);
+#endif
+}
+
+#if defined(AK_OS_RINOS)
+void Request::maybe_advance_from_parallel()
+{
+    if (m_dns_pending || m_cookie_pending)
+        return;
+    // DNS \u306b\u5931\u6557\u3057\u3066\u3044\u308c\u3070 m_dns_result \u304c\u7a7a\u306e\u307e\u307e Error \u306b\u9077\u79fb\u6e08\u307f\u3002\u305d\u306e\u5834\u5408\u306f\u4f55\u3082\u3057\u306a\u3044\u3002
+    if (m_state != State::DNSLookup && m_state != State::RetrieveCookie)
+        return;
+    rs_serial("[RS] parallel DNS+cookie done, -> Fetch\n");
     transition_to_state(State::Fetch);
 }
+#endif
 
 void Request::notify_fetch_complete(Badge<ConnectionFromClient>, int result_code)
 {
@@ -474,22 +496,56 @@ void Request::handle_dns_lookup_state()
     auto host = m_url.serialized_host().to_byte_string();
     auto const& dns_info = DNSInfo::the();
 
+#if defined(AK_OS_RINOS)
+    // Stage 3-A: DNS \u3068 Cookie IPC \u3092\u4e26\u5217\u767a\u884c\u3002RetrieveCookie \u72b6\u614b\u306f\u30b9\u30ad\u30c3\u30d7\u3059\u308b\u3002
+    // \u30b3\u30f3\u30c6\u30f3\u30c4\u4ed8\u304d\u30a4\u30d9\u30f3\u30c8\u3067\u306f Cookie IPC \u306e\u5f80\u5fa9\u3067 200\uff5e500ms \u304b\u304b\u308b\u3053\u3068\u304c\u3042\u308a\u3001
+    // DNS \u89e3\u6c7a\u3068\u540c\u6642\u306b\u8d70\u3089\u305b\u308b\u3068 1 \u30ea\u30bd\u30fc\u30b9\u5f53\u305f\u308a\u6570\u767e ms \u524a\u6e1b\u3067\u304d\u308b\u3002
+    if (first_is_one_of(m_type, Type::Fetch, Type::BackgroundRevalidation)
+        && m_include_credentials == HTTP::Cookie::IncludeCredentials::Yes) {
+        if (auto connection = ConnectionFromClient::primary_connection(); connection.has_value()) {
+            rs_serial("[RS] parallel: cookie IPC sent (in-flight with DNS)\n");
+            m_cookie_pending = true;
+            connection->async_retrieve_http_cookie(m_client.client_id(), m_request_id, m_url);
+        } else {
+            rs_serial("[RS] parallel: no primary connection; skipping cookie\n");
+        }
+    }
+    m_dns_pending = true;
+#endif
+
     m_resolver->dns.lookup(host, DNS::Messages::Class::IN, { DNS::Messages::ResourceType::A, DNS::Messages::ResourceType::AAAA }, { .validate_dnssec_locally = dns_info.validate_dnssec_locally })
         ->when_rejected(weak_callback(*this, [host](auto& self, auto const& error) {
             dbgln("Request::handle_dns_lookup_state: DNS lookup failed for '{}': {}", host, error);
+#if defined(AK_OS_RINOS)
+            self.m_dns_pending = false;
+#endif
             self.m_network_error = Requests::NetworkError::UnableToResolveHost;
             self.transition_to_state(State::Error);
         }))
         .when_resolved(weak_callback(*this, [host](auto& self, NonnullRefPtr<DNS::LookupResult const> dns_result) {
             if (dns_result->is_empty() || !dns_result->has_cached_addresses()) {
                 dbgln("Request::handle_dns_lookup_state: DNS lookup failed for '{}'", host);
+#if defined(AK_OS_RINOS)
+                self.m_dns_pending = false;
+#endif
                 self.m_network_error = Requests::NetworkError::UnableToResolveHost;
                 self.transition_to_state(State::Error);
             } else if (first_is_one_of(self.m_type, Type::Fetch, Type::BackgroundRevalidation)) {
+#if defined(AK_OS_RINOS)
+                rs_serial("[RS] DNS resolved (parallel); checking cookie status\n");
+                self.m_dns_result = move(dns_result);
+                self.m_dns_pending = false;
+                if (self.m_state == State::DNSLookup || self.m_state == State::RetrieveCookie)
+                    self.maybe_advance_from_parallel();
+#else
                 rs_serial("[RS] DNS resolved, transitioning to RetrieveCookie\n");
                 self.m_dns_result = move(dns_result);
                 self.transition_to_state(State::RetrieveCookie);
+#endif
             } else {
+#if defined(AK_OS_RINOS)
+                self.m_dns_pending = false;
+#endif
                 self.transition_to_state(State::Complete);
             }
         }));

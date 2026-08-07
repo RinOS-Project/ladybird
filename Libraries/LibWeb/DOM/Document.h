@@ -1206,6 +1206,12 @@ private:
     // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#throw-on-dynamic-markup-insertion-counter
     u32 m_throw_on_dynamic_markup_insertion_counter { 0 };
 
+#ifdef AK_OS_RINOS
+    // RinOS: document.write 呼び出し回数と累積バイト。暴走検出とパーサ監視のため。
+    u64 m_rin_document_write_calls { 0 };
+    u64 m_rin_document_write_bytes { 0 };
+#endif
+
     // https://html.spec.whatwg.org/multipage/semantics.html#script-blocking-style-sheet-set
     HashTable<GC::Ref<DOM::Element>> m_script_blocking_style_sheet_set;
 

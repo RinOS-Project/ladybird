@@ -52,6 +52,11 @@
 #include <LibWeb/SVG/SVGScriptElement.h>
 #include <LibWeb/SVG/TagNames.h>
 
+#ifdef AK_OS_RINOS
+#    include <stdio.h>
+#    include <unistd.h>
+#endif
+
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(HTMLParser);
@@ -208,6 +213,11 @@ void HTMLParser::run(HTMLTokenizer::StopAtInsertionPoint stop_at_insertion_point
 {
     m_stop_parsing = false;
 
+#ifdef AK_OS_RINOS
+    InsertionMode last_logged_mode = m_insertion_mode;
+    uint64_t tokens_processed_since_log = 0;
+#endif
+
     for (;;) {
         auto optional_token = m_tokenizer.next_token(stop_at_insertion_point);
         if (!optional_token.has_value())
@@ -215,6 +225,20 @@ void HTMLParser::run(HTMLTokenizer::StopAtInsertionPoint stop_at_insertion_point
         auto& token = optional_token.value();
 
         dbgln_if(HTML_PARSER_DEBUG, "[{}] {}", insertion_mode_name(), token.to_string());
+
+#ifdef AK_OS_RINOS
+        if (m_insertion_mode != last_logged_mode || tokens_processed_since_log == 0) {
+            char buf[192];
+            int n = snprintf(buf, sizeof(buf),
+                             "[Parser] insertion_mode=%s tokens_since_prev=%llu\n",
+                             insertion_mode_name(),
+                             (unsigned long long)tokens_processed_since_log);
+            if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+            last_logged_mode = m_insertion_mode;
+            tokens_processed_since_log = 0;
+        }
+        tokens_processed_since_log++;
+#endif
 
         if (m_next_line_feed_can_be_ignored) {
             m_next_line_feed_can_be_ignored = false;
@@ -1535,6 +1559,14 @@ void HTMLParser::handle_after_head(HTMLToken& token)
 
         // Switch the insertion mode to "in body".
         m_insertion_mode = InsertionMode::InBody;
+#ifdef AK_OS_RINOS
+        {
+            char buf[128];
+            int n = snprintf(buf, sizeof(buf),
+                             "[Parser] body inserted (explicit <body> tag), mode=InBody\n");
+            if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+        }
+#endif
         return;
     }
 
@@ -1597,6 +1629,14 @@ void HTMLParser::handle_after_head(HTMLToken& token)
 
         // Switch the insertion mode to "in body".
         m_insertion_mode = InsertionMode::InBody;
+#ifdef AK_OS_RINOS
+        {
+            char buf[128];
+            int n = snprintf(buf, sizeof(buf),
+                             "[Parser] body inserted (implicit - AfterHead AnythingElse), mode=InBody\n");
+            if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+        }
+#endif
 
         // Reprocess the current token.
         process_using_the_rules_for(m_insertion_mode, token);

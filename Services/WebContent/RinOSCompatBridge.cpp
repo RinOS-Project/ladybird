@@ -319,6 +319,13 @@ struct PageSession {
             crash_reason = {};
             waiting_for_first_paint_after_load_finish = false;
             metrics_dirty = true;
+            // P5-2: load 開始時点で DNS→HTTP 段階に入ると仮定。
+            load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_HTTP;
+            load_phase_started_ms = rin_time();
+            load_current_url_str = serialized;
+            load_resources_waiting = 0;
+            load_resources_total = 0;
+            load_suspected_stall = false;
             note_pending_load_started();
             kick_first_frame_if_needed("load-start"sv, true);
             auto message = ByteString::formatted("[webcontent] page {} load start {}\n", page_id, serialized);
@@ -336,12 +343,19 @@ struct PageSession {
                 progress_percent = 100;
                 pending_url = {};
                 waiting_for_first_paint_after_load_finish = false;
+                // P5-2: ロード完了 & 初回描画済み → COMPLETE
+                load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_COMPLETE;
+                load_phase_started_ms = rin_time();
+                load_suspected_stall = false;
             } else {
                 loading = true;
                 if (progress_percent < 95)
                     progress_percent = 95;
                 pending_url = serialized;
                 waiting_for_first_paint_after_load_finish = true;
+                // P5-2: load finish は来たが初回描画待ち → PAINT
+                load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_PAINT;
+                load_phase_started_ms = rin_time();
                 kick_first_frame_if_needed("load-finish-before-first-paint"sv, false);
             }
             auto message = ByteString::formatted("[webcontent] page {} load finish {}\n", page_id, serialized);
@@ -368,6 +382,26 @@ struct PageSession {
             if (!loading)
                 return;
             progress_percent = count_waiting > 0 ? 60 : 90;
+            // P5-2: resource 待機中 = SCRIPT/サブリソース取得フェーズ。
+            // 0 まで落ちたら Parse/Paint 近傍なので PARSE とみなす。
+            if (count_waiting > 0) {
+                if (load_phase_current != RIN_WEBCONTENT_LOAD_PHASE_SCRIPT) {
+                    load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_SCRIPT;
+                    load_phase_started_ms = rin_time();
+                }
+            } else {
+                if (load_phase_current != RIN_WEBCONTENT_LOAD_PHASE_PARSE
+                    && load_phase_current != RIN_WEBCONTENT_LOAD_PHASE_PAINT) {
+                    load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_PARSE;
+                    load_phase_started_ms = rin_time();
+                }
+            }
+            load_resources_waiting = count_waiting;
+            if (count_waiting > load_resources_total)
+                load_resources_total = count_waiting;
+            // 10 秒以上同じフェーズに居たら stall 疑い
+            if (load_phase_started_ms != 0 && rin_time() - load_phase_started_ms > 10000)
+                load_suspected_stall = true;
             mark_dirty();
         };
 
@@ -1124,6 +1158,23 @@ struct PageSession {
         copy_c_string(state.pending_url, sizeof(state.pending_url), pending_url);
         copy_c_string(state.title, sizeof(state.title), title);
         copy_c_string(state.crash_reason, sizeof(state.crash_reason), crash_reason);
+
+        // P5-2: ロードフェーズ情報を埋める
+        state.flags |= RIN_WEBCONTENT_STATE_FLAG_HAS_LOAD_PHASE;
+        state.load_phase = load_phase_current;
+        if (load_phase_started_ms != 0) {
+            auto now_ms = rin_time();
+            state.load_phase_elapsed_ms = (now_ms >= load_phase_started_ms)
+                ? static_cast<u32>(now_ms - load_phase_started_ms)
+                : 0;
+        }
+        state.load_bytes_received = 0;
+        state.load_bytes_total = 0;
+        state.load_scripts_pending = static_cast<u32>(max(load_resources_waiting, 0));
+        state.load_scripts_total = static_cast<u32>(max(load_resources_total, 0));
+        if (load_suspected_stall)
+            state.flags |= RIN_WEBCONTENT_STATE_FLAG_SUSPECTED_STALL;
+        copy_c_string(state.load_current_url, sizeof(state.load_current_url), load_current_url_str);
     }
 
     u32 page_id { 0 };
@@ -1138,6 +1189,14 @@ struct PageSession {
     bool dirty { true };
     bool metrics_dirty { true };
     int progress_percent { 0 };
+
+    // P5-2: ロード中フェーズのトラッキング
+    u32 load_phase_current { RIN_WEBCONTENT_LOAD_PHASE_NONE };
+    unsigned long load_phase_started_ms { 0 };
+    int load_resources_waiting { 0 };
+    int load_resources_total { 0 };
+    ByteString load_current_url_str;
+    bool load_suspected_stall { false };
     int scroll_x { 0 };
     int scroll_y { 0 };
     int max_scroll_x { 0 };

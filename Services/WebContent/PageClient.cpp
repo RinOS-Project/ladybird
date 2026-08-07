@@ -372,6 +372,71 @@ void PageClient::page_did_change_active_document_in_top_level_browsing_context(W
 
 void PageClient::page_did_finish_loading(URL::URL const& url)
 {
+#ifdef AK_OS_RINOS
+    {
+        // P1-4: load finish 時点の DOM / layout / readiness サマリを serial へ
+        auto& bc = page().top_level_browsing_context();
+        auto* doc = bc.active_document();
+        char url_buf[256];
+        auto url_str = url.to_byte_string();
+        size_t url_len = url_str.length();
+        if (url_len > sizeof(url_buf) - 1)
+            url_len = sizeof(url_buf) - 1;
+        __builtin_memcpy(url_buf, url_str.characters(), url_len);
+        url_buf[url_len] = '\0';
+
+        if (!doc) {
+            char buf[384];
+            int n = snprintf(buf, sizeof(buf),
+                             "[PageClient] load_finish_summary url=%s doc=null\n",
+                             url_buf);
+            if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+        } else {
+            auto* body_elem = doc->body();
+            size_t body_child_count = 0;
+            char first_child_tag[64] = {0};
+            if (body_elem) {
+                for (auto* child = body_elem->first_child(); child; child = child->next_sibling())
+                    body_child_count++;
+                if (body_elem->first_child()) {
+                    if (auto* elem = as_if<Web::DOM::Element>(*body_elem->first_child())) {
+                        auto local = elem->local_name().bytes_as_string_view();
+                        size_t l = local.length();
+                        if (l > sizeof(first_child_tag) - 1)
+                            l = sizeof(first_child_tag) - 1;
+                        __builtin_memcpy(first_child_tag, local.characters_without_null_termination(), l);
+                        first_child_tag[l] = '\0';
+                    } else {
+                        __builtin_memcpy(first_child_tag, "(non-element)", 14);
+                    }
+                }
+            }
+            auto* layout_root = doc->layout_node();
+            size_t layout_root_children = 0;
+            if (layout_root) {
+                for (auto* child = layout_root->first_child(); child; child = child->next_sibling())
+                    layout_root_children++;
+            }
+            int readiness = static_cast<int>(doc->readiness());
+            char const* readiness_name = readiness == 0 ? "Loading"
+                : readiness == 1 ? "Interactive"
+                : readiness == 2 ? "Complete"
+                : "?";
+            bool is_same_active = (bc.active_document() == doc);
+
+            char buf[512];
+            int n = snprintf(buf, sizeof(buf),
+                             "[PageClient] load_finish_summary url=%s doc=%p body=%p body_children=%zu "
+                             "first_child_tag=%s layout_root=%p layout_root_children=%zu "
+                             "readiness=%s same_active=%d\n",
+                             url_buf, (void*)doc, (void*)body_elem, body_child_count,
+                             first_child_tag[0] ? first_child_tag : "(none)",
+                             (void*)layout_root, layout_root_children,
+                             readiness_name, is_same_active ? 1 : 0);
+            if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+        }
+    }
+#endif
     client().async_did_finish_loading(m_id, url);
 }
 

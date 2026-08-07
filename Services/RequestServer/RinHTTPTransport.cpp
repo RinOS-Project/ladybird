@@ -13,6 +13,107 @@
 
 namespace RequestServer {
 
+// ============================================================
+// Stage 3-C: RinHTTPConnectionPool
+// \u540c\u4e00 origin \u3078\u306e\u9023\u7d9a HTTP \u30ea\u30af\u30a8\u30b9\u30c8\u3067 TCP + TLS \u30cf\u30f3\u30c9\u30b7\u30a7\u30a4\u30af\u3092\u7701\u304f\u305f\u3081\u306e
+// idle socket \u30ad\u30e3\u30c3\u30b7\u30e5\u3002scheme://host:port \u3054\u3068\u306b LRU \u3067\u6700\u5927 4 \u63a5\u7d9a\u3092\u4fdd\u6301\u3057\u3001
+// 30 \u79d2\u9593\u4f7f\u308f\u308c\u306a\u3044\u3068\u81ea\u52d5\u30af\u30ed\u30fc\u30ba\u3002
+// ============================================================
+
+RinHTTPConnectionPool& RinHTTPConnectionPool::the()
+{
+    static RinHTTPConnectionPool s_instance;
+    return s_instance;
+}
+
+ByteString RinHTTPConnectionPool::make_key(URL::URL const& url)
+{
+    auto host = url.serialized_host().to_byte_string();
+    auto port = url.port_or_default();
+    StringBuilder b;
+    b.appendff("{}://{}:{}", url.scheme(), host, port);
+    return b.to_byte_string();
+}
+
+OwnPtr<Core::BufferedSocketBase> RinHTTPConnectionPool::take(ByteString const& key)
+{
+    auto it = m_pools.find(key);
+    if (it == m_pools.end() || it->value.is_empty())
+        return {};
+    auto pooled = it->value.take_last();
+    if (pooled.idle_timer)
+        pooled.idle_timer->stop();
+    if (!pooled.socket) {
+        dbgln("[RinHTTPPool] take({}): found slot but socket is null", key);
+        return {};
+    }
+    if (pooled.socket->is_eof()) {
+        dbgln("[RinHTTPPool] take({}): socket is EOF, discarding", key);
+        return {};
+    }
+    dbgln("[RinHTTPPool] take({}): reusing idle socket (remaining={})", key, it->value.size());
+    return move(pooled.socket);
+}
+
+void RinHTTPConnectionPool::put(ByteString const& key, OwnPtr<Core::BufferedSocketBase> socket)
+{
+    if (!socket) {
+        dbgln("[RinHTTPPool] put({}): null socket, ignored", key);
+        return;
+    }
+    if (socket->is_eof()) {
+        dbgln("[RinHTTPPool] put({}): socket already EOF, not pooling", key);
+        return;
+    }
+
+    // \u6d41\u308c\u3066\u304d\u305f\u30d0\u30a4\u30c8\u3092\u898b\u306a\u3044\u3088\u3046\u306b on_ready_to_read \u3092\u5916\u3059\u3002
+    socket->on_ready_to_read = nullptr;
+
+    auto& slots = m_pools.ensure(key);
+    if (slots.size() >= MAX_PER_HOST) {
+        // LRU: \u53e4\u3044\u65b9 (vector \u5148\u982d) \u3092\u7834\u68c4\u3002
+        dbgln("[RinHTTPPool] put({}): pool full ({}), evicting oldest", key, slots.size());
+        slots.remove(0);
+    }
+
+    PooledSocket pooled;
+    pooled.socket = move(socket);
+    auto key_copy = key;
+    pooled.idle_timer = Core::Timer::create_single_shot(IDLE_TIMEOUT_MS, [this, key_copy]() mutable {
+        auto it = m_pools.find(key_copy);
+        if (it == m_pools.end())
+            return;
+        // \u30bf\u30a4\u30e0\u30a2\u30a6\u30c8\u3057\u305f idle_timer \u3068\u4e00\u81f4\u3059\u308b\u30a8\u30f3\u30c8\u30ea\u3092\u524a\u9664\u3059\u308b\u3002
+        // \u7c21\u6613\u5b9f\u88c5: \u5148\u982d (\u6700\u53e4) \u3092\u843d\u3068\u3059\u3002
+        if (!it->value.is_empty()) {
+            it->value.remove(0);
+            dbgln("[RinHTTPPool] idle timeout({}): dropped one, remaining={}", key_copy, it->value.size());
+        }
+        if (it->value.is_empty())
+            m_pools.remove(it);
+    });
+    pooled.idle_timer->start();
+    slots.append(move(pooled));
+    dbgln("[RinHTTPPool] put({}): pooled, total={}", key, slots.size());
+}
+
+void RinHTTPConnectionPool::evict_all(ByteString const& key)
+{
+    auto it = m_pools.find(key);
+    if (it == m_pools.end())
+        return;
+    for (auto& pooled : it->value) {
+        if (pooled.idle_timer)
+            pooled.idle_timer->stop();
+    }
+    m_pools.remove(it);
+    dbgln("[RinHTTPPool] evict_all({})", key);
+}
+
+// ============================================================
+// RinHTTPFetch
+// ============================================================
+
 RinHTTPFetch::RinHTTPFetch()
     : m_start_time(MonotonicTime::now())
 {
@@ -54,28 +155,40 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     auto port = url.port_or_default();
     bool is_https = url.scheme() == "https"sv;
 
-    // Build SocketAddress from DNS result
-    auto const& addresses = dns_result->cached_addresses();
-    Core::SocketAddress socket_address = addresses.first().visit(
-        [&](IPv4Address const& v4) -> Core::SocketAddress { return { v4, port }; },
-        [&](IPv6Address const& v6) -> Core::SocketAddress { return { v6, port }; });
-
-    if (is_https) {
-        TLS::Options tls_options;
-        if (auto const& cert_path = default_certificate_path(); !cert_path.is_empty())
-            tls_options.root_certificates_path = cert_path;
-
-        auto tls_socket = TRY(TLS::TLSv12::connect(socket_address, host, move(tls_options)));
+    // Stage 3-C: \u30d7\u30fc\u30eb\u304b\u3089 idle socket \u3092\u53d6\u308a\u51fa\u305b\u306a\u3044\u304b\u8a66\u3059\u3002
+    fetch->m_pool_key = RinHTTPConnectionPool::make_key(url);
+    if (auto pooled = RinHTTPConnectionPool::the().take(fetch->m_pool_key)) {
+        dbgln("[RinHTTP] reusing pooled socket for {}", fetch->m_pool_key);
+        fetch->m_socket = move(pooled);
+        fetch->m_reused_from_pool = true;
+        // \u30cf\u30f3\u30c9\u30b7\u30a7\u30a4\u30af\u3092\u98db\u3070\u3057\u305f\u306e\u3067 connect / secure_connect \u306f 0 \u6271\u3044\u3002
         fetch->m_connect_end_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
-        fetch->m_secure_connect_start_us = fetch->m_connect_end_us;
-
-        fetch->m_socket = TRY(Core::BufferedSocket<TLS::TLSv12>::create(move(tls_socket)));
+        if (is_https)
+            fetch->m_secure_connect_start_us = fetch->m_connect_end_us;
     } else {
-        auto tcp_socket = TRY(Core::TCPSocket::connect(socket_address));
-        TRY(tcp_socket->set_blocking(false));
-        fetch->m_connect_end_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
+        // Build SocketAddress from DNS result
+        auto const& addresses = dns_result->cached_addresses();
+        Core::SocketAddress socket_address = addresses.first().visit(
+            [&](IPv4Address const& v4) -> Core::SocketAddress { return { v4, port }; },
+            [&](IPv6Address const& v6) -> Core::SocketAddress { return { v6, port }; });
 
-        fetch->m_socket = TRY(Core::BufferedTCPSocket::create(move(tcp_socket)));
+        if (is_https) {
+            TLS::Options tls_options;
+            if (auto const& cert_path = default_certificate_path(); !cert_path.is_empty())
+                tls_options.root_certificates_path = cert_path;
+
+            auto tls_socket = TRY(TLS::TLSv12::connect(socket_address, host, move(tls_options)));
+            fetch->m_connect_end_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
+            fetch->m_secure_connect_start_us = fetch->m_connect_end_us;
+
+            fetch->m_socket = TRY(Core::BufferedSocket<TLS::TLSv12>::create(move(tls_socket)));
+        } else {
+            auto tcp_socket = TRY(Core::TCPSocket::connect(socket_address));
+            TRY(tcp_socket->set_blocking(false));
+            fetch->m_connect_end_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
+
+            fetch->m_socket = TRY(Core::BufferedTCPSocket::create(move(tcp_socket)));
+        }
     }
 
     // Send request
@@ -298,6 +411,10 @@ void RinHTTPFetch::process_line_buffered(ReadonlyBytes data)
                     } else if (name.equals_ignoring_ascii_case("transfer-encoding"sv)) {
                         if (value.contains("chunked"sv, CaseSensitivity::CaseInsensitive))
                             m_chunked_encoding = true;
+                    } else if (name.equals_ignoring_ascii_case("connection"sv)) {
+                        // Stage 3-C: Connection: close \u304c\u4ed8\u3044\u3066\u3044\u308c\u3070\u3053\u306e socket \u306f\u30d7\u30fc\u30eb\u4e0d\u53ef\u3002
+                        if (value.contains("close"sv, CaseSensitivity::CaseInsensitive))
+                            m_response_connection_close = true;
                     }
                 }
             }
@@ -393,10 +510,18 @@ void RinHTTPFetch::process_chunked_data(ReadonlyBytes data)
 
 void RinHTTPFetch::finish_with_error(int code)
 {
-    dbgln("[RinHTTP] finish_with_error code={} state={} body={}/{}",
-        code, (int)m_response_state, m_body_bytes_received, m_content_length);
+    dbgln("[RinHTTP] finish_with_error code={} state={} body={}/{} reused={}",
+        code, (int)m_response_state, m_body_bytes_received, m_content_length, m_reused_from_pool);
     m_response_state = ResponseState::Error;
     m_response_end_us = (MonotonicTime::now() - m_start_time).to_microseconds();
+
+    // Stage 3-C: \u30d7\u30fc\u30eb\u304b\u3089\u53d6\u308a\u51fa\u3057\u305f socket \u304c\u5931\u6557\u3057\u305f\u306a\u3089\u3001
+    // \u540c\u4e00\u30db\u30b9\u30c8\u306e\u4ed6\u306e idle socket \u3082\u5207\u3089\u308c\u3066\u3044\u308b\u53ef\u80fd\u6027\u304c\u9ad8\u3044\u306e\u3067\u5168\u6383\u3059\u308b\u3002
+    if (m_reused_from_pool && !m_pool_key.is_empty()) {
+        dbgln("[RinHTTP] pooled socket reuse failed, evicting pool for {}", m_pool_key);
+        RinHTTPConnectionPool::the().evict_all(m_pool_key);
+    }
+
     cancel();
     if (on_complete)
         on_complete(code);
@@ -404,7 +529,8 @@ void RinHTTPFetch::finish_with_error(int code)
 
 void RinHTTPFetch::finish_success()
 {
-    dbgln("[RinHTTP] finish_success body={} status={}", m_body_bytes_received, m_status_code);
+    dbgln("[RinHTTP] finish_success body={} status={} conn_close={} reused={}",
+        m_body_bytes_received, m_status_code, m_response_connection_close, m_reused_from_pool);
     m_response_state = ResponseState::Complete;
     m_response_end_us = (MonotonicTime::now() - m_start_time).to_microseconds();
     if (m_timeout_timer) {
@@ -415,6 +541,22 @@ void RinHTTPFetch::finish_success()
         m_idle_timer->stop();
         m_idle_timer = nullptr;
     }
+
+    // Stage 3-C: \u30d7\u30fc\u30eb\u304c\u898b\u308b\u306e\u306f \"\u30ec\u30b9\u30dd\u30f3\u30b9\u30dc\u30c7\u30a3\u304c\u30ad\u30ea\u898b\u3048\u3066\u3044\u308b\" \u304b\u3064
+    // \"\u30b5\u30fc\u30d0\u304c Connection: close \u3092\u9001\u3063\u3066\u3044\u306a\u3044\" \u3068\u304d\u306e\u307f\u3002
+    // Content-Length \u4ed8\u304d\u304b chunked encoding \u7d42\u4e86\u3057\u305f\u5834\u5408\u306e\u307f\u5b89\u5168\u306b\u4fdd\u7559\u3067\u304d\u308b\u3002
+    bool can_pool = m_socket
+        && !m_response_connection_close
+        && !m_pool_key.is_empty()
+        && (m_has_content_length || m_chunked_encoding)
+        && !m_socket->is_eof();
+
+    if (can_pool) {
+        auto key = m_pool_key;
+        auto socket = move(m_socket);
+        RinHTTPConnectionPool::the().put(key, move(socket));
+    }
+
     if (on_complete)
         on_complete(0);
 }

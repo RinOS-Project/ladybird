@@ -16,7 +16,6 @@
 
 #if defined(AK_OS_RINOS) && defined(RIN_FREESTANDING)
 #    include <stdint.h>
-#    define RIN_SYS_SERIAL_PRINT 110
 static inline void rin_print_error(char const* s)
 {
     if (!s)

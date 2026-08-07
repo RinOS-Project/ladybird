@@ -781,6 +781,27 @@ WebIDL::ExceptionOr<void> Document::run_the_document_write_steps(Vector<TrustedT
     // 10. Insert string into the input stream just before the insertion point.
     m_parser->tokenizer().insert_input_at_insertion_point(string.string_view());
 
+#ifdef AK_OS_RINOS
+    {
+        auto sv = string.string_view();
+        m_rin_document_write_calls++;
+        m_rin_document_write_bytes += sv.length();
+        // 最初の 10 回は毎回、それ以降は 50 回毎 / 1 MiB 毎に出力
+        bool should_log = m_rin_document_write_calls <= 10
+            || (m_rin_document_write_calls % 50) == 0
+            || (m_rin_document_write_bytes >> 20) != ((m_rin_document_write_bytes - sv.length()) >> 20);
+        if (should_log) {
+            char buf[192];
+            int n = snprintf(buf, sizeof(buf),
+                             "[DocumentWrite] calls=%llu bytes=%llu this_len=%zu\n",
+                             (unsigned long long)m_rin_document_write_calls,
+                             (unsigned long long)m_rin_document_write_bytes,
+                             sv.length());
+            if (n > 0) ::write(2, buf, static_cast<size_t>(n));
+        }
+    }
+#endif
+
     // 11. If document's pending parsing-blocking script is null, then have the HTML parser process string, one code
     //     point at a time, processing resulting tokens as they are emitted, and stopping when the tokenizer reaches
     //     the insertion point or when the processing of the tokenizer is aborted by the tree construction stage (this

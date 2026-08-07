@@ -9,6 +9,7 @@
 
 #include <AK/HashTable.h>
 #include <AK/String.h>
+#include <AK/Time.h>
 #include <AK/Tuple.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibWeb/Bindings/NavigationPrototype.h>
@@ -223,6 +224,11 @@ public:
     bool needs_repaint() const { return m_needs_repaint; }
     void set_needs_repaint() { m_needs_repaint = true; }
 
+#ifdef AK_OS_RINOS
+    AK::MonotonicTime last_paint_monotonic_time() const { return m_last_paint_monotonic_time; }
+    void note_paint_completed() { m_last_paint_monotonic_time = AK::MonotonicTime::now(); }
+#endif
+
     [[nodiscard]] bool has_inclusive_ancestor_with_visibility_hidden() const;
 
     RenderingThread& rendering_thread() { return m_rendering_thread; }
@@ -303,6 +309,10 @@ private:
     bool m_should_show_line_box_borders { false };
     GC::Ref<Painting::BackingStoreManager> m_backing_store_manager;
     RenderingThread m_rendering_thread;
+
+#ifdef AK_OS_RINOS
+    AK::MonotonicTime m_last_paint_monotonic_time { AK::MonotonicTime::now() };
+#endif
 };
 
 struct PopulateSessionHistoryEntryDocumentOutput final : public JS::Cell {

@@ -6,9 +6,11 @@
 
 #ifdef AK_OS_RINOS
 #include <unistd.h>
+#include <stdio.h>
 static void rt_serial(const char* msg) { write(2, msg, __builtin_strlen(msg)); }
 #endif
 #include <LibCore/EventLoop.h>
+#include <LibGfx/Bitmap.h>
 #include <LibGfx/PaintingSurface.h>
 #include <LibThreading/Thread.h>
 #include <LibWeb/HTML/RenderingThread.h>
@@ -186,6 +188,55 @@ public:
                     rt_serial("[RenderingThread] RASTERIZING frame\n");
 #endif
                     m_display_list_player->execute(*m_cached_display_list, Painting::ScrollStateSnapshotByDisplayList(m_cached_scroll_state_snapshot), *m_backing_stores.back_store);
+#ifdef AK_OS_RINOS
+                    // P1-5 / P4-1: ラスタライズ直後の back_store からサンプルピクセルを
+                    // 読み出し、全白か非白かを判定する。SHM 書き込み側 (WebContent 側)
+                    // の描画結果を直接確認するのが目的。
+                    {
+                        static uint64_t s_rasterize_seq = 0;
+                        s_rasterize_seq++;
+                        bool should_sample = (s_rasterize_seq <= 5) || (s_rasterize_seq % 20 == 0);
+                        if (should_sample) {
+                            auto* bmp = m_backing_stores.back_store->bitmap();
+                            if (bmp && bmp->width() > 0 && bmp->height() > 0) {
+                                int w = bmp->width();
+                                int h = bmp->height();
+                                auto read_pixel = [&](int x, int y) -> uint32_t {
+                                    if (x < 0) x = 0;
+                                    if (y < 0) y = 0;
+                                    if (x >= w) x = w - 1;
+                                    if (y >= h) y = h - 1;
+                                    return bmp->get_pixel(x, y).value();
+                                };
+                                uint32_t p_center = read_pixel(w / 2, h / 2);
+                                uint32_t p_tl     = read_pixel(8, 8);
+                                uint32_t p_tr     = read_pixel(w - 8, 8);
+                                uint32_t p_bl     = read_pixel(8, h - 8);
+                                uint32_t p_br     = read_pixel(w - 8, h - 8);
+                                uint32_t p_q1     = read_pixel(w / 4, h / 4);
+                                uint32_t p_q2     = read_pixel(w * 3 / 4, h / 4);
+                                uint32_t p_q3     = read_pixel(w / 4, h * 3 / 4);
+                                uint32_t p_q4     = read_pixel(w * 3 / 4, h * 3 / 4);
+                                int all_white = (p_center == 0xFFFFFFFFu && p_tl == 0xFFFFFFFFu
+                                                 && p_tr == 0xFFFFFFFFu && p_bl == 0xFFFFFFFFu
+                                                 && p_br == 0xFFFFFFFFu && p_q1 == 0xFFFFFFFFu
+                                                 && p_q2 == 0xFFFFFFFFu && p_q3 == 0xFFFFFFFFu
+                                                 && p_q4 == 0xFFFFFFFFu) ? 1 : 0;
+                                char buf[320];
+                                int n = snprintf(buf, sizeof(buf),
+                                                 "[RenderingThread] pixel_sample seq=%llu size=%dx%d "
+                                                 "center=%08x tl=%08x tr=%08x bl=%08x br=%08x "
+                                                 "q=[%08x,%08x,%08x,%08x] all_white=%d\n",
+                                                 (unsigned long long)s_rasterize_seq, w, h,
+                                                 p_center, p_tl, p_tr, p_bl, p_br,
+                                                 p_q1, p_q2, p_q3, p_q4, all_white);
+                                if (n > 0) write(2, buf, static_cast<size_t>(n));
+                            } else {
+                                rt_serial("[RenderingThread] pixel_sample: bitmap null or empty\n");
+                            }
+                        }
+                    }
+#endif
                     i32 rendered_bitmap_id = m_backing_stores.back_bitmap_id;
                     m_backing_stores.swap();
 
