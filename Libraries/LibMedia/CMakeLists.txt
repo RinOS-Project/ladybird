@@ -1,7 +1,5 @@
-if (NOT AK_OS_RINOS)
-    include(audio)
-    include(ffmpeg)
-endif()
+include(audio)
+include(ffmpeg)
 
 set(SOURCES
     Containers/Matroska/MatroskaDemuxer.cpp
@@ -23,26 +21,23 @@ set(SOURCES
 ladybird_lib(LibMedia media EXPLICIT_SYMBOL_EXPORT)
 target_link_libraries(LibMedia PRIVATE LibCore LibCrypto LibIPC LibGfx LibThreading LibUnicode)
 
-if (NOT AK_OS_RINOS)
-    target_sources(LibMedia PRIVATE
-            FFmpeg/FFmpegAudioConverter.cpp
-            FFmpeg/FFmpegAudioDecoder.cpp
-            FFmpeg/FFmpegDemuxer.cpp
-            FFmpeg/FFmpegHelpers.cpp
-            FFmpeg/FFmpegIOContext.cpp
-            FFmpeg/FFmpegVideoDecoder.cpp
-    )
+target_sources(LibMedia PRIVATE
+        FFmpeg/FFmpegAudioConverter.cpp
+        FFmpeg/FFmpegAudioDecoder.cpp
+        FFmpeg/FFmpegDemuxer.cpp
+        FFmpeg/FFmpegHelpers.cpp
+        FFmpeg/FFmpegIOContext.cpp
+        FFmpeg/FFmpegVideoDecoder.cpp
+)
 
-    if (NOT ANDROID)
-        target_link_libraries(LibMedia PRIVATE PkgConfig::AVCODEC PkgConfig::AVFORMAT PkgConfig::AVUTIL PkgConfig::LIBSWRESAMPLE)
-    else()
-        target_include_directories(LibMedia PRIVATE ${FFMPEG_INCLUDE_DIRS})
-        target_link_directories(LibMedia PRIVATE ${FFMPEG_LIBRARY_DIRS})
-        target_link_libraries(LibMedia PRIVATE ${FFMPEG_LIBRARIES})
-    endif()
+if (AK_OS_RINOS)
+    target_link_libraries(LibMedia PRIVATE FFmpeg::avcodec FFmpeg::avformat FFmpeg::avutil FFmpeg::swresample)
+elseif (NOT ANDROID)
+    target_link_libraries(LibMedia PRIVATE PkgConfig::AVCODEC PkgConfig::AVFORMAT PkgConfig::AVUTIL PkgConfig::LIBSWRESAMPLE)
 else()
-    # RinOS: media=off, FFmpeg excluded
-    message(STATUS "RinOS policy: FFmpeg/media sources excluded from LibMedia.")
+    target_include_directories(LibMedia PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_directories(LibMedia PRIVATE ${FFMPEG_LIBRARY_DIRS})
+    target_link_libraries(LibMedia PRIVATE ${FFMPEG_LIBRARIES})
 endif()
 
 if (LADYBIRD_AUDIO_BACKEND STREQUAL "PULSE")
@@ -58,6 +53,8 @@ elseif (LADYBIRD_AUDIO_BACKEND STREQUAL "AUDIO_UNIT")
 elseif(LADYBIRD_AUDIO_BACKEND STREQUAL "WASAPI")
     target_sources(LibMedia PRIVATE Audio/PlaybackStreamWasapi.cpp)
     target_link_libraries(LibMedia PRIVATE ole32 avrt winmm)
+elseif(LADYBIRD_AUDIO_BACKEND STREQUAL "RINOS")
+    target_sources(LibMedia PRIVATE Audio/PlaybackStreamRinOS.cpp)
 elseif (DEFINED LADYBIRD_AUDIO_BACKEND)
     message(FATAL_ERROR "Please update ${CMAKE_CURRENT_LIST_FILE} for audio backend ${LADYBIRD_AUDIO_BACKEND}")
 else ()

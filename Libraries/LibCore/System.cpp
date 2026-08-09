@@ -385,7 +385,8 @@ ErrorOr<pid_t> spawn_process(StringView path, char* const arguments[], char* con
         arguments,
         envp,
         takeover_fd,
-        takeover_name_string.characters());
+        takeover_name_string.characters(),
+        0u);
     if (pid < 0)
         return Error::from_syscall("spawn_process"sv, errno);
     return static_cast<pid_t>(pid);

@@ -31,6 +31,8 @@ namespace Web {
 
 #if defined(AK_OS_SERENITY)
 #    define OS_STRING "SerenityOS"
+#elif defined(AK_OS_RINOS)
+#    define OS_STRING "RinOS"
 #elif defined(AK_OS_ANDROID)
 #    define OS_STRING "Android 10"
 #elif defined(AK_OS_LINUX)

@@ -12,7 +12,7 @@
 #include <AK/UFixedBigInt.h>
 #include <AK/UFixedBigIntDivision.h>
 
-#if defined(AK_OS_LINUX)
+#if defined(AK_OS_LINUX) || defined(AK_OS_RINOS)
 #    include <sys/random.h>
 #endif
 
@@ -27,7 +27,7 @@ static inline ErrorOr<void> csprng(void* const buf, size_t size)
 #if defined(AK_OS_SERENITY) || defined(AK_OS_ANDROID) || defined(AK_OS_BSD_GENERIC) || defined(AK_OS_HAIKU) || AK_LIBC_GLIBC_PREREQ(2, 36)
     // This target also covers MacOS and iOS and they both seem to support arc4random_buf
     arc4random_buf(buf, size);
-#elif defined(AK_OS_LINUX)
+#elif defined(AK_OS_LINUX) || defined(AK_OS_RINOS)
     unsigned char* out = (unsigned char*)buf;
     while (size > 0u) {
         // EINTR can be handled safely by just trying again. Others are fatal

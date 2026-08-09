@@ -10,6 +10,7 @@
 #include <AK/StdLibExtras.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
+#include <AK/Time.h>
 #include <AK/Vector.h>
 #include <LibCore/AnonymousBuffer.h>
 #include <LibCore/EventLoop.h>
@@ -53,9 +54,14 @@ class BridgeApplication;
 struct PageSession;
 static PageSession* find_page(u32 page_id);
 
-static constexpr unsigned long s_load_start_retry_interval_ms = 250;
-static constexpr unsigned long s_load_start_retry_budget_ms = 10000;
+static constexpr u64 s_load_start_retry_interval_ms = 250;
+static constexpr u64 s_load_start_retry_budget_ms = 10000;
 static constexpr u32 s_load_start_retry_limit = 40;
+
+static u64 monotonic_time_ms()
+{
+    return static_cast<u64>(MonotonicTime::now_coarse().milliseconds());
+}
 
 static bool is_browser_builtin_url(StringView url)
 {
@@ -321,7 +327,7 @@ struct PageSession {
             metrics_dirty = true;
             // P5-2: load 開始時点で DNS→HTTP 段階に入ると仮定。
             load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_HTTP;
-            load_phase_started_ms = rin_time();
+            load_phase_started_ms = monotonic_time_ms();
             load_current_url_str = serialized;
             load_resources_waiting = 0;
             load_resources_total = 0;
@@ -359,7 +365,7 @@ struct PageSession {
                 waiting_for_first_paint_after_load_finish = false;
                 // P5-2: ロード完了 & 初回描画済み → COMPLETE
                 load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_COMPLETE;
-                load_phase_started_ms = rin_time();
+                load_phase_started_ms = monotonic_time_ms();
                 load_suspected_stall = false;
             } else {
                 loading = true;
@@ -369,7 +375,7 @@ struct PageSession {
                 waiting_for_first_paint_after_load_finish = true;
                 // P5-2: load finish は来たが初回描画待ち → PAINT
                 load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_PAINT;
-                load_phase_started_ms = rin_time();
+                load_phase_started_ms = monotonic_time_ms();
                 kick_first_frame_if_needed("load-finish-before-first-paint"sv, false);
             }
             auto message = ByteString::formatted("[webcontent] page {} load finish {}\n", page_id, serialized);
@@ -401,20 +407,20 @@ struct PageSession {
             if (count_waiting > 0) {
                 if (load_phase_current != RIN_WEBCONTENT_LOAD_PHASE_SCRIPT) {
                     load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_SCRIPT;
-                    load_phase_started_ms = rin_time();
+                    load_phase_started_ms = monotonic_time_ms();
                 }
             } else {
                 if (load_phase_current != RIN_WEBCONTENT_LOAD_PHASE_PARSE
                     && load_phase_current != RIN_WEBCONTENT_LOAD_PHASE_PAINT) {
                     load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_PARSE;
-                    load_phase_started_ms = rin_time();
+                    load_phase_started_ms = monotonic_time_ms();
                 }
             }
             load_resources_waiting = count_waiting;
             if (count_waiting > load_resources_total)
                 load_resources_total = count_waiting;
             // 10 秒以上同じフェーズに居たら stall 疑い
-            if (load_phase_started_ms != 0 && rin_time() - load_phase_started_ms > 10000)
+            if (load_phase_started_ms != 0 && monotonic_time_ms() - load_phase_started_ms > 10000)
                 load_suspected_stall = true;
             mark_dirty();
         };
@@ -626,7 +632,7 @@ struct PageSession {
         pending_load_kind = kind;
         pending_load_target_url = move(target_url);
         pending_load_markup = move(markup);
-        pending_load_requested_ms = rin_time();
+        pending_load_requested_ms = monotonic_time_ms();
     }
 
     bool dispatch_pending_load_request(bool replay)
@@ -660,7 +666,7 @@ struct PageSession {
             rin_log(wait_message.characters());
         }
 
-        pending_load_last_dispatch_ms = rin_time();
+        pending_load_last_dispatch_ms = monotonic_time_ms();
         if (replay)
             ++pending_load_retry_count;
 
@@ -695,7 +701,7 @@ struct PageSession {
         if (!is_waiting_for_load_start())
             return;
 
-        auto now = rin_time();
+        auto now = monotonic_time_ms();
         // ViewImplementation can be constructed before the cold WebContent
         // process has initialized its rendering thread. Navigation IPC sent in
         // that interval is not actionable. Backing-store allocation is the
@@ -773,14 +779,14 @@ struct PageSession {
 
         if (!first_frame_pending || reset_timer || first_frame_started_ms == 0) {
             first_frame_pending = true;
-            first_frame_started_ms = rin_time();
+            first_frame_started_ms = monotonic_time_ms();
             first_frame_kick_count = 0;
             logged_missing_visible_bitmap = false;
             navigation_paint_revision_baseline = paint_revision;
         }
 
         ++first_frame_kick_count;
-        last_first_frame_kick_ms = rin_time();
+        last_first_frame_kick_ms = monotonic_time_ms();
         view->reset_viewport_size({ requested_viewport_width, requested_viewport_height });
         metrics_dirty = true;
         mark_dirty();
@@ -803,7 +809,7 @@ struct PageSession {
             maybe_replay_pending_load_request();
 
         bool waiting_for_load_start = is_waiting_for_load_start();
-        auto now_ms = rin_time();
+        auto now_ms = monotonic_time_ms();
         if (!waiting_for_load_start
             && !has_first_paint_for_active_navigation()
             && first_frame_pending
@@ -1220,7 +1226,7 @@ struct PageSession {
         state.flags |= RIN_WEBCONTENT_STATE_FLAG_HAS_LOAD_PHASE;
         state.load_phase = load_phase_current;
         if (load_phase_started_ms != 0) {
-            auto now_ms = rin_time();
+            auto now_ms = monotonic_time_ms();
             state.load_phase_elapsed_ms = (now_ms >= load_phase_started_ms)
                 ? static_cast<u32>(now_ms - load_phase_started_ms)
                 : 0;
@@ -1249,7 +1255,7 @@ struct PageSession {
 
     // P5-2: ロード中フェーズのトラッキング
     u32 load_phase_current { RIN_WEBCONTENT_LOAD_PHASE_NONE };
-    unsigned long load_phase_started_ms { 0 };
+    u64 load_phase_started_ms { 0 };
     int load_resources_waiting { 0 };
     int load_resources_total { 0 };
     ByteString load_current_url_str;
@@ -1271,18 +1277,18 @@ struct PageSession {
     ByteString crash_reason;
     Web::UIEvents::MouseButton pressed_buttons { Web::UIEvents::MouseButton::None };
     bool first_frame_pending { false };
-    unsigned long first_frame_started_ms { 0 };
+    u64 first_frame_started_ms { 0 };
     u32 first_frame_kick_count { 0 };
-    unsigned long last_first_frame_kick_ms { 0 };
+    u64 last_first_frame_kick_ms { 0 };
     bool logged_missing_visible_bitmap { false };
     bool waiting_for_first_paint_after_load_finish { false };
     PendingLoadKind pending_load_kind { PendingLoadKind::None };
     ByteString pending_load_target_url;
     ByteString pending_load_markup;
-    unsigned long pending_load_requested_ms { 0 };
-    unsigned long pending_load_last_dispatch_ms { 0 };
+    u64 pending_load_requested_ms { 0 };
+    u64 pending_load_last_dispatch_ms { 0 };
     u32 pending_load_retry_count { 0 };
-    unsigned long pending_load_transport_ready_ms { 0 };
+    u64 pending_load_transport_ready_ms { 0 };
     bool pending_load_started { false };
     bool pending_load_expired { false };
     bool logged_pre_navigation_paint { false };

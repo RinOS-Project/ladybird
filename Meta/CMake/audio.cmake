@@ -1,7 +1,10 @@
 include_guard()
 
 # Audio backend -- how we output audio to the speakers.
-if (APPLE AND NOT IOS)
+if (AK_OS_RINOS)
+    set(LADYBIRD_AUDIO_BACKEND "RINOS")
+    return()
+elseif (APPLE AND NOT IOS)
     set(LADYBIRD_AUDIO_BACKEND "AUDIO_UNIT")
     return()
 elseif (NOT WIN32)

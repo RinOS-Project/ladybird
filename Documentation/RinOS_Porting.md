@@ -8,8 +8,9 @@
 ## 1. 移植の目的
 
 RinOS独自Webエンジン基盤として、upstreamのLadybirdコードを取り込みつつ、
-外部プラットフォーム依存（Skia, OpenSSL, curl, ICU, libtommath, HarfBuzz/FreeType,
-Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全に置き換える。
+ホストのパッケージ管理や外部プラットフォーム依存（Skia, OpenSSL, curl, ICU,
+libtommath, HarfBuzz/FreeType, Vulkan, Metal 等）を除去し、RinOS純正ライブラリと
+リポジトリ内で固定された依存だけで構成する。
 
 ### 対象アーキテクチャ
 - **i386** (32-bit)
@@ -25,7 +26,7 @@ Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全
 |---|---|
 | Web Workers | OFF |
 | WebAssembly | OFF |
-| Media (Audio/Video) | OFF |
+| Media (Audio/Video) | ON (FFmpeg CPU decode + RinOS audio) |
 | WebGL | OFF |
 | Service Workers | OFF |
 
@@ -51,6 +52,7 @@ Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全
 | libwebp | `libs/webp/` | LibGfx/ImageFormats | 5 |
 | libavif / libjxl / TIFF | 除外（将来追加） | LibGfx/ImageFormats | 5 |
 | simdutf | `libs/libunicode/` | LibUnicode | 3 |
+| FFmpeg | `libs/FFmpeg/`をi386/x86_64向けに静的ビルド | LibMedia | Media |
 
 ---
 
@@ -177,11 +179,15 @@ Vulkan, Metal 等）を**全て除去**し、RinOS純正ライブラリで完全
   - `RinLadybirdPlatform.cpp/.hpp`, `RinLadybirdRuntime.cpp` 実装
   - `generate_ladybird_buildinfo.py` 実装
   - host前段は `LAGOM_TOOLS_ONLY=ON` の Lagom tools/code generators のみに限定
+  - `deps.lock`固定のFFmpegを静的・PIC・LGPL・decode-onlyで先行クロスビルド
+  - `RINOS_FFMPEG_ROOT` imported targetとRinOS PlaybackStreamをLibMediaへ接続
   - `scripts/build_iso.sh` にladybirdビルド統合
 - **完了条件**:
   - i386/x86_64 両方で cmake 成功
   - ISO生成に ladybird 関連バイナリ含有
   - vcpkg外部パッケージへの参照ゼロ
+  - H.264/AAC MP4およびVP9/Opus WebMをカスタムI/O経由でデコード可能
+  - i386 AC97 / x86_64 Intel HDAでpause/resume/drain/flushと再生位置取得が可能
 
 ### Phase 7: 統合テスト & 最終検証 ✅
 - **目標**: RinOS上でWebエンジンとして動作する端到端の検証
@@ -332,3 +338,10 @@ grep -r '#include.*<openssl/' libs/ladybird/Libraries/ && echo "FAIL" || echo "P
 - **決定**: Ladybird の RequestServer を維持し、内部 transport を RinOS の direct socket + `resolved` + `rintls` に置換
 - **理由**: Browser → WebContent → RequestServer の公式プロセス境界を保ったまま、curl/OpenSSL/workerd を退役できる
 - **補足**: host前段では helper service を組まず、`LAGOM_TOOLS_ONLY=ON` の Lagom tools/code generators のみをビルドする
+
+### ADR-006: 固定済みFFmpegをdecode-onlyで組み込む
+- **日付**: 2026-08-08
+- **決定**: `deps.lock`の`libs/FFmpeg`を変更せず、i386/x86_64ごとに静的・PICで先行ビルドしてLibMediaへリンクする
+- **構成**: avutil/avcodec/avformat/swresampleのみ。ネットワーク、プログラム、デバイス、フィルター、エンコード、外部コーデック、GPL/nonfreeは無効
+- **ライセンス**: 有効化する構成はLGPL-2.1-or-later。固定リビジョンとライセンスファイルは`deps.lock`で追跡する
+- **I/O**: HTTPはRequestServer/Ladybirdが取得し、FFmpegにはカスタムI/Oで渡す

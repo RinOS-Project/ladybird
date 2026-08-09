@@ -1,8 +1,28 @@
 include_guard()
 
 if (AK_OS_RINOS)
-    # RinOS: FFmpeg is excluded from the feature set (media=off)
-    message(STATUS "RinOS policy: FFmpeg excluded.")
+    if (NOT DEFINED RINOS_FFMPEG_ROOT OR RINOS_FFMPEG_ROOT STREQUAL "")
+        message(FATAL_ERROR "RINOS_FFMPEG_ROOT must point to the installed RinOS FFmpeg prefix")
+    endif()
+
+    set(_rinos_ffmpeg_include "${RINOS_FFMPEG_ROOT}/include")
+    foreach(_library avutil avcodec avformat swresample)
+        set(_archive "${RINOS_FFMPEG_ROOT}/lib/lib${_library}.a")
+        if (NOT EXISTS "${_archive}")
+            message(FATAL_ERROR "RinOS FFmpeg archive is missing: ${_archive}")
+        endif()
+        if (NOT TARGET FFmpeg::${_library})
+            add_library(FFmpeg::${_library} STATIC IMPORTED GLOBAL)
+            set_target_properties(FFmpeg::${_library} PROPERTIES
+                IMPORTED_LOCATION "${_archive}"
+                INTERFACE_INCLUDE_DIRECTORIES "${_rinos_ffmpeg_include}"
+            )
+        endif()
+    endforeach()
+    set_property(TARGET FFmpeg::avcodec PROPERTY INTERFACE_LINK_LIBRARIES FFmpeg::avutil)
+    set_property(TARGET FFmpeg::avformat PROPERTY INTERFACE_LINK_LIBRARIES "FFmpeg::avcodec;FFmpeg::avutil")
+    set_property(TARGET FFmpeg::swresample PROPERTY INTERFACE_LINK_LIBRARIES FFmpeg::avutil)
+    message(STATUS "RinOS FFmpeg enabled from ${RINOS_FFMPEG_ROOT}")
 elseif (NOT ANDROID)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(AVCODEC REQUIRED IMPORTED_TARGET libavcodec)

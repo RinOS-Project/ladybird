@@ -236,8 +236,9 @@ DecoderErrorOr<NonnullOwnPtr<VideoFrame>> FFmpegVideoDecoder::get_decoded_frame(
 
         auto yuv_data = DECODER_TRY_ALLOC(Gfx::YUVData::create(gfx_size, bit_depth, subsampling, cicp));
 
-        auto y_plane_size = size.to_type<size_t>();
-        auto uv_plane_size = subsampling.subsampled_size(size).to_type<size_t>();
+        Gfx::Size<size_t> y_plane_size { size.width(), size.height() };
+        auto subsampled_size = subsampling.subsampled_size(size);
+        Gfx::Size<size_t> uv_plane_size { subsampled_size.width(), subsampled_size.height() };
 
         Bytes buffers[] = { yuv_data->y_data(), yuv_data->u_data(), yuv_data->v_data() };
         Gfx::Size<size_t> plane_sizes[] = { y_plane_size, uv_plane_size, uv_plane_size };

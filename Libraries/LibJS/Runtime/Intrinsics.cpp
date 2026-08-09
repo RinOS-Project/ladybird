@@ -145,7 +145,7 @@
         ".byte 0\n");                               \
     extern unsigned char const name[];
 
-#if defined(AK_COMPILER_CLANG) || (defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
+#if (defined(AK_COMPILER_CLANG) && (__clang_major__ >= 19)) || (defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
 static constexpr unsigned char ABSTRACT_OPERATIONS[] = {
 #    embed "JavaScriptImplementations/AbstractOperations.js" suffix(, )
     0 // null terminator
@@ -154,7 +154,7 @@ static constexpr unsigned char ABSTRACT_OPERATIONS[] = {
 INCLUDE_FILE_WITH_ASSEMBLY(ABSTRACT_OPERATIONS, "LibJS/Runtime/JavaScriptImplementations/AbstractOperations.js")
 #endif
 
-#if defined(AK_COMPILER_CLANG) || (defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
+#if (defined(AK_COMPILER_CLANG) && (__clang_major__ >= 19)) || (defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
 static constexpr unsigned char ARRAY_CONSTRUCTOR[] = {
 #    embed "JavaScriptImplementations/ArrayConstructor.js" suffix(, )
     0 // null terminator
