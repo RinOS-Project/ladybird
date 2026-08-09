@@ -3134,6 +3134,27 @@ void Navigable::paint_next_frame()
     if (!is_top_level_traversable())
         return;
 
+    // record_display_list() requires a completed layout/paint tree. Keep the
+    // repaint pending when a cold or inactive document has not reached that
+    // state yet; the next rendering opportunity will retry it.
+    auto document = active_document();
+    if (!document || !document->layout_node() || !document->paintable()) {
+        m_needs_repaint = true;
+#ifdef AK_OS_RINOS
+        static uint64_t s_skipped_no_paintable_seq = 0;
+        s_skipped_no_paintable_seq++;
+        if (s_skipped_no_paintable_seq <= 5 || (s_skipped_no_paintable_seq & 0x1F) == 0) {
+            char buf[112];
+            int n = snprintf(buf, sizeof(buf),
+                             "[Navigable] paint skipped: no paintable seq=%llu\n",
+                             (unsigned long long)s_skipped_no_paintable_seq);
+            if (n > 0)
+                write(2, buf, static_cast<size_t>(n));
+        }
+#endif
+        return;
+    }
+
 #ifdef AK_OS_RINOS
     {
         static uint64_t s_pnf_seq = 0;

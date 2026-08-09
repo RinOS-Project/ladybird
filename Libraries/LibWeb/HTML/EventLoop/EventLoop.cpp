@@ -697,11 +697,29 @@ void EventLoop::update_the_rendering()
                 continue;
 
             // We only rescue top-level navigables whose active doc was skipped
-            // by the fully_active filter. 500ms heartbeat.
+            // by the fully_active filter. Do not bypass the other rendering
+            // eligibility checks: a hidden or render-blocked document may not
+            // have a layout tree/paintable yet.
+            if (doc->is_render_blocked())
+                continue;
+            if (doc->hidden())
+                continue;
+            if (doc->rendering_suppression_for_view_transitions())
+                continue;
+            if (!navigable->has_a_rendering_opportunity())
+                continue;
+
+            // 500ms heartbeat.
             auto now = AK::MonotonicTime::now();
             auto since_last = now - navigable->last_paint_monotonic_time();
             if (since_last < AK::Duration::from_milliseconds(500))
                 continue;
+
+            doc->update_layout(DOM::UpdateLayoutReason::HTMLEventLoopRenderingUpdate);
+            if (!doc->layout_node() || !doc->paintable()) {
+                navigable->set_needs_repaint();
+                continue;
+            }
 
             s_fallback_hb_seq++;
             if (s_fallback_hb_seq <= 5 || (s_fallback_hb_seq & 0x1F) == 0) {

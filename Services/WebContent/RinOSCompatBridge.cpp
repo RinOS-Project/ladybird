@@ -54,8 +54,8 @@ struct PageSession;
 static PageSession* find_page(u32 page_id);
 
 static constexpr unsigned long s_load_start_retry_interval_ms = 250;
-static constexpr unsigned long s_load_start_retry_budget_ms = 2000;
-static constexpr u32 s_load_start_retry_limit = 8;
+static constexpr unsigned long s_load_start_retry_budget_ms = 10000;
+static constexpr u32 s_load_start_retry_limit = 40;
 
 static bool is_browser_builtin_url(StringView url)
 {
@@ -335,6 +335,20 @@ struct PageSession {
 
         view->on_load_finish = [this](URL::URL const& url) {
             auto serialized = remap_markup_internal_url(url.serialize().to_byte_string());
+            // A cold WebContent process finishes its implicit about:blank
+            // document while the accepted navigation is still waiting for the
+            // rendering transport. Do not publish that bootstrap completion as
+            // completion of the requested URL.
+            if (is_waiting_for_load_start()) {
+                auto message = ByteString::formatted(
+                    "[webcontent] page {} ignored pre-navigation load finish {}\n",
+                    page_id,
+                    serialized);
+                rin_log(message.characters());
+                metrics_dirty = true;
+                mark_dirty();
+                return;
+            }
             committed_url = serialized;
             metrics_dirty = true;
             refresh_metrics(true);
@@ -406,6 +420,22 @@ struct PageSession {
         };
 
         view->on_ready_to_paint = [this] {
+            // The first ready_to_paint from a cold process belongs to its
+            // implicit about:blank document. Backing-store readiness will make
+            // maybe_replay_pending_load_request() resend the accepted target;
+            // keep the target's paint revision at zero until then.
+            if (is_waiting_for_load_start()) {
+                if (!logged_pre_navigation_paint) {
+                    auto message = ByteString::formatted(
+                        "[webcontent] page {} ignored pre-navigation ready_to_paint\n",
+                        page_id);
+                    rin_log(message.characters());
+                    logged_pre_navigation_paint = true;
+                }
+                metrics_dirty = true;
+                mark_dirty();
+                return;
+            }
             bool first_paint_for_active_navigation = !has_first_paint_for_active_navigation();
             if (paint_revision == 0) {
                 auto message = ByteString::formatted("[webcontent] page {} first ready_to_paint\n", page_id);
@@ -541,8 +571,10 @@ struct PageSession {
         pending_load_requested_ms = 0;
         pending_load_last_dispatch_ms = 0;
         pending_load_retry_count = 0;
+        pending_load_transport_ready_ms = 0;
         pending_load_started = false;
         pending_load_expired = false;
+        logged_pre_navigation_paint = false;
     }
 
     void note_pending_load_started()
@@ -664,6 +696,25 @@ struct PageSession {
             return;
 
         auto now = rin_time();
+        // ViewImplementation can be constructed before the cold WebContent
+        // process has initialized its rendering thread. Navigation IPC sent in
+        // that interval is not actionable. Backing-store allocation is the
+        // first positive acknowledgement from that process, so start the 10s
+        // retry budget only after it arrives.
+        if (!view->has_allocated_backing_stores())
+            return;
+
+        if (pending_load_transport_ready_ms == 0) {
+            pending_load_transport_ready_ms = now;
+            pending_load_requested_ms = now;
+            pending_load_retry_count = 0;
+            auto message = ByteString::formatted(
+                "[webcontent] page {} load transport ready target={}\n",
+                page_id,
+                pending_load_target_url);
+            rin_log(message.characters());
+        }
+
         if (pending_load_requested_ms == 0)
             pending_load_requested_ms = now;
 
@@ -881,14 +932,20 @@ struct PageSession {
         crashed = false;
         crash_reason = {};
         builtin_shell_url = {};
-        loading = false;
-        progress_percent = 0;
-        pending_url = {};
+        // Navigation has been accepted even if the cold WebContent view has not
+        // emitted on_load_start yet. Publish the pending state immediately so
+        // the browser does not mistake service startup latency for a crash.
+        loading = true;
+        progress_percent = 10;
+        pending_url = url;
         waiting_for_first_paint_after_load_finish = false;
         metrics_dirty = true;
         prime_pending_load_request(PendingLoadKind::Navigate, url);
         if (!dispatch_pending_load_request(false)) {
             clear_pending_load_request();
+            loading = false;
+            progress_percent = 0;
+            pending_url = {};
             return false;
         }
         mark_dirty();
@@ -1225,8 +1282,10 @@ struct PageSession {
     unsigned long pending_load_requested_ms { 0 };
     unsigned long pending_load_last_dispatch_ms { 0 };
     u32 pending_load_retry_count { 0 };
+    unsigned long pending_load_transport_ready_ms { 0 };
     bool pending_load_started { false };
     bool pending_load_expired { false };
+    bool logged_pre_navigation_paint { false };
 
     int paint_shm_handle { -1 };
     void* paint_shm_addr { nullptr };
