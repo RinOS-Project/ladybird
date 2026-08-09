@@ -962,7 +962,9 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
     }();
 
     if (result.is_error()) {
-        dbgln("Request::on_data_received: Aborting request because error occurred whilst writing data to the client: {}", result.error());
+        auto error = result.release_error();
+        dbgln("Request::on_data_received: Aborting request because error occurred whilst writing data to the client: {}", error);
+        request.abandon_client_response(error);
 #if defined(AK_OS_RINOS)
         return 0;
 #else
@@ -1072,8 +1074,10 @@ ErrorOr<void> Request::write_queued_bytes_without_blocking()
         m_client_writer_notifier->set_enabled(false);
 
         m_client_writer_notifier->on_activation = weak_callback(*this, [](auto& self) {
-            if (auto result = self.write_queued_bytes_without_blocking(); result.is_error())
-                dbgln("Warning: Failed to write buffered request data (it's likely the client disappeared): {}", result.error());
+            if (auto result = self.write_queued_bytes_without_blocking(); result.is_error()) {
+                auto error = result.release_error();
+                self.abandon_client_response(error);
+            }
         });
     }
 
@@ -1119,6 +1123,37 @@ ErrorOr<void> Request::write_queued_bytes_without_blocking()
         transition_to_state(State::Complete);
 
     return {};
+}
+
+void Request::abandon_client_response(Error const& error)
+{
+    if (exchange(m_client_response_abandoned, true))
+        return;
+
+    dbgln("Request {}: Client response pipe closed; abandoning request: {}", m_request_id, error);
+
+    if (m_client_writer_notifier) {
+        m_client_writer_notifier->set_enabled(false);
+        m_client_writer_notifier = nullptr;
+    }
+
+#if defined(AK_OS_RINOS)
+    if (m_rin_fetch) {
+        m_rin_fetch->on_header_received = nullptr;
+        m_rin_fetch->on_data_received = nullptr;
+        m_rin_fetch->on_complete = nullptr;
+        m_rin_fetch->callback_user_data = nullptr;
+        m_rin_fetch->cancel();
+    }
+#endif
+
+    if (auto buffered_size = m_response_buffer.used_buffer_size(); buffered_size > 0)
+        MUST(m_response_buffer.discard(buffered_size));
+    m_client_request_pipe.clear();
+
+    // Removing the request is deferred by ConnectionFromClient so this method
+    // remains safe when called from the pipe notifier or a transport callback.
+    m_client.request_complete({}, *this);
 }
 
 bool Request::is_revalidation_request() const

@@ -3138,7 +3138,7 @@ void Navigable::paint_next_frame()
     // repaint pending when a cold or inactive document has not reached that
     // state yet; the next rendering opportunity will retry it.
     auto document = active_document();
-    if (!document || !document->layout_node() || !document->paintable()) {
+    if (!document || !document->layout_is_up_to_date() || !document->layout_node() || !document->paintable()) {
         m_needs_repaint = true;
 #ifdef AK_OS_RINOS
         static uint64_t s_skipped_no_paintable_seq = 0;

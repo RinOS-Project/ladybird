@@ -174,6 +174,7 @@ private:
     ErrorOr<void> inform_client_request_started();
     void transfer_headers_to_client_if_needed();
     ErrorOr<void> write_queued_bytes_without_blocking();
+    void abandon_client_response(Error const&);
 
     virtual bool is_revalidation_request() const override;
     ErrorOr<void> revalidation_failed();
@@ -238,6 +239,7 @@ private:
     RefPtr<Core::Notifier> m_client_writer_notifier;
     Optional<RequestPipe> m_client_request_pipe;
     size_t m_bytes_transferred_to_client { 0 };
+    bool m_client_response_abandoned { false };
 
     Optional<Requests::NetworkError> m_network_error;
 };
