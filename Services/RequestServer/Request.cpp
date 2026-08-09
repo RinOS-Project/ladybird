@@ -9,6 +9,9 @@
 #include <LibCore/File.h>
 #include <LibCore/MimeData.h>
 #include <LibCore/Notifier.h>
+#if defined(AK_OS_RINOS)
+#    include <LibCore/System.h>
+#endif
 #include <LibHTTP/Cache/DiskCache.h>
 #include <LibHTTP/Cache/Utilities.h>
 #include <LibHTTP/Status.h>
@@ -20,6 +23,8 @@
 #include <RequestServer/Request.h>
 
 #if defined(AK_OS_RINOS)
+#    include <netdb.h>
+#    include <netinet/in.h>
 #    include <unistd.h>
 static void rs_serial(char const* msg) { ::write(2, msg, __builtin_strlen(msg)); }
 #else
@@ -33,6 +38,43 @@ namespace RequestServer {
 extern OwnPtr<ResourceSubstitutionMap> g_resource_substitution_map;
 
 static long s_connect_timeout_seconds = 90L;
+
+#if defined(AK_OS_RINOS)
+static ErrorOr<NonnullRefPtr<DNS::LookupResult>> resolve_host_via_rinos(ByteString const& host)
+{
+    struct addrinfo hints {};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    auto addresses = TRY(Core::System::getaddrinfo(host.characters(), nullptr, hints));
+    auto result = make_ref_counted<DNS::LookupResult>(DNS::Messages::DomainName::from_string(host));
+    result->will_add_record_of_type(DNS::Messages::ResourceType::A);
+
+    bool found_address = false;
+    for (auto const& address : addresses.addresses()) {
+        if (address.ai_family != AF_INET || address.ai_addr == nullptr
+            || address.ai_addrlen < sizeof(sockaddr_in)) {
+            continue;
+        }
+
+        auto const* ipv4 = reinterpret_cast<sockaddr_in const*>(address.ai_addr);
+        result->add_record({
+            .name = {},
+            .type = DNS::Messages::ResourceType::A,
+            .class_ = DNS::Messages::Class::IN,
+            .ttl = 0,
+            .record = DNS::Messages::Records::A { IPv4Address(ipv4->sin_addr.s_addr) },
+            .raw = {},
+        });
+        found_address = true;
+    }
+
+    result->finished_request();
+    if (!found_address)
+        return Error::from_string_literal("RinResolver returned no IPv4 address");
+    return result;
+}
+#endif
 
 NonnullOwnPtr<Request> Request::fetch(
     u64 request_id,
@@ -494,7 +536,9 @@ void Request::handle_serve_substitution_state()
 void Request::handle_dns_lookup_state()
 {
     auto host = m_url.serialized_host().to_byte_string();
+#if !defined(AK_OS_RINOS)
     auto const& dns_info = DNSInfo::the();
+#endif
 
 #if defined(AK_OS_RINOS)
     // Stage 3-A: DNS \u3068 Cookie IPC \u3092\u4e26\u5217\u767a\u884c\u3002RetrieveCookie \u72b6\u614b\u306f\u30b9\u30ad\u30c3\u30d7\u3059\u308b\u3002
@@ -511,8 +555,34 @@ void Request::handle_dns_lookup_state()
         }
     }
     m_dns_pending = true;
+
+    // RinOS owns DNS policy and caching in the isolated resolved service.
+    // Using LibDNS here bypassed that service and left RequestServer without a
+    // configured upstream, so every browser lookup failed before resolved saw
+    // a session. Core::System::getaddrinfo() enters the normal libc -> resolved
+    // path and the returned address is adapted to the existing fetch pipeline.
+    auto lookup_result = resolve_host_via_rinos(host);
+    if (lookup_result.is_error()) {
+        dbgln("Request::handle_dns_lookup_state: RinResolver lookup failed for '{}': {}", host, lookup_result.error());
+        m_dns_pending = false;
+        m_network_error = Requests::NetworkError::UnableToResolveHost;
+        transition_to_state(State::Error);
+        return;
+    }
+
+    rs_serial("[RS] RinResolver lookup successful\n");
+    m_dns_result = lookup_result.release_value();
+    m_dns_pending = false;
+    if (first_is_one_of(m_type, Type::Fetch, Type::BackgroundRevalidation)) {
+        if (m_state == State::DNSLookup || m_state == State::RetrieveCookie)
+            maybe_advance_from_parallel();
+    } else {
+        transition_to_state(State::Complete);
+    }
+    return;
 #endif
 
+#if !defined(AK_OS_RINOS)
     m_resolver->dns.lookup(host, DNS::Messages::Class::IN, { DNS::Messages::ResourceType::A, DNS::Messages::ResourceType::AAAA }, { .validate_dnssec_locally = dns_info.validate_dnssec_locally })
         ->when_rejected(weak_callback(*this, [host](auto& self, auto const& error) {
             dbgln("Request::handle_dns_lookup_state: DNS lookup failed for '{}': {}", host, error);
@@ -549,6 +619,7 @@ void Request::handle_dns_lookup_state()
                 self.transition_to_state(State::Complete);
             }
         }));
+#endif
 }
 
 void Request::handle_retrieve_cookie_state()
