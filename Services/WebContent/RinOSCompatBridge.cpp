@@ -573,6 +573,8 @@ struct PageSession {
 
     void clear_pending_load_request()
     {
+        if (pending_load_replay_timer)
+            pending_load_replay_timer->stop();
         pending_load_kind = PendingLoadKind::None;
         pending_load_target_url = {};
         pending_load_markup = {};
@@ -763,11 +765,21 @@ struct PageSession {
     void schedule_load_dispatch_observation()
     {
         auto scheduled_page_id = page_id;
+        if (!pending_load_replay_timer) {
+            pending_load_replay_timer = Core::Timer::create_repeating(
+                static_cast<int>(s_load_start_retry_interval_ms), [scheduled_page_id] {
+                    auto* page = find_page(scheduled_page_id);
+                    if (!page)
+                        return;
+                    page->maybe_replay_pending_load_request();
+                });
+        }
+        pending_load_replay_timer->start();
         Core::deferred_invoke([scheduled_page_id] {
             auto* page = find_page(scheduled_page_id);
             if (!page)
                 return;
-            page->drain_pending_bridge_events(false, false);
+            page->drain_pending_bridge_events(false);
         });
     }
 
@@ -1294,6 +1306,7 @@ struct PageSession {
     bool pending_load_started { false };
     bool pending_load_expired { false };
     bool logged_pre_navigation_paint { false };
+    RefPtr<Core::Timer> pending_load_replay_timer;
 
     int paint_shm_handle { -1 };
     void* paint_shm_addr { nullptr };
