@@ -5,7 +5,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteBuffer.h>
+#include <AK/Vector.h>
 #include <LibCore/ElapsedTimer.h>
+#include <LibCore/File.h>
 #include <LibCore/Promise.h>
 #include <LibTLS/TLSv12.h>
 
@@ -13,6 +16,80 @@
 
 extern "C" {
 #include "../../../rintls/rintls.h"
+}
+
+#include <LibThreading/Mutex.h>
+
+namespace {
+
+constexpr size_t max_rin_trust_bundle_size = 4 * 1024 * 1024;
+
+class RinTrustStoreCache {
+public:
+    ~RinTrustStoreCache()
+    {
+        for (auto const& entry : m_entries)
+            rintls_trust_store_release(entry.store);
+    }
+
+    ErrorOr<rintls_trust_store*> get(ByteString const& path)
+    {
+        Threading::MutexLocker locker { m_mutex };
+        for (auto const& entry : m_entries) {
+            if (entry.path == path)
+                return entry.store;
+        }
+
+        auto file_or_error = Core::File::open(path, Core::File::OpenMode::Read);
+        if (file_or_error.is_error()) {
+            dbgln("Unable to open RinOS TLS trust store '{}': {}", path, file_or_error.error());
+            return Error::from_string_literal("Unable to open RinOS TLS trust store");
+        }
+        auto file = file_or_error.release_value();
+        auto size_or_error = file->size();
+        if (size_or_error.is_error()) {
+            dbgln("Unable to size RinOS TLS trust store '{}': {}", path, size_or_error.error());
+            return Error::from_string_literal("Unable to size RinOS TLS trust store");
+        }
+        auto size = size_or_error.release_value();
+        if (size == 0 || size > max_rin_trust_bundle_size) {
+            dbgln("RinOS TLS trust store '{}' has invalid size {}", path, size);
+            return Error::from_string_literal("RinOS TLS trust store has invalid size");
+        }
+
+        auto bytes = TRY(ByteBuffer::create_uninitialized(size));
+        TRY(file->read_until_filled(bytes.bytes()));
+
+        rintls_trust_store* store = nullptr;
+        auto result = rintls_trust_store_from_bundle(bytes.data(), bytes.size(), &store);
+        if (result != RINTLS_OK || !store) {
+            dbgln("Unable to parse RinOS TLS trust store '{}': {}", path, rintls_strerror(result));
+            return Error::from_string_literal("Unable to parse RinOS TLS trust store");
+        }
+
+        auto count = rintls_trust_store_anchor_count(store);
+        if (count == 0) {
+            rintls_trust_store_release(store);
+            return Error::from_string_literal("RinOS TLS trust store is empty");
+        }
+
+        m_entries.append({ path, store });
+        dbgln("Loaded RinOS TLS trust store '{}' with {} anchors", path, count);
+        return store;
+    }
+
+private:
+    struct Entry {
+        ByteString path;
+        rintls_trust_store* store { nullptr };
+    };
+
+    Threading::Mutex m_mutex;
+    Vector<Entry> m_entries;
+};
+
+RinTrustStoreCache s_rin_trust_store_cache;
+
 }
 
 namespace TLS {
@@ -126,14 +203,21 @@ TLSv12::~TLSv12()
         rintls_free(m_ctx);
 }
 
-ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPSocket> socket, ByteString const& host, Options)
+ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPSocket> socket, ByteString const& host, Options options)
 {
     TRY(socket->set_blocking(false));
+
+    if (!options.root_certificates_path.has_value() || options.root_certificates_path->is_empty())
+        return Error::from_string_literal("RinOS TLS trust store is not configured");
+    auto* trust_store = TRY(s_rin_trust_store_cache.get(*options.root_certificates_path));
 
     auto* ctx = rintls_new();
     if (!ctx)
         return Error::from_string_literal("Failed to create rintls context");
     ArmedScopeGuard free_ctx = [&] { rintls_free(ctx); };
+
+    if (rintls_set_trust_store(ctx, trust_store) != RINTLS_OK)
+        return Error::from_string_literal("Failed to configure RinOS TLS trust store");
 
     if (rintls_set_hostname(ctx, host.characters()) != RINTLS_OK)
         return Error::from_string_literal("Failed to set TLS hostname");

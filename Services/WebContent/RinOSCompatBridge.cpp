@@ -220,6 +220,8 @@ public:
 
         // RinOS bridge-mode startup is currently more reliable without RequestServer disk cache setup.
         request_server_options.http_disk_cache_mode = WebView::HTTPDiskCacheMode::Disabled;
+        if (request_server_options.certificates.is_empty())
+            request_server_options.certificates.append("/System/Trust/roots.rinca"sv);
 
         web_content_options.force_cpu_painting = WebView::ForceCPUPainting::Yes;
         web_content_options.force_fontconfig = WebView::ForceFontconfig::Yes;
