@@ -29,7 +29,13 @@ bool font_format_is_supported(FontFormat const format)
     case FontFormat::WOFF:
         return true;
     case FontFormat::WOFF2:
+#if defined(AK_OS_RINOS)
+        // The RinOS port does not build the woff2 decoder. Advertising this
+        // format made pages fan out downloads that could never be decoded.
+        return false;
+#else
         return true;
+#endif
     }
 
     return false;

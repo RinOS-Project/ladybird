@@ -8,9 +8,11 @@
 #include <AK/FloatingPoint.h>
 #include <AK/NumericLimits.h>
 #include <AK/StringConversions.h>
+#if defined(AK_OS_RINOS)
+#    include <AK/StringFloatingPointConversions.h>
+#endif
 #include <AK/StringView.h>
 #include <AK/Utf16View.h>
-#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 
@@ -209,36 +211,8 @@ DecimalExponentialForm convert_to_decimal_exponential_form(T value)
     extractor.d = value;
 
 #if defined(AK_OS_RINOS)
-    constexpr int precision = IsSame<T, float> ? (FLT_DECIMAL_DIG - 1) : (DBL_DECIMAL_DIG - 1);
-    char buffer[64] {};
-    auto length = snprintf(buffer, sizeof(buffer), "%.*e", precision, static_cast<double>(value));
-    VERIFY(length > 0);
-
-    bool sign = buffer[0] == '-';
-    auto const* cursor = buffer + (sign ? 1 : 0);
-    auto const* exponent_marker = __builtin_strchr(cursor, 'e');
-    VERIFY(exponent_marker);
-
-    u64 significand = 0;
-    i32 decimal_digits = 0;
-    bool after_decimal = false;
-    for (auto const* p = cursor; p < exponent_marker; ++p) {
-        if (*p == '.') {
-            after_decimal = true;
-            continue;
-        }
-        significand = significand * 10 + static_cast<u64>(*p - '0');
-        if (after_decimal)
-            ++decimal_digits;
-    }
-
-    auto exponent = static_cast<i32>(strtol(exponent_marker + 1, nullptr, 10)) - decimal_digits;
-    while (significand != 0 && significand % 10 == 0) {
-        significand /= 10;
-        ++exponent;
-    }
-
-    return { sign, significand, exponent };
+    auto result = convert_floating_point_to_decimal_exponential_form(value);
+    return { result.sign, result.fraction, result.exponent };
 #else
     auto [significand, exponent] = fmt::detail::dragonbox::to_decimal(value);
     return { static_cast<bool>(extractor.sign), significand, exponent };

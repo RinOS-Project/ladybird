@@ -113,6 +113,7 @@ private:
         Body,
         ChunkedSize,
         ChunkedData,
+        ChunkedDataTerminator,
         ChunkedTrailer,
         Complete,
         Error,
@@ -128,6 +129,7 @@ private:
     bool m_chunked_encoding { false };
     size_t m_body_bytes_received { 0 };
     size_t m_current_chunk_remaining { 0 };
+    u8 m_chunk_data_terminator_bytes { 0 };
 
     MonotonicTime m_start_time;
     i64 m_connect_end_us { 0 };

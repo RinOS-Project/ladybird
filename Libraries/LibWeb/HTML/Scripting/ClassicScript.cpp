@@ -57,6 +57,9 @@ GC::Ref<ClassicScript> ClassicScript::create(ByteString filename, StringView sou
     if (result.is_error()) {
         auto& parse_error = result.error().first();
         dbgln_if(HTML_SCRIPT_DEBUG, "ClassicScript: Failed to parse: {}", parse_error.to_string());
+#ifdef AK_OS_RINOS
+        dbgln("ClassicScript: Parse error in {}: {}", script->filename(), parse_error.to_string());
+#endif
 
         // 1. Set script's parse error and its error to rethrow to result[0].
         script->set_parse_error(JS::SyntaxError::create(realm, parse_error.to_string()));
@@ -143,6 +146,9 @@ JS::Completion ClassicScript::run(RethrowErrors rethrow_errors, GC::Ptr<JS::Envi
 
     // 8. If evaluationStatus is an abrupt completion, then:
     if (evaluation_status.is_abrupt()) {
+#ifdef AK_OS_RINOS
+        dbgln("ClassicScript: Runtime error in {}: {}", filename(), evaluation_status.value().to_string_without_side_effects());
+#endif
         // 1. If rethrow errors is true and script's muted errors is false, then:
         if (rethrow_errors == RethrowErrors::Yes && m_muted_errors == MutedErrors::No) {
             // 1. Clean up after running script with realm.

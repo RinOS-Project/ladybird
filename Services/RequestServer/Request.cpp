@@ -6,6 +6,10 @@
  */
 
 #include <AK/GenericShorthands.h>
+#if defined(AK_OS_RINOS)
+#    include <AK/HashMap.h>
+#    include <AK/Time.h>
+#endif
 #include <LibCore/File.h>
 #include <LibCore/MimeData.h>
 #include <LibCore/Notifier.h>
@@ -25,6 +29,7 @@
 #if defined(AK_OS_RINOS)
 #    include <netdb.h>
 #    include <netinet/in.h>
+#    include <LibThreading/Mutex.h>
 #    include <unistd.h>
 static void rs_serial(char const* msg) { ::write(2, msg, __builtin_strlen(msg)); }
 #else
@@ -40,8 +45,31 @@ extern OwnPtr<ResourceSubstitutionMap> g_resource_substitution_map;
 static long s_connect_timeout_seconds = 90L;
 
 #if defined(AK_OS_RINOS)
+struct RinDNSCacheEntry {
+    NonnullRefPtr<DNS::LookupResult> result;
+    i64 expires_at_ms { 0 };
+};
+
+static HashMap<ByteString, RinDNSCacheEntry> s_rinos_dns_cache;
+static Threading::Mutex s_rinos_dns_cache_mutex;
+static constexpr i64 s_rinos_dns_cache_ttl_ms = 60'000;
+static constexpr size_t s_rinos_dns_cache_max_entries = 64;
+
 static ErrorOr<NonnullRefPtr<DNS::LookupResult>> resolve_host_via_rinos(ByteString const& host)
 {
+    // getaddrinfo() uses the isolated resolved service. Keep a small process
+    // cache here as well: a modern page may request hundreds of resources for
+    // one host, and opening a fresh resolved IPC session for every one needlessly
+    // consumes Unix endpoints. Holding this mutex across a miss coalesces
+    // concurrent lookups for the same host.
+    Threading::MutexLocker locker { s_rinos_dns_cache_mutex };
+    auto now_ms = MonotonicTime::now_coarse().milliseconds();
+    if (auto cached = s_rinos_dns_cache.find(host); cached != s_rinos_dns_cache.end()) {
+        if (cached->value.expires_at_ms > now_ms)
+            return cached->value.result;
+        s_rinos_dns_cache.remove(cached);
+    }
+
     struct addrinfo hints {};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
@@ -72,6 +100,10 @@ static ErrorOr<NonnullRefPtr<DNS::LookupResult>> resolve_host_via_rinos(ByteStri
     result->finished_request();
     if (!found_address)
         return Error::from_string_literal("RinResolver returned no IPv4 address");
+
+    if (s_rinos_dns_cache.size() >= s_rinos_dns_cache_max_entries)
+        s_rinos_dns_cache.clear();
+    s_rinos_dns_cache.set(host, RinDNSCacheEntry { result, now_ms + s_rinos_dns_cache_ttl_ms });
     return result;
 }
 #endif

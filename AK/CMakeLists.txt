@@ -37,6 +37,10 @@ set(SOURCES
     kmalloc.cpp
 )
 
+if (AK_OS_RINOS)
+    list(APPEND SOURCES StringFloatingPointConversions.cpp)
+endif()
+
 if (WIN32)
     list(APPEND SOURCES
         LexicalPathWindows.cpp

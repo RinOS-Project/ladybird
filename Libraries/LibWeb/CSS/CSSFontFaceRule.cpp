@@ -231,13 +231,17 @@ void CSSFontFaceRule::dump(StringBuilder& builder, int indent_levels) const
 
 void CSSFontFaceRule::set_parent_style_sheet(CSSStyleSheet* parent_style_sheet)
 {
+#if !defined(AK_OS_RINOS)
     if (m_parent_style_sheet)
         m_parent_style_sheet->remove_critical_subresource(*this);
+#endif
 
     Base::set_parent_style_sheet(parent_style_sheet);
 
+#if !defined(AK_OS_RINOS)
     if (m_parent_style_sheet)
         m_parent_style_sheet->add_critical_subresource(*this);
+#endif
 }
 
 }

@@ -328,7 +328,7 @@ void RinHTTPFetch::on_socket_ready_to_read()
             process_line_buffered(bytes);
         else if (m_response_state == ResponseState::Body)
             process_body_data(bytes);
-        else if (m_response_state == ResponseState::ChunkedSize || m_response_state == ResponseState::ChunkedData || m_response_state == ResponseState::ChunkedTrailer)
+        else if (m_response_state == ResponseState::ChunkedSize || m_response_state == ResponseState::ChunkedData || m_response_state == ResponseState::ChunkedDataTerminator || m_response_state == ResponseState::ChunkedTrailer)
             process_chunked_data(bytes);
     }
 }
@@ -482,13 +482,26 @@ void RinHTTPFetch::process_chunked_data(ReadonlyBytes data)
                 on_data_received(const_cast<u8*>(chunk.data()), 1, chunk.size(), callback_user_data);
 
             if (m_current_chunk_remaining == 0) {
-                // Expect \r\n after chunk data
+                // Every non-final chunk is followed by a CRLF which is not part of
+                // the next chunk-size line. Keep this as a distinct state because
+                // either byte can arrive in a later socket read.
+                m_chunk_data_terminator_bytes = 0;
+                m_response_state = ResponseState::ChunkedDataTerminator;
+            }
+        } else if (m_response_state == ResponseState::ChunkedDataTerminator) {
+            static constexpr u8 expected_terminator[] { '\r', '\n' };
+            while (offset < data.size() && m_chunk_data_terminator_bytes < sizeof(expected_terminator)) {
+                if (data[offset++] != expected_terminator[m_chunk_data_terminator_bytes]) {
+                    dbgln("[RinHTTP] invalid chunk data terminator");
+                    finish_with_error(8); // CURLE_WEIRD_SERVER_REPLY
+                    return;
+                }
+                ++m_chunk_data_terminator_bytes;
+            }
+
+            if (m_chunk_data_terminator_bytes == sizeof(expected_terminator)) {
+                m_chunk_data_terminator_bytes = 0;
                 m_response_state = ResponseState::ChunkedSize;
-                // Skip trailing \r\n — consume up to 2 bytes
-                // We transition back to ChunkedSize which will skip past \r\n naturally
-                // Actually, we need to consume the trailing CRLF. Let's just skip bytes.
-                // The next ChunkedSize line will be preceded by \r\n.
-                // We handle this by looking for the CRLF in the ChunkedSize state.
             }
         } else if (m_response_state == ResponseState::ChunkedTrailer) {
             // After the 0-length chunk, read trailer headers until we see an empty line (\r\n)
