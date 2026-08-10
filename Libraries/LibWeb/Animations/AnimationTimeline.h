@@ -9,13 +9,13 @@
 #include <LibGC/WeakHashSet.h>
 #include <LibWeb/Animations/Animation.h>
 #include <LibWeb/Animations/TimeValue.h>
-#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Bindings/Wrappable.h>
 
 namespace Web::Animations {
 
 // https://www.w3.org/TR/web-animations-1/#animationtimeline
-class AnimationTimeline : public Bindings::PlatformObject {
-    WEB_PLATFORM_OBJECT(AnimationTimeline, Bindings::PlatformObject);
+class AnimationTimeline : public Bindings::GCAllocatedWrappable {
+    WEB_WRAPPABLE(AnimationTimeline, Bindings::GCAllocatedWrappable);
     GC_DECLARE_ALLOCATOR(AnimationTimeline);
 
 public:
@@ -23,7 +23,7 @@ public:
 
     NullableCSSNumberish current_time_for_bindings() const
     {
-        return NullableCSSNumberish::from_optional_css_numberish_time(realm(), current_time());
+        return NullableCSSNumberish::from_optional_css_numberish_time(current_time());
     }
     Optional<TimeValue> current_time() const;
 
@@ -32,8 +32,7 @@ public:
     NullableCSSNumberish duration_for_bindings() const;
     virtual Optional<TimeValue> duration() const = 0;
 
-    GC::Ptr<DOM::Document> associated_document() const { return m_associated_document; }
-    void set_associated_document(GC::Ptr<DOM::Document>);
+    GC::Ref<DOM::Document> associated_document() const { return m_associated_document; }
 
     virtual bool is_inactive() const;
     bool is_monotonically_increasing() const { return m_is_monotonically_increasing; }
@@ -48,13 +47,13 @@ public:
     GC::WeakHashSet<Animation> const& associated_animations() const { return m_associated_animations; }
 
 protected:
-    AnimationTimeline(JS::Realm&);
+    explicit AnimationTimeline(GC::Ref<DOM::Document>);
 
-    virtual void initialize(JS::Realm&) override;
-    virtual void visit_edges(Cell::Visitor&) override;
+    virtual void visit_edges(GC::Cell::Visitor&) override;
     virtual void finalize() override;
 
     void set_current_time(Optional<TimeValue> value);
+    void update_associated_animations();
 
     // https://www.w3.org/TR/web-animations-1/#dom-animationtimeline-currenttime
     Optional<TimeValue> m_current_time {};
@@ -63,7 +62,7 @@ protected:
     bool m_is_monotonically_increasing { false };
 
     // https://www.w3.org/TR/web-animations-1/#timeline-associated-with-a-document
-    GC::Ptr<DOM::Document> m_associated_document {};
+    GC::Ref<DOM::Document> m_associated_document;
 
     GC::WeakHashSet<Animation> m_associated_animations;
 };

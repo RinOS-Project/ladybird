@@ -25,12 +25,37 @@ struct Animatable::Transition {
 
 Animatable::Impl::~Impl() = default;
 
+static WebIDL::ExceptionOr<Animatable::GetAnimationsOptions> get_animations_options_from_bindings(Bindings::GetAnimationsOptions const& options)
+{
+    Animatable::GetAnimationsOptions converted_options;
+    converted_options.subtree = options.subtree;
+    if (options.pseudo_element.has_value())
+        converted_options.pseudo_element = TRY(pseudo_element_parsing(options.pseudo_element));
+    return converted_options;
+}
+
+static WebIDL::ExceptionOr<Animatable::KeyframeAnimationOptions> keyframe_animation_options_from_bindings(Bindings::KeyframeAnimationOptions const& options)
+{
+    auto effect_options = TRY(keyframe_effect_options_from_bindings(options));
+    Animatable::KeyframeAnimationOptions converted_options;
+    static_cast<KeyframeEffect::Options&>(converted_options) = move(effect_options);
+    converted_options.id = options.id;
+    converted_options.timeline = options.timeline;
+    return converted_options;
+}
+
+static WebIDL::ExceptionOr<Variant<double, Animatable::KeyframeAnimationOptions>> keyframe_animation_options_from_bindings(Variant<double, Bindings::KeyframeAnimationOptions> const& options)
+{
+    if (options.has<double>())
+        return options.get<double>();
+    return TRY(keyframe_animation_options_from_bindings(options.get<Bindings::KeyframeAnimationOptions>()));
+}
+
 // https://www.w3.org/TR/web-animations-1/#dom-animatable-animate
-WebIDL::ExceptionOr<GC::Ref<Animation>> Animatable::animate(Optional<GC::Root<JS::Object>> keyframes, Variant<Empty, double, KeyframeAnimationOptions> options)
+WebIDL::ExceptionOr<GC::Ref<Animation>> Animatable::animate(Vector<BaseKeyframe> keyframes, Variant<double, KeyframeAnimationOptions> const& options)
 {
     // 1. Let target be the object on which this method was called.
     GC::Ref target { *static_cast<DOM::Element*>(this) };
-    auto& realm = target->realm();
 
     // 2. Construct a new KeyframeEffect object, effect, in the relevant Realm of target by using the same procedure as
     //    the KeyframeEffect(target, keyframes, options) constructor, passing target as the target argument, and the
@@ -38,21 +63,20 @@ WebIDL::ExceptionOr<GC::Ref<Animation>> Animatable::animate(Optional<GC::Root<JS
     //
     //    If the above procedure causes an exception to be thrown, propagate the exception and abort this procedure.
     auto effect = TRY(options.visit(
-        [&](Empty) { return KeyframeEffect::construct_impl(realm, target, keyframes); },
-        [&](auto const& value) { return KeyframeEffect::construct_impl(realm, target, keyframes, value); }));
+        [&](auto const& value) { return KeyframeEffect::create_from_processed_keyframes(target, move(keyframes), value); }));
 
     // 3. If options is a KeyframeAnimationOptions object, let timeline be the timeline member of options or, if
     //    timeline member of options is missing, be the default document timeline of the node document of the element
     //    on which this method was called.
     Optional<GC::Ptr<AnimationTimeline>> timeline;
-    if (options.has<KeyframeAnimationOptions>())
-        timeline = options.get<KeyframeAnimationOptions>().timeline;
+    if (options.has<KeyframeAnimationOptions>() && options.get<KeyframeAnimationOptions>().timeline.has_value())
+        timeline = options.get<KeyframeAnimationOptions>().timeline.value();
     if (!timeline.has_value())
         timeline = target->document().timeline();
 
     // 4. Construct a new Animation object, animation, in the relevant Realm of target by using the same procedure as
     //    the Animation() constructor, passing effect and timeline as arguments of the same name.
-    auto animation = TRY(Animation::construct_impl(realm, effect, move(timeline)));
+    auto animation = Animation::create(target->document().relevant_settings_object(), effect, timeline.release_value());
 
     // 5. If options is a KeyframeAnimationOptions object, assign the value of the id member of options to animation’s
     //    id attribute.
@@ -66,29 +90,34 @@ WebIDL::ExceptionOr<GC::Ref<Animation>> Animatable::animate(Optional<GC::Root<JS
     return animation;
 }
 
+WebIDL::ExceptionOr<GC::Ref<Animation>> Animatable::animate(JS::Realm& realm, GC::Ptr<JS::Object> keyframes, Variant<double, Bindings::KeyframeAnimationOptions> const& options)
+{
+    auto animation = TRY(animate(TRY(process_keyframes(realm, keyframes)), TRY(keyframe_animation_options_from_bindings(options))));
+
+    return animation;
+}
+
 // https://drafts.csswg.org/web-animations-1/#dom-animatable-getanimations
-WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations(Optional<GetAnimationsOptions> options)
+WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations(GetAnimationsOptions const& options)
 {
     as<DOM::Element>(*this).document().update_style();
+
     return get_animations_internal(GetAnimationsSorted::Yes, options);
 }
 
-WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations_internal(GetAnimationsSorted sorted, Optional<GetAnimationsOptions> options)
+WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations(Bindings::GetAnimationsOptions const& options)
+{
+    return get_animations(TRY(get_animations_options_from_bindings(options)));
+}
+
+WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations_internal(GetAnimationsSorted sorted, GetAnimationsOptions const& options)
 {
     // 1. Let object be the object on which this method was called.
-
-    // 2. Let pseudoElement be the result of pseudo-element parsing applied to pseudoElement of options, or null if options is not passed.
-    // FIXME: Currently only DOM::Element includes Animatable, but that might not always be true.
-    Optional<CSS::Selector::PseudoElementSelector> pseudo_element;
-    if (options.has_value() && options->pseudo_element.has_value()) {
-        auto& realm = static_cast<DOM::Element&>(*this).realm();
-        pseudo_element = TRY(pseudo_element_parsing(realm, options->pseudo_element));
-    }
 
     // 3. If pseudoElement is not null, then let target be the pseudo-element identified by pseudoElement with object as the originating element.
     //    Otherwise, let target be object.
     // FIXME: We can't refer to pseudo-elements directly, and they also can't be animated yet.
-    (void)pseudo_element;
+    (void)options.pseudo_element;
     GC::Ref target { *static_cast<DOM::Element*>(this) };
 
     // 4. If options is passed with subtree set to true, then return the set of relevant animations for a subtree of target.
@@ -102,8 +131,7 @@ WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations_inter
         }
     }
 
-    if (options.has_value() && options->subtree) {
-        Optional<WebIDL::Exception> exception;
+    if (options.subtree) {
         TRY(target->for_each_child_of_type_fallible<DOM::Element>([&](auto& child) -> WebIDL::ExceptionOr<IterationDecision> {
             relevant_animations.extend(TRY(child.get_animations_internal(GetAnimationsSorted::No, options)));
             return IterationDecision::Continue;
@@ -123,17 +151,45 @@ WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations_inter
     return relevant_animations;
 }
 
+bool Animatable::has_relevant_animations() const
+{
+    if (!m_impl)
+        return false;
+
+    for (auto const& animation : m_impl->associated_animations) {
+        if (animation->is_relevant())
+            return true;
+    }
+
+    return false;
+}
+
 void Animatable::associate_with_animation(GC::Ref<Animation> animation)
 {
     auto& impl = ensure_impl();
     impl.associated_animations.append(animation);
     impl.is_sorted_by_composite_order = false;
+
+    as<DOM::Element>(*this).document().associate_with_animation(animation);
 }
 
 void Animatable::disassociate_with_animation(GC::Ref<Animation> animation)
 {
     auto& impl = *m_impl;
     impl.associated_animations.remove_first_matching([&](auto element) { return animation == element; });
+
+    as<DOM::Element>(*this).document().disassociate_with_animation(animation);
+}
+
+void Animatable::on_document_changed(DOM::Document& old_document, DOM::Document& new_document)
+{
+    if (!m_impl)
+        return;
+
+    for (auto const& animation : m_impl->associated_animations) {
+        old_document.disassociate_with_animation(animation);
+        new_document.associate_with_animation(animation);
+    }
 }
 
 void Animatable::add_transitioned_properties(Optional<CSS::PseudoElement> pseudo_element, Vector<CSS::TransitionProperties> const& transitions)
@@ -245,11 +301,6 @@ void Animatable::Impl::visit_edges(JS::Cell::Visitor& visitor)
     }
 }
 
-void Animatable::set_has_css_defined_animations()
-{
-    ensure_impl().has_css_defined_animations = true;
-}
-
 bool Animatable::has_css_defined_animations() const
 {
     if (!m_impl)
@@ -258,7 +309,7 @@ bool Animatable::has_css_defined_animations() const
     return m_impl->has_css_defined_animations;
 }
 
-HashMap<FlyString, GC::Ref<CSS::CSSAnimation>>* Animatable::css_defined_animations(Optional<CSS::PseudoElement> pseudo_element)
+Vector<GC::Ref<CSS::CSSAnimation>> const* Animatable::css_defined_animations(Optional<CSS::PseudoElement> pseudo_element)
 {
     auto& impl = ensure_impl();
 
@@ -270,9 +321,24 @@ HashMap<FlyString, GC::Ref<CSS::CSSAnimation>>* Animatable::css_defined_animatio
                      .value_or(0);
 
     if (!impl.css_defined_animations[index])
-        impl.css_defined_animations[index] = make<HashMap<FlyString, GC::Ref<CSS::CSSAnimation>>>();
+        impl.css_defined_animations[index] = make<Vector<GC::Ref<CSS::CSSAnimation>>>();
 
     return impl.css_defined_animations[index];
+}
+
+void Animatable::set_css_defined_animations(Optional<CSS::PseudoElement> pseudo_element, Vector<GC::Ref<CSS::CSSAnimation>>&& animations)
+{
+    auto& impl = ensure_impl();
+
+    if (pseudo_element.has_value() && !CSS::Selector::PseudoElementSelector::is_known_pseudo_element_type(pseudo_element.value()))
+        return;
+
+    auto index = pseudo_element
+                     .map([](CSS::PseudoElement pseudo_element_value) { return to_underlying(pseudo_element_value) + 1; })
+                     .value_or(0);
+
+    impl.css_defined_animations[index] = make<Vector<GC::Ref<CSS::CSSAnimation>>>(move(animations));
+    impl.has_css_defined_animations = true;
 }
 
 Animatable::Impl& Animatable::ensure_impl() const

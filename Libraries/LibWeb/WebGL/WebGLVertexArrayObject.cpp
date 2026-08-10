@@ -6,15 +6,16 @@
 
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/WebGLVertexArrayObjectPrototype.h>
+#include <LibWeb/Bindings/WebGLVertexArrayObject.h>
 #include <LibWeb/WebGL/WebGLVertexArrayObject.h>
 
 namespace Web::WebGL {
 
 GC_DEFINE_ALLOCATOR(WebGLVertexArrayObject);
 
-GC::Ref<WebGLVertexArrayObject> WebGLVertexArrayObject::create(JS::Realm& realm, GC::Ref<WebGLRenderingContextBase> context, GLuint handle)
+GC::Ref<WebGLVertexArrayObject> WebGLVertexArrayObject::create(GC::Ref<WebGLRenderingContextBase> context, GLuint handle)
 {
+    auto& realm = context->realm();
     return realm.create<WebGLVertexArrayObject>(realm, context, handle);
 }
 
@@ -24,11 +25,5 @@ WebGLVertexArrayObject::WebGLVertexArrayObject(JS::Realm& realm, GC::Ref<WebGLRe
 }
 
 WebGLVertexArrayObject::~WebGLVertexArrayObject() = default;
-
-void WebGLVertexArrayObject::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(WebGLVertexArrayObject);
-    Base::initialize(realm);
-}
 
 }

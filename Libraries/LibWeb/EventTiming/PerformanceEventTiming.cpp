@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/PerformanceEventTimingPrototype.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/EventTiming/PerformanceEventTiming.h>
 #include <LibWeb/PerformanceTimeline/EntryTypes.h>
@@ -16,14 +14,13 @@ GC_DEFINE_ALLOCATOR(PerformanceEventTiming);
 
 // https://www.w3.org/TR/event-timing/#sec-init-event-timing
 PerformanceEventTiming::PerformanceEventTiming(
-    JS::Realm& realm,
     String const& name,
     HighResolutionTime::DOMHighResTimeStamp start_time,
     HighResolutionTime::DOMHighResTimeStamp duration,
     DOM::Event const& event,
     HighResolutionTime::DOMHighResTimeStamp processing_start,
     unsigned long long interaction_id)
-    : PerformanceTimeline::PerformanceEntry(realm, name, start_time, duration)
+    : PerformanceTimeline::PerformanceEntry(name, start_time, duration)
     , m_entry_type(PerformanceTimeline::EntryTypes::event)
     , m_start_time(event.time_stamp())
     , m_processing_start(processing_start)
@@ -35,7 +32,7 @@ PerformanceEventTiming::PerformanceEventTiming(
 
 PerformanceEventTiming::~PerformanceEventTiming() = default;
 
-FlyString const& PerformanceEventTiming::entry_type() const
+Utf16FlyString const& PerformanceEventTiming::entry_type() const
 {
     return m_entry_type;
 }
@@ -57,7 +54,7 @@ bool PerformanceEventTiming::cancelable() const
     return m_cancelable;
 }
 
-JS::ThrowCompletionOr<GC::Ptr<DOM::Node>> PerformanceEventTiming::target()
+GC::Ptr<DOM::Node> PerformanceEventTiming::target()
 {
     dbgln("FIXME: Implement PerformanceEventTiming::PerformanceEventTiming target()");
     return nullptr;
@@ -74,11 +71,11 @@ PerformanceTimeline::ShouldAddEntry PerformanceEventTiming::should_add_performan
 {
     dbgln("FIXME: Implement PerformanceEventTiming should_add_performance_event_timing()");
     // 1. If entry’s entryType attribute value equals to "first-input", return true.
-    if (entry_type() == "first-input")
+    if (entry_type() == PerformanceTimeline::EntryTypes::first_input)
         return PerformanceTimeline::ShouldAddEntry::Yes;
 
     // 2. Assert that entry’s entryType attribute value equals "event".
-    VERIFY(entry_type() == "event");
+    VERIFY(entry_type() == PerformanceTimeline::EntryTypes::event);
 
     // FIXME: 3. Let minDuration be computed as follows:
     // FIXME: 3.1. If options is not present or if options’s durationThreshold is not present, let minDuration be 104.
@@ -116,13 +113,7 @@ PerformanceTimeline::ShouldAddEntry PerformanceEventTiming::should_add_entry(Opt
     return should_add_performance_event_timing();
 }
 
-void PerformanceEventTiming::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(PerformanceEventTiming);
-    Base::initialize(realm);
-}
-
-void PerformanceEventTiming::visit_edges(JS::Cell::Visitor& visitor)
+void PerformanceEventTiming::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_event_target);

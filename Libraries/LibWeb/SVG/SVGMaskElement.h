@@ -13,7 +13,7 @@ namespace Web::SVG {
 
 class SVGMaskElement final : public SVGGraphicsElement {
 
-    WEB_PLATFORM_OBJECT(SVGMaskElement, SVGGraphicsElement);
+    WEB_WRAPPABLE(SVGMaskElement, SVGGraphicsElement);
     GC_DECLARE_ALLOCATOR(SVGMaskElement);
 
 public:
@@ -30,9 +30,9 @@ public:
         return {};
     }
 
-    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
 
-    virtual GC::Ptr<Layout::Node> create_layout_node(GC::Ref<CSS::ComputedProperties>) override;
+    virtual RefPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::ComputedValues const>) override;
 
     CSSPixelRect resolve_masking_area(CSSPixelRect const& mask_target) const;
 
@@ -41,7 +41,6 @@ public:
 
 private:
     SVGMaskElement(DOM::Document&, DOM::QualifiedName);
-    virtual void initialize(JS::Realm&) override;
 
     Optional<MaskContentUnits> m_mask_content_units = {};
     Optional<MaskUnits> m_mask_units = {};

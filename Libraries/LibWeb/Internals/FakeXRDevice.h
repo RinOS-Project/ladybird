@@ -6,35 +6,28 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/XRSystemPrototype.h>
+#include <LibWeb/Export.h>
 #include <LibWeb/Internals/InternalsBase.h>
 #include <LibWeb/WebXR/XRSession.h>
 
 namespace Web::Internals {
 
-struct FakeXRDeviceInit {
-    Optional<Vector<Bindings::XRSessionMode>> supported_modes;
-
-    Optional<Vector<String>> supported_features;
-};
-
 // https://github.com/immersive-web/webxr-test-api/blob/main/explainer.md
 class WEB_API FakeXRDevice final : public InternalsBase {
-    WEB_PLATFORM_OBJECT(FakeXRDevice, InternalsBase);
+    WEB_WRAPPABLE(FakeXRDevice, InternalsBase);
     GC_DECLARE_ALLOCATOR(FakeXRDevice);
 
 public:
-    static GC::Ref<FakeXRDevice> create(JS::Realm&);
+    static GC::Ref<FakeXRDevice> create(HTML::Window&);
     virtual ~FakeXRDevice() override;
 
     void simulate_user_activation(GC::Ref<WebIDL::CallbackType>) const;
 
     GC::Ref<WebIDL::Promise> disconnect() const;
+    void disconnect(GC::Ref<WebIDL::Promise>) const;
 
 private:
-    explicit FakeXRDevice(JS::Realm&);
-
-    virtual void initialize(JS::Realm&) override;
+    explicit FakeXRDevice(HTML::Window&);
 };
 
 }

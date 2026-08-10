@@ -1,12 +1,16 @@
 /*
- * Copyright (c) 2024-2025, Sam Atkins <sam@ladybird.org>
+ * Copyright (c) 2024-2026, Sam Atkins <sam@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Utf16StringBuilder.h>
+#include <LibWeb/CSS/ComputedProperties.h>
+#include <LibWeb/CSS/CustomPropertyData.h>
 #include <LibWeb/DOM/AbstractElement.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
+#include <LibWeb/DOM/PseudoElement.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/Layout/Node.h>
 
@@ -14,6 +18,12 @@ namespace Web::DOM {
 
 AbstractElement::AbstractElement(GC::Ref<Element> element, Optional<CSS::PseudoElement> pseudo_element)
     : m_element(element)
+    , m_pseudo_element(move(pseudo_element))
+{
+}
+
+AbstractElement::AbstractElement(Element const& element, Optional<CSS::PseudoElement> pseudo_element)
+    : m_element(const_cast<Element&>(element))
     , m_pseudo_element(move(pseudo_element))
 {
 }
@@ -65,17 +75,17 @@ AbstractElement::TreeCountingFunctionResolutionContext AbstractElement::tree_cou
     };
 }
 
-GC::Ptr<Layout::NodeWithStyle> AbstractElement::layout_node()
+Layout::NodeWithStyle* AbstractElement::layout_node()
 {
     if (m_pseudo_element.has_value())
-        return m_element->get_pseudo_element_node(*m_pseudo_element);
+        return m_element->pseudo_element_layout_node(*m_pseudo_element);
     return m_element->layout_node();
 }
 
-GC::Ptr<Layout::NodeWithStyle> AbstractElement::unsafe_layout_node()
+Layout::NodeWithStyle* AbstractElement::unsafe_layout_node()
 {
     if (m_pseudo_element.has_value())
-        return m_element->get_pseudo_element_node(*m_pseudo_element);
+        return m_element->pseudo_element_unsafe_layout_node(*m_pseudo_element);
     return m_element->unsafe_layout_node();
 }
 
@@ -84,6 +94,13 @@ GC::Ptr<Element const> AbstractElement::parent_element() const
     if (m_pseudo_element.has_value())
         return m_element;
     return m_element->parent_element();
+}
+
+Element* AbstractElement::flat_tree_parent_element() const
+{
+    if (m_pseudo_element.has_value())
+        return m_element;
+    return m_element->flat_tree_parent_element();
 }
 
 Optional<AbstractElement> AbstractElement::element_to_inherit_style_from() const
@@ -102,7 +119,7 @@ Optional<AbstractElement> AbstractElement::element_to_inherit_style_from() const
 Optional<AbstractElement> AbstractElement::walk_layout_tree(WalkMethod walk_method)
 {
     // NB: Called during style recalculation.
-    GC::Ptr<Layout::Node> node = unsafe_layout_node();
+    Layout::Node* node = unsafe_layout_node();
     if (!node)
         return OptionalNone {};
 
@@ -121,8 +138,11 @@ Optional<AbstractElement> AbstractElement::walk_layout_tree(WalkMethod walk_meth
         if (auto* previous_element = as_if<Element>(node->dom_node()))
             return AbstractElement { *previous_element };
 
-        if (node->is_generated_for_pseudo_element())
-            return AbstractElement { *node->pseudo_element_generator(), node->generated_for_pseudo_element() };
+        if (node->is_generated_for_pseudo_element()) {
+            auto pseudo_element = node->generated_for_pseudo_element();
+            if (pseudo_element.has_value() && CSS::is_tree_abiding_pseudo_element(*pseudo_element))
+                return AbstractElement { *node->pseudo_element_generator(), pseudo_element };
+        }
     }
 }
 
@@ -134,9 +154,25 @@ bool AbstractElement::is_before(AbstractElement const& other) const
     return this_node && other_node && this_node->is_before(*other_node);
 }
 
-GC::Ptr<CSS::ComputedProperties const> AbstractElement::computed_properties() const
+CSS::ComputedValues const* AbstractElement::computed_values() const
 {
-    return m_element->computed_properties(m_pseudo_element);
+    return m_element->computed_values(m_pseudo_element);
+}
+
+GC::Ptr<CSS::CSSStyleProperties const> AbstractElement::inline_style() const
+{
+    if (!m_pseudo_element.has_value())
+        return m_element->inline_style();
+
+    if (!CSS::is_element_reference_pseudo_element(*m_pseudo_element))
+        return nullptr;
+
+    auto pseudo_element = m_element->get_pseudo_element(*m_pseudo_element);
+
+    if (!pseudo_element.has_value())
+        return nullptr;
+
+    return as<ElementReferencePseudoElement>(*pseudo_element).referenced_element()->inline_style();
 }
 
 RefPtr<CSS::CustomPropertyData const> AbstractElement::custom_property_data() const
@@ -149,7 +185,7 @@ void AbstractElement::set_custom_property_data(RefPtr<CSS::CustomPropertyData co
     m_element->set_custom_property_data(m_pseudo_element, move(data));
 }
 
-RefPtr<CSS::StyleValue const> AbstractElement::get_custom_property(FlyString const& name) const
+RefPtr<CSS::StyleValue const> AbstractElement::get_custom_property(Utf16FlyString const& name) const
 {
     auto data = custom_property_data();
     if (!data)
@@ -159,78 +195,61 @@ RefPtr<CSS::StyleValue const> AbstractElement::get_custom_property(FlyString con
     return nullptr;
 }
 
-GC::Ptr<CSS::CascadedProperties> AbstractElement::cascaded_properties() const
-{
-    return m_element->cascaded_properties(m_pseudo_element);
-}
-
-void AbstractElement::set_cascaded_properties(GC::Ptr<CSS::CascadedProperties> cascaded_properties)
-{
-    m_element->set_cascaded_properties(m_pseudo_element, cascaded_properties);
-}
-
 bool AbstractElement::has_non_empty_counters_set() const
 {
     if (m_pseudo_element.has_value())
-        return m_element->get_pseudo_element(*m_pseudo_element)->has_non_empty_counters_set();
+        return m_element->get_synthetic_pseudo_element(*m_pseudo_element)->has_non_empty_counters_set();
     return m_element->has_non_empty_counters_set();
 }
 
 Optional<CSS::CountersSet const&> AbstractElement::counters_set() const
 {
     if (m_pseudo_element.has_value())
-        return m_element->get_pseudo_element(*m_pseudo_element)->counters_set();
+        return m_element->get_synthetic_pseudo_element(*m_pseudo_element)->counters_set();
     return m_element->counters_set();
 }
 
 CSS::CountersSet& AbstractElement::ensure_counters_set()
 {
     if (m_pseudo_element.has_value())
-        return m_element->get_pseudo_element(*m_pseudo_element)->ensure_counters_set();
+        return m_element->get_synthetic_pseudo_element(*m_pseudo_element)->ensure_counters_set();
     return m_element->ensure_counters_set();
 }
 
 void AbstractElement::set_counters_set(OwnPtr<CSS::CountersSet>&& counters_set)
 {
     if (m_pseudo_element.has_value()) {
-        m_element->get_pseudo_element(*m_pseudo_element)->set_counters_set(move(counters_set));
+        m_element->get_synthetic_pseudo_element(*m_pseudo_element)->set_counters_set(move(counters_set));
     } else {
         m_element->set_counters_set(move(counters_set));
     }
 }
 
-String AbstractElement::debug_description() const
+Utf16String AbstractElement::debug_description() const
 {
     if (m_pseudo_element.has_value()) {
-        StringBuilder builder;
+        Utf16StringBuilder builder;
         builder.append(m_element->debug_description());
-        builder.append("::"sv);
-        builder.append(CSS::pseudo_element_name(*m_pseudo_element));
-        return builder.to_string_without_validation();
+        builder.append_ascii("::"sv);
+        builder.append_ascii(CSS::pseudo_element_name(*m_pseudo_element));
+        return builder.to_string();
     }
     return m_element->debug_description();
 }
 
 CSS::StyleScope const& AbstractElement::style_scope() const
 {
-    auto& root = m_element->root();
-    if (root.is_shadow_root()) {
-        auto& shadow_root = as<DOM::ShadowRoot>(root);
-        if (shadow_root.uses_document_style_sheets())
-            return root.document().style_scope();
-        return shadow_root.style_scope();
-    }
-    return root.document().style_scope();
+    return m_element->style_scope();
 }
 
-HashMap<FlyString, GC::Ref<CSS::CSSAnimation>>* AbstractElement::css_defined_animations() const
+Vector<GC::Ref<CSS::CSSAnimation>> const* AbstractElement::css_defined_animations() const
 {
     return m_element->css_defined_animations(m_pseudo_element);
 }
 
-void AbstractElement::set_has_css_defined_animations()
+void AbstractElement::set_css_defined_animations(Vector<GC::Ref<CSS::CSSAnimation>>&& animations)
 {
-    m_element->set_has_css_defined_animations();
+    m_element->set_css_defined_animations(m_pseudo_element, move(animations));
 }
 
 }

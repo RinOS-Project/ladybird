@@ -6,8 +6,7 @@
  */
 
 #include "CSSKeyframeRule.h"
-#include <LibWeb/Bindings/CSSKeyframeRulePrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/CSS/CSSRuleList.h>
 #include <LibWeb/Dump.h>
 
@@ -15,36 +14,30 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSKeyframeRule);
 
-GC::Ref<CSSKeyframeRule> CSSKeyframeRule::create(JS::Realm& realm, Percentage key, CSSStyleProperties& declarations)
+GC::Ref<CSSKeyframeRule> CSSKeyframeRule::create(Vector<Percentage>&& keys, CSSStyleProperties& declarations)
 {
-    return realm.create<CSSKeyframeRule>(realm, key, declarations);
+    return GC::Heap::the().allocate<CSSKeyframeRule>(move(keys), declarations);
 }
 
-CSSKeyframeRule::CSSKeyframeRule(JS::Realm& realm, Percentage key, CSSStyleProperties& declarations)
-    : CSSRule(realm, Type::Keyframe)
-    , m_key(key)
+CSSKeyframeRule::CSSKeyframeRule(Vector<Percentage>&& keys, CSSStyleProperties& declarations)
+    : CSSRule(Type::Keyframe)
+    , m_keys(move(keys))
     , m_declarations(declarations)
 {
     m_declarations->set_parent_rule(*this);
 }
 
-void CSSKeyframeRule::visit_edges(Visitor& visitor)
+void CSSKeyframeRule::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_declarations);
 }
 
-void CSSKeyframeRule::initialize(JS::Realm& realm)
+Utf16String CSSKeyframeRule::serialized() const
 {
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSKeyframeRule);
-    Base::initialize(realm);
-}
-
-String CSSKeyframeRule::serialized() const
-{
-    StringBuilder builder;
-    builder.appendff("{}% {{ {} }}", key().value(), style()->serialized());
-    return MUST(builder.to_string());
+    Utf16StringBuilder builder;
+    builder.appendff("{} {{ {} }}", key_text(), style()->serialized());
+    return builder.to_string();
 }
 
 void CSSKeyframeRule::dump(StringBuilder& builder, int indent_levels) const
@@ -52,7 +45,7 @@ void CSSKeyframeRule::dump(StringBuilder& builder, int indent_levels) const
     Base::dump(builder, indent_levels);
 
     dump_indent(builder, indent_levels + 1);
-    builder.appendff("Key: {}\n"sv, key_text());
+    builder.appendff("Keys: {}\n"sv, key_text());
     dump_style_properties(builder, style(), indent_levels + 1);
 }
 

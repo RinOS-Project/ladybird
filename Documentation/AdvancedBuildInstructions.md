@@ -20,12 +20,11 @@ There are some optional features that can be enabled during compilation that are
 - `ENABLE_UNDEFINED_SANITIZER`: builds in runtime checks for [undefined behavior](https://en.wikipedia.org/wiki/Undefined_behavior) (like null pointer dereferences and signed integer overflows) in Lagom and Ladybird.
 - `UNDEFINED_BEHAVIOR_IS_FATAL`: makes all undefined behavior sanitizer errors non-recoverable. This option reduces the performance overhead of `ENABLE_UNDEFINED_SANITIZER`.
 - `ENABLE_COMPILER_EXPLORER_BUILD`: Skip building non-library entities in Lagom (this only applies to Lagom).
-- `ENABLE_FUZZERS`: builds [fuzzers](../Meta/Lagom/ReadMe.md#fuzzing) for various parts of the system.
-- `ENABLE_FUZZERS_LIBFUZZER`: builds Clang libFuzzer-based [fuzzers](../Meta/Lagom/ReadMe.md#fuzzing) for various parts of the system.
-- `ENABLE_FUZZERS_OSSFUZZ`: builds OSS-Fuzz compatible [fuzzers](../Meta/Lagom/ReadMe.md#fuzzing) for various parts of the system.
+- `ENABLE_FUZZERS`: builds [fuzzers](../Meta/Fuzzers/README.md) for various parts of the system.
+- `ENABLE_FUZZERS_LIBFUZZER`: builds Clang libFuzzer-based [fuzzers](../Meta/Fuzzers/README.md) for various parts of the system.
+- `ENABLE_FUZZERS_OSSFUZZ`: builds OSS-Fuzz compatible [fuzzers](../Meta/Fuzzers/README.md) for various parts of the system.
 - `ENABLE_ALL_THE_DEBUG_MACROS`: used for checking whether debug code compiles on CI. This should not be set normally, as it clutters the console output and makes the system run very slowly. Instead, enable only the needed debug macros, as described below.
 - `ENABLE_COMPILETIME_FORMAT_CHECK`: checks for the validity of `std::format`-style format string during compilation. Enabled by default.
-- `LAGOM_TOOLS_ONLY`: Skips building libraries, utilities and tests for [Lagom](../Meta/Lagom/ReadMe.md). Mostly only useful for cross-compilation.
 - `INCLUDE_WASM_SPEC_TESTS`: downloads and includes the WebAssembly spec testsuite tests. In order to use this option, you will need to install `prettier` and `wasm-tools`.
 - `INCLUDE_FLAC_SPEC_TESTS`: downloads and includes the xiph.org FLAC test suite.
 - `LADYBIRD_CACHE_DIR`: sets the location of a shared cache of downloaded files. Should not need to be set manually unless managing a distribution package.
@@ -71,16 +70,10 @@ Some OS distributions don't ship bleeding-edge clang-format binaries. Below are 
 
 ## Clangd Configuration
 
-Clangd will automatically look for configuration information in files
-named `.clangd` in each of the parent directories of the file being
-edited. The Ladybird source code repository has a top-level `.clangd`
-configuration file in the root directory. One of the configuration
-stanzas in that file specifies the location for a compilation database.
-Depending on your build configuration (e.g., Debug, default, Sanitizer,
-etc.), the path to the compilation database in that file may not be
-correct. The result is that `clangd` will have a difficult time
-understanding all your include directories. To resolve the problem, you
-can use the `Meta/configure-clangd.sh` script.
+The repository has a `.clangd` configuration file in the root directory. One of the configuration stanzas in that file
+specifies the location for a compilation database. Depending on your build configuration (e.g. Release, Debug, Sanitizer),
+the path to the compilation database in that file may not be correct. You may edit the `.clangd` file to point at your
+build directory.
 
 ## Clang Plugins
 
@@ -111,7 +104,7 @@ builds, and to configure the Flathub repo. The Ladybird Flatpak manifest at
 ```bash
 flatpak-builder --user --force-clean --install-deps-from=flathub \
   --ccache --repo=Build/repo --install Build/flatpak \
-  Meta/CMake/flatpak/org.ladybird.Ladybird.json 
+  Meta/CMake/flatpak/org.ladybird.Ladybird.json
 ```
 
 This command will build the Flatpak bundle and install it into the local Flatpak repository at `Build/repo`. Expect this
@@ -147,18 +140,17 @@ If you do run into such an error, the rest of this section explains how to deal 
 
       ```diff
       $ patch -p1 <<EOF
-      diff --git a/Meta/CMake/lagom_compile_options.cmake b/Meta/CMake/lagom_compile_options.cmake
-      index 7fec47ac843..45c3af87493 100644
-      --- a/Meta/CMake/lagom_compile_options.cmake
-      +++ b/Meta/CMake/lagom_compile_options.cmake
-      @@ -29,7 +29,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+      diff --git a/Meta/CMake/compile_options.cmake b/Meta/CMake/compile_options.cmake
+      index 0bb2be833b6..modified 100644
+      --- a/Meta/CMake/compile_options.cmake
+      +++ b/Meta/CMake/compile_options.cmake
+      @@ -235,7 +235,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
            if (NOT MSVC)
                add_cxx_compile_options(-ggdb3)
+      -        add_cxx_compile_options(-Og)
+      +        add_cxx_compile_options(-O0)
            endif()
-      -    add_cxx_compile_options(-Og)
-      +    add_cxx_compile_options(-O0)
        elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-           add_cxx_compile_options(-O2)
            if (NOT MSVC)
       EOF
       ```
@@ -169,7 +161,7 @@ If you do run into such an error, the rest of this section explains how to deal 
 2. At your command-line prompt in your shell environment, run the following command:
 
       ```
-      git update-index --skip-worktree Meta/CMake/lagom_compile_options.cmake
+      git update-index --skip-worktree Meta/CMake/compile_options.cmake
       ```
 
    That will cause git to ignore the change you made to that build file. Otherwise, if you don’t run that command, git will consider that build file to have been modified, and you might then end up inadvertently committing the changes to that build file as part of some actual code change you’re making to the sources that you’re in the process of debugging.
@@ -181,8 +173,8 @@ After you’ve finished debugging your code changes with that build, you can rev
 1. At your command-line prompt in your shell environment, run the following:
 
       ```
-      git update-index --no-skip-worktree Meta/CMake/lagom_compile_options.cmake \
-          && git checkout Meta/CMake/lagom_compile_options.cmake
+      git update-index --no-skip-worktree Meta/CMake/compile_options.cmake \
+          && git checkout Meta/CMake/compile_options.cmake
       ```
 
 That will restore your git environment to the state it was in before you patched the build file.

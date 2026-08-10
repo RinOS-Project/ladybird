@@ -5,41 +5,36 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGC/Heap.h>
 #include <LibUnicode/Segmenter.h>
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/SelectionPrototype.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/Position.h>
 #include <LibWeb/DOM/Range.h>
 #include <LibWeb/DOM/Text.h>
-#include <LibWeb/GraphemeEdgeTracker.h>
+#include <LibWeb/Editing/EditingHistory.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
+#include <LibWeb/Layout/Box.h>
 #include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/Selection/Selection.h>
+#include <LibWeb/Selection/SelectionModifier.h>
 
 namespace Web::Selection {
 
 GC_DEFINE_ALLOCATOR(Selection);
 
-GC::Ref<Selection> Selection::create(GC::Ref<JS::Realm> realm, GC::Ref<DOM::Document> document)
+GC::Ref<Selection> Selection::create(GC::Ref<DOM::Document> document)
 {
-    return realm->create<Selection>(realm, document);
+    return GC::Heap::the().allocate<Selection>(document);
 }
 
-Selection::Selection(GC::Ref<JS::Realm> realm, GC::Ref<DOM::Document> document)
-    : PlatformObject(realm)
-    , m_document(document)
+Selection::Selection(GC::Ref<DOM::Document> document)
+    : m_document(document)
 {
 }
 
 Selection::~Selection() = default;
-
-void Selection::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(Selection);
-    Base::initialize(realm);
-}
 
 // https://w3c.github.io/selection-api/#dfn-empty
 bool Selection::is_empty() const
@@ -52,7 +47,7 @@ bool Selection::is_empty() const
     return !m_range;
 }
 
-void Selection::visit_edges(Cell::Visitor& visitor)
+void Selection::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_range);
@@ -118,22 +113,22 @@ unsigned Selection::range_count() const
     return 0;
 }
 
-String Selection::type() const
+Utf16String Selection::type() const
 {
     if (!m_range)
-        return "None"_string;
+        return "None"_utf16;
     if (m_range->collapsed())
-        return "Caret"_string;
-    return "Range"_string;
+        return "Caret"_utf16;
+    return "Range"_utf16;
 }
 
-String Selection::direction() const
+Utf16String Selection::direction() const
 {
     if (!m_range || m_direction == Direction::Directionless)
-        return "none"_string;
+        return "none"_utf16;
     if (m_direction == Direction::Forwards)
-        return "forward"_string;
-    return "backward"_string;
+        return "forward"_utf16;
+    return "backward"_utf16;
 }
 
 // https://w3c.github.io/selection-api/#dom-selection-getrangeat
@@ -147,7 +142,7 @@ WebIDL::ExceptionOr<GC::Ptr<DOM::Range>> Selection::get_range_at(unsigned index)
     auto is_anchor_in_document_tree = anchor && &anchor->document() == document();
 
     if (index != 0 || is_empty() || !is_focus_in_document_tree || !is_anchor_in_document_tree)
-        return WebIDL::IndexSizeError::create(realm(), "Selection.getRangeAt() on empty Selection or with invalid argument"_utf16);
+        return WebIDL::IndexSizeError::create("Selection.getRangeAt() on empty Selection or with invalid argument"_utf16);
 
     // Otherwise, it must return a reference to (not a copy of) this's range.
     return m_range;
@@ -181,7 +176,7 @@ WebIDL::ExceptionOr<void> Selection::remove_range(GC::Ref<DOM::Range> range)
     }
 
     // Otherwise, it must throw a NotFoundError.
-    return WebIDL::NotFoundError::create(realm(), "Selection.removeRange() with invalid argument"_utf16);
+    return WebIDL::NotFoundError::create("Selection.removeRange() with invalid argument"_utf16);
 }
 
 // https://w3c.github.io/selection-api/#dom-selection-removeallranges
@@ -209,11 +204,11 @@ WebIDL::ExceptionOr<void> Selection::collapse(GC::Ptr<DOM::Node> node, unsigned 
 
     // 2. If node is a DocumentType, throw an InvalidNodeTypeError exception and abort these steps.
     if (node->is_document_type())
-        return WebIDL::InvalidNodeTypeError::create(realm(), "Selection.collapse() with DocumentType node"_utf16);
+        return WebIDL::InvalidNodeTypeError::create("Selection.collapse() with DocumentType node"_utf16);
 
     // 3. The method must throw an IndexSizeError exception if offset is longer than node's length and abort these steps.
     if (offset > node->length())
-        return WebIDL::IndexSizeError::create(realm(), "Selection.collapse() with offset longer than node's length"_utf16);
+        return WebIDL::IndexSizeError::create("Selection.collapse() with offset longer than node's length"_utf16);
 
     // 4. If document associated with this is not a shadow-including inclusive ancestor of node, abort these steps.
     if (!m_document->is_shadow_including_inclusive_ancestor_of(*node))
@@ -243,7 +238,7 @@ WebIDL::ExceptionOr<void> Selection::collapse_to_start()
 {
     // 1. The method must throw InvalidStateError exception if the this is empty.
     if (!m_range) {
-        return WebIDL::InvalidStateError::create(realm(), "Selection.collapse_to_start() on empty range"_utf16);
+        return WebIDL::InvalidStateError::create("Selection.collapse_to_start() on empty range"_utf16);
     }
 
     // 2. Otherwise, it must create a new range
@@ -263,7 +258,7 @@ WebIDL::ExceptionOr<void> Selection::collapse_to_end()
 {
     // 1. The method must throw InvalidStateError exception if the this is empty.
     if (!m_range) {
-        return WebIDL::InvalidStateError::create(realm(), "Selection.collapse_to_end() on empty range"_utf16);
+        return WebIDL::InvalidStateError::create("Selection.collapse_to_end() on empty range"_utf16);
     }
 
     // 2. Otherwise, it must create a new range
@@ -288,7 +283,7 @@ WebIDL::ExceptionOr<void> Selection::extend(GC::Ref<DOM::Node> node, unsigned of
 
     // 2. If this is empty, throw an InvalidStateError exception and abort these steps.
     if (!m_range) {
-        return WebIDL::InvalidStateError::create(realm(), "Selection.extend() on empty range"_utf16);
+        return WebIDL::InvalidStateError::create("Selection.extend() on empty range"_utf16);
     }
 
     // 3. Let oldAnchor and oldFocus be the this's anchor and focus, and let newFocus be the boundary point (node, offset).
@@ -301,8 +296,10 @@ WebIDL::ExceptionOr<void> Selection::extend(GC::Ref<DOM::Node> node, unsigned of
     // 4. Let newRange be a new range.
     auto new_range = DOM::Range::create(*m_document);
 
+    auto old_anchor_and_new_focus_have_the_same_shadow_including_root = &old_anchor_node.shadow_including_root() == &new_focus_node->shadow_including_root();
+
     // 5. If node's root is not the same as the this's range's root, set the start newRange's start and end to newFocus.
-    if (&node->root() != &m_range->start_container()->root()) {
+    if (&node->root() != &m_range->start_container()->root() || !old_anchor_and_new_focus_have_the_same_shadow_including_root) {
         TRY(new_range->set_start(new_focus_node, new_focus_offset));
         TRY(new_range->set_end(new_focus_node, new_focus_offset));
     }
@@ -321,7 +318,7 @@ WebIDL::ExceptionOr<void> Selection::extend(GC::Ref<DOM::Node> node, unsigned of
     set_range(new_range);
 
     // 9. If newFocus is before oldAnchor, set this's direction to backwards. Otherwise, set it to forwards.
-    if (DOM::position_of_boundary_point_relative_to_other_boundary_point({ new_focus_node, new_focus_offset }, { old_anchor_node, old_anchor_offset }) == DOM::RelativeBoundaryPointPosition::Before) {
+    if (old_anchor_and_new_focus_have_the_same_shadow_including_root && DOM::position_of_boundary_point_relative_to_other_boundary_point({ new_focus_node, new_focus_offset }, { old_anchor_node, old_anchor_offset }) == DOM::RelativeBoundaryPointPosition::Before) {
         m_direction = Direction::Backwards;
     } else {
         m_direction = Direction::Forwards;
@@ -335,10 +332,10 @@ WebIDL::ExceptionOr<void> Selection::set_base_and_extent(GC::Ref<DOM::Node> anch
 {
     // 1. If anchorOffset is longer than anchorNode's length or if focusOffset is longer than focusNode's length, throw an IndexSizeError exception and abort these steps.
     if (anchor_offset > anchor_node->length())
-        return WebIDL::IndexSizeError::create(realm(), "Anchor offset points outside of the anchor node"_utf16);
+        return WebIDL::IndexSizeError::create("Anchor offset points outside of the anchor node"_utf16);
 
     if (focus_offset > focus_node->length())
-        return WebIDL::IndexSizeError::create(realm(), "Focus offset points outside of the focus node"_utf16);
+        return WebIDL::IndexSizeError::create("Focus offset points outside of the focus node"_utf16);
 
     // 2. If document associated with this is not a shadow-including inclusive ancestor of anchorNode or focusNode, abort these steps.
     if (!m_document->is_shadow_including_inclusive_ancestor_of(anchor_node) || !m_document->is_shadow_including_inclusive_ancestor_of(focus_node))
@@ -377,7 +374,7 @@ WebIDL::ExceptionOr<void> Selection::select_all_children(GC::Ref<DOM::Node> node
 {
     // 1. If node is a DocumentType, throw an InvalidNodeTypeError exception and abort these steps.
     if (node->is_document_type())
-        return WebIDL::InvalidNodeTypeError::create(realm(), "Selection.selectAllChildren() with DocumentType node"_utf16);
+        return WebIDL::InvalidNodeTypeError::create("Selection.selectAllChildren() with DocumentType node"_utf16);
 
     // 2. If node's root is not the document associated with this, abort these steps.
     if (&node->root() != m_document.ptr())
@@ -403,44 +400,51 @@ WebIDL::ExceptionOr<void> Selection::select_all_children(GC::Ref<DOM::Node> node
 }
 
 // https://w3c.github.io/selection-api/#dom-selection-modify
-WebIDL::ExceptionOr<void> Selection::modify(Optional<String> alter, Optional<String> direction, Optional<String> granularity)
+WebIDL::ExceptionOr<void> Selection::modify(Optional<Utf16String> alter, Optional<Utf16String> direction, Optional<Utf16String> granularity)
 {
-    auto anchor_node = this->anchor_node();
-    if (!anchor_node || !is<DOM::Text>(*anchor_node))
-        return {};
-
-    auto& text_node = static_cast<DOM::Text&>(*anchor_node);
-
     // 1. If alter is not ASCII case-insensitive match with "extend" or "move", abort these steps.
-    if (!alter.has_value() || !alter.value().bytes_as_string_view().is_one_of_ignoring_ascii_case("extend"sv, "move"sv))
+    if (!alter.has_value() || !alter->utf16_view().is_one_of_ignoring_ascii_case(u"extend"sv, u"move"sv))
         return {};
 
     // 2. If direction is not ASCII case-insensitive match with "forward", "backward", "left", or "right", abort these steps.
-    if (!direction.has_value() || !direction.value().bytes_as_string_view().is_one_of_ignoring_ascii_case("forward"sv, "backward"sv, "left"sv, "right"sv))
+    if (!direction.has_value() || !direction->utf16_view().is_one_of_ignoring_ascii_case(u"forward"sv, u"backward"sv, u"left"sv, u"right"sv))
         return {};
 
     // 3. If granularity is not ASCII case-insensitive match with "character", "word", "sentence", "line", "paragraph",
     //    "lineboundary", "sentenceboundary", "paragraphboundary", "documentboundary", abort these steps.
-    if (!granularity.has_value() || !granularity.value().bytes_as_string_view().is_one_of_ignoring_ascii_case("character"sv, "word"sv, "sentence"sv, "line"sv, "paragraph"sv, "lineboundary"sv, "sentenceboundary"sv, "paragraphboundary"sv, "documentboundary"sv))
+    if (!granularity.has_value() || !granularity->utf16_view().is_one_of_ignoring_ascii_case(u"character"sv, u"word"sv, u"sentence"sv, u"line"sv, u"paragraph"sv, u"lineboundary"sv, u"sentenceboundary"sv, u"paragraphboundary"sv, u"documentboundary"sv))
         return {};
 
     // 4. If this selection is empty, abort these steps.
     if (is_empty())
         return {};
 
+    auto focus = focus_node();
+    if (!focus)
+        return {};
+
     // 5. Let effectiveDirection be backwards.
     auto effective_direction = Direction::Backwards;
 
     // 6. If direction is ASCII case-insensitive match with "forward", set effectiveDirection to forwards.
-    if (direction.value().equals_ignoring_ascii_case("forward"sv))
+    if (direction->equals_ignoring_ascii_case(u"forward"sv))
         effective_direction = Direction::Forwards;
 
+    // Inline base direction of this selection's focus.
+    auto focus_directionality = DOM::Element::Directionality::Ltr;
+    if (auto* text = as_if<DOM::Text>(*focus)) {
+        if (auto text_directionality = text->directionality(); text_directionality.has_value())
+            focus_directionality = *text_directionality;
+    } else if (auto* element = as_if<DOM::Element>(*focus)) {
+        focus_directionality = element->directionality();
+    }
+
     // 7. If direction is ASCII case-insensitive match with "right" and inline base direction of this selection's focus is ltr, set effectiveDirection to forwards.
-    if (direction.value().equals_ignoring_ascii_case("right"sv) && text_node.directionality() == DOM::Element::Directionality::Ltr)
+    if (direction->equals_ignoring_ascii_case(u"right"sv) && focus_directionality == DOM::Element::Directionality::Ltr)
         effective_direction = Direction::Forwards;
 
     // 8. If direction is ASCII case-insensitive match with "left" and inline base direction of this selection's focus is rtl, set effectiveDirection to forwards.
-    if (direction.value().equals_ignoring_ascii_case("left"sv) && text_node.directionality() == DOM::Element::Directionality::Rtl)
+    if (direction->equals_ignoring_ascii_case(u"left"sv) && focus_directionality == DOM::Element::Directionality::Rtl)
         effective_direction = Direction::Forwards;
 
     // 9. Set this selection's direction to effectiveDirection.
@@ -448,20 +452,23 @@ WebIDL::ExceptionOr<void> Selection::modify(Optional<String> alter, Optional<Str
 
     // 10. If alter is ASCII case-insensitive match with "extend", set this selection's focus to the location as if the user had requested to extend selection by granularity.
     // 11. Otherwise, set this selection's focus and anchor to the location as if the user had requested to move selection by granularity.
-    auto collapse_selection = alter.value().equals_ignoring_ascii_case("move"sv);
+    auto collapse_selection = alter->equals_ignoring_ascii_case(u"move"sv);
 
-    // TODO: Implement the other granularity options.
-    if (effective_direction == Direction::Forwards) {
-        if (granularity.value().equals_ignoring_ascii_case("character"sv))
-            move_offset_to_next_character(collapse_selection);
-        if (granularity.value().equals_ignoring_ascii_case("word"sv))
-            move_offset_to_next_word(collapse_selection);
-    } else {
-        if (granularity.value().equals_ignoring_ascii_case("character"sv))
-            move_offset_to_previous_character(collapse_selection);
-        if (granularity.value().equals_ignoring_ascii_case("word"sv))
-            move_offset_to_previous_word(collapse_selection);
-    }
+    // TODO: Implement the sentence, paragraph, and document granularity options.
+    auto alteration = collapse_selection ? SelectionAlteration::Move : SelectionAlteration::Extend;
+    auto selection_direction = effective_direction == Direction::Forwards ? SelectionDirection::Forward : SelectionDirection::Backward;
+    Optional<SelectionGranularity> selection_granularity;
+    if (granularity->equals_ignoring_ascii_case(u"character"sv))
+        selection_granularity = SelectionGranularity::Character;
+    else if (granularity->equals_ignoring_ascii_case(u"word"sv))
+        selection_granularity = SelectionGranularity::Word;
+    else if (granularity->equals_ignoring_ascii_case(u"line"sv))
+        selection_granularity = SelectionGranularity::Line;
+    else if (granularity->equals_ignoring_ascii_case(u"lineboundary"sv))
+        selection_granularity = SelectionGranularity::LineBoundary;
+
+    if (selection_granularity.has_value())
+        SelectionModifier(*this).modify(alteration, selection_direction, *selection_granularity);
 
     return {};
 }
@@ -481,6 +488,10 @@ bool Selection::contains_node(GC::Ref<DOM::Node> node, bool allow_partial_contai
 {
     // The method must return false if this is empty or if node's root is not the document associated with this.
     if (!m_range)
+        return false;
+    // The range's boundary points can be in a tree that's not connected to the document (for example, inside the shadow
+    // tree of a removed host). Such a range isn't comparable with a node in the document.
+    if (&m_range->start().node->shadow_including_root() != m_document.ptr())
         return false;
     if (&node->root() != m_document.ptr())
         return false;
@@ -555,6 +566,8 @@ void Selection::set_range(GC::Ptr<DOM::Range> range)
         old_range->set_associated_selection({}, nullptr);
 
     m_range = range;
+    m_focus_affinity = TextAffinity::Downstream;
+    m_preferred_inline_coordinate.clear();
 
     if (range)
         range->set_associated_selection({}, this);
@@ -566,6 +579,13 @@ void Selection::set_range(GC::Ptr<DOM::Range> range)
     if (((old_range == nullptr) != (range == nullptr)) || (old_range && *old_range != *range)) {
         m_document->reset_command_state_overrides();
         m_document->reset_command_value_overrides();
+    }
+
+    // NB: Removing the selection ends typing coalescence in the editing history; changes to an associated range are
+    //     handled in Range::update_associated_selection().
+    if (!range) {
+        if (auto history = m_document->editing_history_if_exists())
+            history->selection_changed();
     }
 
     // https://developer.mozilla.org/en-US/docs/Web/API/Selection#behavior_of_selection_api_in_terms_of_editing_host_focus_changes
@@ -584,146 +604,37 @@ GC::Ptr<DOM::Position> Selection::cursor_position() const
     if (!m_range || !is_collapsed())
         return nullptr;
 
-    return DOM::Position::create(m_document->realm(), *m_range->start_container(), m_range->start_offset());
+    return DOM::Position::create(*m_range->start_container(), m_range->start_offset());
 }
-
-// FIXME: The offset adjustment algorithms below do not handle moving over multiple DOM nodes. For example, if we have:
-//        `<div contenteditable><p>Well hello</p><p>friends</p></div>`, we should be able to move the cursor between the
-//        two <p> elements. But the algorithms below limit us to a single DOM node.
 
 void Selection::move_offset_to_next_character(bool collapse_selection)
 {
-    auto* text_node = as_if<DOM::Text>(anchor_node().ptr());
-    if (!text_node)
-        return;
-
-    // If there is a selection range, collapse to the end (max) of that range without moving forward
-    if (collapse_selection && !is_collapsed()) {
-        MUST(collapse(text_node, max(anchor_offset(), focus_offset())));
-        m_document->reset_cursor_blink_cycle();
-    }
-    // Otherwise, move forward if possible
-    else if (auto offset = text_node->grapheme_segmenter().next_boundary(focus_offset()); offset.has_value()) {
-        if (collapse_selection) {
-            MUST(collapse(text_node, *offset));
-            m_document->reset_cursor_blink_cycle();
-        } else {
-            MUST(set_base_and_extent(*text_node, anchor_offset(), *text_node, *offset));
-        }
-    }
-    scroll_focus_into_view();
+    SelectionModifier(*this).modify(collapse_selection ? SelectionAlteration::Move : SelectionAlteration::Extend, SelectionDirection::Forward, SelectionGranularity::Character);
 }
 
 void Selection::move_offset_to_previous_character(bool collapse_selection)
 {
-    auto* text_node = as_if<DOM::Text>(anchor_node().ptr());
-    if (!text_node)
-        return;
-
-    // If there is a selection range, collapse to the start (min) of that range without moving backward
-    if (collapse_selection && !is_collapsed()) {
-        MUST(collapse(text_node, min(anchor_offset(), focus_offset())));
-        m_document->reset_cursor_blink_cycle();
-    }
-    // Otherwise, move backward if possible
-    else if (auto offset = text_node->grapheme_segmenter().previous_boundary(focus_offset()); offset.has_value()) {
-        if (collapse_selection) {
-            MUST(collapse(text_node, *offset));
-            m_document->reset_cursor_blink_cycle();
-        } else {
-            MUST(set_base_and_extent(*text_node, anchor_offset(), *text_node, *offset));
-        }
-    }
-    scroll_focus_into_view();
+    SelectionModifier(*this).modify(collapse_selection ? SelectionAlteration::Move : SelectionAlteration::Extend, SelectionDirection::Backward, SelectionGranularity::Character);
 }
 
 void Selection::move_offset_to_next_word(bool collapse_selection)
 {
-    auto* text_node = as_if<DOM::Text>(anchor_node().ptr());
-    if (!text_node)
-        return;
-
-    while (true) {
-        auto focus_offset = this->focus_offset();
-        if (focus_offset == text_node->data().length_in_code_units())
-            break;
-
-        if (auto offset = text_node->word_segmenter().next_boundary(focus_offset); offset.has_value()) {
-            if (collapse_selection) {
-                MUST(collapse(text_node, *offset));
-                m_document->reset_cursor_blink_cycle();
-            } else {
-                MUST(set_base_and_extent(*text_node, anchor_offset(), *text_node, *offset));
-            }
-            auto word = text_node->data().substring_view(focus_offset, *offset - focus_offset);
-            if (Unicode::Segmenter::should_continue_beyond_word(word))
-                continue;
-        }
-        break;
-    }
-    scroll_focus_into_view();
+    SelectionModifier(*this).modify(collapse_selection ? SelectionAlteration::Move : SelectionAlteration::Extend, SelectionDirection::Forward, SelectionGranularity::Word);
 }
 
 void Selection::move_offset_to_previous_word(bool collapse_selection)
 {
-    auto* text_node = as_if<DOM::Text>(anchor_node().ptr());
-    if (!text_node)
-        return;
-
-    while (true) {
-        auto focus_offset = this->focus_offset();
-        if (auto offset = text_node->word_segmenter().previous_boundary(focus_offset); offset.has_value()) {
-            if (collapse_selection) {
-                MUST(collapse(text_node, *offset));
-                m_document->reset_cursor_blink_cycle();
-            } else {
-                MUST(set_base_and_extent(*text_node, anchor_offset(), *text_node, *offset));
-            }
-            auto word = text_node->data().substring_view(*offset, focus_offset - *offset);
-            if (Unicode::Segmenter::should_continue_beyond_word(word))
-                continue;
-        }
-        break;
-    }
-    scroll_focus_into_view();
+    SelectionModifier(*this).modify(collapse_selection ? SelectionAlteration::Move : SelectionAlteration::Extend, SelectionDirection::Backward, SelectionGranularity::Word);
 }
 
 void Selection::move_offset_to_next_line(bool collapse_selection)
 {
-    auto* text_node = as_if<DOM::Text>(anchor_node().ptr());
-    if (!text_node)
-        return;
-
-    auto new_offset = compute_cursor_position_on_next_line(*text_node, focus_offset());
-    if (!new_offset.has_value())
-        return;
-
-    if (collapse_selection) {
-        MUST(collapse(text_node, *new_offset));
-        m_document->reset_cursor_blink_cycle();
-    } else {
-        MUST(set_base_and_extent(*text_node, anchor_offset(), *text_node, *new_offset));
-    }
-    scroll_focus_into_view();
+    SelectionModifier(*this).modify(collapse_selection ? SelectionAlteration::Move : SelectionAlteration::Extend, SelectionDirection::Forward, SelectionGranularity::Line);
 }
 
 void Selection::move_offset_to_previous_line(bool collapse_selection)
 {
-    auto* text_node = as_if<DOM::Text>(anchor_node().ptr());
-    if (!text_node)
-        return;
-
-    auto new_offset = compute_cursor_position_on_previous_line(*text_node, focus_offset());
-    if (!new_offset.has_value())
-        return;
-
-    if (collapse_selection) {
-        MUST(collapse(text_node, *new_offset));
-        m_document->reset_cursor_blink_cycle();
-    } else {
-        MUST(set_base_and_extent(*text_node, anchor_offset(), *text_node, *new_offset));
-    }
-    scroll_focus_into_view();
+    SelectionModifier(*this).modify(collapse_selection ? SelectionAlteration::Move : SelectionAlteration::Extend, SelectionDirection::Backward, SelectionGranularity::Line);
 }
 
 void Selection::scroll_focus_into_view()
@@ -734,7 +645,12 @@ void Selection::scroll_focus_into_view()
 
     m_document->update_layout(DOM::UpdateLayoutReason::ScrollCursorIntoView);
 
-    auto* paintable = focus->paintable();
+    if (auto* text = as_if<DOM::Text>(*focus)) {
+        Painting::Paintable::scroll_text_offset_into_view(*text, focus_offset(), m_focus_affinity);
+        return;
+    }
+
+    auto paintable = focus->paintable();
     if (!paintable)
         return;
 

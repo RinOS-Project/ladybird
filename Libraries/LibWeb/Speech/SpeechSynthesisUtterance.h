@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/String.h>
+#include <AK/Utf16String.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
 #include <LibWeb/DOM/EventTarget.h>
@@ -26,20 +26,20 @@
 namespace Web::Speech {
 
 class SpeechSynthesisUtterance final : public DOM::EventTarget {
-    WEB_PLATFORM_OBJECT(SpeechSynthesisUtterance, DOM::EventTarget);
+    WEB_WRAPPABLE(SpeechSynthesisUtterance, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(SpeechSynthesisUtterance);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<SpeechSynthesisUtterance>> construct_impl(JS::Realm&, String const& text = {});
+    static GC::Ref<SpeechSynthesisUtterance> create(Utf16String const& text = {});
     virtual ~SpeechSynthesisUtterance() override;
 
     // https://wicg.github.io/speech-api/#dom-speechsynthesisutterance-text
-    String const& text() const { return m_text; }
-    void set_text(String const& text) { m_text = text; }
+    Utf16String const& text() const { return m_text; }
+    void set_text(Utf16String const& text) { m_text = text; }
 
     // https://wicg.github.io/speech-api/#dom-speechsynthesisutterance-lang
-    String const& lang() const { return m_lang; }
-    void set_lang(String const& lang) { m_lang = lang; }
+    Utf16String const& lang() const { return m_lang; }
+    void set_lang(Utf16String const& lang) { m_lang = lang; }
 
     // https://wicg.github.io/speech-api/#dom-speechsynthesisutterance-voice
     GC::Ptr<SpeechSynthesisVoice> voice() const { return m_voice; }
@@ -65,13 +65,12 @@ public:
 #undef __ENUMERATE
 
 private:
-    SpeechSynthesisUtterance(JS::Realm&, String const& text);
+    explicit SpeechSynthesisUtterance(Utf16String const& text);
 
-    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    String m_text;
-    String m_lang;
+    Utf16String m_text;
+    Utf16String m_lang;
     GC::Ptr<SpeechSynthesisVoice> m_voice;
     float m_volume { 1.f };
     float m_rate { 1.f };

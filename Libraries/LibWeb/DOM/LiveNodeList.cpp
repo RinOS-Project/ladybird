@@ -14,13 +14,13 @@ namespace Web::DOM {
 
 GC_DEFINE_ALLOCATOR(LiveNodeList);
 
-GC::Ref<NodeList> LiveNodeList::create(JS::Realm& realm, Node const& root, Scope scope, Function<bool(Node const&)> filter)
+GC::Ref<NodeList> LiveNodeList::create(Node const& root, Scope scope, Function<bool(Node const&)> filter)
 {
-    return realm.create<LiveNodeList>(realm, root, scope, move(filter));
+    return GC::Heap::the().allocate<LiveNodeList>(root, scope, move(filter));
 }
 
-LiveNodeList::LiveNodeList(JS::Realm& realm, Node const& root, Scope scope, Function<bool(Node const&)> filter)
-    : NodeList(realm)
+LiveNodeList::LiveNodeList(Node const& root, Scope scope, Function<bool(Node const&)> filter)
+    : NodeList()
     , m_root(root)
     , m_filter(move(filter))
     , m_scope(scope)
@@ -29,15 +29,16 @@ LiveNodeList::LiveNodeList(JS::Realm& realm, Node const& root, Scope scope, Func
 
 LiveNodeList::~LiveNodeList() = default;
 
-void LiveNodeList::visit_edges(Cell::Visitor& visitor)
+void LiveNodeList::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_root);
+    visitor.visit_possible_values(m_filter.raw_capture_range());
 }
 
 GC::RootVector<Node*> LiveNodeList::collection() const
 {
-    GC::RootVector<Node*> nodes(heap());
+    GC::RootVector<Node*> nodes;
     if (m_scope == Scope::Descendants) {
         m_root->for_each_in_subtree([&](auto& node) {
             if (m_filter(node))

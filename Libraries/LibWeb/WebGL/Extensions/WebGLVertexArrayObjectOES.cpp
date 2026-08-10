@@ -7,15 +7,16 @@
 
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/WebGLVertexArrayObjectOESPrototype.h>
+#include <LibWeb/Bindings/WebGLVertexArrayObjectOES.h>
 #include <LibWeb/WebGL/Extensions/WebGLVertexArrayObjectOES.h>
 
-namespace Web::WebGL::Extensions {
+namespace Web::WebGL {
 
 GC_DEFINE_ALLOCATOR(WebGLVertexArrayObjectOES);
 
-GC::Ref<WebGLVertexArrayObjectOES> WebGLVertexArrayObjectOES::create(JS::Realm& realm, WebGLRenderingContextBase& context, GLuint handle)
+GC::Ref<WebGLVertexArrayObjectOES> WebGLVertexArrayObjectOES::create(WebGLRenderingContextBase& context, GLuint handle)
 {
+    auto& realm = context.realm();
     return realm.create<WebGLVertexArrayObjectOES>(realm, context, handle);
 }
 
@@ -25,11 +26,5 @@ WebGLVertexArrayObjectOES::WebGLVertexArrayObjectOES(JS::Realm& realm, WebGLRend
 }
 
 WebGLVertexArrayObjectOES::~WebGLVertexArrayObjectOES() = default;
-
-void WebGLVertexArrayObjectOES::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(WebGLVertexArrayObjectOES);
-    Base::initialize(realm);
-}
 
 }

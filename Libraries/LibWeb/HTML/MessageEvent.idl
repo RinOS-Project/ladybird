@@ -1,6 +1,3 @@
-#import <DOM/Event.idl>
-#import <HTML/MessagePort.idl>
-
 // FIXME: typedef (WindowProxy or MessagePort or ServiceWorker) MessageEventSource;
 typedef (WindowProxy or MessagePort) MessageEventSource;
 
@@ -21,8 +18,8 @@ interface MessageEvent : Event {
 
 dictionary MessageEventInit : EventInit {
     any data = null;
-    USVString origin = "";
-    DOMString lastEventId = "";
+    Utf16USVString origin = "";
+    Utf16DOMString lastEventId = "";
     MessageEventSource? source = null;
     sequence<MessagePort> ports = [];
 };

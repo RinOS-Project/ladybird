@@ -8,6 +8,7 @@
 #pragma once
 
 #include <AK/Assertions.h>
+#include <AK/Checked.h>
 #include <AK/Error.h>
 #include <AK/Find.h>
 #include <AK/Forward.h>
@@ -481,7 +482,7 @@ public:
     {
         clear_with_capacity();
         if (m_metadata.outline_buffer) {
-            kfree_sized(m_metadata.outline_buffer, m_capacity * sizeof(StorageType));
+            kfree(m_metadata.outline_buffer);
             m_metadata.outline_buffer = nullptr;
         }
         reset_capacity();
@@ -848,8 +849,13 @@ public:
     {
         if (m_capacity >= needed_capacity)
             return {};
-        size_t new_capacity = kmalloc_good_size(needed_capacity * sizeof(StorageType)) / sizeof(StorageType);
-        auto* new_buffer = static_cast<StorageType*>(kmalloc_array(new_capacity, sizeof(StorageType)));
+        Checked<size_t> new_size_in_bytes = needed_capacity;
+        new_size_in_bytes *= sizeof(StorageType);
+        if (new_size_in_bytes.has_overflow())
+            return Error::from_errno(ENOMEM);
+        size_t allocation_size = kmalloc_good_size(new_size_in_bytes.value());
+        size_t new_capacity = allocation_size / sizeof(StorageType);
+        auto* new_buffer = static_cast<StorageType*>(kmalloc(allocation_size));
         if (new_buffer == nullptr)
             return Error::from_errno(ENOMEM);
 
@@ -862,7 +868,7 @@ public:
             }
         }
         if (m_metadata.outline_buffer)
-            kfree_sized(m_metadata.outline_buffer, m_capacity * sizeof(StorageType));
+            kfree(m_metadata.outline_buffer);
         m_metadata.outline_buffer = new_buffer;
         m_capacity = new_capacity;
         update_metadata(); // We have *some* space, we just allocated it.

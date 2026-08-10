@@ -6,53 +6,57 @@
 
 #pragma once
 
+#include <AK/IterationDecision.h>
 #include <AK/Vector.h>
 #include <LibURL/URL.h>
+#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::DOMURL {
 
 struct QueryParam {
-    String name;
-    String value;
+    Utf16String name;
+    Utf16String value;
 };
 String url_encode(Vector<QueryParam> const&, StringView encoding = "UTF-8"sv);
 Vector<QueryParam> url_decode(StringView);
+Vector<QueryParam> url_decode(Utf16View);
 
-class URLSearchParams : public Bindings::PlatformObject {
-    WEB_PLATFORM_OBJECT(URLSearchParams, Bindings::PlatformObject);
+class URLSearchParams : public Bindings::GCAllocatedWrappable {
+    WEB_WRAPPABLE(URLSearchParams, Bindings::GCAllocatedWrappable);
     GC_DECLARE_ALLOCATOR(URLSearchParams);
 
 public:
-    static GC::Ref<URLSearchParams> create(JS::Realm&, StringView);
-    static GC::Ref<URLSearchParams> create(JS::Realm&, Vector<QueryParam> list);
-    static WebIDL::ExceptionOr<GC::Ref<URLSearchParams>> construct_impl(JS::Realm&, Variant<Vector<Vector<String>>, OrderedHashMap<String, String>, String> const& init);
+    static GC::Ref<URLSearchParams> create(StringView);
+    static GC::Ref<URLSearchParams> create(Utf16View);
+    static GC::Ref<URLSearchParams> create(Vector<QueryParam> list);
+    static WebIDL::ExceptionOr<GC::Ref<URLSearchParams>> create_from_init(Variant<Vector<Vector<Utf16String>>, OrderedHashMap<Utf16String, Utf16String>, Utf16String> const& init);
 
     virtual ~URLSearchParams() override;
 
     size_t size() const;
-    void append(String const& name, String const& value);
-    void delete_(String const& name, Optional<String> const& value = {});
-    Optional<String> get(String const& name);
-    Vector<String> get_all(String const& name);
-    bool has(String const& name, Optional<String> const& value = {});
-    void set(String const& name, String const& value);
+    void append(Utf16String const& name, Utf16String const& value);
+    void delete_(Utf16String const& name, Optional<Utf16String> const& value = {});
+    Optional<Utf16String> get(Utf16String const& name);
+    Vector<Utf16String> get_all(Utf16String const& name);
+    bool has(Utf16String const& name, Optional<Utf16String> const& value = {});
+    void set(Utf16String const& name, Utf16String const& value);
 
     void sort();
 
-    String to_string() const;
+    String serialize_to_byte_string() const;
+    Utf16String to_string() const;
 
-    using ForEachCallback = Function<JS::ThrowCompletionOr<void>(String const&, String const&)>;
-    JS::ThrowCompletionOr<void> for_each(ForEachCallback);
+    using ForEachCallback = Function<IterationDecision(Utf16String const&, Utf16String const&)>;
+    void for_each(ForEachCallback);
 
 private:
     friend class DOMURL;
     friend class URLSearchParamsIterator;
 
-    URLSearchParams(JS::Realm&, Vector<QueryParam> list);
+    explicit URLSearchParams(Vector<QueryParam> list);
 
-    virtual void initialize(JS::Realm&) override;
-    virtual void visit_edges(Cell::Visitor&) override;
+    virtual void visit_edges(GC::Cell::Visitor&) override;
 
     void update();
 

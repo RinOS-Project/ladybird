@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/Runtime/Realm.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/ContentSecurityPolicy/Directives/BaseUriDirective.h>
 #include <LibWeb/ContentSecurityPolicy/Directives/ChildSourceDirective.h>
 #include <LibWeb/ContentSecurityPolicy/Directives/ConnectSourceDirective.h>
@@ -35,7 +35,7 @@
 
 namespace Web::ContentSecurityPolicy::Directives {
 
-GC::Ref<Directive> create_directive(GC::Heap& heap, String name, Vector<String> value)
+GC::Ref<Directive> create_directive(GC::Heap& heap, Utf16FlyString name, Vector<Utf16String> value)
 {
     if (name == Names::BaseUri)
         return heap.allocate<BaseUriDirective>(move(name), move(value));

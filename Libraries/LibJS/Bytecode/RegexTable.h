@@ -29,13 +29,8 @@ class RegexTable {
 public:
     RegexTable() = default;
 
-    RegexTableIndex insert(ParsedRegex);
-    Regex<ECMA262> const& get(RegexTableIndex) const;
-    void dump() const;
-    bool is_empty() const { return m_regexes.is_empty(); }
-
-private:
-    Vector<Regex<ECMA262>> m_regexes;
+    bool is_empty() const { return true; }
+    size_t external_memory_size() const { return 0; }
 };
 
 }

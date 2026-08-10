@@ -21,19 +21,50 @@
 #include <LibWeb/Painting/DisplayListPlayerSkia.h>
 #endif
 #include <LibWeb/Painting/DisplayListRecorder.h>
+#include <LibWeb/Painting/DisplayListResourceStorage.h>
 
 namespace Web::CSS {
 
+StyleValueFFI::StyleValueData const* CursorStyleValue::make_cursor_data(NonnullRefPtr<AbstractImageStyleValue const> const& image, RefPtr<StyleValue const> const& x, RefPtr<StyleValue const> const& y)
+{
+    // The Rust allocation takes ownership of one strong reference to the image and to each
+    // non-null coordinate.
+    return StyleValueFFI::rust_style_value_create_cursor(
+        StyleValueFFI::rust_style_value_retain(image->rust_style_value_data()),
+        x ? StyleValueFFI::rust_style_value_retain(x->rust_style_value_data()) : nullptr,
+        y ? StyleValueFFI::rust_style_value_retain(y->rust_style_value_data()) : nullptr);
+}
+
+CursorStyleValue::CursorStyleValue(StyleValueFFI::StyleValueData const* data)
+    : StyleValueWithDefaultOperators(Type::Cursor, data)
+    , m_image(StyleValue::adopt_rust_style_value_data(StyleValueFFI::rust_style_value_retain(
+                                                          static_cast<StyleValueFFI::StyleValueData const*>(data->cursor.image.pointer)))
+              ->as_abstract_image())
+    , m_x([&]() -> ValueComparingRefPtr<StyleValue const> {
+        auto const* x_data = static_cast<StyleValueFFI::StyleValueData const*>(data->cursor.x.pointer);
+        if (!x_data)
+            return nullptr;
+        return StyleValue::adopt_rust_style_value_data(StyleValueFFI::rust_style_value_retain(x_data));
+    }())
+    , m_y([&]() -> ValueComparingRefPtr<StyleValue const> {
+        auto const* y_data = static_cast<StyleValueFFI::StyleValueData const*>(data->cursor.y.pointer);
+        if (!y_data)
+            return nullptr;
+        return StyleValue::adopt_rust_style_value_data(StyleValueFFI::rust_style_value_retain(y_data));
+    }())
+{
+}
+
 void CursorStyleValue::serialize(StringBuilder& builder, SerializationMode mode) const
 {
-    m_properties.image->serialize(builder, mode);
+    image().serialize(builder, mode);
 
-    if (m_properties.x) {
-        VERIFY(m_properties.y);
+    if (x()) {
+        VERIFY(y());
         builder.append(' ');
-        m_properties.x->serialize(builder, mode);
+        x()->serialize(builder, mode);
         builder.append(' ');
-        m_properties.y->serialize(builder, mode);
+        y()->serialize(builder, mode);
     }
 }
 
@@ -42,36 +73,24 @@ ValueComparingNonnullRefPtr<StyleValue const> CursorStyleValue::absolutized(Comp
     RefPtr<StyleValue const> absolutized_x;
     RefPtr<StyleValue const> absolutized_y;
 
-    if (m_properties.x)
-        absolutized_x = m_properties.x->absolutized(computation_context);
+    if (x())
+        absolutized_x = x()->absolutized(computation_context);
 
-    if (m_properties.y)
-        absolutized_y = m_properties.y->absolutized(computation_context);
+    if (y())
+        absolutized_y = y()->absolutized(computation_context);
 
-    return CursorStyleValue::create(m_properties.image->absolutized(computation_context)->as_abstract_image(), absolutized_x, absolutized_y);
-}
-
-bool CursorStyleValue::is_computationally_independent() const
-{
-    return m_properties.image->is_computationally_independent()
-        && (!m_properties.x || m_properties.x->is_computationally_independent())
-        && (!m_properties.y || m_properties.y->is_computationally_independent());
+    return CursorStyleValue::create(image().absolutized(computation_context)->as_abstract_image(), absolutized_x, absolutized_y);
 }
 
 Optional<Gfx::ImageCursor> CursorStyleValue::make_image_cursor(Layout::NodeWithStyle const& layout_node) const
 {
-    auto const& image = *m_properties.image;
-    if (!image.is_paintable()) {
-        const_cast<AbstractImageStyleValue&>(image).load_any_resources(const_cast<DOM::Document&>(layout_node.document()));
-        return {};
-    }
-
+    auto const& image = this->image();
     auto const& document = layout_node.document();
+    if (!image.is_paintable(document))
+        return {};
 
-    CacheKey cache_key {
-        .length_resolution_context = Length::ResolutionContext::for_layout_node(layout_node),
-        .current_color = layout_node.computed_values().color(),
-    };
+    auto const& current_color = layout_node.computed_values().color();
+    auto const current_color_scheme = document.page().preferred_color_scheme();
 
     // Create a bitmap if needed.
     // The cursor size for a given image never changes. It's based either on the image itself, or our default size,
@@ -88,7 +107,7 @@ Optional<Gfx::ImageCursor> CursorStyleValue::make_image_cursor(Layout::NodeWithS
         // 32x32 is selected arbitrarily.
         // FIXME: Ask the OS for the default size?
         CSSPixelSize const default_cursor_size { 32, 32 };
-        auto cursor_css_size = run_default_sizing_algorithm({}, {}, { image.natural_width(), image.natural_height(), image.natural_aspect_ratio() }, default_cursor_size);
+        auto cursor_css_size = run_default_sizing_algorithm({}, {}, { image.natural_width(document), image.natural_height(document), image.natural_aspect_ratio(document) }, default_cursor_size);
         // FIXME: How do we determine what cursor sizes the OS allows?
         // We don't multiply by the pixel ratio, because we want to use the image's actual pixel size.
         DevicePixelSize cursor_device_size { cursor_css_size.to_type<double>().to_rounded<int>() };
@@ -103,35 +122,30 @@ Optional<Gfx::ImageCursor> CursorStyleValue::make_image_cursor(Layout::NodeWithS
     }
 
     // Repaint the bitmap if necessary
-    if (m_cache_key != cache_key) {
-        m_cache_key = move(cache_key);
-
+    if (m_cached_bitmap_color != current_color || m_cached_bitmap_color_scheme != current_color_scheme) {
         // Clear whatever was in the bitmap before.
         auto& bitmap = *m_cached_bitmap->bitmap();
         auto painter = Gfx::Painter::create(bitmap);
         painter->clear_rect(bitmap.rect().to_type<float>(), Color::Transparent);
 
         // Paint the cursor into a bitmap.
-        auto display_list = Painting::DisplayList::create(Painting::AccumulatedVisualContextTree::create());
-        Painting::DisplayListRecorder display_list_recorder(display_list);
+        auto visual_context_tree = Painting::AccumulatedVisualContextTree::create();
+        auto display_list = Painting::DisplayList::create(visual_context_tree);
+        Painting::DisplayListResourceStorage resource_storage;
+        Painting::DisplayListRecorder display_list_recorder(display_list, visual_context_tree, resource_storage);
         DisplayListRecordingContext paint_context { display_list_recorder, document.page().palette(), document.page().client().device_pixels_per_css_pixel(), document.page().chrome_metrics() };
 
         image.resolve_for_size(layout_node, CSSPixelSize { bitmap.size() });
-        image.paint(paint_context, DevicePixelRect { bitmap.rect() }, ImageRendering::Auto);
+        // A cursor image is not embedded by any element, so it follows the page's own preference.
+        image.paint(paint_context, document, DevicePixelRect { bitmap.rect() }, ImageRendering::Auto, current_color_scheme);
 
-        switch (document.page().client().display_list_player_type()) {
-        case DisplayListPlayerType::GPUIfAvailable:
-        case DisplayListPlayerType::CPU: {
-            auto painting_surface = Gfx::PaintingSurface::wrap_bitmap(bitmap);
-#if defined(AK_OS_RINOS)
-            Painting::DisplayListPlayerAquamarine display_list_player;
-#else
-            Painting::DisplayListPlayerSkia display_list_player;
-#endif
-            display_list_player.execute(*display_list, {}, painting_surface);
-            break;
-        }
-        }
+        auto painting_surface = Gfx::PaintingSurface::wrap_bitmap(bitmap);
+        Painting::DisplayListPlayerSkia display_list_player;
+        display_list_player.execute(*display_list, visual_context_tree, resource_storage, {}, painting_surface);
+        display_list_player.flush(*painting_surface);
+
+        m_cached_bitmap_color = current_color;
+        m_cached_bitmap_color_scheme = current_color_scheme;
     }
 
     // "If the values are unspecified, then the natural hotspot defined inside the image resource itself is used.
@@ -139,10 +153,10 @@ Optional<Gfx::ImageCursor> CursorStyleValue::make_image_cursor(Layout::NodeWithS
     // value of "0 0" were specified."
     // FIXME: Make use of embedded hotspots.
     Gfx::IntPoint hotspot = { 0, 0 };
-    if (m_properties.x && m_properties.y) {
+    if (x() && y()) {
         VERIFY(document.window());
 
-        hotspot = { number_from_style_value(*m_properties.x, {}), number_from_style_value(*m_properties.y, {}) };
+        hotspot = { number_from_style_value(*x(), {}), number_from_style_value(*y(), {}) };
     }
 
     return Gfx::ImageCursor {

@@ -8,44 +8,54 @@
 #pragma once
 
 #include <LibGC/WeakHashSet.h>
-#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Bindings/CustomElementRegistry.h>
+#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/HTML/CustomElements/CustomElementDefinition.h>
 
 namespace Web::HTML {
 
-struct ElementDefinitionOptions {
-    Optional<String> extends;
-};
+class CustomElementRegistry;
+
+}
+
+namespace Web::HTML {
+
+using ElementDefinitionOptions = Bindings::ElementDefinitionOptions;
 
 // https://html.spec.whatwg.org/multipage/custom-elements.html#customelementregistry
-class WEB_API CustomElementRegistry : public Bindings::PlatformObject {
-    WEB_PLATFORM_OBJECT(CustomElementRegistry, Bindings::PlatformObject);
+class WEB_API CustomElementRegistry : public Bindings::GCAllocatedWrappable {
+    WEB_WRAPPABLE(CustomElementRegistry, Bindings::GCAllocatedWrappable);
     GC_DECLARE_ALLOCATOR(CustomElementRegistry);
 
 public:
-    [[nodiscard]] static GC::Ref<CustomElementRegistry> construct_impl(JS::Realm&);
+    [[nodiscard]] static GC::Ref<CustomElementRegistry> create_scoped();
+    [[nodiscard]] static GC::Ref<CustomElementRegistry> create_global(DOM::Document&);
 
     virtual ~CustomElementRegistry() override;
 
-    JS::ThrowCompletionOr<void> define(String const& name, WebIDL::CallbackType* constructor, ElementDefinitionOptions options);
-    Variant<GC::Root<WebIDL::CallbackType>, Empty> get(String const& name) const;
-    Optional<String> get_name(GC::Root<WebIDL::CallbackType> const& constructor) const;
-    WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> when_defined(String const& name);
+    JS::ThrowCompletionOr<void> define(JS::Realm&, Utf16String const& name, WebIDL::CallbackType* constructor, ElementDefinitionOptions const&);
+    Variant<GC::Ref<WebIDL::CallbackType>, Empty> get(Utf16FlyString const& name) const;
+    Optional<Utf16String> get_name(GC::Ref<WebIDL::CallbackType> constructor) const;
+    GC::Ptr<WebIDL::CallbackType> constructor_for_defined_name(Utf16FlyString const& name) const;
+    GC::Ptr<WebIDL::Promise> when_defined_promise(Utf16FlyString const& name) const;
+    void set_when_defined_promise(Utf16FlyString const& name, GC::Ref<WebIDL::Promise>);
     void upgrade(GC::Ref<DOM::Node> root) const;
     WebIDL::ExceptionOr<void> initialize_for_bindings(GC::Ref<DOM::Node> root);
 
     bool is_scoped() const { return m_is_scoped; }
     void append_scoped_document(GC::Ref<DOM::Document>);
 
-    GC::Ptr<CustomElementDefinition> get_definition_with_name_and_local_name(String const& name, String const& local_name) const;
+    GC::Ptr<CustomElementDefinition> get_definition_with_name_and_local_name(Utf16FlyString const& name, Utf16FlyString const& local_name) const;
     GC::Ptr<CustomElementDefinition> get_definition_from_new_target(JS::FunctionObject const& new_target) const;
 
 private:
-    CustomElementRegistry(JS::Realm&);
+    CustomElementRegistry();
 
-    virtual void initialize(JS::Realm&) override;
-    virtual void visit_edges(Visitor&) override;
+    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual GC::Ptr<Bindings::Wrappable> relevant_global_impl() const override;
+
+    GC::Ptr<DOM::Document> m_global_document;
 
     // https://html.spec.whatwg.org/multipage/custom-elements.html#is-scoped
     // Every CustomElementRegistry has an is scoped, a boolean, initially false.
@@ -69,11 +79,11 @@ private:
     // https://html.spec.whatwg.org/multipage/custom-elements.html#when-defined-promise-map
     // Every CustomElementRegistry also has a when-defined promise map, mapping valid custom element names to promises.
     // It is used to implement the whenDefined() method.
-    OrderedHashMap<String, GC::Ref<WebIDL::Promise>> m_when_defined_promise_map;
+    OrderedHashMap<Utf16FlyString, GC::Ref<WebIDL::Promise>> m_when_defined_promise_map;
 };
 
 GC::Ptr<CustomElementRegistry> look_up_a_custom_element_registry(DOM::Node const&);
-GC::Ptr<CustomElementDefinition> look_up_a_custom_element_definition(GC::Ptr<CustomElementRegistry> registry, Optional<FlyString> const& namespace_, FlyString const& local_name, Optional<String> const& is);
+GC::Ptr<CustomElementDefinition> look_up_a_custom_element_definition(GC::Ptr<CustomElementRegistry> registry, Optional<Utf16FlyString> const& namespace_, Utf16FlyString const& local_name, Optional<Utf16FlyString> const& is);
 
 bool is_a_global_custom_element_registry(GC::Ptr<CustomElementRegistry>);
 

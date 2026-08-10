@@ -5,8 +5,7 @@
  */
 
 #include "CSSMathInvert.h"
-#include <LibWeb/Bindings/CSSMathInvertPrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
@@ -14,47 +13,41 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSMathInvert);
 
-GC::Ref<CSSMathInvert> CSSMathInvert::create(JS::Realm& realm, NumericType type, GC::Ref<CSSNumericValue> values)
+GC::Ref<CSSMathInvert> CSSMathInvert::create(NumericType type, GC::Ref<CSSNumericValue> values)
 {
-    return realm.create<CSSMathInvert>(realm, move(type), move(values));
+    return GC::Heap::the().allocate<CSSMathInvert>(move(type), move(values));
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-cssmathinvert-cssmathinvert
-GC::Ref<CSSMathInvert> CSSMathInvert::construct_impl(JS::Realm& realm, CSSNumberish value)
+GC::Ref<CSSMathInvert> CSSMathInvert::create_from_numberish(CSSNumberish value)
 {
     // The CSSMathInvert(arg) constructor is defined identically to the above, except that in the last step it returns
     // a new CSSMathInvert object.
     // NB: So, the steps below are a modification of the CSSMathNegate steps.
 
     // 1. Replace arg with the result of rectifying a numberish value for arg.
-    auto converted_value = rectify_a_numberish_value(realm, value);
+    auto converted_value = rectify_a_numberish_value(value);
 
     // 2. Return a new CSSMathInvert whose value internal slot is set to arg.
-    return CSSMathInvert::create(realm, converted_value->type().inverted(), converted_value);
+    return CSSMathInvert::create(converted_value->type().inverted(), converted_value);
 }
 
-CSSMathInvert::CSSMathInvert(JS::Realm& realm, NumericType type, GC::Ref<CSSNumericValue> values)
-    : CSSMathValue(realm, Bindings::CSSMathOperator::Invert, move(type))
+CSSMathInvert::CSSMathInvert(NumericType type, GC::Ref<CSSNumericValue> values)
+    : CSSMathValue(CSSMathOperator::Invert, move(type))
     , m_value(move(values))
 {
 }
 
 CSSMathInvert::~CSSMathInvert() = default;
 
-void CSSMathInvert::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSMathInvert);
-    Base::initialize(realm);
-}
-
-void CSSMathInvert::visit_edges(Visitor& visitor)
+void CSSMathInvert::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_value);
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#serialize-a-cssmathvalue
-void CSSMathInvert::serialize_math_value(StringBuilder& s, Nested nested, Parens parens) const
+void CSSMathInvert::serialize_math_value(Utf16StringBuilder& s, Nested nested, Parens parens) const
 {
     // NB: Only steps 1 and 6 apply here.
     // 1. Let s initially be the empty string.
@@ -65,21 +58,21 @@ void CSSMathInvert::serialize_math_value(StringBuilder& s, Nested nested, Parens
         //    otherwise, append "calc(" to s.
         if (parens == Parens::With) {
             if (nested == Nested::Yes) {
-                s.append('(');
+                s.append_ascii('(');
             } else {
-                s.append("calc("sv);
+                s.append_ascii("calc("sv);
             }
         }
 
         // 2. Append "1 / " to s.
-        s.append("1 / "sv);
+        s.append_ascii("1 / "sv);
 
         // 3. Serialize this’s value internal slot with nested set to true, and append the result to s.
         m_value->serialize(s, { .nested = true });
 
         // 4. If paren-less is false, append ")" to s,
         if (parens == Parens::With)
-            s.append(')');
+            s.append_ascii(')');
 
         // 5. Return s.
     }
@@ -130,9 +123,9 @@ Optional<SumValue> CSSMathInvert::create_a_sum_value() const
     return values;
 }
 
-WebIDL::ExceptionOr<NonnullRefPtr<CalculationNode const>> CSSMathInvert::create_calculation_node(CalculationContext const& context) const
+WebIDL::ExceptionOr<CalcNodeRef> CSSMathInvert::create_calculation_node(CalculationContext const& context) const
 {
-    return InvertCalculationNode::create(TRY(m_value->create_calculation_node(context)));
+    return CalcNodeRef::invert(TRY(m_value->create_calculation_node(context)));
 }
 
 }

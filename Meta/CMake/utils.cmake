@@ -93,7 +93,6 @@ endfunction()
 
 function(invoke_py_generator name script primary_source header implementation)
     cmake_parse_arguments(invoke_py_generator "" "EXTRA_HEADER" "arguments;dependencies" ${ARGN})
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
     set(py_generator_arguments ${invoke_py_generator_arguments})
     if (invoke_py_generator_EXTRA_HEADER)
@@ -103,7 +102,7 @@ function(invoke_py_generator name script primary_source header implementation)
 
     invoke_generator_impl(
         ${name}
-        "${LADYBIRD_PROJECT_ROOT}/Meta/${script}"
+        "${LADYBIRD_SOURCE_DIR}/Meta/Generators/${script}"
         ${primary_source}
         ${header}
         ${implementation}
@@ -136,6 +135,29 @@ function(invoke_idl_generator cpp_name idl_name generator primary_source header 
     set(CURRENT_LIB_GENERATED ${CURRENT_LIB_GENERATED} PARENT_SCOPE)
 endfunction()
 
+function(invoke_py_idl_generator cpp_name idl_name script primary_source header implementation idl)
+    cmake_parse_arguments(invoke_py_idl_generator "" "" "arguments;dependencies" ${ARGN})
+
+    set(script_path "${LADYBIRD_SOURCE_DIR}/Meta/Generators/${script}")
+    add_custom_command(
+        OUTPUT "${header}" "${implementation}" "${idl}"
+        COMMAND ${Python3_EXECUTABLE} "${script_path}" -h "${header}.tmp" -c "${implementation}.tmp" -i "${idl}.tmp" ${invoke_py_idl_generator_arguments}
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${header}.tmp" "${header}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${implementation}.tmp" "${implementation}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${idl}.tmp" "${idl}"
+        COMMAND "${CMAKE_COMMAND}" -E remove "${header}.tmp" "${implementation}.tmp" "${idl}.tmp"
+        VERBATIM
+        DEPENDS "${script_path}" ${invoke_py_idl_generator_dependencies} "${primary_source}"
+    )
+
+    add_custom_target("generate_${cpp_name}" DEPENDS "${header}" "${implementation}" "${idl}")
+    add_custom_target("generate_${idl_name}" DEPENDS "generate_${cpp_name}")
+    add_dependencies(ladybird_codegen_accumulator "generate_${cpp_name}")
+    add_dependencies(ladybird_codegen_accumulator "generate_${idl_name}")
+    list(APPEND CURRENT_LIB_GENERATED "${name}")
+    set(CURRENT_LIB_GENERATED ${CURRENT_LIB_GENERATED} PARENT_SCOPE)
+endfunction()
+
 function(download_file_multisource urls path)
     cmake_parse_arguments(DOWNLOAD "" "SHA256" "" ${ARGN})
 
@@ -151,20 +173,31 @@ function(download_file_multisource urls path)
         get_filename_component(file "${path}" NAME)
         set(tmp_path "${path}.tmp")
 
-        foreach(url ${urls})
-            message(STATUS "Downloading file ${file} from ${url}")
+        set(download_attempts 3)
+        foreach(attempt RANGE 1 ${download_attempts})
+            foreach(url ${urls})
+                message(STATUS "Downloading file ${file} from ${url} (attempt ${attempt}/${download_attempts})")
 
-            file(DOWNLOAD "${url}" "${tmp_path}" INACTIVITY_TIMEOUT 10 STATUS download_result ${DOWNLOAD_SHA256})
-            list(GET download_result 0 status_code)
-            list(GET download_result 1 error_message)
+                file(DOWNLOAD "${url}" "${tmp_path}" INACTIVITY_TIMEOUT 10 STATUS download_result ${DOWNLOAD_SHA256})
+                list(GET download_result 0 status_code)
+                list(GET download_result 1 error_message)
+
+                if (status_code EQUAL 0)
+                    file(RENAME "${tmp_path}" "${path}")
+                    break()
+                endif()
+
+                file(REMOVE "${tmp_path}")
+                message(WARNING "Failed to download ${url} (attempt ${attempt}/${download_attempts}): ${error_message}")
+            endforeach()
 
             if (status_code EQUAL 0)
-                file(RENAME "${tmp_path}" "${path}")
                 break()
             endif()
 
-            file(REMOVE "${tmp_path}")
-            message(WARNING "Failed to download ${url}: ${error_message}")
+            if (attempt LESS ${download_attempts})
+                execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 2)
+            endif()
         endforeach()
 
         if (NOT status_code EQUAL 0)

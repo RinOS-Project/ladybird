@@ -22,11 +22,13 @@ public:
 
     virtual void visit_edges(Visitor&) override;
 
-    virtual void get_stack_frame_size(size_t& registers_and_locals_count, size_t& constants_count, size_t& argument_count) override;
+    virtual void get_stack_frame_info(size_t& registers_and_locals_count, ReadonlySpan<Value>& constants, size_t& argument_count) override;
 
     virtual ThrowCompletionOr<Value> call() override;
 
     Bytecode::Executable& bytecode_executable();
+    SharedFunctionInstanceData& shared_data() { return *m_shared_function_instance_data; }
+    SharedFunctionInstanceData const& shared_data() const { return *m_shared_function_instance_data; }
     FunctionKind kind() const;
     ThisMode this_mode() const;
 

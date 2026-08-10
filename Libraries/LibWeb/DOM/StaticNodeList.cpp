@@ -6,6 +6,7 @@
 
 #include <LibGC/Heap.h>
 #include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/ExternalMemory.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/StaticNodeList.h>
 
@@ -13,13 +14,13 @@ namespace Web::DOM {
 
 GC_DEFINE_ALLOCATOR(StaticNodeList);
 
-GC::Ref<NodeList> StaticNodeList::create(JS::Realm& realm, Vector<GC::Root<Node>> static_nodes)
+GC::Ref<NodeList> StaticNodeList::create(Vector<GC::Root<Node>> static_nodes)
 {
-    return realm.create<StaticNodeList>(realm, move(static_nodes));
+    return GC::Heap::the().allocate<StaticNodeList>(move(static_nodes));
 }
 
-StaticNodeList::StaticNodeList(JS::Realm& realm, Vector<GC::Root<Node>> static_nodes)
-    : NodeList(realm)
+StaticNodeList::StaticNodeList(Vector<GC::Root<Node>> static_nodes)
+    : NodeList()
 {
     for (auto& node : static_nodes)
         m_static_nodes.append(*node);
@@ -27,10 +28,15 @@ StaticNodeList::StaticNodeList(JS::Realm& realm, Vector<GC::Root<Node>> static_n
 
 StaticNodeList::~StaticNodeList() = default;
 
-void StaticNodeList::visit_edges(Cell::Visitor& visitor)
+void StaticNodeList::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_static_nodes);
+}
+
+size_t StaticNodeList::external_memory_size() const
+{
+    return Base::external_memory_size() + JS::vector_external_memory_size(m_static_nodes);
 }
 
 // https://dom.spec.whatwg.org/#dom-nodelist-length

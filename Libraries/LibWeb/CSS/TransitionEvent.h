@@ -6,38 +6,47 @@
 
 #pragma once
 
+#include <AK/Utf16String.h>
+#include <LibWeb/Bindings/TransitionEvent.h>
 #include <LibWeb/DOM/Event.h>
+#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
+
+namespace Web::HTML {
+
+class Window;
+
+}
 
 namespace Web::CSS {
 
-struct TransitionEventInit : public DOM::EventInit {
-    String property_name {};
-    double elapsed_time = 0.0;
-    String pseudo_element {};
-};
+using TransitionEventInit = Bindings::TransitionEventInit;
 
 class TransitionEvent final : public DOM::Event {
-    WEB_PLATFORM_OBJECT(TransitionEvent, DOM::Event);
+    WEB_WRAPPABLE(TransitionEvent, DOM::Event);
     GC_DECLARE_ALLOCATOR(TransitionEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<TransitionEvent> create(JS::Realm&, FlyString const& event_name, TransitionEventInit const& = {});
-    [[nodiscard]] static GC::Ref<TransitionEvent> construct_impl(JS::Realm&, FlyString const& event_name, TransitionEventInit const& = {});
+    [[nodiscard]] static GC::Ref<TransitionEvent> create(Utf16FlyString const& event_name, Bindings::TransitionEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static GC::Ref<TransitionEvent> create(Utf16FlyString const& event_name, String property_name, double elapsed_time, String pseudo_element, HighResolutionTime::DOMHighResTimeStamp, GC::Ptr<CSSTransition> animation = nullptr);
+    [[nodiscard]] static GC::Ref<TransitionEvent> create_for_constructor(Utf16FlyString const& event_name, Bindings::TransitionEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
 
     virtual ~TransitionEvent() override;
 
-    String const& property_name() const { return m_property_name; }
+    Utf16String const& property_name() const { return m_property_name; }
     double elapsed_time() const { return m_elapsed_time; }
-    String const& pseudo_element() const { return m_pseudo_element; }
+    Utf16String const& pseudo_element() const { return m_pseudo_element; }
+    GC::Ptr<CSSTransition> animation() const { return m_animation; }
+
+    virtual void visit_edges(Cell::Visitor&) override;
 
 private:
-    TransitionEvent(JS::Realm&, FlyString const& event_name, TransitionEventInit const& event_init);
+    TransitionEvent(Utf16FlyString const& event_name, Bindings::TransitionEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
+    TransitionEvent(Utf16FlyString const& event_name, String property_name, double elapsed_time, String pseudo_element, HighResolutionTime::DOMHighResTimeStamp, GC::Ptr<CSSTransition> animation);
 
-    virtual void initialize(JS::Realm&) override;
-
-    String m_property_name {};
+    Utf16String m_property_name {};
     double m_elapsed_time {};
-    String m_pseudo_element {};
+    Utf16String m_pseudo_element {};
+    GC::Ptr<CSSTransition> m_animation;
 };
 
 }

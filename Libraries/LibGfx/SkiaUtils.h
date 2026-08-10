@@ -19,6 +19,7 @@
 #include <core/SkBlender.h>
 #include <core/SkColor.h>
 #include <core/SkColorType.h>
+#include <core/SkImage.h>
 #include <core/SkImageFilter.h>
 #include <core/SkPaint.h>
 #include <core/SkPath.h>
@@ -139,5 +140,13 @@ constexpr SkSamplingOptions to_skia_sampling_options(ScalingMode scaling_mode)
 SkPath to_skia_path(Path const& path);
 sk_sp<SkImageFilter> to_skia_image_filter(Gfx::Filter const& filter);
 sk_sp<SkBlender> to_skia_blender(Gfx::CompositingAndBlendingOperator compositing_and_blending_operator);
+
+// The returned SkImage references the source bitmap's pixels without copying; the caller
+// must keep `bitmap` alive for as long as the SkImage (or anything derived from it) is in use.
+sk_sp<SkImage> sk_image_from_bitmap(Bitmap const& bitmap, ColorSpace const& color_space);
+
+// Hands the source bitmap's pixel storage to the returned SkImage without copying: the image
+// holds a reference to the bitmap and drops it on destruction.
+sk_sp<SkImage> sk_image_adopting_bitmap(NonnullRefPtr<Bitmap> bitmap, ColorSpace const& color_space);
 
 }

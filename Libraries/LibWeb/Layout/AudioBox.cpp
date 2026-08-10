@@ -6,15 +6,14 @@
 
 #include <LibWeb/HTML/HTMLAudioElement.h>
 #include <LibWeb/Layout/AudioBox.h>
-#include <LibWeb/Painting/PaintableBox.h>
+#include <LibWeb/Painting/Paintable.h>
 
 namespace Web::Layout {
 
-GC_DEFINE_ALLOCATOR(AudioBox);
-
-AudioBox::AudioBox(DOM::Document& document, DOM::Element& element, GC::Ref<CSS::ComputedProperties> style)
+AudioBox::AudioBox(DOM::Document& document, DOM::Element& element, NonnullRefPtr<CSS::ComputedValues const> style)
     : ReplacedBox(document, element, style)
 {
+    set_flag(RustFFI::NodeFlag::ReplacedBoxCanHaveChildren, element.shadow_root() != nullptr);
 }
 
 HTML::HTMLAudioElement& AudioBox::dom_node()
@@ -33,9 +32,9 @@ bool AudioBox::can_have_children() const
     return dom_node().shadow_root() != nullptr;
 }
 
-GC::Ptr<Painting::Paintable> AudioBox::create_paintable() const
+RefPtr<Painting::Paintable> AudioBox::create_paintable() const
 {
-    return Painting::PaintableBox::create(*this);
+    return Painting::Paintable::create(*this);
 }
 
 }

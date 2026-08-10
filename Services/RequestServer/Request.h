@@ -10,6 +10,7 @@
 #include <AK/ByteString.h>
 #include <AK/MemoryStream.h>
 #include <AK/Optional.h>
+#include <AK/RefPtr.h>
 #include <AK/Time.h>
 #include <LibCore/Proxy.h>
 #include <LibDNS/Resolver.h>
@@ -17,12 +18,14 @@
 #include <LibHTTP/Cache/CacheRequest.h>
 #include <LibHTTP/Cookie/IncludeCredentials.h>
 #include <LibHTTP/HeaderList.h>
+#include <LibIPC/File.h>
 #include <LibRequests/NetworkError.h>
 #include <LibRequests/RequestTimingInfo.h>
 #include <LibURL/URL.h>
 #include <RequestServer/CacheLevel.h>
 #include <RequestServer/Forward.h>
 #include <RequestServer/RequestPipe.h>
+#include <RequestServer/RequestType.h>
 
 #if defined(AK_OS_RINOS)
 #    include <RequestServer/RinHTTPTransport.h>
@@ -46,8 +49,10 @@ public:
         NonnullRefPtr<HTTP::HeaderList> request_headers,
         ByteBuffer request_body,
         HTTP::Cookie::IncludeCredentials include_credentials,
-        ByteString alt_svc_cache_path,
-        Core::ProxyData proxy_data);
+        Optional<ByteString> alt_svc_cache_path,
+        Core::ProxyData proxy_data,
+        bool keep_alive_for_transfer,
+        Optional<u32> address_selection_hint);
 
     static NonnullOwnPtr<Request> connect(
         u64 request_id,
@@ -68,26 +73,37 @@ public:
         NonnullRefPtr<HTTP::HeaderList> request_headers,
         ByteBuffer request_body,
         HTTP::Cookie::IncludeCredentials include_credentials,
-        ByteString alt_svc_cache_path,
+        Optional<ByteString> alt_svc_cache_path,
         Core::ProxyData proxy_data);
 
     virtual ~Request() override;
 
-    enum class Type : u8 {
-        Fetch,
-        Connect,
-        BackgroundRevalidation,
-    };
-
     u64 request_id() const { return m_request_id; }
-    Type type() const { return m_type; }
+    RequestType type() const { return m_type; }
     URL::URL const& url() const { return m_url; }
+    bool is_complete() const { return m_state == State::Complete || m_state == State::Error; }
+    bool keep_alive_for_transfer() const { return m_keep_alive_for_transfer; }
+
+    ErrorOr<void> transfer_to_client(ConnectionFromClient&, u64 request_id);
+    void release_for_transfer() { m_keep_alive_for_transfer = false; }
 
     virtual void notify_request_unblocked(Badge<HTTP::DiskCache>) override;
     void notify_retrieved_http_cookie(Badge<ConnectionFromClient>, StringView cookie);
     void notify_fetch_complete(Badge<ConnectionFromClient>, int result_code);
 
 private:
+    struct TransferredBodyFile {
+        TransferredBodyFile() = default;
+        ~TransferredBodyFile();
+
+        TransferredBodyFile(TransferredBodyFile const&) = delete;
+        TransferredBodyFile& operator=(TransferredBodyFile const&) = delete;
+
+        int fd { -1 };
+        u64 offset { 0 };
+        u64 size { 0 };
+    };
+
     enum class State : u8 {
         Init,              // Decide whether to service this request from cache or the network.
         ReadCache,         // Read the cached response from disk.
@@ -133,7 +149,7 @@ private:
 
     Request(
         u64 request_id,
-        Type type,
+        RequestType type,
         Optional<HTTP::DiskCache&> disk_cache,
         HTTP::CacheMode cache_mode,
         ConnectionFromClient& client,
@@ -144,8 +160,9 @@ private:
         NonnullRefPtr<HTTP::HeaderList> request_headers,
         ByteBuffer request_body,
         HTTP::Cookie::IncludeCredentials include_credentials,
-        ByteString alt_svc_cache_path,
-        Core::ProxyData proxy_data);
+        Optional<ByteString> alt_svc_cache_path,
+        Core::ProxyData proxy_data,
+        bool keep_alive_for_transfer = false);
 
     Request(
         u64 request_id,
@@ -171,8 +188,12 @@ private:
     static size_t on_header_received(void* buffer, size_t size, size_t nmemb, void* user_data);
     static size_t on_data_received(void* buffer, size_t size, size_t nmemb, void* user_data);
 
+    ErrorOr<void> detach_curl_handle_from_multi();
     ErrorOr<void> inform_client_request_started();
+    ErrorOr<void> send_request_pipe_to_client();
+    ErrorOr<void> send_transferred_body_file_to_client();
     void transfer_headers_to_client_if_needed();
+    void send_headers_to_client(Optional<IPC::File> javascript_bytecode = {}, u64 javascript_bytecode_size = 0, Optional<u64> javascript_bytecode_cache_vary_key = {});
     ErrorOr<void> write_queued_bytes_without_blocking();
     void abandon_client_response(Error const&);
 
@@ -191,12 +212,12 @@ private:
     Requests::RequestTimingInfo acquire_timing_info() const;
 
     u64 m_request_id { 0 };
-    Type m_type { Type::Fetch };
+    RequestType m_type { RequestType::Fetch };
     State m_state { State::Init };
 
     Optional<HTTP::DiskCache&> m_disk_cache;
     HTTP::CacheMode m_cache_mode { HTTP::CacheMode::Default };
-    ConnectionFromClient& m_client;
+    ConnectionFromClient* m_client { nullptr };
 
     void* m_curl_multi_handle { nullptr };
 #if defined(AK_OS_RINOS)
@@ -204,12 +225,14 @@ private:
     Optional<int> m_rin_result_code;
 #else
     void* m_curl_easy_handle { nullptr };
+    bool m_curl_easy_handle_is_in_multi { false };
     Vector<curl_slist*> m_curl_string_lists;
     Optional<int> m_curl_result_code;
 #endif
 
     NonnullRefPtr<Resolver> m_resolver;
     RefPtr<DNS::LookupResult const> m_dns_result;
+    CacheLevel m_connect_cache_level { CacheLevel::ResolveOnly };
 
 #if defined(AK_OS_RINOS)
     // Stage 3-A: DNS \u3068 Cookie IPC \u3092\u540c\u6642\u306b\u8d70\u3089\u305b\u3066\u3001\u4e21\u65b9\u5b8c\u4e86\u5f8c\u306b Fetch \u3078\u9032\u3080\u3002
@@ -226,7 +249,7 @@ private:
 
     HTTP::Cookie::IncludeCredentials m_include_credentials { HTTP::Cookie::IncludeCredentials::Yes };
 
-    ByteString m_alt_svc_cache_path;
+    Optional<ByteString> m_alt_svc_cache_path;
     Core::ProxyData m_proxy_data;
 
     Optional<u32> m_status_code;
@@ -238,10 +261,16 @@ private:
     AllocatingMemoryStream m_response_buffer;
     RefPtr<Core::Notifier> m_client_writer_notifier;
     Optional<RequestPipe> m_client_request_pipe;
+    Optional<TransferredBodyFile> m_transferred_body_file;
     size_t m_bytes_transferred_to_client { 0 };
     bool m_client_response_abandoned { false };
 
     Optional<Requests::NetworkError> m_network_error;
+
+    Optional<u32> m_address_selection_hint;
+
+    bool m_keep_alive_for_transfer { false };
+    RefPtr<ConnectionFromClient> m_network_connection_keep_alive;
 };
 
 }

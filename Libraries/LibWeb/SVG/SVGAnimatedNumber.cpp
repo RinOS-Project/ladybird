@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/SVGAnimatedNumberPrototype.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/SVG/AttributeParser.h>
 #include <LibWeb/SVG/SVGAnimatedNumber.h>
 
@@ -15,26 +14,23 @@ namespace Web::SVG {
 GC_DEFINE_ALLOCATOR(SVGAnimatedNumber);
 
 GC::Ref<SVGAnimatedNumber> SVGAnimatedNumber::create(
-    JS::Realm& realm,
     GC::Ref<SVGElement> element,
     DOM::QualifiedName reflected_attribute,
     float initial_value,
     SupportsSecondValue supports_second_value,
     ValueRepresented value_represented)
 {
-    return realm.create<SVGAnimatedNumber>(realm, element, move(reflected_attribute), initial_value,
+    return GC::Heap::the().allocate<SVGAnimatedNumber>(element, move(reflected_attribute), initial_value,
         supports_second_value, value_represented);
 }
 
 SVGAnimatedNumber::SVGAnimatedNumber(
-    JS::Realm& realm,
     GC::Ref<SVGElement> element,
     DOM::QualifiedName reflected_attribute,
     float initial_value,
     SupportsSecondValue supports_second_value,
     ValueRepresented value_represented)
-    : PlatformObject(realm)
-    , m_element(element)
+    : m_element(element)
     , m_reflected_attribute(move(reflected_attribute))
     , m_initial_value(initial_value)
     , m_supports_second_value(supports_second_value)
@@ -65,7 +61,7 @@ void SVGAnimatedNumber::set_base_val(float new_value)
         // 1. Let current be the value of the reflected attribute (using the attribute's initial value if it is not
         //    present or invalid).
         auto current = m_element->get_attribute_value(m_reflected_attribute.local_name(), m_reflected_attribute.namespace_());
-        auto current_values = MUST(current.split(' '));
+        auto current_values = current.split_view(' ', SplitBehavior::Nothing);
 
         // 2. Let first be the first number in current.
         auto first = current_values.size() > 0 ? parse_value_or_initial(current_values[0]) : m_initial_value;
@@ -101,7 +97,7 @@ void SVGAnimatedNumber::set_base_val(float new_value)
     //    specific string that, if parsed as an <number> using CSS syntax, would return the value closest to the number
     //    (given the implementation's supported Precisionreal number precision), joined and separated by a single U+0020
     //    SPACE character.
-    auto new_attribute_value = MUST(String::join(' ', new_));
+    auto new_attribute_value = Utf16String::join(' ', new_);
     m_element->set_attribute_value(m_reflected_attribute.local_name(), new_attribute_value, m_reflected_attribute.prefix(), m_reflected_attribute.namespace_());
 }
 
@@ -112,7 +108,7 @@ float SVGAnimatedNumber::anim_val() const
     return get_base_or_anim_value();
 }
 
-float SVGAnimatedNumber::parse_value_or_initial(StringView number_value) const
+float SVGAnimatedNumber::parse_value_or_initial(Utf16View number_value) const
 {
     auto value = AttributeParser::parse_number_percentage(number_value);
     if (!value.has_value())
@@ -130,7 +126,7 @@ float SVGAnimatedNumber::get_base_or_anim_value() const
     // 2. If the reflected attribute is defined to take an number followed by an optional second number, then:
     if (m_supports_second_value == SupportsSecondValue::Yes) {
         // 1. If this SVGAnimatedNumber object reflects the first number, then return the first value in value.
-        auto values = MUST(value.split(' '));
+        auto values = value.split_view(' ', SplitBehavior::Nothing);
         if (values.is_empty())
             return m_initial_value;
         if (m_value_represented == ValueRepresented::First)
@@ -151,13 +147,7 @@ float SVGAnimatedNumber::get_base_or_anim_value() const
     return parse_value_or_initial(value);
 }
 
-void SVGAnimatedNumber::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGAnimatedNumber);
-    Base::initialize(realm);
-}
-
-void SVGAnimatedNumber::visit_edges(Visitor& visitor)
+void SVGAnimatedNumber::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_element);

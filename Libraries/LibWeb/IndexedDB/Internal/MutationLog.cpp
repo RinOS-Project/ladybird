@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGC/Heap.h>
 #include <LibWeb/IndexedDB/IDBDatabase.h>
+#include <LibWeb/IndexedDB/Inspection.h>
 #include <LibWeb/IndexedDB/Internal/Database.h>
 #include <LibWeb/IndexedDB/Internal/Index.h>
+#include <LibWeb/IndexedDB/Internal/Key.h>
 #include <LibWeb/IndexedDB/Internal/MutationLog.h>
 #include <LibWeb/IndexedDB/Internal/ObjectStore.h>
 
@@ -16,9 +19,9 @@ GC_DEFINE_ALLOCATOR(MutationLog);
 
 MutationLog::MutationLog() = default;
 
-GC::Ref<MutationLog> MutationLog::create(JS::Realm& realm)
+GC::Ref<MutationLog> MutationLog::create()
 {
-    return realm.create<MutationLog>();
+    return GC::Heap::the().allocate<MutationLog>();
 }
 
 void MutationLog::visit_edges(Visitor& visitor)
@@ -75,7 +78,7 @@ void MutationLog::note_object_store_deleted()
     m_entries.append(ObjectStoreDeleted {});
 }
 
-void MutationLog::note_object_store_renamed(String old_name)
+void MutationLog::note_object_store_renamed(Utf16String old_name)
 {
     m_entries.append(ObjectStoreRenamed { move(old_name) });
 }
@@ -90,7 +93,7 @@ void MutationLog::note_index_deleted(GC::Ref<Index> index)
     m_entries.append(IndexDeleted { index });
 }
 
-void MutationLog::note_index_renamed(GC::Ref<Index> index, String old_name)
+void MutationLog::note_index_renamed(GC::Ref<Index> index, Utf16String old_name)
 {
     m_entries.append(IndexRenamed { index, move(old_name) });
 }
@@ -118,6 +121,71 @@ void MutationLog::note_index_records_deleted(GC::Ref<Index> index, Vector<IndexR
 void MutationLog::note_index_record_stored(GC::Ref<Index> index, IndexRecord record)
 {
     m_entries.append(IndexRecordStored { index, record });
+}
+
+void MutationLog::append_changes(Utf16String const& database_name, Utf16String const& object_store_name, TransactionChanges& changes) const
+{
+    Vector<GC::Ref<Key>> stored_keys;
+    Vector<GC::Ref<Key>> changed_keys;
+    Vector<GC::Ref<Key>> deleted_keys;
+
+    auto remove_key = [](Vector<GC::Ref<Key>>& keys, Key& key) {
+        return keys.remove_first_matching([&](auto const& existing) {
+            return Key::equals(existing, GC::Ref { key });
+        });
+    };
+
+    auto append_deleted_key = [&](Key& key) {
+        if (remove_key(stored_keys, key))
+            return;
+        remove_key(changed_keys, key);
+        deleted_keys.append(GC::Ref { key });
+    };
+
+    auto append_stored_key = [&](Key& key) {
+        if (remove_key(deleted_keys, key)) {
+            changed_keys.append(GC::Ref { key });
+            return;
+        }
+        stored_keys.append(GC::Ref { key });
+    };
+
+    for (auto const& entry : m_entries) {
+        entry.visit(
+            [&](ObjectStoreCreated const&) {
+                changes.added.append({ database_name, object_store_name });
+            },
+            [&](ObjectStoreDeleted const&) {
+                changes.deleted.append({ database_name, object_store_name });
+            },
+            [&](ObjectStoreRenamed const& e) {
+                changes.deleted.append({ database_name, e.old_name });
+                changes.added.append({ database_name, object_store_name });
+            },
+            [&](IndexCreated const&) {},
+            [&](IndexDeleted const&) {},
+            [&](IndexRenamed const&) {},
+            [&](KeyGeneratorChanged const&) {
+            },
+            [&](RecordsDeleted const& e) {
+                for (auto const& record : e.records)
+                    append_deleted_key(*record.key);
+            },
+            [&](RecordStored const& e) {
+                append_stored_key(*e.key);
+            },
+            [&](IndexRecordsDeleted const&) {},
+            [&](IndexRecordStored const&) {});
+    }
+
+    for (auto const& key : stored_keys)
+        changes.added.append({ database_name, object_store_name, serialize_key_for_inspection(key) });
+
+    for (auto const& key : changed_keys)
+        changes.changed.append({ database_name, object_store_name, serialize_key_for_inspection(key) });
+
+    for (auto const& key : deleted_keys)
+        changes.deleted.append({ database_name, object_store_name, serialize_key_for_inspection(key) });
 }
 
 void MutationLog::revert(ObjectStore& store, GC::Ref<Database> database, GC::Ref<IDBDatabase> connection)

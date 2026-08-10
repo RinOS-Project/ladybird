@@ -1,9 +1,4 @@
-#import <DOM/AbortSignal.idl>
-#import <Fetch/Body.idl>
-#import <Fetch/BodyInit.idl>
-#import <Fetch/Headers.idl>
-
-typedef (Request or USVString) RequestInfo;
+typedef (Request or Utf16USVString) RequestInfo;
 
 // https://fetch.spec.whatwg.org/#request
 [Exposed=(Window,Worker)]
@@ -11,7 +6,7 @@ interface Request {
     constructor(RequestInfo input, optional RequestInit init = {});
 
     readonly attribute ByteString method;
-    readonly attribute USVString url;
+    readonly attribute Utf16USVString url;
     [SameObject] readonly attribute Headers headers;
 
     readonly attribute RequestDestination destination;
@@ -28,7 +23,7 @@ interface Request {
     readonly attribute AbortSignal signal;
     readonly attribute RequestDuplex duplex;
 
-    [NewObject] Request clone();
+    [NeedsCallerRealm, NewObject] Request clone();
 };
 Request includes Body;
 
@@ -36,13 +31,13 @@ dictionary RequestInit {
     ByteString method;
     HeadersInit headers;
     BodyInit? body;
-    USVString referrer;
+    Utf16USVString referrer;
     ReferrerPolicy referrerPolicy;
     RequestMode mode;
     RequestCredentials credentials;
     RequestCache cache;
     RequestRedirect redirect;
-    DOMString integrity;
+    Utf16DOMString integrity;
     boolean keepalive;
     AbortSignal? signal;
     RequestDuplex duplex;

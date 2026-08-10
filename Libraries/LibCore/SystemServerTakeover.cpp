@@ -6,33 +6,20 @@
  */
 
 #include "SystemServerTakeover.h"
+#include <AK/NeverDestroyed.h>
 #include <LibCore/Environment.h>
 #include <LibCore/Socket.h>
 #include <LibCore/System.h>
 
 namespace Core {
 
-HashMap<ByteString, int> s_overtaken_sockets {};
 bool s_overtaken_sockets_parsed { false };
 
-#if defined(AK_OS_RINOS)
-static ErrorOr<int> find_single_inherited_socket_fallback()
+static auto& overtaken_sockets()
 {
-    Optional<int> candidate;
-
-    for (int fd = 3; fd < 1024; ++fd) {
-        if (!System::is_socket(fd))
-            continue;
-        if (candidate.has_value())
-            return Error::from_string_literal("Multiple inherited sockets found without takeover metadata");
-        candidate = fd;
-    }
-
-    if (!candidate.has_value())
-        return Error::from_string_literal("No inherited socket found without takeover metadata");
-    return candidate.release_value();
+    static NeverDestroyed<HashMap<ByteString, int>> sockets;
+    return *sockets;
 }
-#endif
 
 static void parse_sockets_from_system_server()
 {
@@ -48,7 +35,7 @@ static void parse_sockets_from_system_server()
     for (auto socket : sockets->split_view(';')) {
         auto params = socket.split_view(':');
         VERIFY(params.size() == 2);
-        s_overtaken_sockets.set(params[0].to_byte_string(), params[1].to_number<int>().value());
+        overtaken_sockets().set(params[0].to_byte_string(), params[1].to_number<int>().value());
     }
 
     s_overtaken_sockets_parsed = true;
@@ -65,21 +52,11 @@ ErrorOr<NonnullOwnPtr<Core::LocalSocket>> take_over_socket_from_system_server(By
     int fd;
     if (socket_path.is_empty()) {
         // We want the first (and only) socket.
-        if (s_overtaken_sockets.size() == 1) {
-            fd = s_overtaken_sockets.begin()->value;
-        }
-#if defined(AK_OS_RINOS)
-        else {
-            fd = TRY(find_single_inherited_socket_fallback());
-        }
-#else
-        else {
-            return Error::from_string_literal("Expected exactly one socket takeover entry");
-        }
-#endif
+        VERIFY(overtaken_sockets().size() == 1);
+        fd = overtaken_sockets().begin()->value;
     } else {
-        auto it = s_overtaken_sockets.find(socket_path);
-        if (it == s_overtaken_sockets.end())
+        auto it = overtaken_sockets().find(socket_path);
+        if (it == overtaken_sockets().end())
             return Error::from_string_literal("Non-existent socket requested");
         fd = it->value;
     }

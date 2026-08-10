@@ -5,18 +5,20 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGC/Heap.h>
 #include <LibJS/Runtime/NativeFunction.h>
-#include <LibWeb/Bindings/HTMLDialogElementPrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/PrincipalHostDefined.h>
+#include <LibWeb/CSS/Invalidation/ElementStateInvalidator.h>
+#include <LibWeb/DOM/BindingsGlue.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/IDLEventListener.h>
 #include <LibWeb/HTML/CloseWatcher.h>
 #include <LibWeb/HTML/Focus.h>
 #include <LibWeb/HTML/HTMLDialogElement.h>
+#include <LibWeb/HTML/LocalNavigable.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/ToggleEvent.h>
-#include <LibWeb/HTML/TraversableNavigable.h>
+#include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/UIEvents/EventNames.h>
 #include <LibWeb/UIEvents/PointerEvent.h>
 
@@ -31,12 +33,6 @@ HTMLDialogElement::HTMLDialogElement(DOM::Document& document, DOM::QualifiedName
 
 HTMLDialogElement::~HTMLDialogElement() = default;
 
-void HTMLDialogElement::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLDialogElement);
-    Base::initialize(realm);
-}
-
 void HTMLDialogElement::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
@@ -47,9 +43,9 @@ void HTMLDialogElement::visit_edges(JS::Cell::Visitor& visitor)
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#the-dialog-element:html-element-removing-steps
-void HTMLDialogElement::removed_from(Node* old_parent, Node& old_root)
+void HTMLDialogElement::removed_from(IsSubtreeRoot is_subtree_root, Node* old_ancestor, Node& old_root)
 {
-    HTMLElement::removed_from(old_parent, old_root);
+    HTMLElement::removed_from(is_subtree_root, old_ancestor, old_root);
 
     // 1. If removedNode has an open attribute, then run the dialog cleanup steps given removedNode.
     if (has_attribute(AttributeNames::open))
@@ -65,7 +61,7 @@ void HTMLDialogElement::removed_from(Node* old_parent, Node& old_root)
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#queue-a-dialog-toggle-event-task
-void HTMLDialogElement::queue_a_dialog_toggle_event_task(AK::String old_state, AK::String new_state, GC::Ptr<DOM::Element> source)
+void HTMLDialogElement::queue_a_dialog_toggle_event_task(Utf16FlyString old_state, Utf16FlyString new_state, GC::Ptr<DOM::Element> source)
 {
     // 1. If element's dialog toggle task tracker is not null, then:
     if (m_dialog_toggle_task_tracker.has_value()) {
@@ -90,7 +86,7 @@ void HTMLDialogElement::queue_a_dialog_toggle_event_task(AK::String old_state, A
         event_init.new_state = move(new_state);
         event_init.source = source;
 
-        dispatch_event(ToggleEvent::create(realm(), HTML::EventNames::toggle, move(event_init)));
+        dispatch_event(ToggleEvent::create(HTML::EventNames::toggle, move(event_init), HighResolutionTime::current_high_resolution_time(relevant_global_object(*this))));
 
         // 2. Set element's dialog toggle task tracker to null.
         m_dialog_toggle_task_tracker = {};
@@ -112,17 +108,17 @@ WebIDL::ExceptionOr<void> HTMLDialogElement::show()
 
     // 2. If this has an open attribute, then throw an "InvalidStateError" DOMException.
     if (has_attribute(AttributeNames::open))
-        return WebIDL::InvalidStateError::create(realm(), "Dialog already open"_utf16);
+        return WebIDL::InvalidStateError::create("Dialog already open"_utf16);
 
     // 3. If the result of firing an event named beforetoggle, using ToggleEvent,
     //    with the cancelable attribute initialized to true, the oldState attribute initialized to "closed",
     //    and the newState attribute initialized to "open" at this is false, then return.
     ToggleEventInit event_init {};
     event_init.cancelable = true;
-    event_init.old_state = "closed"_string;
-    event_init.new_state = "open"_string;
+    event_init.old_state = "closed"_utf16_fly_string;
+    event_init.new_state = "open"_utf16_fly_string;
 
-    auto beforetoggle_result = dispatch_event(ToggleEvent::create(realm(), HTML::EventNames::beforetoggle, move(event_init)));
+    auto beforetoggle_result = dispatch_event(ToggleEvent::create(HTML::EventNames::beforetoggle, move(event_init), HighResolutionTime::current_high_resolution_time(relevant_global_object(*this))));
     if (!beforetoggle_result)
         return {};
 
@@ -131,10 +127,10 @@ WebIDL::ExceptionOr<void> HTMLDialogElement::show()
         return {};
 
     // 5. Queue a dialog toggle event task given this, "closed", "open", and null.
-    queue_a_dialog_toggle_event_task("closed"_string, "open"_string, nullptr);
+    queue_a_dialog_toggle_event_task("closed"_utf16_fly_string, "open"_utf16_fly_string, nullptr);
 
     // 6. Add an open attribute to this, whose value is the empty string.
-    set_attribute_value(AttributeNames::open, String {});
+    set_attribute_value(AttributeNames::open, Utf16String {});
 
     // 7. Set this's previously focused element to the focused element.
     m_previously_focused_element = document().focused_area();
@@ -174,27 +170,25 @@ WebIDL::ExceptionOr<void> HTMLDialogElement::show_modal()
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#show-a-modal-dialog
 WebIDL::ExceptionOr<void> HTMLDialogElement::show_a_modal_dialog(HTMLDialogElement& subject, GC::Ptr<DOM::Element> source)
 {
-    auto& realm = subject.realm();
-
     // 1. If subject has an open attribute and is modal of subject is true, then return.
     if (subject.has_attribute(AttributeNames::open) && subject.m_is_modal)
         return {};
 
     // 2. If subject has an open attribute, then throw an "InvalidStateError" DOMException.
     if (subject.has_attribute(AttributeNames::open))
-        return WebIDL::InvalidStateError::create(realm, "Dialog already open"_utf16);
+        return WebIDL::InvalidStateError::create("Dialog already open"_utf16);
 
     // 3. If subject's node document is not fully active, then throw an "InvalidStateError" DOMException.
     if (!subject.document().is_fully_active())
-        return WebIDL::InvalidStateError::create(realm, "Document is not fully active"_utf16);
+        return WebIDL::InvalidStateError::create("Document is not fully active"_utf16);
 
     // 4. If subject is not connected, then throw an "InvalidStateError" DOMException.
     if (!subject.is_connected())
-        return WebIDL::InvalidStateError::create(realm, "Dialog not connected"_utf16);
+        return WebIDL::InvalidStateError::create("Dialog not connected"_utf16);
 
     // 5. If subject is in the popover showing state, then throw an "InvalidStateError" DOMException.
     if (subject.popover_visibility_state() == PopoverVisibilityState::Showing)
-        return WebIDL::InvalidStateError::create(realm, "Dialog already open as popover"_utf16);
+        return WebIDL::InvalidStateError::create("Dialog already open as popover"_utf16);
 
     // 6. If the result of firing an event named beforetoggle, using ToggleEvent,
     //    with the cancelable attribute initialized to true, the oldState attribute initialized to "closed",
@@ -202,11 +196,11 @@ WebIDL::ExceptionOr<void> HTMLDialogElement::show_a_modal_dialog(HTMLDialogEleme
     //    false, then return.
     ToggleEventInit event_init {};
     event_init.cancelable = true;
-    event_init.old_state = "closed"_string;
-    event_init.new_state = "open"_string;
+    event_init.old_state = "closed"_utf16_fly_string;
+    event_init.new_state = "open"_utf16_fly_string;
     event_init.source = source;
 
-    auto beforetoggle_result = subject.dispatch_event(ToggleEvent::create(realm, EventNames::beforetoggle, move(event_init)));
+    auto beforetoggle_result = subject.dispatch_event(ToggleEvent::create(EventNames::beforetoggle, move(event_init), HighResolutionTime::current_high_resolution_time(relevant_global_object(subject))));
     if (!beforetoggle_result)
         return {};
 
@@ -223,10 +217,10 @@ WebIDL::ExceptionOr<void> HTMLDialogElement::show_a_modal_dialog(HTMLDialogEleme
         return {};
 
     // 10. Queue a dialog toggle event task given subject, "closed", "open", and source.
-    subject.queue_a_dialog_toggle_event_task("closed"_string, "open"_string, source);
+    subject.queue_a_dialog_toggle_event_task("closed"_utf16_fly_string, "open"_utf16_fly_string, source);
 
     // 11. Add an open attribute to subject, whose value is the empty string.
-    subject.set_attribute_value(AttributeNames::open, String {});
+    subject.set_attribute_value(AttributeNames::open, Utf16String {});
 
     // 12. Assert: subject's close watcher is not null.
     VERIFY(subject.m_close_watcher);
@@ -238,7 +232,10 @@ WebIDL::ExceptionOr<void> HTMLDialogElement::show_a_modal_dialog(HTMLDialogEleme
 
     // 15. If subject's node document's top layer does not already contain subject, then add an element to the top
     //     layer given subject.
-    if (!subject.document().top_layer_elements().contains(subject))
+    // AD-HOC: A dialog closed and re-shown before removals were processed is contained only as
+    //         a pending removal; adding again cancels that pending removal.
+    if (!subject.document().top_layer_elements().contains(subject)
+        || subject.document().top_layer_pending_removals_contains(subject))
         subject.document().add_an_element_to_the_top_layer(subject);
 
     // FIXME: 16. Set subject's previously focused element to the focused element.
@@ -269,7 +266,7 @@ WebIDL::ExceptionOr<void> HTMLDialogElement::show_a_modal_dialog(HTMLDialogEleme
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#dom-dialog-close
-void HTMLDialogElement::close(Optional<String> return_value)
+void HTMLDialogElement::close(Optional<Utf16String> return_value)
 {
     // 1. If returnValue is not given, then set it to null.
     // 2. Close the dialog this with returnValue and null.
@@ -277,7 +274,7 @@ void HTMLDialogElement::close(Optional<String> return_value)
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#dom-dialog-requestclose
-void HTMLDialogElement::request_close(Optional<String> return_value)
+void HTMLDialogElement::request_close(Optional<Utf16String> return_value)
 {
     // 1. If returnValue is not given, then set it to null.
     // 2. Request to close the dialog this with returnValue and null.
@@ -285,7 +282,7 @@ void HTMLDialogElement::request_close(Optional<String> return_value)
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#dialog-request-close
-void HTMLDialogElement::request_close_the_dialog(Optional<String> return_value, GC::Ptr<DOM::Element> source)
+void HTMLDialogElement::request_close_the_dialog(Optional<Utf16String> return_value, GC::Ptr<DOM::Element> source)
 {
     // 1. If this does not have an open attribute, then return.
     if (!has_attribute(AttributeNames::open))
@@ -315,19 +312,19 @@ void HTMLDialogElement::request_close_the_dialog(Optional<String> return_value, 
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#dom-dialog-returnvalue
-String HTMLDialogElement::return_value() const
+Utf16String HTMLDialogElement::return_value() const
 {
     return m_return_value;
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#dom-dialog-returnvalue
-void HTMLDialogElement::set_return_value(String return_value)
+void HTMLDialogElement::set_return_value(Utf16String return_value)
 {
     m_return_value = move(return_value);
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#close-the-dialog
-void HTMLDialogElement::close_the_dialog(Optional<String> result, GC::Ptr<DOM::Element> source)
+void HTMLDialogElement::close_the_dialog(Optional<Utf16String> result, GC::Ptr<DOM::Element> source)
 {
     // 1. If subject does not have an open attribute, then return.
     if (!has_attribute(AttributeNames::open))
@@ -336,18 +333,18 @@ void HTMLDialogElement::close_the_dialog(Optional<String> result, GC::Ptr<DOM::E
     // 2. Fire an event named beforetoggle, using ToggleEvent, with the oldState attribute initialized to "open", the
     //    newState attribute initialized to "closed", and the source attribute initialized to source at subject.
     ToggleEventInit event_init {};
-    event_init.old_state = "open"_string;
-    event_init.new_state = "closed"_string;
+    event_init.old_state = "open"_utf16_fly_string;
+    event_init.new_state = "closed"_utf16_fly_string;
     event_init.source = source;
 
-    dispatch_event(ToggleEvent::create(realm(), HTML::EventNames::beforetoggle, move(event_init)));
+    dispatch_event(ToggleEvent::create(HTML::EventNames::beforetoggle, move(event_init), HighResolutionTime::current_high_resolution_time(relevant_global_object(*this))));
 
     // 3. If subject does not have an open attribute, then return.
     if (!has_attribute(AttributeNames::open))
         return;
 
     // 4. Queue a dialog toggle event task given subject, "open", "closed", and source.
-    queue_a_dialog_toggle_event_task("open"_string, "closed"_string, source);
+    queue_a_dialog_toggle_event_task("open"_utf16_fly_string, "closed"_utf16_fly_string, source);
 
     // 5. Remove subject's open attribute.
     remove_attribute(AttributeNames::open);
@@ -392,7 +389,7 @@ void HTMLDialogElement::close_the_dialog(Optional<String> result, GC::Ptr<DOM::E
     // 13. Queue an element task on the user interaction task source given the subject element to fire an event named
     //     close at subject.
     queue_an_element_task(HTML::Task::Source::UserInteraction, [this] {
-        auto close_event = DOM::Event::create(realm(), HTML::EventNames::close);
+        auto close_event = DOM::Event::create(HTML::EventNames::close, HighResolutionTime::current_high_resolution_time(relevant_global_object(*this)));
         dispatch_event(close_event);
     });
 }
@@ -411,29 +408,30 @@ void HTMLDialogElement::set_close_watcher()
     //    - cancelAction given canPreventClose being to return the result of firing an event named cancel at dialog,
     //      with the cancelable attribute initialized to canPreventClose.
     auto cancel_callback_function = JS::NativeFunction::create(
-        realm(), [this](JS::VM& vm) {
-            auto& event = as<DOM::Event>(vm.argument(0).as_object());
-            bool can_prevent_close = event.cancelable();
-            auto should_continue = dispatch_event(DOM::Event::create(realm(), HTML::EventNames::cancel, { .cancelable = can_prevent_close }));
+        HTML::relevant_realm(*this), [this](JS::VM& vm) {
+            auto* event = Bindings::event_from_callback_argument(vm);
+            VERIFY(event);
+            bool can_prevent_close = event->cancelable();
+            auto should_continue = dispatch_event(DOM::Event::create(HTML::EventNames::cancel, { .cancelable = can_prevent_close }, HighResolutionTime::current_high_resolution_time(relevant_global_object(*this))));
             if (!should_continue)
-                event.prevent_default();
+                event->prevent_default();
             return JS::js_undefined();
         },
-        0, Utf16FlyString {}, &realm());
-    auto cancel_callback = realm().heap().allocate<WebIDL::CallbackType>(*cancel_callback_function, realm());
+        0, Utf16FlyString {}, &HTML::relevant_realm(*this));
+    auto cancel_callback = GC::Heap::the().allocate<WebIDL::CallbackType>(*cancel_callback_function, HTML::relevant_realm(*this));
     //    - closeAction being to close the dialog given dialog, dialog's request close return value, and dialog's
     //      request close source element.
     auto close_callback_function = JS::NativeFunction::create(
-        realm(), [this](JS::VM&) {
+        HTML::relevant_realm(*this), [this](JS::VM&) {
             close_the_dialog(m_request_close_return_value, m_request_close_source_element);
 
             return JS::js_undefined();
         },
-        0, Utf16FlyString {}, &realm());
-    auto close_callback = realm().heap().allocate<WebIDL::CallbackType>(*close_callback_function, realm());
+        0, Utf16FlyString {}, &HTML::relevant_realm(*this));
+    auto close_callback = GC::Heap::the().allocate<WebIDL::CallbackType>(*close_callback_function, HTML::relevant_realm(*this));
     //    - getEnabledState being to return true if dialog's enable close watcher for request close is true or dialog's
     //      computed closed-by state is not None; otherwise false.
-    auto get_enabled_state = GC::create_function(heap(), [dialog = this] {
+    auto get_enabled_state = GC::create_function(GC::Heap::the(), [dialog = this] {
         if (dialog->m_enable_close_watcher_for_request_close)
             return true;
         // FIXME: dialog's computed closed-by state is not None
@@ -441,8 +439,8 @@ void HTMLDialogElement::set_close_watcher()
     });
 
     m_close_watcher = CloseWatcher::establish(*document().window(), move(get_enabled_state));
-    m_close_watcher->add_event_listener_without_options(HTML::EventNames::cancel, DOM::IDLEventListener::create(realm(), cancel_callback));
-    m_close_watcher->add_event_listener_without_options(HTML::EventNames::close, DOM::IDLEventListener::create(realm(), close_callback));
+    m_close_watcher->add_event_listener_without_options(HTML::EventNames::cancel, DOM::IDLEventListener::create(cancel_callback));
+    m_close_watcher->add_event_listener_without_options(HTML::EventNames::close, DOM::IDLEventListener::create(close_callback));
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#dialog-setup-steps
@@ -501,10 +499,8 @@ void HTMLDialogElement::run_dialog_focusing_steps()
     run_focusing_steps(control);
 
     // 7. Let topDocument be control's node navigable's top-level traversable's active document.
-    auto top_document = control->navigable()->top_level_traversable()->active_document();
-
     // 8. If control's node document's origin is not the same as the origin of topDocument, then return.
-    if (!control->document().origin().is_same_origin(top_document->origin()))
+    if (!control->document().origin().is_same_origin(*control->navigable()->top_level_traversable()->active_document_origin()))
         return;
 
     // FIXME: 9. Empty topDocument's autofocus candidates.
@@ -516,14 +512,14 @@ void HTMLDialogElement::set_is_modal(bool is_modal)
     if (m_is_modal == is_modal)
         return;
     m_is_modal = is_modal;
-    invalidate_style(DOM::StyleInvalidationReason::HTMLDialogElementSetIsModal);
+    CSS::Invalidation::invalidate_style_after_modal_state_change(*this);
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#the-dialog-element:is-valid-command-steps
-bool HTMLDialogElement::is_valid_command(String& command)
+bool HTMLDialogElement::is_valid_command(Utf16View command)
 {
     // 1. If command is in the Close state, the Request Close state, or the Show Modal state, then return true.
-    if (command == "close" || command == "request-close" || command == "show-modal")
+    if (command == u"close"sv || command == u"request-close"sv || command == u"show-modal"sv)
         return true;
 
     // 2. Return false.
@@ -531,7 +527,7 @@ bool HTMLDialogElement::is_valid_command(String& command)
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#the-dialog-element:command-steps
-void HTMLDialogElement::command_steps(DOM::Element& source, String& command)
+void HTMLDialogElement::command_steps(DOM::Element& source, Utf16View command)
 {
     // 1. If element is in the popover showing state, then return.
     if (popover_visibility_state() == PopoverVisibilityState::Showing) {
@@ -540,21 +536,21 @@ void HTMLDialogElement::command_steps(DOM::Element& source, String& command)
 
     // 2. If command is in the Close state and element has an open attribute,
     //    then close the dialog given element with source's optional value and source.
-    if (command == "close" && has_attribute(AttributeNames::open)) {
+    if (command == u"close"sv && has_attribute(AttributeNames::open)) {
         auto const optional_value = as<FormAssociatedElement>(source).optional_value();
         close_the_dialog(optional_value, source);
     }
 
     // 3. If command is in the Request Close state and element has an open attribute,
     //    then request to close the dialog element with source's optional value and source.
-    if (command == "request-close" && has_attribute(AttributeNames::open)) {
+    if (command == u"request-close"sv && has_attribute(AttributeNames::open)) {
         auto const optional_value = as<FormAssociatedElement>(source).optional_value();
         request_close_the_dialog(optional_value, source);
     }
 
     // 4. If command is the Show Modal state and element does not have an open attribute,
     //    then show a modal dialog given element and source.
-    if (command == "show-modal" && !has_attribute(AttributeNames::open)) {
+    if (command == u"show-modal"sv && !has_attribute(AttributeNames::open)) {
         MUST(show_a_modal_dialog(*this, source));
     }
 }
@@ -636,8 +632,8 @@ void HTMLDialogElement::light_dismiss_open_dialogs(UIEvents::PointerEvent const&
 
         // 6. If topmostDialog's computed closed-by state is not Any, then return.
         // FIXME: This should use the "computed closed-by state" algorithm.
-        auto closedby = topmost_dialog->attribute(AttributeNames::closedby);
-        if (!closedby.has_value() || !closedby.value().equals_ignoring_ascii_case("any"sv))
+        auto closedby = topmost_dialog->get_attribute_value_view(AttributeNames::closedby);
+        if (!closedby.has_value() || !closedby.value().equals_ignoring_ascii_case(u"any"sv))
             return;
 
         // 7. Assert: topmostDialog's close watcher is not null.
@@ -663,7 +659,7 @@ void HTMLDialogElement::inserted()
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#the-dialog-element:concept-element-attributes-change-ext
-void HTMLDialogElement::attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
+void HTMLDialogElement::attribute_changed(Utf16FlyString const& local_name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
 {
     Base::attribute_changed(local_name, old_value, value, namespace_);
 
@@ -672,12 +668,10 @@ void HTMLDialogElement::attribute_changed(FlyString const& local_name, Optional<
         return;
 
     // 2. If localName is not open, then return.
-    if (local_name != "open"_fly_string)
+    if (local_name != u"open"sv)
         return;
 
-    // The :open pseudo-class can affect sibling selectors (e.g., dialog:open + sibling),
-    // so we need full subtree + sibling invalidation, not just targeted invalidation.
-    invalidate_style(DOM::StyleInvalidationReason::HTMLDetailsOrDialogOpenAttributeChange);
+    CSS::Invalidation::invalidate_style_after_open_state_change(*this);
 
     // 3. If value is null and oldValue is not null, then run the dialog cleanup steps given element.
     if (!value.has_value() && old_value.has_value())

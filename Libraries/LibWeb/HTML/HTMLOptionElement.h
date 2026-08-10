@@ -7,13 +7,14 @@
 
 #pragma once
 
+#include <AK/Utf16View.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/HTML/HTMLElement.h>
 
 namespace Web::HTML {
 
 class WEB_API HTMLOptionElement final : public HTMLElement {
-    WEB_PLATFORM_OBJECT(HTMLOptionElement, HTMLElement);
+    WEB_WRAPPABLE(HTMLOptionElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLOptionElement);
 
 public:
@@ -26,13 +27,13 @@ public:
 
     Utf16String value() const;
     virtual Utf16String form_value() const override { return value(); }
-    void set_value(Utf16String const&);
+    void set_value(Utf16View);
 
     Utf16String text() const;
-    void set_text(Utf16String const&);
+    void set_text(Utf16View);
 
-    [[nodiscard]] String label() const;
-    void set_label(String const&);
+    [[nodiscard]] Utf16String label() const;
+    void set_label(Utf16View);
 
     int index() const;
 
@@ -51,20 +52,18 @@ public:
     WebIDL::ExceptionOr<void> clone_into_selectedcontent(GC::Ref<HTMLSelectedContentElement>);
 
 private:
-    friend class Bindings::OptionConstructor;
     friend class HTMLSelectElement;
 
     HTMLOptionElement(DOM::Document&, DOM::QualifiedName);
 
     virtual bool is_html_option_element() const final { return true; }
-
-    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
 
     virtual void inserted() override;
-    virtual void removed_from(Node* old_parent, Node& old_root) override;
+    virtual void removed_from(IsSubtreeRoot, Node* old_ancestor, Node& old_root) override;
+    virtual void moved_from(IsSubtreeRoot, GC::Ptr<Node> old_ancestor) override;
     virtual void children_changed(ChildrenChangedMetadata const&) override;
 
     void ask_for_a_reset();
@@ -72,8 +71,6 @@ private:
 
     // https://html.spec.whatwg.org/multipage/form-elements.html#update-an-option's-nearest-ancestor-select
     void update_nearest_select_element();
-    // https://html.spec.whatwg.org/multipage/form-elements.html#option-element-nearest-ancestor-select
-    GC::Ptr<HTMLSelectElement> compute_nearest_select_element();
 
     // https://html.spec.whatwg.org/multipage/form-elements.html#concept-option-selectedness
     bool m_selected { false };

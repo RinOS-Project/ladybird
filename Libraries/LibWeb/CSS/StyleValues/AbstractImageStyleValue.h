@@ -10,37 +10,38 @@
 #pragma once
 
 #include <LibWeb/CSS/PercentageOr.h>
-#include <LibWeb/CSS/Serialize.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
+#include <LibWeb/Export.h>
 
 namespace Web::CSS {
 
-class AbstractImageStyleValue : public StyleValue {
+class WEB_API AbstractImageStyleValue : public StyleValue {
 public:
     using StyleValue::StyleValue;
 
-    virtual Optional<CSSPixels> natural_width() const { return {}; }
-    virtual Optional<CSSPixels> natural_height() const { return {}; }
+    virtual Optional<CSSPixels> natural_width(DOM::Document const&) const { return {}; }
+    virtual Optional<CSSPixels> natural_height(DOM::Document const&) const { return {}; }
 
-    virtual Optional<CSSPixelFraction> natural_aspect_ratio() const
+    virtual Optional<CSSPixelFraction> natural_aspect_ratio(DOM::Document const& document) const
     {
-        auto width = natural_width();
-        auto height = natural_height();
+        auto width = natural_width(document);
+        auto height = natural_height(document);
         if (width.has_value() && height.has_value() && *height != 0)
             return *width / *height;
         return {};
     }
 
     virtual void load_any_resources(DOM::Document&) { }
+    virtual void load_any_resources(Layout::NodeWithStyle const&);
     virtual void resolve_for_size(Layout::NodeWithStyle const&, CSSPixelSize) const { }
 
-    virtual bool is_paintable() const = 0;
-    virtual void paint(DisplayListRecordingContext& context, DevicePixelRect const& dest_rect, ImageRendering) const = 0;
+    virtual bool is_paintable(DOM::Document const&) const = 0;
+    virtual void paint(DisplayListRecordingContext& context, DOM::Document const&, DevicePixelRect const& dest_rect, ImageRendering, PreferredColorScheme) const = 0;
 
-    virtual Optional<Gfx::Color> color_if_single_pixel_bitmap() const { return {}; }
+    virtual Optional<Gfx::Color> color_if_single_pixel_bitmap(DOM::Document const&) const { return {}; }
 
-    virtual GC::Ref<CSSStyleValue> reify(JS::Realm&, FlyString const& associated_property) const override;
+    GC::Ref<CSSStyleValue> reify(Utf16FlyString const& associated_property) const;
 };
 
 // And now, some gradient related things. Maybe these should live somewhere else.
@@ -61,14 +62,20 @@ struct ColorStopListElement {
 
     bool operator==(ColorStopListElement const&) const = default;
     ColorStopListElement absolutized(ComputationContext const& context) const;
-    bool is_computationally_independent() const
-    {
-        return (!transition_hint || transition_hint->is_computationally_independent())
-            && (!color_stop.color || color_stop.color->is_computationally_independent())
-            && (!color_stop.position || color_stop.position->is_computationally_independent())
-            && (!color_stop.second_position || color_stop.second_position->is_computationally_independent());
-    }
 };
-void serialize_color_stop_list(StringBuilder&, Vector<ColorStopListElement> const&, SerializationMode);
+void serialize_color_stop_list(StringBuilder&, ReadonlySpan<ColorStopListElement>, SerializationMode);
+
+namespace StyleValueFFI {
+
+struct RetainedColorStop;
+
+}
+
+// Marshals a color stop for a Rust-owned gradient allocation, retaining one strong reference
+// to each non-null sub-value.
+StyleValueFFI::RetainedColorStop retain_color_stop_for_rust(ColorStopListElement const&);
+Vector<StyleValueFFI::RetainedColorStop> retain_color_stops_for_rust(ReadonlySpan<ColorStopListElement>);
+ColorStopListElement color_stop_from_rust_data(StyleValueFFI::RetainedColorStop const&);
+Vector<ColorStopListElement> color_stops_from_rust_data(StyleValueFFI::RetainedColorStop const*, size_t);
 
 }

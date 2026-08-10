@@ -5,7 +5,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/DOM/MutationObserver.h>
 #include <LibWeb/HTML/HTMLSlotElement.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
@@ -17,7 +16,7 @@ namespace Web::HTML {
 NonnullOwnPtr<SimilarOriginWindowAgent> SimilarOriginWindowAgent::create(GC::Heap& heap)
 {
     // See 'creating an agent' step in: https://html.spec.whatwg.org/multipage/webappapis.html#obtain-similar-origin-window-agent
-    auto agent = adopt_own(*new SimilarOriginWindowAgent(heap, CanBlock::No));
+    auto agent = adopt_own(*new SimilarOriginWindowAgent(CanBlock::No));
     agent->event_loop = heap.allocate<HTML::EventLoop>(HTML::EventLoop::Type::Window);
     return agent;
 }
@@ -30,10 +29,18 @@ SimilarOriginWindowAgent& relevant_similar_origin_window_agent(JS::Object const&
     return as<SimilarOriginWindowAgent>(*relevant_realm(object).vm().agent());
 }
 
-SimilarOriginWindowAgent::SimilarOriginWindowAgent(GC::Heap& heap, CanBlock can_block)
+SimilarOriginWindowAgent& relevant_similar_origin_window_agent(DOM::Node const& node)
+{
+    return as<SimilarOriginWindowAgent>(*relevant_realm(node).vm().agent());
+}
+
+SimilarOriginWindowAgent& relevant_similar_origin_window_agent(Window const& window)
+{
+    return as<SimilarOriginWindowAgent>(*relevant_realm(window).vm().agent());
+}
+
+SimilarOriginWindowAgent::SimilarOriginWindowAgent(CanBlock can_block)
     : Agent(can_block)
-    , pending_mutation_observers(heap)
-    , signal_slots(heap)
 {
 }
 

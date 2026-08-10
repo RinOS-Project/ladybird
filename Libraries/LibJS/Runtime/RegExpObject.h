@@ -10,6 +10,7 @@
 #include <AK/EnumBits.h>
 #include <AK/Optional.h>
 #include <AK/Result.h>
+#include <AK/String.h>
 #include <LibJS/Export.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibRegex/ECMAScriptRegex.h>
@@ -22,10 +23,10 @@ ThrowCompletionOr<GC::Ref<RegExpObject>> regexp_alloc(VM&, FunctionObject& new_t
 
 Result<regex::RegexOptions<ECMAScriptFlags>, String> regex_flags_from_string(Utf16View const& flags);
 struct ParseRegexPatternError {
-    String error;
+    Utf16String error;
 };
-ErrorOr<String, ParseRegexPatternError> parse_regex_pattern(Utf16View const& pattern, bool unicode, bool unicode_sets);
-ThrowCompletionOr<String> parse_regex_pattern(VM& vm, Utf16View const& pattern, bool unicode, bool unicode_sets);
+ErrorOr<Utf16String, ParseRegexPatternError> parse_regex_pattern(Utf16View const& pattern, bool unicode, bool unicode_sets);
+ThrowCompletionOr<Utf16String> parse_regex_pattern(VM& vm, Utf16View const& pattern, bool unicode, bool unicode_sets);
 
 class JS_API RegExpObject : public Object {
     JS_OBJECT(RegExpObject, Object);
@@ -53,7 +54,7 @@ public:
     static GC::Ref<RegExpObject> create(Realm&, Utf16String pattern, Utf16String flags);
 
     ThrowCompletionOr<GC::Ref<RegExpObject>> regexp_initialize(VM&, Value pattern, Value flags);
-    String escape_regexp_pattern() const;
+    Utf16String escape_regexp_pattern() const;
 
     virtual void initialize(Realm&) override;
     virtual ~RegExpObject() override = default;

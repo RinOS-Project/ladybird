@@ -40,7 +40,6 @@
     __JS_ENUMERATE(Promise, promise, PromisePrototype, PromiseConstructor, void)                                                               \
     __JS_ENUMERATE(RegExpObject, regexp, RegExpPrototype, RegExpConstructor, void)                                                             \
     __JS_ENUMERATE(Set, set, SetPrototype, SetConstructor, void)                                                                               \
-    __JS_ENUMERATE(ShadowRealm, shadow_realm, ShadowRealmPrototype, ShadowRealmConstructor, void)                                              \
     __JS_ENUMERATE(SharedArrayBuffer, shared_array_buffer, SharedArrayBufferPrototype, SharedArrayBufferConstructor, void)                     \
     __JS_ENUMERATE(StringObject, string, StringPrototype, StringConstructor, void)                                                             \
     __JS_ENUMERATE(SuppressedError, suppressed_error, SuppressedErrorPrototype, SuppressedErrorConstructor, void)                              \
@@ -178,12 +177,14 @@ class Completion;
 class Console;
 class ConsoleClient;
 class CyclicModule;
+class Debugger;
 class DeclarativeEnvironment;
 struct DisposeCapability;
 struct DisposableResource;
 class ECMAScriptFunctionObject;
 class Environment;
 class Error;
+class ErrorData;
 class ErrorType;
 struct ExecutionContext;
 struct ExportEntry;
@@ -209,6 +210,7 @@ class ModuleEnvironment;
 class Module;
 struct ModuleRequest;
 class NativeFunction;
+class RawNativeFunction;
 class NativeJavaScriptBackedFunction;
 class ObjectEnvironment;
 class Parser;
@@ -238,7 +240,6 @@ class PrototypeChainValidity;
 class Value;
 class WrappedFunction;
 enum class DeclarationKind;
-struct AlreadyResolved;
 class JobCallback;
 struct ModuleRequest;
 struct LoadedModuleRequest;
@@ -329,15 +330,14 @@ struct TimeZoneOffset;
 template<typename T>
 requires(!IsLvalueReference<T>)
 class ThrowCompletionOr;
+using NativeFunctionPointer = ThrowCompletionOr<Value> (*)(VM&);
 
 namespace Bytecode {
 
-class BasicBlock;
 enum class Builtin : u8;
 class Executable;
 class Generator;
 class Instruction;
-class Interpreter;
 class Operand;
 struct PropertyLookupCache;
 class RegexTable;

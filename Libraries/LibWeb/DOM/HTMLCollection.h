@@ -9,7 +9,8 @@
 
 #include <AK/Function.h>
 #include <LibGC/Ptr.h>
-#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibGC/WeakContainer.h>
+#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::DOM {
@@ -21,8 +22,10 @@ namespace Web::DOM {
 // The filter is a simple Function object that answers the question
 // "is this Element part of the collection?"
 
-class HTMLCollection : public Bindings::PlatformObject {
-    WEB_PLATFORM_OBJECT(HTMLCollection, Bindings::PlatformObject);
+class HTMLCollection
+    : public Bindings::GCAllocatedWrappable
+    , public GC::WeakContainer {
+    WEB_WRAPPABLE(HTMLCollection, Bindings::GCAllocatedWrappable);
     GC_DECLARE_ALLOCATOR(HTMLCollection);
 
 public:
@@ -36,32 +39,31 @@ public:
 
     size_t length() const;
     Element* item(size_t index) const;
-    Element* named_item(FlyString const& key) const;
+    Element* named_item(Utf16View key) const;
 
     GC::RootVector<GC::Ref<Element>> collect_matching_elements() const;
 
-    virtual Optional<JS::Value> item_value(size_t index) const override;
-    virtual JS::Value named_item_value(FlyString const& name) const override;
-    virtual Vector<FlyString> supported_property_names() const override;
-    virtual bool is_supported_property_name(FlyString const&) const override;
+    virtual Vector<Utf16FlyString> supported_property_names() const override;
+    virtual bool is_supported_property_name(Utf16FlyString const&) const override;
 
 protected:
     HTMLCollection(ParentNode& root, Scope, ESCAPING Function<bool(Element const&)> filter, ESCAPING Function<bool(Element const&, Element const&)> sort = nullptr);
 
-    virtual void initialize(JS::Realm&) override;
-
     GC::Ref<ParentNode> root() { return *m_root; }
     GC::Ref<ParentNode const> root() const { return *m_root; }
 
+    virtual void visit_edges(GC::Cell::Visitor&) override;
+
 private:
-    virtual void visit_edges(Cell::Visitor&) override;
+    virtual void remove_dead_cells(Badge<GC::Heap>) override;
+    virtual GC::Cell const& owner_cell(Badge<GC::Heap>) const override;
 
     void update_cache_if_needed() const;
     void update_name_to_element_mappings_if_needed() const;
 
     mutable u64 m_cached_dom_tree_version { 0 };
-    mutable Vector<GC::Weak<Element>> m_cached_elements;
-    mutable OwnPtr<OrderedHashMap<FlyString, GC::Weak<Element>>> m_cached_name_to_element_mappings;
+    mutable Vector<GC::RawPtr<Element>> m_cached_elements;
+    mutable OwnPtr<OrderedHashMap<Utf16FlyString, GC::RawPtr<Element>>> m_cached_name_to_element_mappings;
 
     GC::Ref<ParentNode> m_root;
     Function<bool(Element const&)> m_filter;

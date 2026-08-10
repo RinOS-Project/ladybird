@@ -7,8 +7,8 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
 #include <AK/NonnullRefPtr.h>
+#include <AK/Utf16FlyString.h>
 #include <LibGC/Ptr.h>
 #include <LibWeb/CSS/CSSKeyframeRule.h>
 #include <LibWeb/CSS/CSSRule.h>
@@ -20,29 +20,33 @@ namespace Web::CSS {
 
 // https://drafts.csswg.org/css-animations/#interface-csskeyframesrule
 class CSSKeyframesRule final : public CSSRule {
-    WEB_PLATFORM_OBJECT(CSSKeyframesRule, CSSRule);
+    WEB_WRAPPABLE(CSSKeyframesRule, CSSRule);
     GC_DECLARE_ALLOCATOR(CSSKeyframesRule);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSKeyframesRule> create(JS::Realm&, FlyString name, GC::Ref<CSSRuleList>);
+    [[nodiscard]] static GC::Ref<CSSKeyframesRule> create(Utf16FlyString name, GC::Ref<CSSRuleList>);
 
     virtual ~CSSKeyframesRule() = default;
 
     auto const& css_rules() const { return m_rules; }
-    FlyString const& name() const { return m_name; }
+    Utf16FlyString const& name() const { return m_name; }
     [[nodiscard]] WebIDL::UnsignedLong length() const;
+    GC::Ptr<CSSKeyframeRule> item(size_t index) const;
 
-    void set_name(String const& name) { m_name = name; }
+    void set_name(Utf16String const& name) { m_name = Utf16FlyString { name }; }
+
+    void append_rule(Utf16String const& rule);
+    void delete_rule(Utf16String const& select);
+    GC::Ptr<CSSKeyframeRule> find_rule(Utf16String const& select);
 
 private:
-    CSSKeyframesRule(JS::Realm&, FlyString name, GC::Ref<CSSRuleList> keyframes);
+    CSSKeyframesRule(Utf16FlyString name, GC::Ref<CSSRuleList> keyframes);
     virtual void visit_edges(Visitor&) override;
 
-    virtual void initialize(JS::Realm&) override;
-    virtual String serialized() const override;
+    virtual Utf16String serialized() const override;
     virtual void dump(StringBuilder&, int indent_levels) const override;
 
-    FlyString m_name;
+    Utf16FlyString m_name;
     GC::Ref<CSSRuleList> m_rules;
 };
 

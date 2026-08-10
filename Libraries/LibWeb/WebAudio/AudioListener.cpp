@@ -5,30 +5,29 @@
  */
 
 #include <LibGC/CellAllocator.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/WebAudio/AudioListener.h>
 
 namespace Web::WebAudio {
 
 GC_DEFINE_ALLOCATOR(AudioListener);
 
-AudioListener::AudioListener(JS::Realm& realm, GC::Ref<BaseAudioContext> context)
-    : Bindings::PlatformObject(realm)
-    , m_forward_x(AudioParam::create(realm, context, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), Bindings::AutomationRate::ARate))
-    , m_forward_y(AudioParam::create(realm, context, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), Bindings::AutomationRate::ARate))
-    , m_forward_z(AudioParam::create(realm, context, -1.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), Bindings::AutomationRate::ARate))
-    , m_position_x(AudioParam::create(realm, context, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), Bindings::AutomationRate::ARate))
-    , m_position_y(AudioParam::create(realm, context, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), Bindings::AutomationRate::ARate))
-    , m_position_z(AudioParam::create(realm, context, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), Bindings::AutomationRate::ARate))
-    , m_up_x(AudioParam::create(realm, context, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), Bindings::AutomationRate::ARate))
-    , m_up_y(AudioParam::create(realm, context, 1.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), Bindings::AutomationRate::ARate))
-    , m_up_z(AudioParam::create(realm, context, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), Bindings::AutomationRate::ARate))
+AudioListener::AudioListener(GC::Ref<BaseAudioContext> context)
+    : m_forward_x(AudioParam::create(context, nullptr, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), AutomationRate::ARate))
+    , m_forward_y(AudioParam::create(context, nullptr, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), AutomationRate::ARate))
+    , m_forward_z(AudioParam::create(context, nullptr, -1.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), AutomationRate::ARate))
+    , m_position_x(AudioParam::create(context, nullptr, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), AutomationRate::ARate))
+    , m_position_y(AudioParam::create(context, nullptr, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), AutomationRate::ARate))
+    , m_position_z(AudioParam::create(context, nullptr, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), AutomationRate::ARate))
+    , m_up_x(AudioParam::create(context, nullptr, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), AutomationRate::ARate))
+    , m_up_y(AudioParam::create(context, nullptr, 1.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), AutomationRate::ARate))
+    , m_up_z(AudioParam::create(context, nullptr, 0.f, NumericLimits<float>::lowest(), NumericLimits<float>::max(), AutomationRate::ARate))
 {
 }
 
-GC::Ref<AudioListener> AudioListener::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context)
+GC::Ref<AudioListener> AudioListener::create(GC::Ref<BaseAudioContext> context)
 {
-    return realm.create<AudioListener>(realm, context);
+    return GC::Heap::the().allocate<AudioListener>(context);
 }
 
 AudioListener::~AudioListener() = default;
@@ -39,13 +38,13 @@ WebIDL::ExceptionOr<void> AudioListener::set_position(float x, float y, float z)
     // This method is DEPRECATED. It is equivalent to setting positionX.value, positionY.value, and
     // positionZ.value directly with the given x, y, and z values, respectively.
 
-    // FIXME: Consequently, any of the positionX, positionY, and positionZ AudioParams for this
-    //        AudioListener have an automation curve set using setValueCurveAtTime() at the time this
-    //        method is called, a NotSupportedError MUST be thrown.
+    // Consequently, if any of the positionX, positionY, and positionZ AudioParams for this AudioListener have an
+    // automation curve set using setValueCurveAtTime() at the time this method is called, a NotSupportedError MUST be
+    // thrown.
 
-    m_position_x->set_value(x);
-    m_position_y->set_value(y);
-    m_position_z->set_value(z);
+    TRY(m_position_x->set_value(x));
+    TRY(m_position_y->set_value(y));
+    TRY(m_position_z->set_value(z));
 
     return {};
 }
@@ -57,27 +56,20 @@ WebIDL::ExceptionOr<void> AudioListener::set_orientation(float x, float y, float
     // forwardZ.value, upX.value, upY.value, and upZ.value directly with the given x, y, z, xUp,
     // yUp, and zUp values, respectively.
 
-    // FIXME: Consequently, if any of the forwardX, forwardY, forwardZ, upX, upY and upZ
-    //        AudioParams have an automation curve set using setValueCurveAtTime() at the time this
-    //        method is called, a NotSupportedError MUST be thrown.
+    // Consequently, if any of the forwardX, forwardY, forwardZ, upX, upY and upZ AudioParams have an automation curve
+    // set using setValueCurveAtTime() at the time this method is called, a NotSupportedError MUST be thrown.
 
-    m_forward_x->set_value(x);
-    m_forward_y->set_value(y);
-    m_forward_z->set_value(z);
-    m_up_x->set_value(x_up);
-    m_up_y->set_value(y_up);
-    m_up_z->set_value(z_up);
+    TRY(m_forward_x->set_value(x));
+    TRY(m_forward_y->set_value(y));
+    TRY(m_forward_z->set_value(z));
+    TRY(m_up_x->set_value(x_up));
+    TRY(m_up_y->set_value(y_up));
+    TRY(m_up_z->set_value(z_up));
 
     return {};
 }
 
-void AudioListener::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(AudioListener);
-    Base::initialize(realm);
-}
-
-void AudioListener::visit_edges(Cell::Visitor& visitor)
+void AudioListener::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_forward_x);

@@ -19,13 +19,12 @@
 
 namespace GC {
 
-// This instrumentation tells analysis tooling to ignore a potentially mis-wrapped GC-allocated member variable
-// It should only be used when the lifetime of the GC-allocated member is always longer than the object
+template<typename T>
+struct IsVisitable;
+
 #if defined(AK_COMPILER_CLANG)
-#    define IGNORE_GC [[clang::annotate("serenity::ignore_gc")]]
 #    define GC_ALLOW_CELL_DESTRUCTOR [[clang::annotate("ladybird::allow_cell_destructor")]]
 #else
-#    define IGNORE_GC
 #    define GC_ALLOW_CELL_DESTRUCTOR
 #endif
 
@@ -38,12 +37,16 @@ public:                                            \
     }                                              \
     friend class GC::Heap;
 
+#define GC_CELL_WITH_CUSTOM_CLASS_NAME(class_, base_class) \
+public:                                                    \
+    using Base = base_class;                               \
+    friend class GC::Heap;
+
 class GC_API Cell {
     AK_MAKE_NONCOPYABLE(Cell);
     AK_MAKE_NONMOVABLE(Cell);
 
 public:
-    static constexpr bool OVERRIDES_MUST_SURVIVE_GARBAGE_COLLECTION = false;
     static constexpr bool OVERRIDES_FINALIZE = false;
 
     virtual ~Cell() = default;
@@ -99,6 +102,7 @@ public:
 
         template<typename T>
         void visit(ReadonlySpan<T> span)
+        requires(!IsBaseOf<NanBoxedValue, T> && IsVisitable<T>::value)
         {
             for (auto& value : span)
                 visit(value);
@@ -113,6 +117,7 @@ public:
 
         template<typename T>
         void visit(Span<T> span)
+        requires(!IsBaseOf<NanBoxedValue, T> && IsVisitable<T>::value)
         {
             for (auto& value : span)
                 visit(value);
@@ -127,6 +132,7 @@ public:
 
         template<typename T, size_t inline_capacity>
         void visit(Vector<T, inline_capacity> const& vector)
+        requires(!IsBaseOf<NanBoxedValue, T> && IsVisitable<T>::value)
         {
             for (auto& value : vector)
                 visit(value);
@@ -141,6 +147,7 @@ public:
 
         template<typename T>
         void visit(HashTable<T> const& table)
+        requires(IsVisitable<T>::value)
         {
             for (auto& value : table)
                 visit(value);
@@ -148,6 +155,7 @@ public:
 
         template<typename T>
         void visit(OrderedHashTable<T> const& table)
+        requires(IsVisitable<T>::value)
         {
             for (auto& value : table)
                 visit(value);
@@ -176,13 +184,31 @@ public:
         }
 
         template<typename T>
+        void visit(T const& value)
+        requires(!IsBaseOf<Cell, T> && requires(T& visitable) { visitable.visit_edges(*this); })
+        {
+            const_cast<T&>(value).visit_edges(*this);
+        }
+
+        template<typename T>
         void visit(Optional<T> const& optional)
+        requires(IsVisitable<T>::value)
         {
             if (optional.has_value())
                 visit(optional.value());
         }
 
         void visit(NanBoxedValue const& value);
+
+        template<typename... Ts>
+        void visit(Variant<Ts...> const& variant)
+        requires((IsVisitable<Ts>::value || ...))
+        {
+            variant.visit([&](auto const& value) {
+                if constexpr (requires { visit(value); })
+                    visit(value);
+            });
+        }
 
         // Allow explicitly ignoring a GC-allocated member in a visit_edges implementation instead
         // of just not using it.
@@ -204,10 +230,7 @@ public:
     // This will be called on unmarked objects by the garbage collector in a separate pass before destruction.
     MUST_UPCALL virtual void finalize() { }
 
-    // This allows cells to survive GC by choice, even if nothing points to them.
-    // It's used to implement special rules in the web platform.
-    // NOTE: Cell types must have OVERRIDES_MUST_SURVIVE_GARBAGE_COLLECTION set for this to be called.
-    virtual bool must_survive_garbage_collection() const { return false; }
+    virtual size_t external_memory_size() const { return 0; }
 
     ALWAYS_INLINE Heap& heap() const { return HeapBlockBase::from_cell(this)->heap(); }
 
@@ -217,6 +240,11 @@ protected:
 private:
     bool m_mark { false };
     State m_state { State::Live };
+};
+
+template<typename T>
+struct IsVisitable {
+    static constexpr bool value = requires(Cell::Visitor& visitor, T const& value) { visitor.visit(value); };
 };
 
 }

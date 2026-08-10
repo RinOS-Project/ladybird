@@ -9,42 +9,49 @@
 
 #pragma once
 
+#include <AK/Function.h>
+#include <AK/Utf16View.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/CORSSettingAttribute.h>
 #include <LibWeb/HTML/HTMLElement.h>
+#include <LibWeb/HTML/PreloadEntry.h>
 
 namespace Web::HTML {
 
 class WEB_API HTMLLinkElement final : public HTMLElement {
-    WEB_PLATFORM_OBJECT(HTMLLinkElement, HTMLElement);
+    WEB_WRAPPABLE(HTMLLinkElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLLinkElement);
 
 public:
     virtual ~HTMLLinkElement() override;
 
     virtual void inserted() override;
-    virtual void removed_from(Node* old_parent, Node& old_root) override;
+    virtual void removed_from(IsSubtreeRoot, Node* old_ancestor, Node& old_root) override;
 
-    String rel() const { return get_attribute_value(HTML::AttributeNames::rel); }
-    String type() const { return get_attribute_value(HTML::AttributeNames::type); }
-    String href() const { return get_attribute_value(HTML::AttributeNames::href); }
+    Utf16String rel() const { return get_attribute_value(HTML::AttributeNames::rel); }
+    void set_rel(Utf16View value) { set_attribute_value(HTML::AttributeNames::rel, value); }
+    Utf16String type() const { return get_attribute_value(HTML::AttributeNames::type); }
+    void set_type(Utf16View value) { set_attribute_value(HTML::AttributeNames::type, value); }
+    Utf16String href() const { return get_attribute_value(HTML::AttributeNames::href); }
+    void set_href(Utf16View value) { set_attribute_value(HTML::AttributeNames::href, value); }
 
     GC::Ref<DOM::DOMTokenList> rel_list();
     GC::Ref<DOM::DOMTokenList> sizes();
 
     bool has_loaded_icon() const;
-    bool load_favicon_and_use_if_window_is_active();
+    bool has_icon_keyword() const;
+    RefPtr<Gfx::Bitmap const> load_favicon_if_window_is_active();
 
     static void load_fallback_favicon_if_needed(GC::Ref<DOM::Document>);
 
     void set_parser_document(Badge<HTMLParser>, GC::Ref<DOM::Document> document) { m_parser_document = document; }
     void set_was_enabled_when_created_by_parser(Badge<HTMLParser>, bool was_enabled_when_created_by_parser) { m_was_enabled_when_created_by_parser = was_enabled_when_created_by_parser; }
 
-    void set_media(String);
-    String media() const;
+    void set_media(Utf16View);
+    Utf16String media() const;
 
     GC::Ptr<CSS::CSSStyleSheet> sheet() const;
 
@@ -68,26 +75,26 @@ private:
             GC::Ref<HTML::EnvironmentSettingsObject> environment,
             GC::Ref<HTML::PolicyContainer> policy_container,
             GC::Ptr<Web::DOM::Document> document,
-            String cryptographic_nonce_metadata,
+            Utf16String cryptographic_nonce_metadata,
             Fetch::Infrastructure::Request::Priority fetch_priority);
 
         virtual void visit_edges(Cell::Visitor& visitor) override;
 
         // href (default the empty string)
-        String href;
+        Utf16String href;
 
         // initiator (default "link")
         Optional<Fetch::Infrastructure::Request::InitiatorType> initiator { Fetch::Infrastructure::Request::InitiatorType::Link };
 
         // integrity (default the empty string)
-        String integrity;
+        Utf16String integrity;
 
         // type (default the empty string)
-        String type;
+        Utf16String type;
 
         // cryptographic nonce metadata (default the empty string)
         //     A string
-        String cryptographic_nonce_metadata;
+        Utf16String cryptographic_nonce_metadata;
 
         // destination (default the empty string)
         //     A destination type.
@@ -133,57 +140,15 @@ private:
         Fetch::Infrastructure::Request::Priority fetch_priority { Fetch::Infrastructure::Request::Priority::Auto };
     };
 
-    // https://html.spec.whatwg.org/multipage/links.html#preload-key
-    struct PreloadKey {
-        static PreloadKey create(Fetch::Infrastructure::Request const&);
-
-        // URL
-        //     A URL
-        URL::URL url;
-
-        // destination
-        //     A string
-        Optional<Fetch::Infrastructure::Request::Destination> destination;
-
-        // mode
-        //     A request mode, either "same-origin", "cors", or "no-cors"
-        Fetch::Infrastructure::Request::Mode mode;
-
-        // credentials mode
-        //     A credentials mode
-        Fetch::Infrastructure::Request::CredentialsMode credentials_mode;
-    };
-
-    // https://html.spec.whatwg.org/multipage/links.html#preload-entry
-    struct PreloadEntry final : public JS::Cell {
-        GC_CELL(PreloadEntry, JS::Cell);
-        GC_DECLARE_ALLOCATOR(PreloadEntry);
-
-        virtual void visit_edges(Cell::Visitor& visitor) override;
-
-        // integrity metadata
-        //     A string
-        String integrity_metadata;
-
-        // response
-        //     Null or a response
-        GC::Ptr<Fetch::Infrastructure::Response> response;
-
-        // on response available
-        //     Null, or an algorithm accepting a response or null
-        GC::Ptr<GC::Function<void(GC::Ptr<Fetch::Infrastructure::Response>)>> on_response_available;
-    };
-
     HTMLLinkElement(DOM::Document&, DOM::QualifiedName);
-
-    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
+    virtual void adopted_from(DOM::Document&) override;
 
     // ^DOM::Node
     virtual bool is_html_link_element() const override { return true; }
 
     // ^HTMLElement
-    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
     virtual bool contributes_a_script_blocking_style_sheet() const final;
     virtual bool is_implicitly_potentially_render_blocking() const override;
 
@@ -191,7 +156,7 @@ private:
     GC::Ptr<Fetch::Infrastructure::Request> create_link_request(LinkProcessingOptions const&);
 
     void fetch_and_process_linked_resource();
-    void default_fetch_and_process_linked_resource();
+    void default_fetch_and_process_linked_resource(u64 fetch_generation);
     void fetch_and_process_linked_dns_prefetch_resource();
     void fetch_and_process_linked_preconnect_resource();
     void fetch_and_process_linked_preload_resource();
@@ -201,11 +166,11 @@ private:
     bool stylesheet_linked_resource_fetch_setup_steps(Fetch::Infrastructure::Request&);
 
     void preconnect(LinkProcessingOptions const&);
-    void preload(LinkProcessingOptions&, GC::Ptr<GC::Function<void(Fetch::Infrastructure::Response&)>> process_response = {});
+    void preload(LinkProcessingOptions&, Function<void(Fetch::Infrastructure::Response&)> process_response = {});
 
-    void process_linked_resource(bool success, Fetch::Infrastructure::Response const&, ByteBuffer);
+    void process_linked_resource(bool success, Fetch::Infrastructure::Response const&, Core::ImmutableBytes const*);
     void process_icon_resource(bool success, Fetch::Infrastructure::Response const&, ByteBuffer);
-    void process_stylesheet_resource(bool success, Fetch::Infrastructure::Response const&, ByteBuffer);
+    void process_stylesheet_resource(bool success, Fetch::Infrastructure::Response const&, ReadonlyBytes);
 
     bool should_fetch_and_process_resource_type() const;
 
@@ -234,13 +199,14 @@ private:
     GC::Ptr<DOM::DOMTokenList> m_rel_list;
     GC::Ptr<DOM::DOMTokenList> m_sizes;
     unsigned m_relationship { 0 };
+    u64 m_current_fetch_generation { 0 };
 
     // https://html.spec.whatwg.org/multipage/semantics.html#explicitly-enabled
     bool m_explicitly_enabled { false };
 
     bool m_was_enabled_when_created_by_parser { false };
 
-    Optional<String> m_mime_type;
+    Optional<Utf16String> m_mime_type;
 
     GC::Weak<DOM::Document> m_parser_document;
 };

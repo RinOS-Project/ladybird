@@ -8,6 +8,7 @@
 
 #include <AK/Forward.h>
 #include <LibURL/URL.h>
+#include <LibWebView/PrivateBrowsing.h>
 
 #import <Cocoa/Cocoa.h>
 
@@ -15,21 +16,25 @@
 
 @interface TabController : NSWindowController <NSWindowDelegate>
 
-- (instancetype)init;
+- (instancetype)init:(WebView::IsPrivate)is_private;
 - (instancetype)initAsChild:(Tab*)parent
                   pageIndex:(u64)page_index;
 
+- (WebView::IsPrivate)isPrivate;
+
 - (void)loadURL:(URL::URL const&)url;
 
-- (void)onLoadStart:(URL::URL const&)url isRedirect:(BOOL)isRedirect;
+- (void)onLoadStart;
+- (void)onLoadFinish;
+- (void)onFaviconChange:(NSImage*)favicon;
 
 - (void)onURLChange:(URL::URL const&)url;
 
 - (void)onEnterFullscreenWindow;
 - (void)onExitFullscreenWindow;
 
-- (void)clearHistory;
-
+- (void)focusWebViewWhenActivated;
+- (void)focusWebView;
 - (void)focusLocationToolbarItem;
 
 @end

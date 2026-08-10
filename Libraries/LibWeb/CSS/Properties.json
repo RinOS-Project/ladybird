@@ -313,7 +313,7 @@
     "affects-layout": false,
     "animation-type": "none",
     "inherited": false,
-    "initial": "0s",
+    "initial": "auto",
     "multiplicity": "coordinating-list",
     "needs-layout-node-for-resolved-value": true,
     "requires-computation": "cascaded-value",
@@ -431,6 +431,7 @@
     ]
   },
   "backdrop-filter": {
+    "affects-accumulated-visual-contexts": true,
     "affects-layout": false,
     "affects-stacking-context": true,
     "animation-type": "custom",
@@ -442,6 +443,17 @@
     "requires-computation": "cascaded-value",
     "valid-identifiers": [
       "none"
+    ]
+  },
+  "backface-visibility": {
+    "affects-accumulated-visual-contexts": true,
+    "affects-stacking-context": true,
+    "animation-type": "discrete",
+    "inherited": false,
+    "initial": "visible",
+    "requires-computation": "never",
+    "valid-types": [
+      "backface-visibility"
     ]
   },
   "background": {
@@ -460,6 +472,7 @@
     "multiplicity": "coordinating-list"
   },
   "background-attachment": {
+    "affects-accumulated-visual-contexts": true,
     "affects-layout": false,
     "animation-type": "discrete",
     "inherited": false,
@@ -1349,6 +1362,7 @@
     ]
   },
   "clip": {
+    "affects-accumulated-visual-contexts": true,
     "affects-layout": false,
     "animation-type": "by-computed-value",
     "inherited": false,
@@ -1365,6 +1379,7 @@
     ]
   },
   "clip-path": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "by-computed-value",
     "affects-layout": false,
     "affects-stacking-context": true,
@@ -1409,6 +1424,16 @@
     "animation-type": "discrete",
     "inherited": true,
     "initial": "srgb",
+    "requires-computation": "never",
+    "valid-types": [
+      "color-interpolation"
+    ]
+  },
+  "color-interpolation-filters": {
+    "affects-layout": false,
+    "animation-type": "discrete",
+    "inherited": true,
+    "initial": "linearrgb",
     "requires-computation": "never",
     "valid-types": [
       "color-interpolation"
@@ -1505,6 +1530,27 @@
     "requires-computation": "never",
     "valid-types": [
       "contain"
+    ]
+  },
+  "container": {
+    "initial": "none",
+    "longhands": [
+      "container-name",
+      "container-type"
+    ]
+  },
+  "container-name": {
+    "affects-layout": false,
+    "animation-type": "none",
+    "inherited": false,
+    "initial": "none",
+    "multiplicity": "list",
+    "requires-computation": "never",
+    "valid-types": [
+      "custom-ident ![none,and,not,or]"
+    ],
+    "valid-identifiers": [
+      "none"
     ]
   },
   "container-type": {
@@ -1794,6 +1840,12 @@
       "unitless-length"
     ]
   },
+  "d": {
+    "animation-type": "by-computed-value",
+    "inherited": false,
+    "initial": "none",
+    "requires-computation": "never"
+  },
   "direction": {
     "animation-type": "none",
     "inherited": true,
@@ -1858,7 +1910,7 @@
     "initial": "1",
     "requires-computation": "cascaded-value",
     "valid-types": [
-      "opacity"
+      "opacity-value"
     ]
   },
   "fill-rule": {
@@ -1872,6 +1924,7 @@
     ]
   },
   "filter": {
+    "affects-accumulated-visual-contexts": true,
     "affects-layout": false,
     "affects-stacking-context": true,
     "animation-type": "custom",
@@ -1983,7 +2036,7 @@
     "initial": "1",
     "requires-computation": "cascaded-value",
     "valid-types": [
-      "opacity"
+      "opacity-value"
     ]
   },
   "font": {
@@ -2190,7 +2243,7 @@
     "multiplicity": "list",
     "requires-computation": "cascaded-value",
     "valid-types": [
-      "number",
+      "number [-∞,∞]",
       "opentype-tag"
     ],
     "valid-identifiers": [
@@ -2328,7 +2381,7 @@
     "animation-type": "discrete",
     "inherited": false,
     "initial": "auto",
-    "requires-computation": "never",
+    "requires-computation": "cascaded-value",
     "valid-identifiers": [
       "auto"
     ],
@@ -2343,7 +2396,7 @@
     "animation-type": "discrete",
     "inherited": false,
     "initial": "auto",
-    "requires-computation": "never",
+    "requires-computation": "cascaded-value",
     "valid-identifiers": [
       "auto"
     ],
@@ -2371,7 +2424,7 @@
     "animation-type": "discrete",
     "inherited": false,
     "initial": "auto",
-    "requires-computation": "never",
+    "requires-computation": "cascaded-value",
     "valid-identifiers": [
       "auto"
     ],
@@ -2386,7 +2439,7 @@
     "animation-type": "discrete",
     "inherited": false,
     "initial": "auto",
-    "requires-computation": "never",
+    "requires-computation": "cascaded-value",
     "valid-identifiers": [
       "auto"
     ],
@@ -2913,6 +2966,7 @@
     "initial": "add"
   },
   "mask-image": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "discrete",
     "inherited": false,
     "affects-layout": false,
@@ -2998,6 +3052,7 @@
     "percentages-resolve-to": "length"
   },
   "mask-type": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "discrete",
     "inherited": false,
     "affects-layout": false,
@@ -3016,7 +3071,7 @@
     "__comment": "FIXME: `add(<integer>)` is also valid but we can't represent that here yet.",
     "requires-computation": "cascaded-value",
     "valid-types": [
-      "integer"
+      "integer [-∞,∞]"
     ],
     "valid-identifiers": [
       "auto-add"
@@ -3149,6 +3204,7 @@
     ]
   },
   "mix-blend-mode": {
+    "affects-accumulated-visual-contexts": true,
     "affects-layout": false,
     "animation-type": "discrete",
     "inherited": false,
@@ -3181,6 +3237,7 @@
     "percentages-resolve-to": "length"
   },
   "opacity": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "by-computed-value",
     "affects-layout": false,
     "affects-stacking-context": true,
@@ -3188,7 +3245,7 @@
     "initial": "1",
     "requires-computation": "cascaded-value",
     "valid-types": [
-      "opacity"
+      "opacity-value"
     ]
   },
   "order": {
@@ -3562,6 +3619,7 @@
     ]
   },
   "perspective": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "by-computed-value",
     "inherited": false,
     "initial": "none",
@@ -3574,6 +3632,7 @@
     ]
   },
   "perspective-origin": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "by-computed-value",
     "affects-layout": false,
     "inherited": false,
@@ -3627,12 +3686,14 @@
   "position-anchor": {
     "animation-type": "discrete",
     "inherited": false,
-    "initial": "auto",
+    "initial": "normal",
     "requires-computation": "never",
     "valid-types": [
       "dashed-ident"
     ],
     "valid-identifiers": [
+      "normal",
+      "none",
       "auto"
     ]
   },
@@ -3745,10 +3806,12 @@
     "needs-layout-for-getcomputedstyle": true
   },
   "rotate": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "custom",
     "inherited": false,
     "initial": "none",
     "affects-layout": false,
+    "affects-scrollable-overflow": true,
     "affects-stacking-context": true,
     "requires-computation": "cascaded-value"
   },
@@ -3803,10 +3866,12 @@
     ]
   },
   "scale": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "custom",
     "inherited": false,
     "initial": "none",
     "affects-layout": false,
+    "affects-scrollable-overflow": true,
     "affects-stacking-context": true,
     "requires-computation": "cascaded-value"
   },
@@ -3820,6 +3885,231 @@
       "auto",
       "smooth"
     ]
+  },
+  "scroll-margin": {
+    "initial": "0",
+    "positional-value-list-shorthand": true,
+    "longhands": [
+      "scroll-margin-top",
+      "scroll-margin-right",
+      "scroll-margin-bottom",
+      "scroll-margin-left"
+    ],
+    "valid-types": [
+      "length [-∞,∞]"
+    ]
+  },
+  "scroll-margin-block": {
+    "initial": "0",
+    "positional-value-list-shorthand": true,
+    "longhands": [
+      "scroll-margin-block-start",
+      "scroll-margin-block-end"
+    ],
+    "valid-types": [
+      "length [-∞,∞]"
+    ]
+  },
+  "scroll-margin-block-end": {
+    "logical-alias-for": {
+      "group": "scroll-margin",
+      "mapping": "block-end"
+    }
+  },
+  "scroll-margin-block-start": {
+    "logical-alias-for": {
+      "group": "scroll-margin",
+      "mapping": "block-start"
+    }
+  },
+  "scroll-margin-bottom": {
+    "animation-type": "by-computed-value",
+    "initial": "0",
+    "inherited": false,
+    "requires-computation": "cascaded-value",
+    "valid-types": [
+      "length [-∞,∞]"
+    ]
+  },
+  "scroll-margin-inline": {
+    "initial": "0",
+    "positional-value-list-shorthand": true,
+    "longhands": [
+      "scroll-margin-inline-start",
+      "scroll-margin-inline-end"
+    ],
+    "valid-types": [
+      "length [-∞,∞]"
+    ]
+  },
+  "scroll-margin-inline-end": {
+    "logical-alias-for": {
+      "group": "scroll-margin",
+      "mapping": "inline-end"
+    }
+  },
+  "scroll-margin-inline-start": {
+    "logical-alias-for": {
+      "group": "scroll-margin",
+      "mapping": "inline-start"
+    }
+  },
+  "scroll-margin-left": {
+    "animation-type": "by-computed-value",
+    "inherited": false,
+    "initial": "0",
+    "requires-computation": "cascaded-value",
+    "valid-types": [
+      "length [-∞,∞]"
+    ]
+  },
+  "scroll-margin-right": {
+    "animation-type": "by-computed-value",
+    "inherited": false,
+    "initial": "0",
+    "requires-computation": "cascaded-value",
+    "valid-types": [
+      "length [-∞,∞]"
+    ]
+  },
+  "scroll-margin-top": {
+    "animation-type": "by-computed-value",
+    "inherited": false,
+    "initial": "0",
+    "requires-computation": "cascaded-value",
+    "valid-types": [
+      "length [-∞,∞]"
+    ]
+  },
+  "scroll-padding": {
+    "initial": "auto",
+    "positional-value-list-shorthand": true,
+    "longhands": [
+      "scroll-padding-top",
+      "scroll-padding-right",
+      "scroll-padding-bottom",
+      "scroll-padding-left"
+    ],
+    "valid-types": [
+      "length [0,∞]",
+      "percentage [0,∞]"
+    ],
+    "valid-identifiers": [
+      "auto"
+    ],
+    "percentages-resolve-to": "length"
+  },
+  "scroll-padding-block": {
+    "initial": "auto",
+    "positional-value-list-shorthand": true,
+    "longhands": [
+      "scroll-padding-block-start",
+      "scroll-padding-block-end"
+    ],
+    "valid-types": [
+      "length [0,∞]",
+      "percentage [0,∞]"
+    ],
+    "valid-identifiers": [
+      "auto"
+    ],
+    "percentages-resolve-to": "length"
+  },
+  "scroll-padding-block-end": {
+    "logical-alias-for": {
+      "group": "scroll-padding",
+      "mapping": "block-end"
+    }
+  },
+  "scroll-padding-block-start": {
+    "logical-alias-for": {
+      "group": "scroll-padding",
+      "mapping": "block-start"
+    }
+  },
+  "scroll-padding-bottom": {
+    "animation-type": "by-computed-value",
+    "initial": "auto",
+    "inherited": false,
+    "requires-computation": "cascaded-value",
+    "valid-types": [
+      "length [0,∞]",
+      "percentage [0,∞]"
+    ],
+    "valid-identifiers": [
+      "auto"
+    ],
+    "percentages-resolve-to": "length"
+  },
+  "scroll-padding-inline": {
+    "initial": "auto",
+    "positional-value-list-shorthand": true,
+    "longhands": [
+      "scroll-padding-inline-start",
+      "scroll-padding-inline-end"
+    ],
+    "valid-types": [
+      "length [0,∞]",
+      "percentage [0,∞]"
+    ],
+    "valid-identifiers": [
+      "auto"
+    ],
+    "percentages-resolve-to": "length"
+  },
+  "scroll-padding-inline-end": {
+    "logical-alias-for": {
+      "group": "scroll-padding",
+      "mapping": "inline-end"
+    }
+  },
+  "scroll-padding-inline-start": {
+    "logical-alias-for": {
+      "group": "scroll-padding",
+      "mapping": "inline-start"
+    }
+  },
+  "scroll-padding-left": {
+    "animation-type": "by-computed-value",
+    "inherited": false,
+    "initial": "auto",
+    "requires-computation": "cascaded-value",
+    "valid-types": [
+      "length [0,∞]",
+      "percentage [0,∞]"
+    ],
+    "valid-identifiers": [
+      "auto"
+    ],
+    "percentages-resolve-to": "length"
+  },
+  "scroll-padding-right": {
+    "animation-type": "by-computed-value",
+    "inherited": false,
+    "initial": "auto",
+    "requires-computation": "cascaded-value",
+    "valid-types": [
+      "length [0,∞]",
+      "percentage [0,∞]"
+    ],
+    "valid-identifiers": [
+      "auto"
+    ],
+    "percentages-resolve-to": "length"
+  },
+  "scroll-padding-top": {
+    "animation-type": "by-computed-value",
+    "inherited": false,
+    "initial": "auto",
+    "requires-computation": "cascaded-value",
+    "valid-types": [
+      "length [0,∞]",
+      "percentage [0,∞]"
+    ],
+    "valid-identifiers": [
+      "auto"
+    ],
+    "percentages-resolve-to": "length"
   },
   "scroll-timeline": {
     "affects-layout": false,
@@ -3892,7 +4182,7 @@
     "initial": "0",
     "requires-computation": "cascaded-value",
     "valid-types": [
-      "opacity"
+      "opacity-value"
     ]
   },
   "shape-margin": {
@@ -3940,7 +4230,7 @@
     "initial": "1",
     "requires-computation": "cascaded-value",
     "valid-types": [
-      "opacity"
+      "opacity-value"
     ]
   },
   "stroke": {
@@ -4011,7 +4301,7 @@
     "initial": "1",
     "requires-computation": "cascaded-value",
     "valid-types": [
-      "opacity"
+      "opacity-value"
     ]
   },
   "stroke-width": {
@@ -4283,17 +4573,19 @@
     "animation-type": "discrete",
     "inherited": false,
     "initial": "auto",
-    "max-values": 2,
+    "max-values": 3,
     "requires-computation": "never",
     "valid-types": [
       "touch-action"
     ]
   },
   "transform": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "custom",
     "inherited": false,
     "initial": "none",
     "affects-layout": false,
+    "affects-scrollable-overflow": true,
     "affects-stacking-context": true,
     "needs-layout-node-for-resolved-value": true,
     "percentages-resolve-to": "length",
@@ -4306,17 +4598,21 @@
     ]
   },
   "transform-box": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "discrete",
     "inherited": false,
     "initial": "view-box",
     "affects-layout": false,
+    "affects-scrollable-overflow": true,
     "requires-computation": "never",
     "valid-types": [
       "transform-box"
     ]
   },
   "transform-origin": {
+    "affects-accumulated-visual-contexts": true,
     "affects-layout": false,
+    "affects-scrollable-overflow": true,
     "animation-type": "by-computed-value",
     "inherited": false,
     "initial": "50% 50%",
@@ -4336,6 +4632,7 @@
     "percentages-resolve-to": "length"
   },
   "transform-style": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "discrete",
     "inherited": false,
     "initial": "flat",
@@ -4376,7 +4673,7 @@
     "multiplicity": "coordinating-list",
     "requires-computation": "cascaded-value",
     "valid-types": [
-      "time"
+      "time [-∞,∞]"
     ]
   },
   "transition-duration": {
@@ -4417,10 +4714,12 @@
     ]
   },
   "translate": {
+    "affects-accumulated-visual-contexts": true,
     "animation-type": "custom",
     "inherited": false,
     "initial": "none",
     "affects-layout": false,
+    "affects-scrollable-overflow": true,
     "affects-stacking-context": true,
     "requires-computation": "cascaded-value",
     "valid-types": [
@@ -4446,6 +4745,16 @@
     "requires-computation": "never",
     "valid-types": [
       "user-select"
+    ]
+  },
+  "vector-effect": {
+    "affects-layout": false,
+    "animation-type": "discrete",
+    "inherited": false,
+    "initial": "none",
+    "requires-computation": "never",
+    "valid-types": [
+      "vector-effect"
     ]
   },
   "vertical-align": {

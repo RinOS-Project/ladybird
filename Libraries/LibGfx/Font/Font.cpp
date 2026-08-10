@@ -6,6 +6,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Atomic.h>
+#include <AK/NumericLimits.h>
 #include <AK/TypeCasts.h>
 #include <AK/Utf16String.h>
 #include <LibGfx/Font/Font.h>
@@ -15,7 +17,10 @@
 #endif
 #include <LibGfx/TextLayout.h>
 
-#ifndef AK_OS_RINOS
+#if defined(USE_FONTCONFIG)
+#    include <LibGfx/Font/GlobalFontConfig.h>
+#endif
+
 #include <core/SkFont.h>
 #include <core/SkFontMetrics.h>
 #include <core/SkFontTypes.h>
@@ -23,19 +28,25 @@
 #include <harfbuzz/hb.h>
 #endif
 
+extern "C" {
+float ladybird_gfx_font_glyph_width(void const*, u32);
+u32 ladybird_gfx_font_glyph_id(void const*, u32);
+bool ladybird_gfx_font_contains_glyph(void const*, u32);
+bool ladybird_gfx_font_is_emoji_font(void const*);
+}
+
 namespace Gfx {
 
-Font::Font(NonnullRefPtr<Typeface const> typeface, float point_width, float point_height, unsigned dpi_x, unsigned dpi_y, FontVariationSettings const variations, ShapeFeatures const& features)
-    : m_typeface(move(typeface))
+static Atomic<u64> s_next_id { 1 };
+
+Font::Font(NonnullRefPtr<Typeface const> typeface, float point_width, float point_height, FontVariationSettings const variations, ShapeFeatures const& features)
+    : m_id(s_next_id.fetch_add(1, AK::MemoryOrder::memory_order_relaxed))
+    , m_typeface(move(typeface))
     , m_point_width(point_width)
     , m_point_height(point_height)
     , m_font_variation_settings(move(variations))
     , m_shape_features(features)
 {
-    float const units_per_em = m_typeface->units_per_em();
-    m_x_scale = (point_width * dpi_x) / (POINTS_PER_INCH * units_per_em);
-    m_y_scale = (point_height * dpi_y) / (POINTS_PER_INCH * units_per_em);
-
     m_pixel_size = m_point_height * (DEFAULT_DPI / POINTS_PER_INCH);
 
 #ifdef AK_OS_RINOS
@@ -55,36 +66,12 @@ Font::Font(NonnullRefPtr<Typeface const> typeface, float point_width, float poin
     font.getMetrics(&skMetrics);
 
     FontPixelMetrics metrics;
-    metrics.size = font.getSize();
     metrics.x_height = skMetrics.fXHeight;
     metrics.advance_of_ascii_zero = font.measureText("0", 1, SkTextEncoding::kUTF8);
     metrics.ascent = -skMetrics.fAscent;
     metrics.descent = skMetrics.fDescent;
-    metrics.line_gap = skMetrics.fLeading;
 
     m_pixel_metrics = metrics;
-#endif
-}
-
-ScaledFontMetrics Font::metrics() const
-{
-#ifdef AK_OS_RINOS
-    ScaledFontMetrics metrics;
-    metrics.ascender = m_pixel_metrics.ascent;
-    metrics.descender = m_pixel_metrics.descent;
-    metrics.line_gap = m_pixel_metrics.line_gap;
-    metrics.x_height = m_pixel_metrics.x_height;
-    return metrics;
-#else
-    SkFontMetrics sk_metrics;
-    skia_font(1).getMetrics(&sk_metrics);
-
-    ScaledFontMetrics metrics;
-    metrics.ascender = -sk_metrics.fAscent;
-    metrics.descender = sk_metrics.fDescent;
-    metrics.line_gap = sk_metrics.fLeading;
-    metrics.x_height = sk_metrics.fXHeight;
-    return metrics;
 #endif
 }
 
@@ -96,18 +83,13 @@ float Font::glyph_width(u32 code_point) const
     return measure_text_width(string.utf16_view(), *this);
 }
 
-NonnullRefPtr<Font> Font::scaled_with_size(float point_size) const
+NonnullRefPtr<Font> Font::with_size(float point_size) const
 {
     if (point_size == m_point_height && point_size == m_point_width)
         return *const_cast<Font*>(this);
 
     // FIXME: Should we be discarding m_font_variation_settings and m_shape_features here?
     return m_typeface->font(point_size);
-}
-
-NonnullRefPtr<Font> Font::with_size(float point_size) const
-{
-    return scaled_with_size(point_size);
 }
 
 float Font::pixel_size() const
@@ -138,6 +120,18 @@ Font const& Font::bold_variant() const
     return *m_bold_variant;
 }
 
+static int scale_for_harfbuzz(float pixel_size)
+{
+    auto scaled_pixel_size = static_cast<double>(pixel_size) * text_shaping_resolution;
+    if (__builtin_isnan(scaled_pixel_size))
+        return 0;
+    if (scaled_pixel_size >= NumericLimits<int>::max())
+        return NumericLimits<int>::max();
+    if (scaled_pixel_size <= NumericLimits<int>::min())
+        return NumericLimits<int>::min();
+    return static_cast<int>(scaled_pixel_size);
+}
+
 hb_font_t* Font::harfbuzz_font() const
 {
 #ifdef AK_OS_RINOS
@@ -145,8 +139,10 @@ hb_font_t* Font::harfbuzz_font() const
 #else
     if (!m_harfbuzz_font) {
         m_harfbuzz_font = hb_font_create(typeface().harfbuzz_typeface());
-        hb_font_set_scale(m_harfbuzz_font, pixel_size() * text_shaping_resolution, pixel_size() * text_shaping_resolution);
-        hb_font_set_ptem(m_harfbuzz_font, point_size());
+        auto harfbuzz_scale = scale_for_harfbuzz(pixel_size());
+        hb_font_set_scale(m_harfbuzz_font, harfbuzz_scale, harfbuzz_scale);
+        // HarfBuzz uses ptem for AAT 'trak' table lookup; use CSS pixels instead of physical points here.
+        hb_font_set_ptem(m_harfbuzz_font, pixel_size());
 
         auto variations = m_font_variation_settings.axes;
         if (!variations.is_empty()) {
@@ -164,39 +160,68 @@ hb_font_t* Font::harfbuzz_font() const
 #endif
 }
 
-#ifndef AK_OS_RINOS
+#if defined(USE_FONTCONFIG)
+static Optional<FontHintingStyle> s_hinting_override_for_testing;
+
+static SkFontHinting to_skia_hinting(FontHintingStyle style)
+{
+    switch (style) {
+    case FontHintingStyle::None:
+        return SkFontHinting::kNone;
+    case FontHintingStyle::Slight:
+        return SkFontHinting::kSlight;
+    case FontHintingStyle::Normal:
+        return SkFontHinting::kNormal;
+    case FontHintingStyle::Full:
+        return SkFontHinting::kFull;
+    }
+    VERIFY_NOT_REACHED();
+}
+#endif
+
+void force_hinting_for_testing([[maybe_unused]] Optional<FontHintingStyle> style)
+{
+#if defined(USE_FONTCONFIG)
+    s_hinting_override_for_testing = style;
+#endif
+}
+
+#if defined(USE_FONTCONFIG)
+FontHintingOptions Font::hinting_options(float scale) const
+{
+    if (!m_hinting_options.has_value() || m_hinting_options->scale != scale)
+        m_hinting_options = ScaledFontHintingOptions { scale, GlobalFontConfig::the().hinting_for_font(family(), pixel_size() * scale, weight(), slope()) };
+    return m_hinting_options->options;
+}
+#endif
+
 SkFont Font::skia_font(float scale) const
 {
     auto const& sk_typeface = as<TypefaceSkia>(*m_typeface).sk_typeface();
     auto sk_font = SkFont { sk_ref_sp(sk_typeface), pixel_size() * scale };
     sk_font.setSubpixel(true);
+
+#if defined(USE_FONTCONFIG)
+    if (s_hinting_override_for_testing.has_value()) {
+        sk_font.setHinting(to_skia_hinting(*s_hinting_override_for_testing));
+    } else {
+        auto options = hinting_options(scale);
+        sk_font.setHinting(to_skia_hinting(options.style));
+        sk_font.setForceAutoHinting(options.force_autohinting);
+    }
+#endif
+
     return sk_font;
 }
 #endif
 
-Font::ShapingCache::~ShapingCache()
-{
-    clear();
-}
+Font::ShapingCache::~ShapingCache() = default;
 
 void Font::ShapingCache::clear()
 {
-#ifndef AK_OS_RINOS
-    for (auto& it : map) {
-        hb_buffer_destroy(it.value);
-    }
-#endif
     map.clear();
-    for (auto& buffer : single_ascii_character_map) {
-#ifndef AK_OS_RINOS
-        if (buffer) {
-            hb_buffer_destroy(buffer);
-            buffer = nullptr;
-        }
-#else
-        buffer = nullptr;
-#endif
-    }
+    for (auto& slot : single_ascii_character_map)
+        slot = nullptr;
 }
 
 #ifndef AK_OS_RINOS
@@ -221,8 +246,10 @@ bool Font::is_emoji_font() const
         auto* hb_font = harfbuzz_font();
         hb_face_t* face = hb_font_get_face(hb_font);
 
-        bool has_colr = hb_ot_color_has_layers(hb_font_get_face(hb_font));
-        bool has_svg = hb_ot_color_has_svg(hb_font_get_face(hb_font));
+        // hb_ot_color_has_layers() only reports COLRv0 layered glyphs; COLRv1 fonts (e.g. Noto Color Emoji's COLRv1
+        // build) carry a paint graph instead, reported by hb_ot_color_has_paint().
+        bool has_colr = hb_ot_color_has_layers(face) || hb_ot_color_has_paint(face);
+        bool has_svg = hb_ot_color_has_svg(face);
 
         bool has_sbix = hb_face_has_table(face, HB_TAG('s', 'b', 'i', 'x'));
         bool has_cbdt = hb_face_has_table(face, HB_TAG('C', 'B', 'D', 'T'));
@@ -238,7 +265,6 @@ bool Font::is_emoji_font() const
         }();
 
         m_is_emoji_font = (name_contains_emoji && !looks_like_text) || (has_any_color && !looks_like_text) ? TriState::True : TriState::False;
-        return false;
     }
 
     return m_is_emoji_font == TriState::True;
@@ -250,4 +276,28 @@ bool Font::is_emoji_font() const
 }
 #endif
 
+}
+
+extern "C" float ladybird_gfx_font_glyph_width(void const* font, u32 code_point)
+{
+    VERIFY(font);
+    return static_cast<Gfx::Font const*>(font)->glyph_width(code_point);
+}
+
+extern "C" u32 ladybird_gfx_font_glyph_id(void const* font, u32 code_point)
+{
+    VERIFY(font);
+    return static_cast<Gfx::Font const*>(font)->glyph_id_for_code_point(code_point);
+}
+
+extern "C" bool ladybird_gfx_font_contains_glyph(void const* font, u32 code_point)
+{
+    VERIFY(font);
+    return static_cast<Gfx::Font const*>(font)->contains_glyph(code_point);
+}
+
+extern "C" bool ladybird_gfx_font_is_emoji_font(void const* font)
+{
+    VERIFY(font);
+    return static_cast<Gfx::Font const*>(font)->is_emoji_font();
 }

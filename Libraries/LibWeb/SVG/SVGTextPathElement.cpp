@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGC/Heap.h>
 #include <LibURL/URL.h>
-#include <LibWeb/Bindings/SVGTextPathElementPrototype.h>
 #include <LibWeb/Layout/SVGTextPathBox.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/SVGTextPathElement.h>
@@ -19,18 +19,28 @@ SVGTextPathElement::SVGTextPathElement(DOM::Document& document, DOM::QualifiedNa
 {
 }
 
+void SVGTextPathElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
+{
+    Base::attribute_changed(name, old_value, value, namespace_);
+
+    if (name == SVG::AttributeNames::startOffset)
+        m_start_offset = AttributeParser::parse_number_percentage(value.value_or({}));
+}
+
 GC::Ptr<SVGGeometryElement const> SVGTextPathElement::path_or_shape() const
 {
-    auto href = get_attribute(AttributeNames::href);
+    auto href = has_attribute(AttributeNames::href) ? get_attribute(AttributeNames::href) : get_attribute(AttributeNames::xlink_href);
     if (!href.has_value())
         return {};
     return try_resolve_url_to<SVGGeometryElement const>(*href);
 }
 
-void SVGTextPathElement::initialize(JS::Realm& realm)
+// https://svgwg.org/svg2-draft/text.html#TextPathElementStartOffsetAttribute
+float SVGTextPathElement::start_offset_for_path_length(float path_length) const
 {
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGTextPathElement);
-    Base::initialize(realm);
+    if (!m_start_offset.has_value())
+        return 0;
+    return m_start_offset->resolve_relative_to(path_length);
 }
 
 void SVGTextPathElement::visit_edges(Cell::Visitor& visitor)
@@ -39,9 +49,9 @@ void SVGTextPathElement::visit_edges(Cell::Visitor& visitor)
     SVGURIReferenceMixin::visit_edges(visitor);
 }
 
-GC::Ptr<Layout::Node> SVGTextPathElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+RefPtr<Layout::Node> SVGTextPathElement::create_layout_node(NonnullRefPtr<CSS::ComputedValues const> style)
 {
-    return heap().allocate<Layout::SVGTextPathBox>(document(), *this, move(style));
+    return make_ref_counted<Layout::SVGTextPathBox>(document(), *this, style);
 }
 
 };

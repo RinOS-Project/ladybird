@@ -1,18 +1,17 @@
-$0b8784bc async-await-in-try-catch.js:9:1
+$faa11ddd async-await-in-try-catch.js:9:1
   Registers: 8
   Blocks:    1
   Constants:
     [0] = Undefined
 
 block0:
-  [   0] GetLexicalEnvironment dst:reg4
-  [   8] GetGlobal dst:reg6, `f`
-  [  20] NewObject dst:reg7
-  [  30] Call dst:reg5, callee:reg6, this_value:Undefined, f, arguments:[reg7]
-  [  58] End value:reg5
+  [   0] GetGlobal dst:reg6, `f`
+  [  10] NewObject dst:reg7
+  [  20] Call dst:reg5, callee:reg6, this_value:Undefined, f, arguments:[reg7]
+  [  48] End value:reg5
 
 
-f$9cd82caf async-await-in-try-catch.js:2:5
+f$8982c134 async-await-in-try-catch.js:2:5
   Registers: 10
   Blocks:    8
   Locals:    e~0
@@ -43,7 +42,7 @@ block4:
 block5:
   [  80] Mov dst:reg6, src:reg0
   [  90] GetCompletionFields type_dst:reg7, value_dst:reg8, completion:reg6
-  [  a0] JumpStrictlyEquals lhs:reg7, rhs:Int32(1), true_target:block6, false_target:block7
+  [  a0] JumpStrictlyEqualsRhsInt32 lhs:reg7, rhs:1, true_target:block6, false_target:block7
 
 block6:
   [  b8] SetLexicalEnvironment environment:reg4

@@ -4,7 +4,7 @@ interface DOMException {
 
     constructor(optional Utf16DOMString message = "", optional DOMString name = "Error");
 
-    readonly attribute DOMString name;
+    readonly attribute Utf16DOMString name;
     readonly attribute Utf16DOMString message;
     readonly attribute unsigned short code;
 

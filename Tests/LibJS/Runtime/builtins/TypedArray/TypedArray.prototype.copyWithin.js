@@ -134,6 +134,22 @@ describe("normal behavior", () => {
         });
     });
 
+    test("SharedArrayBuffer-backed arrays", () => {
+        TYPED_ARRAYS.forEach(T => {
+            const array = new T(new SharedArrayBuffer(T.BYTES_PER_ELEMENT * 6));
+            array.set([0, 54, 999, 1000, 0, 0]);
+            expect(array.copyWithin(3, 2, 4)).toEqual(array);
+            expect(array).toEqual(new T([0, 54, 999, 999, 1000, 0]));
+        });
+
+        BIGINT_TYPED_ARRAYS.forEach(T => {
+            const array = new T(new SharedArrayBuffer(T.BYTES_PER_ELEMENT * 6));
+            array.set([0n, 54n, 999n, 1000n, 0n, 0n]);
+            expect(array.copyWithin(3, 2, 4)).toEqual(array);
+            expect(array).toEqual(new T([0n, 54n, 999n, 999n, 1000n, 0n]));
+        });
+    });
+
     test("resizing during copyWithin", () => {
         TYPED_ARRAYS.forEach(T => {
             let arrayBuffer = new ArrayBuffer(T.BYTES_PER_ELEMENT * 4, {
@@ -153,6 +169,25 @@ describe("normal behavior", () => {
 
             typedArray.copyWithin({ valueOf: resize }, 1);
             expect(typedArray).toEqual(new T([1, 2, 2]));
+        });
+    });
+
+    test("shrinking the buffer to a non-positive copy count during copyWithin is a no-op", () => {
+        TYPED_ARRAYS.forEach(T => {
+            let arrayBuffer = new ArrayBuffer(T.BYTES_PER_ELEMENT * 8, {
+                maxByteLength: T.BYTES_PER_ELEMENT * 8,
+            });
+
+            let typedArray = new T(arrayBuffer);
+            let start = {
+                valueOf() {
+                    arrayBuffer.resize(0);
+                    return 4;
+                },
+            };
+
+            expect(typedArray.copyWithin(0, start, 8)).toEqual(typedArray);
+            expect(typedArray.length).toBe(0);
         });
     });
 });

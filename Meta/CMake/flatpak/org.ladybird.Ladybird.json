@@ -37,7 +37,7 @@
         {
           "type": "git",
           "url": "https://github.com/simdjson/simdjson.git",
-          "tag": "v4.2.4"
+          "tag": "v4.6.4"
         }
       ],
       "config-opts": [
@@ -56,7 +56,7 @@
         {
           "type": "git",
           "url": "https://github.com/simdutf/simdutf.git",
-          "tag": "v7.4.0"
+          "tag": "v9.0.0"
         }
       ],
       "config-opts": [
@@ -76,18 +76,18 @@
         {
           "type": "git",
           "url": "https://github.com/pnggroup/libpng.git",
-          "tag": "v1.6.50"
+          "tag": "v1.6.58"
         },
         {
           "type": "file",
-          "url": "https://downloads.sourceforge.net/project/libpng-apng/libpng16/1.6.49/libpng-1.6.49-apng.patch.gz",
-          "sha512": "d3a7121f892049f5488f32b5de29fb8892f2b329ee1df956b129918601946ab86a542a4412587ee5f660c581484812aaf101f953bcc187c993d98ba9d8d63a00"
+          "url": "https://downloads.sourceforge.net/project/libpng-apng/libpng16/1.6.58/libpng-1.6.58-apng.patch.gz",
+          "sha512": "95a6f5bb7148b5c48dccd73811d7bcf9752a631a7bb4f4856670a7da12a7159581ac1bce1749318343794e0f5cb86972711ba2ec0f523c168f0991fa940687d5"
         },
         {
           "type": "shell",
           "commands": [
-            "gunzip -k libpng-1.6.49-apng.patch.gz",
-            "patch -p1 -i libpng-1.6.49-apng.patch"
+            "gunzip -k libpng-1.6.58-apng.patch.gz",
+            "patch -p1 -i libpng-1.6.58-apng.patch"
           ]
         }
       ],
@@ -133,7 +133,7 @@
           "type": "git",
           "url": "https://chromium.googlesource.com/angle/angle",
           "commit": "79ac1a8cd767a32cce6401203e20c4bd4ca4d539",
-          "branch": "chromium/7258_13",
+          "x-branch": "chromium/7258_13",
           "dest": "angle",
           "disable-submodules": true
         },
@@ -195,7 +195,7 @@
         {
           "type": "git",
           "url": "https://github.com/fmtlib/fmt.git",
-          "tag": "12.1.0"
+          "tag": "12.2.0"
         }
       ],
       "config-opts": [
@@ -215,7 +215,7 @@
         {
           "type": "git",
           "url": "https://github.com/unicode-org/icu.git",
-          "tag": "release-78.2"
+          "tag": "release-78.3"
         }
       ],
       "subdir": "icu4c/source/",
@@ -238,13 +238,39 @@
       ]
     },
     {
+      "name": "libpsl",
+      "buildsystem": "meson",
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/rockdaboot/libpsl.git",
+          "tag": "0.21.5"
+        },
+        {
+          "type": "file",
+          "url": "https://raw.githubusercontent.com/publicsuffix/list/303b81a2140a3192d336f22af389a28daf6efab6/public_suffix_list.dat",
+          "sha256": "82d4d57e397177be3a627df27f88dc0ab04f54d081bc94c68f82c3e100855e0b",
+          "dest": "list/"
+        }
+      ],
+      "config-opts": [
+        "-Ddocs=false",
+        "-Druntime=libicu",
+        "-Dtests=false",
+        "--libdir=/app/lib"
+      ],
+      "cleanup": [
+        "/bin"
+      ]
+    },
+    {
       "name": "libxml2",
       "buildsystem": "cmake-ninja",
       "sources": [
         {
           "type": "git",
           "url": "https://github.com/GNOME/libxml2.git",
-          "tag": "v2.13.8"
+          "tag": "v2.15.3"
         }
       ],
       "config-opts": [
@@ -292,7 +318,7 @@
         {
           "type": "git",
           "url": "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git",
-          "tag": "v3.3.0"
+          "tag": "v3.4.0"
         }
       ],
       "config-opts": [
@@ -347,7 +373,7 @@
         {
           "type": "git",
           "url": "https://code.videolan.org/videolan/dav1d.git",
-          "tag": "1.5.1"
+          "tag": "1.5.3"
         }
       ],
       "config-opts": [
@@ -384,7 +410,7 @@
         {
           "type": "git",
           "url": "https://github.com/AOMediaCodec/libavif.git",
-          "tag": "v1.3.0"
+          "tag": "v1.4.2"
         }
       ],
       "config-opts": [
@@ -435,7 +461,7 @@
           {
             "type": "git",
             "url": "https://github.com/google/highway.git",
-            "tag": "1.3.0",
+            "tag": "1.4.0",
             "disable-submodules": true
           }
         ],
@@ -456,7 +482,7 @@
           {
             "type": "git",
             "url": "https://github.com/libjxl/libjxl.git",
-            "tag": "v0.11.1",
+            "tag": "v0.11.2",
             "disable-submodules": true
           }
         ],
@@ -493,8 +519,8 @@
         {
           "type": "git",
           "url": "https://skia.googlesource.com/skia.git",
-          "commit": "7911bee5d90e994b6dde508a508576b9fded69d2",
-          "branch": "chrome/m144"
+          "commit": "e7c90ecca9444fe09598f1630ab7cee2c0ee027a",
+          "x-branch": "chrome/m148"
         },
         {
           "type": "file",
@@ -513,6 +539,21 @@
         "./skia-configure.sh",
         "./skia-build.sh",
         "./skia-install.sh"
+      ]
+    },
+    {
+      "name": "libedit",
+      "buildsystem": "autotools",
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://thrysoee.dk/editline/libedit-20240808-3.1.tar.gz",
+          "sha256": "5f0573349d77c4a48967191cdd6634dd7aa5f6398c6a57fe037cc02696d6099f"
+        }
+      ],
+      "config-opts": [
+        "--prefix=/app",
+        "--libdir=/app/lib"
       ]
     },
     {
@@ -539,7 +580,7 @@
           {
             "type": "git",
             "url": "https://github.com/fastfloat/fast_float.git",
-            "tag": "v8.1.0"
+            "tag": "v8.2.10"
           }
         ],
         "config-opts": [
@@ -571,7 +612,7 @@
         {
           "type": "git",
           "url": "https://github.com/davea42/libdwarf-code.git",
-          "tag": "v2.3.0"
+          "tag": "v2.3.1"
         }
       ],
       "config-opts": [
@@ -631,8 +672,8 @@
         {
           "type": "git",
           "url": "https://github.com/openssl/openssl.git",
-          "commit": "c4da9ac23de497ce039a102e6715381047899447",
-          "tag": "openssl-3.5.3"
+          "commit": "aae016bfd52fcad2bc9657c2c782cfdf73b1ed5f",
+          "tag": "openssl-3.6.3"
         }
       ]
     },
@@ -654,14 +695,83 @@
       ]
     },
     {
+      "name": "mimalloc",
+      "buildsystem": "cmake-ninja",
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/microsoft/mimalloc.git",
+          "tag": "v2.2.7"
+        }
+      ],
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PREFIX_PATH=/app",
+        "-DCMAKE_INSTALL_LIBDIR=lib",
+        "-DMI_BUILD_OBJECT=OFF",
+        "-DMI_BUILD_TESTS=OFF",
+        "-DMI_BUILD_STATIC=OFF",
+        "-DMI_BUILD_SHARED=ON",
+        "-DMI_INSTALL_TOPLEVEL=ON",
+        "-DMI_OVERRIDE=OFF",
+        "-DMI_USE_CXX=ON"
+      ]
+    },
+    {
+      "name": "wuffs",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -D -m644 release/c/wuffs-v0.3.c /app/include/wuffs/wuffs-v0.3.c"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/google/wuffs-mirror-release-c.git",
+          "tag": "v0.3.4"
+        }
+      ]
+    },
+    {
+      "name": "pdfjs",
+      "buildsystem": "simple",
+      "build-commands": [
+        "patch -p1 -i 0001-ladybird-embed.patch",
+        "install -d /app/share/pdfjs/build /app/share/pdfjs/web/images /app/share/pdfjs/web/locale/en-US",
+        "install -m644 build/*.mjs /app/share/pdfjs/build/",
+        "install -m644 web/viewer.html web/viewer.mjs web/viewer.css /app/share/pdfjs/web/",
+        "cp -r web/images/. /app/share/pdfjs/web/images/",
+        "install -m644 web/locale/locale.json /app/share/pdfjs/web/locale/",
+        "install -m644 web/locale/en-US/viewer.ftl /app/share/pdfjs/web/locale/en-US/"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/mozilla/pdf.js.git",
+          "tag": "v5.6.205",
+          "dest": "pdfjs-src"
+        },
+        {
+          "type": "archive",
+          "url": "https://github.com/mozilla/pdf.js/releases/download/v5.6.205/pdfjs-5.6.205-dist.zip",
+          "sha256": "0555ef47464e456125dcd0b9742cfa2aaed6d282e804e4dd1f1b99316b46ac00",
+          "dest": ".",
+          "strip-components": 0
+        },
+        {
+          "type": "file",
+          "path": "../vcpkg/overlay-ports/pdfjs/0001-ladybird-embed.patch"
+        }
+      ]
+    },
+    {
       "name": "Ladybird",
       "buildsystem": "cmake-ninja",
       "sources": [
         {
           "type": "file",
-          "url": "https://raw.githubusercontent.com/publicsuffix/list/32c68ce9d52e12df5b914b2b248cb893147301f7/public_suffix_list.dat",
-          "dest": "Caches/PublicSuffix/",
-          "sha256": "e79e372bcc6fcdb51f7a31e3c0c504530838432669af2ac544d2491de0a86030"
+          "url": "https://raw.githubusercontent.com/chromium/chromium/aa04f175415addb04bb78936b0d8b973fbd8ea61/net/http/transport_security_state_static.json",
+          "dest": "Caches/HSTSPreload/",
+          "sha256": "4ca70f051571a198246bc337bd357f759fb8f9fdeddbe66b65960997540ee163"
         },
         {
           "type": "shell",

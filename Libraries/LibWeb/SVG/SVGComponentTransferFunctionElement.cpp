@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/SVGComponentTransferFunctionElementPrototype.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/AttributeParser.h>
 #include <LibWeb/SVG/SVGComponentTransferFunctionElement.h>
@@ -19,7 +18,7 @@ SVGComponentTransferFunctionElement::SVGComponentTransferFunctionElement(DOM::Do
 }
 
 // https://drafts.fxtf.org/filter-effects-1/#element-attrdef-fecomponenttransfer-type
-static SVGComponentTransferFunctionElement::Type parse_type(Optional<String> const& value)
+static SVGComponentTransferFunctionElement::Type parse_type(Optional<Utf16String> const& value)
 {
     if (value == "identity"sv)
         return SVGComponentTransferFunctionElement::Type::Identity;
@@ -35,8 +34,8 @@ static SVGComponentTransferFunctionElement::Type parse_type(Optional<String> con
     return SVGComponentTransferFunctionElement::Type::Unknown;
 }
 
-void SVGComponentTransferFunctionElement::attribute_changed(FlyString const& name, Optional<String> const& old_value,
-    Optional<String> const& value, Optional<FlyString> const& namespace_)
+void SVGComponentTransferFunctionElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value,
+    Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
 {
     Base::attribute_changed(name, old_value, value, namespace_);
 
@@ -50,12 +49,6 @@ void SVGComponentTransferFunctionElement::attribute_changed(FlyString const& nam
 
     // Clear our cached color table on any attribute change.
     m_cached_color_table.clear();
-}
-
-void SVGComponentTransferFunctionElement::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGComponentTransferFunctionElement);
-    Base::initialize(realm);
 }
 
 void SVGComponentTransferFunctionElement::visit_edges(Visitor& visitor)
@@ -75,7 +68,7 @@ void SVGComponentTransferFunctionElement::visit_edges(Visitor& visitor)
 GC::Ref<SVGAnimatedEnumeration> SVGComponentTransferFunctionElement::type()
 {
     if (!m_type)
-        m_type = SVGAnimatedEnumeration::create(realm(), to_underlying(type_from_attribute()));
+        m_type = SVGAnimatedEnumeration::create(to_underlying(type_from_attribute()));
     return *m_type;
 }
 
@@ -89,10 +82,10 @@ GC::Ref<SVGAnimatedNumberList> SVGComponentTransferFunctionElement::table_values
         Vector<GC::Ref<SVGNumber>> items;
         items.ensure_capacity(numbers.size());
         for (auto number : numbers)
-            items.unchecked_append(SVGNumber::create(realm(), number, SVGNumber::ReadOnly::Yes));
+            items.unchecked_append(SVGNumber::create(number, SVGNumber::ReadOnly::Yes));
 
-        auto number_list = SVGNumberList::create(realm(), move(items), ReadOnlyList::Yes);
-        m_table_values = SVGAnimatedNumberList::create(realm(), number_list);
+        auto number_list = SVGNumberList::create(move(items), ReadOnlyList::Yes);
+        m_table_values = SVGAnimatedNumberList::create(number_list);
     }
     return *m_table_values;
 }
@@ -102,7 +95,7 @@ GC::Ref<SVGAnimatedNumberList> SVGComponentTransferFunctionElement::table_values
 GC::Ref<SVGAnimatedNumber> SVGComponentTransferFunctionElement::slope()
 {
     if (!m_slope)
-        m_slope = SVGAnimatedNumber::create(realm(), *this, DOM::QualifiedName { AttributeNames::slope, {}, {} }, 1.f);
+        m_slope = SVGAnimatedNumber::create(*this, DOM::QualifiedName { AttributeNames::slope, {}, {} }, 1.f);
     return *m_slope;
 }
 
@@ -111,7 +104,7 @@ GC::Ref<SVGAnimatedNumber> SVGComponentTransferFunctionElement::slope()
 GC::Ref<SVGAnimatedNumber> SVGComponentTransferFunctionElement::intercept()
 {
     if (!m_intercept)
-        m_intercept = SVGAnimatedNumber::create(realm(), *this, DOM::QualifiedName { AttributeNames::intercept, {}, {} }, 0.f);
+        m_intercept = SVGAnimatedNumber::create(*this, DOM::QualifiedName { AttributeNames::intercept, {}, {} }, 0.f);
     return *m_intercept;
 }
 
@@ -120,7 +113,7 @@ GC::Ref<SVGAnimatedNumber> SVGComponentTransferFunctionElement::intercept()
 GC::Ref<SVGAnimatedNumber> SVGComponentTransferFunctionElement::amplitude()
 {
     if (!m_amplitude)
-        m_amplitude = SVGAnimatedNumber::create(realm(), *this, DOM::QualifiedName { AttributeNames::amplitude, {}, {} }, 1.f);
+        m_amplitude = SVGAnimatedNumber::create(*this, DOM::QualifiedName { AttributeNames::amplitude, {}, {} }, 1.f);
     return *m_amplitude;
 }
 
@@ -129,7 +122,7 @@ GC::Ref<SVGAnimatedNumber> SVGComponentTransferFunctionElement::amplitude()
 GC::Ref<SVGAnimatedNumber> SVGComponentTransferFunctionElement::exponent()
 {
     if (!m_exponent)
-        m_exponent = SVGAnimatedNumber::create(realm(), *this, DOM::QualifiedName { AttributeNames::exponent, {}, {} }, 1.f);
+        m_exponent = SVGAnimatedNumber::create(*this, DOM::QualifiedName { AttributeNames::exponent, {}, {} }, 1.f);
     return *m_exponent;
 }
 
@@ -138,7 +131,7 @@ GC::Ref<SVGAnimatedNumber> SVGComponentTransferFunctionElement::exponent()
 GC::Ref<SVGAnimatedNumber> SVGComponentTransferFunctionElement::offset()
 {
     if (!m_offset)
-        m_offset = SVGAnimatedNumber::create(realm(), *this, DOM::QualifiedName { AttributeNames::offset, {}, {} }, 0.f);
+        m_offset = SVGAnimatedNumber::create(*this, DOM::QualifiedName { AttributeNames::offset, {}, {} }, 0.f);
     return *m_offset;
 }
 

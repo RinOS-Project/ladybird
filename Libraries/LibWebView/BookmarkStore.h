@@ -6,9 +6,10 @@
 
 #pragma once
 
-#include <AK/Badge.h>
+#include <AK/JsonValue.h>
 #include <AK/Optional.h>
 #include <AK/String.h>
+#include <AK/Time.h>
 #include <AK/Variant.h>
 #include <AK/Vector.h>
 #include <LibURL/URL.h>
@@ -29,6 +30,8 @@ struct WEBVIEW_API BookmarkItem {
     };
 
     String id;
+    UnixDateTime date_added;
+    UnixDateTime last_modified;
     Variant<Bookmark, Folder> data;
 
     bool is_bookmark() const { return data.has<Bookmark>(); }
@@ -51,17 +54,29 @@ public:
 
 class WEBVIEW_API BookmarkStore {
 public:
-    static BookmarkStore create(Badge<Application>);
+    static BookmarkStore create(ByteString bookmarks_path);
 
     Vector<BookmarkItem> const& root_items() const { return m_items; }
 
     bool is_bookmarked(URL::URL const&) const;
-    Optional<BookmarkItem const&> find_bookmark_by_url(URL::URL const&) const;
 
-    void add_bookmark(URL::URL url, Optional<String> title, Optional<String> favicon_base64);
+    Optional<BookmarkItem const&> find_bookmark_by_url(URL::URL const&) const;
+    Optional<BookmarkItem const&> find_item_by_id(StringView id) const;
+
+    void import_items(JsonArray const& items_array);
+
+    void add_bookmark(URL::URL url, Optional<String> title, Optional<String> favicon_base64, Optional<String const&> target_folder_id = {});
+    String add_folder(Optional<String> title, Optional<String const&> target_folder_id = {});
+
+    void edit_bookmark(StringView id, URL::URL url, Optional<String> title);
+    void edit_folder(StringView id, Optional<String> title);
+
+    void move_item(StringView id, Optional<String const&> target_folder_id, size_t index);
     void remove_item(StringView id);
 
     void update_favicon(URL::URL const& url, String favicon_base64);
+
+    JsonValue serialize_items() const;
 
     static void add_observer(Badge<BookmarkStoreObserver>, BookmarkStoreObserver&);
     static void remove_observer(Badge<BookmarkStoreObserver>, BookmarkStoreObserver&);
@@ -69,6 +84,7 @@ public:
 private:
     explicit BookmarkStore(ByteString bookmarks_path);
 
+    Optional<BookmarkItem&> find_mutable_item_by_id(StringView id);
     Optional<Vector<BookmarkItem>&> find_containing_item_list(StringView id);
 
     void persist_bookmarks();

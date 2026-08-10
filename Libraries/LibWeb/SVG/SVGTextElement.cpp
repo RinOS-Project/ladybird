@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/SVGTextElementPrototype.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/Layout/SVGTextBox.h>
 #include <LibWeb/SVG/SVGTextElement.h>
 
@@ -17,15 +17,9 @@ SVGTextElement::SVGTextElement(DOM::Document& document, DOM::QualifiedName quali
 {
 }
 
-void SVGTextElement::initialize(JS::Realm& realm)
+RefPtr<Layout::Node> SVGTextElement::create_layout_node(NonnullRefPtr<CSS::ComputedValues const> style)
 {
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGTextElement);
-    Base::initialize(realm);
-}
-
-GC::Ptr<Layout::Node> SVGTextElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
-{
-    return heap().allocate<Layout::SVGTextBox>(document(), *this, move(style));
+    return make_ref_counted<Layout::SVGTextBox>(document(), *this, style);
 }
 
 }

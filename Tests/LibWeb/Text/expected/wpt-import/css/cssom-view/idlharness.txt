@@ -1,9 +1,9 @@
 Harness status: OK
 
-Found 415 tests
+Found 400 tests
 
-342 Pass
-73 Fail
+343 Pass
+57 Fail
 Pass	idl_test setup
 Pass	idl_test validation
 Pass	Partial interface Window: original interface defined
@@ -18,13 +18,9 @@ Pass	Partial interface HTMLImageElement: original interface defined
 Pass	Partial interface HTMLImageElement: member names are unique
 Pass	Partial interface Range: original interface defined
 Pass	Partial interface Range: member names are unique
-Pass	Partial interface MouseEvent: original interface defined
-Pass	Partial interface MouseEvent: member names are unique
+Fail	Partial interface MouseEvent: original interface defined
 Pass	Partial interface Element[2]: member names are unique
 Pass	Partial interface Window[2]: member names are unique
-Pass	Partial interface UIEvent: member names are unique
-Pass	Partial interface MouseEvent[2]: member names are unique
-Pass	Partial interface UIEvent[2]: member names are unique
 Pass	Partial interface Document[2]: member names are unique
 Pass	Partial interface Document[3]: member names are unique
 Pass	Partial interface Element[3]: member names are unique
@@ -48,6 +44,7 @@ Pass	Window includes AnimationFrameProvider: member names are unique
 Pass	Window includes WindowSessionStorage: member names are unique
 Pass	Window includes WindowLocalStorage: member names are unique
 Pass	Document includes NonElementParentNode: member names are unique
+Pass	Document includes DocumentOrShadowRoot: member names are unique
 Pass	Document includes ParentNode: member names are unique
 Pass	Element includes ParentNode: member names are unique
 Pass	Element includes NonDocumentTypeChildNode: member names are unique
@@ -109,20 +106,20 @@ Pass	Screen interface: screen must inherit property "width" with the proper type
 Pass	Screen interface: screen must inherit property "height" with the proper type
 Pass	Screen interface: screen must inherit property "colorDepth" with the proper type
 Pass	Screen interface: screen must inherit property "pixelDepth" with the proper type
-Fail	CaretPosition interface: existence and properties of interface object
-Fail	CaretPosition interface object length
-Fail	CaretPosition interface object name
-Fail	CaretPosition interface: existence and properties of interface prototype object
-Fail	CaretPosition interface: existence and properties of interface prototype object's "constructor" property
-Fail	CaretPosition interface: existence and properties of interface prototype object's @@unscopables property
-Fail	CaretPosition interface: attribute offsetNode
-Fail	CaretPosition interface: attribute offset
-Fail	CaretPosition interface: operation getClientRect()
-Fail	CaretPosition must be primary interface of document.caretPositionFromPoint(5, 5)
-Fail	Stringification of document.caretPositionFromPoint(5, 5)
-Fail	CaretPosition interface: document.caretPositionFromPoint(5, 5) must inherit property "offsetNode" with the proper type
-Fail	CaretPosition interface: document.caretPositionFromPoint(5, 5) must inherit property "offset" with the proper type
-Fail	CaretPosition interface: document.caretPositionFromPoint(5, 5) must inherit property "getClientRect()" with the proper type
+Pass	CaretPosition interface: existence and properties of interface object
+Pass	CaretPosition interface object length
+Pass	CaretPosition interface object name
+Pass	CaretPosition interface: existence and properties of interface prototype object
+Pass	CaretPosition interface: existence and properties of interface prototype object's "constructor" property
+Pass	CaretPosition interface: existence and properties of interface prototype object's @@unscopables property
+Pass	CaretPosition interface: attribute offsetNode
+Pass	CaretPosition interface: attribute offset
+Pass	CaretPosition interface: operation getClientRect()
+Pass	CaretPosition must be primary interface of document.caretPositionFromPoint(5, 5)
+Pass	Stringification of document.caretPositionFromPoint(5, 5)
+Pass	CaretPosition interface: document.caretPositionFromPoint(5, 5) must inherit property "offsetNode" with the proper type
+Pass	CaretPosition interface: document.caretPositionFromPoint(5, 5) must inherit property "offset" with the proper type
+Pass	CaretPosition interface: document.caretPositionFromPoint(5, 5) must inherit property "getClientRect()" with the proper type
 Pass	VisualViewport interface: existence and properties of interface object
 Pass	VisualViewport interface object length
 Pass	VisualViewport interface object name
@@ -155,18 +152,6 @@ Fail	CSSPseudoElement interface: operation getBoxQuads(optional BoxQuadOptions)
 Fail	CSSPseudoElement interface: operation convertQuadFromNode(DOMQuadInit, GeometryNode, optional ConvertCoordinateOptions)
 Fail	CSSPseudoElement interface: operation convertRectFromNode(DOMRectReadOnly, GeometryNode, optional ConvertCoordinateOptions)
 Fail	CSSPseudoElement interface: operation convertPointFromNode(DOMPointInit, GeometryNode, optional ConvertCoordinateOptions)
-Pass	MouseEvent interface: attribute pageX
-Pass	MouseEvent interface: attribute pageY
-Pass	MouseEvent interface: attribute x
-Pass	MouseEvent interface: attribute y
-Pass	MouseEvent interface: attribute offsetX
-Pass	MouseEvent interface: attribute offsetY
-Pass	MouseEvent interface: new MouseEvent("foo") must inherit property "pageX" with the proper type
-Pass	MouseEvent interface: new MouseEvent("foo") must inherit property "pageY" with the proper type
-Pass	MouseEvent interface: new MouseEvent("foo") must inherit property "x" with the proper type
-Pass	MouseEvent interface: new MouseEvent("foo") must inherit property "y" with the proper type
-Pass	MouseEvent interface: new MouseEvent("foo") must inherit property "offsetX" with the proper type
-Pass	MouseEvent interface: new MouseEvent("foo") must inherit property "offsetY" with the proper type
 Pass	HTMLElement interface: attribute scrollParent
 Pass	HTMLElement interface: attribute offsetParent
 Pass	HTMLElement interface: attribute offsetTop
@@ -324,7 +309,7 @@ Pass	Window interface: window must inherit property "outerHeight" with the prope
 Pass	Window interface: window must inherit property "devicePixelRatio" with the proper type
 Pass	Document interface: operation elementFromPoint(double, double)
 Pass	Document interface: operation elementsFromPoint(double, double)
-Fail	Document interface: operation caretPositionFromPoint(double, double, optional CaretPositionFromPointOptions)
+Pass	Document interface: operation caretPositionFromPoint(double, double, optional CaretPositionFromPointOptions)
 Pass	Document interface: attribute scrollingElement
 Fail	Document interface: operation getBoxQuads(optional BoxQuadOptions)
 Fail	Document interface: operation convertQuadFromNode(DOMQuadInit, GeometryNode, optional ConvertCoordinateOptions)
@@ -334,8 +319,8 @@ Pass	Document interface: document must inherit property "elementFromPoint(double
 Pass	Document interface: calling elementFromPoint(double, double) on document with too few arguments must throw TypeError
 Pass	Document interface: document must inherit property "elementsFromPoint(double, double)" with the proper type
 Pass	Document interface: calling elementsFromPoint(double, double) on document with too few arguments must throw TypeError
-Fail	Document interface: document must inherit property "caretPositionFromPoint(double, double, optional CaretPositionFromPointOptions)" with the proper type
-Fail	Document interface: calling caretPositionFromPoint(double, double, optional CaretPositionFromPointOptions) on document with too few arguments must throw TypeError
+Pass	Document interface: document must inherit property "caretPositionFromPoint(double, double, optional CaretPositionFromPointOptions)" with the proper type
+Pass	Document interface: calling caretPositionFromPoint(double, double, optional CaretPositionFromPointOptions) on document with too few arguments must throw TypeError
 Pass	Document interface: document must inherit property "scrollingElement" with the proper type
 Fail	Document interface: document must inherit property "getBoxQuads(optional BoxQuadOptions)" with the proper type
 Fail	Document interface: calling getBoxQuads(optional BoxQuadOptions) on document with too few arguments must throw TypeError

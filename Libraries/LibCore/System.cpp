@@ -8,7 +8,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Atomic.h>
 #include <AK/ByteString.h>
+#include <AK/Random.h>
 #include <AK/ScopeGuard.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Vector.h>
@@ -149,6 +151,49 @@ ErrorOr<void> munmap(void* address, size_t size)
     return {};
 }
 
+ErrorOr<void*> reserve_address_space(size_t size)
+{
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#ifdef MAP_NORESERVE
+    flags |= MAP_NORESERVE;
+#endif
+    auto* ptr = ::mmap(nullptr, size, PROT_NONE, flags, -1, 0);
+    if (ptr == MAP_FAILED)
+        return Error::from_syscall("mmap"sv, errno);
+    return ptr;
+}
+
+ErrorOr<void> commit_memory(void* address, size_t size)
+{
+    auto* ptr = ::mmap(address, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    if (ptr == MAP_FAILED)
+        return Error::from_syscall("mmap"sv, errno);
+    return {};
+}
+
+ErrorOr<void> decommit_memory(void* address, size_t size)
+{
+    if (size == 0)
+        return {};
+
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+#ifdef MAP_NORESERVE
+    flags |= MAP_NORESERVE;
+#endif
+    auto* ptr = ::mmap(address, size, PROT_NONE, flags, -1, 0);
+    if (ptr == MAP_FAILED)
+        return Error::from_syscall("mmap"sv, errno);
+    VERIFY(ptr == address);
+    return {};
+}
+
+ErrorOr<void> release_address_space(void* address, size_t size)
+{
+    if (::munmap(address, size) < 0)
+        return Error::from_syscall("munmap"sv, errno);
+    return {};
+}
+
 ErrorOr<int> anon_create([[maybe_unused]] size_t size, [[maybe_unused]] int options)
 {
     int fd = -1;
@@ -164,15 +209,28 @@ ErrorOr<int> anon_create([[maybe_unused]] size_t size, [[maybe_unused]] int opti
 #elif defined(SHM_ANON)
     fd = shm_open(SHM_ANON, O_RDWR | O_CREAT | options, 0600);
 #elif defined(AK_OS_BSD_GENERIC) || defined(AK_OS_HAIKU)
-    static size_t shared_memory_id = 0;
+    // Create the shared memory object under an unpredictable, single-use name, and unlink it immediately — so only the
+    // returned fd keeps it alive. Use O_EXCL to ensure that if the name already exists, the open fails.
+    static Atomic<u32> shared_memory_id = 0;
+    auto name = ByteString::formatted("/shm-{:016x}-{:08x}", get_random<u64>(), shared_memory_id++);
+    // Passing O_CLOEXEC to shm_open in the oflag argument isn't POSIX-compliant and is known to be rejected
+    // in macOS 26.4+. So we filter it out here, and instead set FD_CLOEXEC via fcntl after opening.
+    fd = shm_open(name.characters(), O_RDWR | O_CREAT | O_EXCL | (options & ~O_CLOEXEC), 0600);
 
-    auto name = ByteString::formatted("/shm-{}-{}", getpid(), shared_memory_id++);
-    fd = shm_open(name.characters(), O_RDWR | O_CREAT | options, 0600);
+    if (fd >= 0) {
+        if (shm_unlink(name.characters()) == -1) {
+            auto saved_errno = errno;
+            TRY(close(fd));
+            return Error::from_errno(saved_errno);
+        }
 
-    if (shm_unlink(name.characters()) == -1) {
-        auto saved_errno = errno;
-        TRY(close(fd));
-        return Error::from_errno(saved_errno);
+        if (options & O_CLOEXEC) {
+            if (::fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
+                auto saved_errno = errno;
+                TRY(close(fd));
+                return Error::from_errno(saved_errno);
+            }
+        }
     }
 #endif
     if (fd < 0)
@@ -425,6 +483,20 @@ ErrorOr<bool> isatty(int fd)
     return rc == 1;
 }
 
+ErrorOr<TerminalSize> terminal_size(int fd)
+{
+    struct winsize ws {};
+    if (::ioctl(fd, TIOCGWINSZ, &ws) < 0)
+        return Error::from_syscall("ioctl"sv, errno);
+    return TerminalSize { ws.ws_col, ws.ws_row };
+}
+
+ErrorOr<void> enable_ansi_escape_sequence_processing(int)
+{
+    // POSIX terminals interpret escape sequences natively.
+    return {};
+}
+
 ErrorOr<void> link(StringView old_path, StringView new_path)
 {
     ByteString old_path_string = old_path;
@@ -445,8 +517,6 @@ ErrorOr<void> symlink(StringView target, StringView link_path)
 
 ErrorOr<void> mkdir(StringView path, mode_t mode)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
     ByteString path_string = path;
     if (::mkdir(path_string.characters(), mode) < 0)
         return Error::from_syscall("mkdir"sv, errno);
@@ -455,9 +525,6 @@ ErrorOr<void> mkdir(StringView path, mode_t mode)
 
 ErrorOr<void> chdir(StringView path)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString path_string = path;
     if (::chdir(path_string.characters()) < 0)
         return Error::from_syscall("chdir"sv, errno);
@@ -466,9 +533,6 @@ ErrorOr<void> chdir(StringView path)
 
 ErrorOr<void> rmdir(StringView path)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString path_string = path;
     if (::rmdir(path_string.characters()) < 0)
         return Error::from_syscall("rmdir"sv, errno);
@@ -485,9 +549,6 @@ ErrorOr<int> mkstemp(Span<char> pattern)
 
 ErrorOr<void> rename(StringView old_path, StringView new_path)
 {
-    if (old_path.is_null() || new_path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString old_path_string = old_path;
     ByteString new_path_string = new_path;
     if (::rename(old_path_string.characters(), new_path_string.characters()) < 0)
@@ -497,9 +558,6 @@ ErrorOr<void> rename(StringView old_path, StringView new_path)
 
 ErrorOr<void> unlink(StringView path)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString path_string = path;
     if (::unlink(path_string.characters()) < 0)
         return Error::from_syscall("unlink"sv, errno);
@@ -508,15 +566,8 @@ ErrorOr<void> unlink(StringView path)
 
 ErrorOr<void> utimensat(int fd, StringView path, struct timespec const times[2], int flag)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
-    StringBuilder builder;
-    TRY(builder.try_append(path));
-    TRY(builder.try_append('\0'));
-
-    // Note the explicit null terminators above.
-    if (::utimensat(fd, builder.string_view().characters_without_null_termination(), times, flag) < 0)
+    ByteString path_string = path;
+    if (::utimensat(fd, path_string.characters(), times, flag) < 0)
         return Error::from_syscall("utimensat"sv, errno);
     return {};
 }
@@ -527,6 +578,12 @@ ErrorOr<int> socket(int domain, int type, int protocol)
     if (fd < 0)
         return Error::from_syscall("socket"sv, errno);
     return fd;
+}
+
+ErrorOr<void> set_socket_blocking(int socket, bool enabled)
+{
+    int value = enabled ? 0 : 1;
+    return ioctl(socket, FIONBIO, &value);
 }
 
 ErrorOr<void> bind(int sockfd, struct sockaddr const* address, socklen_t address_length)
@@ -697,9 +754,6 @@ ErrorOr<Array<int, 2>> pipe2(int flags)
 
 ErrorOr<void> access(StringView pathname, int mode, int flags)
 {
-    if (pathname.is_null())
-        return Error::from_syscall("access"sv, EFAULT);
-
     ByteString path_string = pathname;
     (void)flags;
 

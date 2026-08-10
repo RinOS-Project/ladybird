@@ -19,7 +19,8 @@ static ErrorOr<GC::Ref<DOM::NodeList>, Error> locate_element_by_css_selector(DOM
 {
     // 1. Let elements be the result of calling querySelectorAll() with start node as this and selector as the argument.
     //    If this causes an exception to be thrown, return error with error code invalid selector.
-    auto elements = start_node.query_selector_all(selector);
+    auto selector_utf16 = Utf16String::from_utf8(selector);
+    auto elements = start_node.query_selector_all(selector_utf16);
     if (elements.is_exception())
         return Error::from_code(ErrorCode::InvalidSelector, "querySelectorAll() failed"sv);
 
@@ -30,8 +31,6 @@ static ErrorOr<GC::Ref<DOM::NodeList>, Error> locate_element_by_css_selector(DOM
 // https://w3c.github.io/webdriver/#link-text
 static ErrorOr<GC::Ref<DOM::NodeList>, Error> locate_element_by_link_text(DOM::ParentNode& start_node, StringView selector)
 {
-    auto& realm = start_node.realm();
-
     // 1. Let elements be the result of calling querySelectorAll() with start node as this and "a" as the argument. If
     //    this throws an exception, return error with error code unknown error.
     auto elements = start_node.query_selector_all("a"sv);
@@ -57,14 +56,12 @@ static ErrorOr<GC::Ref<DOM::NodeList>, Error> locate_element_by_link_text(DOM::P
     }
 
     // 4. Return success with data result.
-    return DOM::StaticNodeList::create(realm, move(result));
+    return DOM::StaticNodeList::create(move(result));
 }
 
 // https://w3c.github.io/webdriver/#partial-link-text
 static ErrorOr<GC::Ref<DOM::NodeList>, Error> locate_element_by_partial_link_text(DOM::ParentNode& start_node, StringView selector)
 {
-    auto& realm = start_node.realm();
-
     // 1. Let elements be the result of calling querySelectorAll() with start node as this and "a" as the argument. If
     //    this throws an exception, return error with error code unknown error.
     auto elements = start_node.query_selector_all("a"sv);
@@ -87,17 +84,15 @@ static ErrorOr<GC::Ref<DOM::NodeList>, Error> locate_element_by_partial_link_tex
     }
 
     // 4. Return success with data result.
-    return DOM::StaticNodeList::create(realm, move(result));
+    return DOM::StaticNodeList::create(move(result));
 }
 
 // https://w3c.github.io/webdriver/#tag-name
-static GC::Ref<DOM::NodeList> locate_element_by_tag_name(DOM::ParentNode& start_node, StringView selector)
+static GC::Ref<DOM::NodeList> locate_element_by_tag_name(DOM::ParentNode& start_node, Utf16FlyString const& selector)
 {
-    auto& realm = start_node.realm();
-
     // To find a web element with the Tag Name strategy return success with data set to the result of calling
     // getElementsByTagName() with start node as this and selector as the argument.
-    auto elements = start_node.get_elements_by_tag_name(MUST(FlyString::from_utf8(selector)));
+    auto elements = start_node.get_elements_by_tag_name(selector);
 
     // FIXME: Having to convert this to a NodeList is a bit awkward.
     Vector<GC::Root<DOM::Node>> result;
@@ -107,7 +102,7 @@ static GC::Ref<DOM::NodeList> locate_element_by_tag_name(DOM::ParentNode& start_
         result.append(*element);
     }
 
-    return DOM::StaticNodeList::create(realm, move(result));
+    return DOM::StaticNodeList::create(move(result));
 }
 
 // https://w3c.github.io/webdriver/#xpath
@@ -131,19 +126,20 @@ Optional<LocationStrategy> location_strategy_from_string(StringView type)
     return {};
 }
 
-ErrorOr<GC::Ref<DOM::NodeList>, Error> invoke_location_strategy(LocationStrategy type, DOM::ParentNode& start_node, StringView selector)
+ErrorOr<GC::Ref<DOM::NodeList>, Error> invoke_location_strategy(LocationStrategy type, DOM::ParentNode& start_node,
+    Variant<String, Utf16FlyString> const& selector)
 {
     switch (type) {
     case LocationStrategy::CssSelector:
-        return locate_element_by_css_selector(start_node, selector);
+        return locate_element_by_css_selector(start_node, selector.get<String>());
     case LocationStrategy::LinkText:
-        return locate_element_by_link_text(start_node, selector);
+        return locate_element_by_link_text(start_node, selector.get<String>());
     case LocationStrategy::PartialLinkText:
-        return locate_element_by_partial_link_text(start_node, selector);
+        return locate_element_by_partial_link_text(start_node, selector.get<String>());
     case LocationStrategy::TagName:
-        return locate_element_by_tag_name(start_node, selector);
+        return locate_element_by_tag_name(start_node, selector.get<Utf16FlyString>());
     case LocationStrategy::XPath:
-        return locate_element_by_x_path(start_node, selector);
+        return locate_element_by_x_path(start_node, selector.get<String>());
     }
 
     VERIFY_NOT_REACHED();

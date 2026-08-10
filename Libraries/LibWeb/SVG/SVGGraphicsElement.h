@@ -19,20 +19,19 @@
 #include <LibWeb/WebIDL/DOMException.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
+namespace Web::Bindings {
+
+struct SVGBoundingBoxOptions;
+
+}
+
 namespace Web::SVG {
 
-struct SVGBoundingBoxOptions {
-    bool fill { true };
-    bool stroke { false };
-    bool markers { false };
-    bool clipped { false };
-};
-
 class WEB_API SVGGraphicsElement : public SVGElement {
-    WEB_PLATFORM_OBJECT(SVGGraphicsElement, SVGElement);
+    WEB_WRAPPABLE(SVGGraphicsElement, SVGElement);
 
 public:
-    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
 
     Optional<Gfx::Color> fill_color() const;
     Optional<Gfx::Color> stroke_color() const;
@@ -71,7 +70,7 @@ public:
     GC::Ptr<SVG::SVGPatternElement const> fill_pattern() const;
     GC::Ptr<SVG::SVGPatternElement const> stroke_pattern() const;
 
-    WebIDL::ExceptionOr<GC::Ref<Geometry::DOMRect>> get_b_box(Optional<SVGBoundingBoxOptions>);
+    WebIDL::ExceptionOr<GC::Ref<Geometry::DOMRect>> get_b_box(Bindings::SVGBoundingBoxOptions const&);
     GC::Ref<SVGAnimatedTransformList> transform() const;
 
     GC::Ptr<Geometry::DOMMatrix> get_ctm();
@@ -85,13 +84,12 @@ public:
 protected:
     SVGGraphicsElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual void initialize(JS::Realm&) override;
-
     Optional<Painting::PaintStyle> svg_paint_computed_value_to_gfx_paint_style(SVGPaintContext const& paint_context, Optional<CSS::SVGPaint> const& paint_value, DisplayListRecordingContext* = nullptr) const;
 
     Gfx::AffineTransform m_transform = {};
 
     GC::Ptr<DOM::Element> resolve_url_to_element(CSS::URL const& url) const;
+    GC::Ptr<DOM::Element> resolve_url_to_element(Utf16String const& url) const;
 
     template<typename T>
     GC::Ptr<T> try_resolve_url_to(CSS::URL const& url) const
@@ -99,8 +97,15 @@ protected:
         return as_if<T>(resolve_url_to_element(url).ptr());
     }
 
+    template<typename T>
+    GC::Ptr<T> try_resolve_url_to(Utf16String const& url) const
+    {
+        return as_if<T>(resolve_url_to_element(url).ptr());
+    }
+
 private:
     virtual bool is_svg_graphics_element() const final { return true; }
+    GC::Ptr<DOM::Element> resolve_fragment_identifier_to_element(Utf16String const& fragment) const;
     float resolve_relative_to_viewport_size(CSS::LengthPercentage const& length_percentage) const;
 };
 

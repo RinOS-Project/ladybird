@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
+#include <AK/Utf16FlyString.h>
 #include <LibWeb/Export.h>
 
 namespace Web::MathML::AttributeNames {
@@ -17,6 +17,7 @@ namespace Web::MathML::AttributeNames {
     __ENUMERATE_MATHML_ATTRIBUTE(dir, "dir")                       \
     __ENUMERATE_MATHML_ATTRIBUTE(displaystyle, "displaystyle")     \
     __ENUMERATE_MATHML_ATTRIBUTE(height, "height")                 \
+    __ENUMERATE_MATHML_ATTRIBUTE(href, "href")                     \
     __ENUMERATE_MATHML_ATTRIBUTE(mathbackground, "mathbackground") \
     __ENUMERATE_MATHML_ATTRIBUTE(mathcolor, "mathcolor")           \
     __ENUMERATE_MATHML_ATTRIBUTE(mathsize, "mathsize")             \
@@ -24,7 +25,7 @@ namespace Web::MathML::AttributeNames {
     __ENUMERATE_MATHML_ATTRIBUTE(scriptlevel, "scriptlevel")       \
     __ENUMERATE_MATHML_ATTRIBUTE(width, "width")
 
-#define __ENUMERATE_MATHML_ATTRIBUTE(name, attribute) extern WEB_API FlyString name;
+#define __ENUMERATE_MATHML_ATTRIBUTE(name, attribute) extern WEB_API Utf16FlyString const& name;
 ENUMERATE_MATHML_ATTRIBUTES
 #undef __ENUMERATE_MATHML_ATTRIBUTE
 

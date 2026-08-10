@@ -7,39 +7,36 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
+#include <AK/Utf16FlyString.h>
+#include <AK/Utf16String.h>
+#include <LibJS/Forward.h>
+#include <LibWeb/Bindings/CloseEvent.h>
 #include <LibWeb/DOM/Event.h>
+#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 
 namespace Web::HTML {
 
-struct CloseEventInit : public DOM::EventInit {
-    bool was_clean { false };
-    u16 code { 0 };
-    String reason;
-};
+using CloseEventInit = Bindings::CloseEventInit;
 
 class CloseEvent : public DOM::Event {
-    WEB_PLATFORM_OBJECT(CloseEvent, DOM::Event);
+    WEB_WRAPPABLE(CloseEvent, DOM::Event);
     GC_DECLARE_ALLOCATOR(CloseEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<CloseEvent> create(JS::Realm&, FlyString const& event_name, CloseEventInit const& event_init = {});
-    static WebIDL::ExceptionOr<GC::Ref<CloseEvent>> construct_impl(JS::Realm&, FlyString const& event_name, CloseEventInit const& event_init);
+    [[nodiscard]] static GC::Ref<CloseEvent> create(Utf16FlyString const& event_name, CloseEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
 
     virtual ~CloseEvent() override;
 
     bool was_clean() const { return m_was_clean; }
     u16 code() const { return m_code; }
-    String reason() const { return m_reason; }
+    Utf16String const& reason() const { return m_reason; }
 
 private:
-    CloseEvent(JS::Realm&, FlyString const& event_name, CloseEventInit const& event_init);
-
-    virtual void initialize(JS::Realm&) override;
+    CloseEvent(Utf16FlyString const& event_name, CloseEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
 
     bool m_was_clean { false };
     u16 m_code { 0 };
-    String m_reason;
+    Utf16String m_reason;
 };
 
 }

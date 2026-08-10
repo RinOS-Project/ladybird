@@ -6,10 +6,10 @@
 
 #include <AK/Optional.h>
 #include <LibGfx/Path.h>
-#include <LibWeb/Bindings/SVGPathElementPrototype.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Layout/SVGGeometryBox.h>
+#include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/SVGPathElement.h>
 
 namespace Web::SVG {
@@ -21,25 +21,18 @@ SVGPathElement::SVGPathElement(DOM::Document& document, DOM::QualifiedName quali
 {
 }
 
-void SVGPathElement::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGPathElement);
-    Base::initialize(realm);
-}
-
-void SVGPathElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
-{
-    Base::attribute_changed(name, old_value, value, namespace_);
-
-    if (name == "d") {
-        m_path = AttributeParser::parse_path_data(value.value_or(String {}));
-        set_needs_layout_update(DOM::SetNeedsLayoutReason::StyleChange);
-    }
-}
-
 Gfx::Path SVGPathElement::get_path(CSSPixelSize)
 {
-    return m_path.to_gfx_path();
+    auto computed_d = this->computed_values()->d();
+
+    if (computed_d->is_keyword()) {
+        VERIFY(computed_d->as_keyword().keyword() == CSS::Keyword::None);
+        return {};
+    }
+
+    // NB: The reference box is not used for path() values and is only required to maintain compatibility with other
+    //     basic shapes.
+    return computed_d->as_basic_shape().basic_shape().get<CSS::Path>().to_path({ 0, 0, 0, 0 });
 }
 
 }

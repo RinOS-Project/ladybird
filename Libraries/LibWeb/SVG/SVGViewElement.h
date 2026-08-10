@@ -13,18 +13,18 @@ namespace Web::SVG {
 
 class SVGViewElement final : public SVGGraphicsElement
     , public SVGFitToViewBox {
-    WEB_PLATFORM_OBJECT(SVGViewElement, SVGGraphicsElement);
+    WEB_WRAPPABLE(SVGViewElement, SVGGraphicsElement);
     GC_DECLARE_ALLOCATOR(SVGViewElement);
 
 private:
     SVGViewElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual void initialize(JS::Realm&) override;
+    virtual void initialize_element() override;
     virtual void visit_edges(Visitor&) override;
 
     virtual bool is_svg_view_element() const override { return true; }
 
-    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
 };
 
 }

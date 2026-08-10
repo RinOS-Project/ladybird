@@ -12,6 +12,7 @@
 #include <AK/Vector.h>
 #include <LibURL/URL.h>
 #include <LibWebView/ProcessType.h>
+#include <LibWebView/SiteIsolation.h>
 
 namespace WebView {
 
@@ -29,16 +30,6 @@ enum class SkipImplicitHeadlessBootstrapView {
 };
 
 enum class NewWindow {
-    No,
-    Yes,
-};
-
-enum class ForceNewProcess {
-    No,
-    Yes,
-};
-
-enum class DisableSpareWebContentProcesses {
     No,
     Yes,
 };
@@ -79,7 +70,12 @@ using DNSSettings = Variant<SystemDNS, DNSOverTLS, DNSOverUDP>;
 
 constexpr inline u16 default_devtools_port = 6000;
 
-enum class EnableContentFilter {
+enum class EnableContentBlocker {
+    No,
+    Yes,
+};
+
+enum class DisableSandbox {
     No,
     Yes,
 };
@@ -88,32 +84,33 @@ struct BrowserOptions {
     Vector<URL::URL> urls;
     Vector<ByteString> raw_urls;
     Optional<HeadlessMode> headless_mode;
-    SkipImplicitHeadlessBootstrapView skip_implicit_headless_bootstrap_view { SkipImplicitHeadlessBootstrapView::No };
+    Optional<ByteString> screenshot_path {};
+    u32 screenshot_delay { 1 };
     int window_width { 800 };
     int window_height { 600 };
     NewWindow new_window { NewWindow::No };
-    ForceNewProcess force_new_process { ForceNewProcess::No };
-    DisableSpareWebContentProcesses disable_spare_web_content_processes { DisableSpareWebContentProcesses::No };
     AllowPopups allow_popups { AllowPopups::No };
     DisableScripting disable_scripting { DisableScripting::No };
     DisableSQLDatabase disable_sql_database { DisableSQLDatabase::No };
-    Optional<ProcessType> debug_helper_process {};
+    Vector<ProcessType> debug_helper_processes {};
     Optional<ProcessType> profile_helper_process {};
     Optional<ByteString> webdriver_endpoint {};
     Optional<DNSSettings> dns_settings {};
     Optional<u16> devtools_port;
-    EnableContentFilter enable_content_filter { EnableContentFilter::Yes };
+    EnableContentBlocker enable_content_blocker { EnableContentBlocker::Yes };
+    DisableSandbox disable_sandbox { DisableSandbox::No };
+    Vector<ByteString> content_blocker_list_paths {};
 };
 
 enum class HTTPDiskCacheMode {
     Disabled,
     Enabled,
-    Partitioned,
     Testing,
 };
 
 struct RequestServerOptions {
     Vector<ByteString> certificates;
+    ByteString cache_path;
     HTTPDiskCacheMode http_disk_cache_mode { HTTPDiskCacheMode::Disabled };
     Optional<ByteString> resource_substitution_map_path;
 };
@@ -134,11 +131,6 @@ enum class EnableIDLTracing {
 };
 
 enum class EnableMemoryHTTPCache {
-    No,
-    Yes,
-};
-
-enum class DisableSiteIsolation {
     No,
     Yes,
 };
@@ -173,14 +165,23 @@ enum class PaintViewportScrollbars {
     No,
 };
 
+enum class EnableAsyncScrolling {
+    No,
+    Yes,
+};
+
+enum class FileSchemeUrlsHaveTupleOrigins {
+    No,
+    Yes,
+};
+
 struct WebContentOptions {
-    String command_line;
-    String executable_path;
     Optional<ByteString> config_path {};
+    Optional<ByteString> cache_path {};
     Optional<StringView> user_agent_preset {};
     IsTestMode is_test_mode { IsTestMode::No };
     LogAllJSExceptions log_all_js_exceptions { LogAllJSExceptions::No };
-    DisableSiteIsolation disable_site_isolation { DisableSiteIsolation::No };
+    SiteIsolationMode site_isolation_mode { SiteIsolationMode::TopLevel };
     EnableIDLTracing enable_idl_tracing { EnableIDLTracing::No };
     EnableMemoryHTTPCache enable_http_memory_cache { EnableMemoryHTTPCache::No };
     ExposeExperimentalInterfaces expose_experimental_interfaces { ExposeExperimentalInterfaces::No };
@@ -191,7 +192,10 @@ struct WebContentOptions {
     CollectGarbageOnEveryAllocation collect_garbage_on_every_allocation { CollectGarbageOnEveryAllocation::No };
     Optional<u16> echo_server_port {};
     PaintViewportScrollbars paint_viewport_scrollbars { PaintViewportScrollbars::Yes };
+    EnableAsyncScrolling enable_async_scrolling { EnableAsyncScrolling::Yes };
+    FileSchemeUrlsHaveTupleOrigins file_scheme_urls_have_tuple_origins { FileSchemeUrlsHaveTupleOrigins::No };
     Optional<StringView> default_time_zone {};
+    Optional<u64> style_invalidation_counter_dump_interval {};
 };
 
 }

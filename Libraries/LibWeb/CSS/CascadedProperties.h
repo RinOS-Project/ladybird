@@ -6,52 +6,52 @@
 
 #pragma once
 
-#include <AK/FixedBitmap.h>
-#include <LibGC/CellAllocator.h>
-#include <LibJS/Heap/Cell.h>
+#include <AK/HashMap.h>
+#include <AK/NonnullRefPtr.h>
+#include <AK/RefCounted.h>
+#include <AK/Utf16FlyString.h>
+#include <AK/Vector.h>
+#include <LibGC/Ptr.h>
+#include <LibGC/Weak.h>
 #include <LibWeb/CSS/CascadeOrigin.h>
 #include <LibWeb/CSS/PropertyID.h>
-#include <LibWeb/CSS/Selector.h>
 #include <LibWeb/CSS/StyleProperty.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
+#include <LibWeb/ComputedValuesRustFFI.h>
+#include <LibWeb/Forward.h>
 
 namespace Web::CSS {
 
-class CascadedProperties final : public JS::Cell {
-    GC_CELL(CascadedProperties, JS::Cell);
-    GC_DECLARE_ALLOCATOR(CascadedProperties);
-
+// A thin shell over the Rust cascaded property store. The store owns the
+// entries (values, importance, origin, layer, cascade order); this shell keeps
+// the GC-weak declaration sources the store cannot hold, one pair per
+// store-assigned slot.
+class CascadedProperties final : public RefCounted<CascadedProperties> {
 public:
-    virtual ~CascadedProperties() override;
+    static NonnullRefPtr<CascadedProperties> create();
+
+    ~CascadedProperties();
 
     [[nodiscard]] RefPtr<StyleValue const> property(PropertyID) const;
-    [[nodiscard]] PropertyID property_with_higher_priority(PropertyID, PropertyID) const;
-    [[nodiscard]] GC::Ptr<CSSStyleDeclaration const> property_source(PropertyID) const;
-    [[nodiscard]] Optional<StyleProperty> style_property(PropertyID) const;
+    [[nodiscard]] GC::Ptr<DOM::ShadowRoot const> property_source_shadow_root(PropertyID) const;
 
-    void set_property(PropertyID, NonnullRefPtr<StyleValue const>, Important, CascadeOrigin, Optional<FlyString> layer_name, GC::Ptr<CSS::CSSStyleDeclaration const> source);
-    void set_property_from_presentational_hint(PropertyID, NonnullRefPtr<StyleValue const>);
-
-    void revert_property(PropertyID, Important, CascadeOrigin);
-    void revert_layer_property(PropertyID, Important, Optional<FlyString> layer_name);
-
-    void resolve_unresolved_properties(DOM::AbstractElement);
+    // For the Rust-driven cascade application: the underlying store, and assignment of the
+    // GC-weak declaration source pair for a slot the store handed out.
+    ComputedValuesFFI::CascadedPropertyStore* rust_store() { return m_store; }
+    void assign_source_slot(u32 slot, GC::Ptr<CSS::CSSStyleDeclaration const> source, GC::Ptr<DOM::ShadowRoot const> source_shadow_root);
+    [[nodiscard]] GC::Ptr<CSS::CSSStyleDeclaration const> source_for_slot(u32 slot) const;
 
 private:
     CascadedProperties();
 
-    virtual void visit_edges(Visitor&) override;
-
-    struct Entry {
-        StyleProperty property;
-        size_t cascade_index { 0 };
-        CascadeOrigin origin;
-        Optional<FlyString> layer_name;
-        GC::Ptr<CSS::CSSStyleDeclaration const> source;
+    struct SourcePair {
+        GC::Weak<CSS::CSSStyleDeclaration const> source;
+        GC::Weak<DOM::ShadowRoot const> source_shadow_root;
     };
-    HashMap<PropertyID, Vector<Entry>> m_properties;
-    size_t m_next_cascade_index { 0 };
-    AK::FixedBitmap<to_underlying(last_longhand_property_id) + 1> m_contained_properties_cache { false };
+
+    ComputedValuesFFI::CascadedPropertyStore* m_store { nullptr };
+    Vector<SourcePair> m_source_slots;
+    mutable HashMap<PropertyID, ValueComparingNonnullRefPtr<StyleValue const>> m_property_cache;
 };
 
 }

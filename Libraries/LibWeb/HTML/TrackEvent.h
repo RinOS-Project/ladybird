@@ -7,41 +7,38 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
 #include <AK/Optional.h>
+#include <AK/Utf16FlyString.h>
 #include <AK/Variant.h>
 #include <LibGC/Root.h>
+#include <LibJS/Forward.h>
+#include <LibWeb/Bindings/TrackEvent.h>
 #include <LibWeb/DOM/Event.h>
+#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 
 namespace Web::HTML {
 
-using NullableTrackType = Variant<GC::Root<VideoTrack>, GC::Root<AudioTrack>, GC::Root<TextTrack>, Empty>;
+using NullableTrackType = Variant<GC::Ref<VideoTrack>, GC::Ref<AudioTrack>, GC::Ref<TextTrack>, Empty>;
 
-struct TrackEventInit : public DOM::EventInit {
-    NullableTrackType track { Empty {} };
-};
+using TrackEventInit = Bindings::TrackEventInit;
 
 class TrackEvent : public DOM::Event {
-    WEB_PLATFORM_OBJECT(TrackEvent, DOM::Event);
+    WEB_WRAPPABLE(TrackEvent, DOM::Event);
     GC_DECLARE_ALLOCATOR(TrackEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<TrackEvent> create(JS::Realm&, FlyString const& event_name, TrackEventInit = {});
-    static WebIDL::ExceptionOr<GC::Ref<TrackEvent>> construct_impl(JS::Realm&, FlyString const& event_name, TrackEventInit);
+    [[nodiscard]] static GC::Ref<TrackEvent> create(FlyString const& event_name, TrackEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static GC::Ref<TrackEvent> create(Utf16FlyString const& event_name, TrackEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-trackevent-track
     NullableTrackType track() const;
 
 private:
-    TrackEvent(JS::Realm&, FlyString const& event_name, TrackEventInit event_init);
+    TrackEvent(FlyString const& event_name, TrackEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
 
-    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Visitor&) override;
 
-    using TrackTypeInternal = Variant<Empty, GC::Ref<VideoTrack>, GC::Ref<AudioTrack>, GC::Ref<TextTrack>>;
-    static TrackTypeInternal to_track_type_internal(NullableTrackType const&);
-
-    TrackTypeInternal m_track;
+    NullableTrackType m_track;
 };
 
 }

@@ -10,7 +10,7 @@
 #pragma once
 
 #include <AK/Checked.h>
-#include <LibJS/Bytecode/BasicBlock.h>
+#include <AK/Span.h>
 #include <LibJS/Export.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Module.h>
@@ -24,7 +24,7 @@ using ScriptOrModule = Variant<Empty, GC::Ref<Script>, GC::Ref<Module>>;
 
 // 9.4 Execution Contexts, https://tc39.es/ecma262/#sec-execution-contexts
 struct JS_API ExecutionContext {
-    static NonnullOwnPtr<ExecutionContext> create(u32 registers_and_locals_count, u32 constants_count, u32 arguments_count);
+    static NonnullOwnPtr<ExecutionContext> create(u32 registers_and_locals_count, ReadonlySpan<Value> constants, u32 arguments_count);
     [[nodiscard]] NonnullOwnPtr<ExecutionContext> copy() const;
 
     ~ExecutionContext() = default;
@@ -36,15 +36,16 @@ private:
 
 public:
     // NB: The layout is: [registers | locals | constants | arguments]
-    ALWAYS_INLINE ExecutionContext(u32 registers_and_locals_count, u32 constants_count, u32 arguments_count_)
+    ALWAYS_INLINE ExecutionContext(u32 registers_and_locals_count, ReadonlySpan<Value> constants, u32 arguments_count_)
     {
-        VERIFY(!Checked<u32>::addition_would_overflow(registers_and_locals_count, constants_count, arguments_count_));
-        registers_and_constants_and_locals_and_arguments_count = registers_and_locals_count + constants_count + arguments_count_;
+        VERIFY(!Checked<u32>::addition_would_overflow(registers_and_locals_count, constants.size(), arguments_count_));
+        registers_and_constants_and_locals_and_arguments_count = registers_and_locals_count + constants.size() + arguments_count_;
         argument_count = arguments_count_;
         auto* values = registers_and_constants_and_locals_and_arguments();
-        for (size_t i = 0; i < registers_and_constants_and_locals_and_arguments_count; ++i)
+        for (size_t i = 0; i < registers_and_locals_count; ++i)
             values[i] = js_special_empty_value();
-        arguments = { values + registers_and_locals_count + constants_count, arguments_count_ };
+        for (size_t i = 0; i < constants.size(); ++i)
+            values[registers_and_locals_count + i] = constants[i];
     }
 
     void operator delete(void* ptr);
@@ -73,6 +74,7 @@ public:
     u32 yield_continuation { no_yield_continuation };
 
     bool yield_is_await { false };
+    bool yield_value_is_iterator_result { false };
     bool caller_is_construct { false };
 
     Optional<Value> this_value;
@@ -119,15 +121,14 @@ public:
     }
 
     // Non-standard: Inline frame linkage for the bytecode interpreter.
-    // When a JS-to-JS call is inlined in the dispatch loop, these fields
-    // allow the Return handler to restore the caller's frame.
+    // Only inline JS-to-JS calls use these fields.
     ExecutionContext* caller_frame { nullptr };
     u32 passed_argument_count { 0 };
     u32 caller_return_pc { 0 };
     u32 caller_dst_raw { 0 };
 
 private:
-    friend class Bytecode::Interpreter;
+    friend class VM;
 
     Value* registers_and_constants_and_locals_and_arguments()
     {

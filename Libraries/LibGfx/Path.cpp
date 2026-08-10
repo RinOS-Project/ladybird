@@ -9,16 +9,22 @@
 #include <LibGfx/PathAquamarine.h>
 #else
 #include <LibGfx/PathSkia.h>
-#endif
+#include <LibIPC/Decoder.h>
+#include <LibIPC/Encoder.h>
+
+extern "C" {
+void ladybird_gfx_path_destroy(void*);
+}
 
 namespace Gfx {
 
-#ifdef AK_OS_RINOS
-NonnullOwnPtr<Gfx::PathImpl> PathImpl::create()
+Path Path::from_serialized_bytes(ReadonlyBytes bytes)
 {
-    return PathImplAquamarine::create();
+    Gfx::Path path;
+    path.impl().deserialize_from_bytes(bytes);
+    return path;
 }
-#else
+
 NonnullOwnPtr<Gfx::PathImpl> PathImpl::create()
 {
     return PathImplSkia::create();
@@ -27,4 +33,26 @@ NonnullOwnPtr<Gfx::PathImpl> PathImpl::create()
 
 PathImpl::~PathImpl() = default;
 
+}
+
+namespace IPC {
+
+template<>
+ErrorOr<void> encode(Encoder& encoder, Gfx::Path const& path)
+{
+    return encoder.encode(path.serialize_to_bytes());
+}
+
+template<>
+ErrorOr<Gfx::Path> decode(Decoder& decoder)
+{
+    auto path_data = TRY(decoder.decode<Vector<u8>>());
+    return Gfx::Path::from_serialized_bytes(path_data);
+}
+
+}
+
+extern "C" void ladybird_gfx_path_destroy(void* path)
+{
+    delete static_cast<Gfx::Path*>(path);
 }

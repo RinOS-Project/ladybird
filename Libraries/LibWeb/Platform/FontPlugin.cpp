@@ -39,6 +39,9 @@ void FontPlugin::install(FontPlugin& plugin)
 FontPlugin::FontPlugin(bool is_layout_test_mode, Gfx::SystemFontProvider* font_provider)
     : m_is_layout_test_mode(is_layout_test_mode)
 {
+    if (is_layout_test_mode)
+        Gfx::force_hinting_for_testing(Gfx::FontHintingStyle::Normal);
+
     if (!font_provider)
         font_provider = &static_cast<Gfx::PathFontProvider&>(Gfx::FontDatabase::the().install_system_font_provider(make<Gfx::PathFontProvider>()));
     if (is<Gfx::PathFontProvider>(*font_provider)) {
@@ -54,15 +57,8 @@ FontPlugin::FontPlugin(bool is_layout_test_mode, Gfx::SystemFontProvider* font_p
     m_default_fixed_width_font = Gfx::FontDatabase::the().get(default_fixed_width_font_name, 12.0, 400, Gfx::FontWidth::Normal, 0);
     VERIFY(m_default_fixed_width_font);
 
-    if (is_layout_test_mode) {
+    if (is_layout_test_mode)
         m_symbol_font_names = { "Noto Emoji"_fly_string };
-    } else {
-#ifdef AK_OS_MACOS
-        m_symbol_font_names = { "Apple Color Emoji"_fly_string, "Apple Symbols"_fly_string };
-#else
-        m_symbol_font_names = { "Noto Color Emoji"_fly_string, "Noto Sans Symbols"_fly_string };
-#endif
-    }
 }
 
 FontPlugin::~FontPlugin() = default;
@@ -81,6 +77,14 @@ Gfx::Font& FontPlugin::default_fixed_width_font()
 Vector<FlyString> FontPlugin::symbol_font_names()
 {
     return m_symbol_font_names;
+}
+
+void FontPlugin::set_system_font_family(FlyString system_font_family)
+{
+    if (m_system_font_family == system_font_family)
+        return;
+    m_system_font_family = move(system_font_family);
+    m_generic_font_cache.clear();
 }
 
 void FontPlugin::update_generic_fonts()
@@ -159,7 +163,15 @@ FlyString FontPlugin::compute_generic_font_name(GenericFont generic_font, int we
         VERIFY_NOT_REACHED();
     }
 
-#ifndef AK_OS_RINOS
+    if (generic_font == GenericFont::UiSansSerif && m_system_font_family.has_value()) {
+        auto system_font_family_is_available = false;
+        Gfx::FontDatabase::the().for_each_typeface_with_family_name(m_system_font_family.value(), [&](Gfx::Typeface const&) {
+            system_font_family_is_available = true;
+        });
+        if (system_font_family_is_available)
+            return m_system_font_family.value();
+    }
+
     auto name = Gfx::TypefaceSkia::resolve_generic_family(generic_family_name, weight, slope);
     if (name.has_value()) {
         if (Gfx::FontDatabase::the().get(name.value(), 16, weight, Gfx::FontWidth::Normal, slope))

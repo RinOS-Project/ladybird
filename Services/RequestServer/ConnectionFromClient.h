@@ -8,12 +8,18 @@
 
 #include <AK/Badge.h>
 #include <AK/HashMap.h>
+#include <AK/Optional.h>
+#include <AK/Time.h>
+#include <LibCore/AnonymousBuffer.h>
 #include <LibHTTP/Cache/CacheMode.h>
 #include <LibHTTP/Cache/DiskCacheSettings.h>
+#include <LibHTTP/Cache/Utilities.h>
 #include <LibHTTP/Forward.h>
 #include <LibIPC/ConnectionFromClient.h>
+#include <LibRequests/WebSocket.h>
 #include <LibWebSocket/WebSocket.h>
 #include <RequestServer/Forward.h>
+#include <RequestServer/IsPrivate.h>
 #include <RequestServer/RequestClientEndpoint.h>
 #include <RequestServer/RequestServerEndpoint.h>
 
@@ -37,33 +43,42 @@ public:
 
     static Optional<ConnectionFromClient&> primary_connection();
 
+    IsPrivate is_private() const { return m_is_private; }
+
     void start_revalidation_request(Badge<Request>, ByteString method, URL::URL, NonnullRefPtr<HTTP::HeaderList> request_headers, ByteBuffer request_body, HTTP::Cookie::IncludeCredentials, Core::ProxyData proxy_data);
     void request_complete(Badge<Request>, Request const&);
 
 private:
-    ConnectionFromClient(NonnullOwnPtr<IPC::Transport>, IsPrimaryConnection, ConnectionMap&, Optional<HTTP::DiskCache&>);
+    ConnectionFromClient(NonnullOwnPtr<IPC::Transport>, IsPrimaryConnection, IsPrivate, ConnectionMap&, Optional<HTTP::DiskCache&>, ByteString alt_svc_cache_path);
 
     virtual Messages::RequestServer::InitTransportResponse init_transport(int peer_pid) override;
-    virtual Messages::RequestServer::ConnectNewClientResponse connect_new_client() override;
-    virtual Messages::RequestServer::ConnectNewClientsResponse connect_new_clients(size_t count) override;
+    virtual Messages::RequestServer::ConnectNewClientResponse connect_new_client(IsPrivate) override;
+    virtual Messages::RequestServer::ConnectNewClientsResponse connect_new_clients(size_t count, IsPrivate) override;
 
     virtual void set_disk_cache_settings(HTTP::DiskCacheSettings) override;
 
     virtual Messages::RequestServer::IsSupportedProtocolResponse is_supported_protocol(ByteString) override;
+    virtual Messages::RequestServer::GetClientIdResponse get_client_id() override;
     virtual void set_dns_server(ByteString host_or_address, u16 port, bool use_tls, bool validate_dnssec_locally) override;
     virtual void set_use_system_dns() override;
-    virtual void start_request(u64 request_id, ByteString, URL::URL, Vector<HTTP::Header>, ByteBuffer, HTTP::CacheMode, HTTP::Cookie::IncludeCredentials, Core::ProxyData) override;
+    virtual void start_request(u64 request_id, ByteString, URL::URL, Vector<HTTP::Header>, ByteBuffer, HTTP::CacheMode, HTTP::Cookie::IncludeCredentials, Core::ProxyData, bool keep_alive_for_transfer, Optional<u32> address_selection_hint) override;
+    virtual void adopt_request(int source_client_id, u64 source_request_id, u64 target_request_id) override;
+    virtual void release_request_for_transfer(u64 request_id) override;
     virtual Messages::RequestServer::StopRequestResponse stop_request(u64 request_id) override;
     virtual Messages::RequestServer::SetCertificateResponse set_certificate(u64 request_id, ByteString, ByteString) override;
     virtual void ensure_connection(u64 request_id, URL::URL url, ::RequestServer::CacheLevel cache_level) override;
 
-    virtual void retrieved_http_cookie(int client_id, u64 request_id, String cookie) override;
+    virtual void retrieved_http_cookie(int client_id, u64 request_id, RequestServer::RequestType request_type, String cookie) override;
 
     virtual void estimate_cache_size_accessed_since(u64 cache_size_estimation_id, UnixDateTime since) override;
     virtual void remove_cache_entries_accessed_since(UnixDateTime since) override;
+    virtual Messages::RequestServer::StoreCacheAssociatedDataResponse store_cache_associated_data(URL::URL, ByteString method, Vector<HTTP::Header> request_headers, Optional<u64> vary_key, HTTP::CacheEntryAssociatedData, Core::AnonymousBuffer) override;
+    virtual Messages::RequestServer::RetrieveCacheAssociatedDataResponse retrieve_cache_associated_data(URL::URL, ByteString method, Vector<HTTP::Header> request_headers, Optional<u64> vary_key, HTTP::CacheEntryAssociatedData) override;
+    virtual Messages::RequestServer::CreateSyntheticCacheEntryResponse create_synthetic_cache_entry(URL::URL, ByteString method) override;
 
     virtual void websocket_connect(u64 websocket_id, URL::URL, ByteString, Vector<ByteString>, Vector<ByteString>, Vector<HTTP::Header>) override;
     virtual void websocket_send(u64 websocket_id, bool, ByteBuffer) override;
+    virtual void websocket_send_shared(u64 websocket_id, bool, Core::AnonymousBuffer) override;
     virtual void websocket_close(u64 websocket_id, u16, ByteString) override;
     virtual Messages::RequestServer::WebsocketSetCertificateResponse websocket_set_certificate(u64, ByteString, ByteString) override;
 
@@ -71,9 +86,11 @@ private:
     static int on_socket_callback(void*, int sockfd, int what, void* user_data, void*);
     static int on_timeout_callback(void*, long timeout_ms, void* user_data);
     void check_active_requests();
-#endif
+    void fail_websocket(u64 websocket_id, Requests::WebSocket::Error);
 
-    ErrorOr<IPC::TransportHandle> create_client_socket();
+    ErrorOr<IPC::TransportHandle> create_client_socket(IsPrivate);
+
+    IsPrivate m_is_private { IsPrivate::No };
 
     ConnectionMap& m_connections;
     Optional<HTTP::DiskCache&> m_disk_cache;
@@ -84,6 +101,7 @@ private:
 
     HashMap<u64, NonnullOwnPtr<Request>> m_active_requests;
     HashMap<u64, NonnullOwnPtr<Request>> m_active_revalidation_requests;
+    HashTable<u64> m_pending_websockets;
     HashMap<u64, RefPtr<WebSocket::WebSocket>> m_websockets;
 
     RefPtr<Core::Timer> m_timer;
@@ -93,9 +111,12 @@ private:
 #endif
 
     NonnullRefPtr<Resolver> m_resolver;
-    ByteString m_alt_svc_cache_path;
+    Optional<ByteString> m_alt_svc_cache_path;
 
     u64 m_next_revalidation_request_id { 0 };
+
+    Optional<MonotonicTime> m_burst_window_started_at;
+    u64 m_requests_in_burst_window { 0 };
 };
 
 constexpr inline uintptr_t websocket_private_tag = 0x1;

@@ -5,34 +5,27 @@
  */
 
 #include "CSSFunctionDescriptors.h"
-#include <LibWeb/Bindings/CSSFunctionDescriptorsPrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibGC/Heap.h>
 
 namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSFunctionDescriptors);
 
-GC::Ref<CSSFunctionDescriptors> CSSFunctionDescriptors::create(JS::Realm& realm, Vector<Descriptor> descriptors)
+GC::Ref<CSSFunctionDescriptors> CSSFunctionDescriptors::create(Vector<Descriptor> descriptors)
 {
-    return realm.create<CSSFunctionDescriptors>(realm, move(descriptors));
-}
-
-void CSSFunctionDescriptors::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSFunctionDescriptors);
-    Base::initialize(realm);
+    return GC::Heap::the().allocate<CSSFunctionDescriptors>(move(descriptors));
 }
 
 // https://drafts.csswg.org/css-mixins-1/#dom-cssfunctiondescriptors-result
-String CSSFunctionDescriptors::result() const
+Utf16String CSSFunctionDescriptors::result() const
 {
-    return get_property_value("result"_string);
+    return get_property_value("result"_utf16_fly_string);
 }
 
 // https://drafts.csswg.org/css-mixins-1/#dom-cssfunctiondescriptors-result
-WebIDL::ExceptionOr<void> CSSFunctionDescriptors::set_result(StringView value)
+WebIDL::ExceptionOr<void> CSSFunctionDescriptors::set_result(Utf16View value)
 {
-    return set_property("result"_string, value, ""sv);
+    return set_property("result"_utf16_fly_string, value, u""sv);
 }
 
 }

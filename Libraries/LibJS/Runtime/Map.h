@@ -34,7 +34,14 @@ public:
     void map_set(Value const&, Value);
     size_t map_size() const;
 
+    virtual size_t external_memory_size() const override;
+
     struct EndIterator {
+    };
+
+    struct Entry {
+        Value key;
+        Value value;
     };
 
     template<bool IsConst>
@@ -51,16 +58,11 @@ public:
             return *this;
         }
 
-        decltype(auto) operator*()
+        Entry operator*() const
         {
             ensure_next_element();
-            return *m_map->m_entries.find(*m_map->m_keys.begin_from(m_index));
-        }
-
-        decltype(auto) operator*() const
-        {
-            ensure_next_element();
-            return *m_map->m_entries.find(*m_map->m_keys.begin_from(m_index));
+            auto const& entry = *m_map->m_entries.find(*m_map->m_keys.begin_from(m_index));
+            return { entry.key, entry.value };
         }
 
         bool operator==(IteratorImpl const& other) const { return m_index == other.m_index && &m_map == &other.m_map; }
@@ -117,6 +119,8 @@ public:
 private:
     explicit Map(Object& prototype);
     virtual void visit_edges(Visitor& visitor) override;
+
+    void account_external_memory_change(size_t old_external_memory_size);
 
     size_t m_next_insertion_id { 0 };
     RedBlackTree<size_t, Value> m_keys;

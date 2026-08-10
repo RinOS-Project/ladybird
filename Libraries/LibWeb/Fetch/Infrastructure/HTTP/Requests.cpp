@@ -5,6 +5,7 @@
  */
 
 #include <AK/Array.h>
+#include <AK/CharacterTypes.h>
 #include <LibGC/Heap.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibTextCodec/Encoder.h>
@@ -14,15 +15,20 @@
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Fetch/Fetching/PendingResponse.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
-#include <LibWeb/HTML/TraversableNavigable.h>
+#include <LibWeb/HTML/LocalTraversableNavigable.h>
 
 namespace Web::Fetch::Infrastructure {
 
 GC_DEFINE_ALLOCATOR(Request);
 
-GC::Ref<Request> Request::create(JS::VM& vm)
+GC::Ref<Request> Request::create()
 {
-    return vm.heap().allocate<Request>(HTTP::HeaderList::create());
+    return GC::Heap::the().allocate<Request>(HTTP::HeaderList::create());
+}
+
+GC::Ref<Request> Request::create(JS::VM&)
+{
+    return create();
 }
 
 Request::Request(NonnullRefPtr<HTTP::HeaderList> header_list)
@@ -35,18 +41,11 @@ void Request::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_client);
-    m_body.visit(
-        [&](GC::Ref<Body>& body) { visitor.visit(body); },
-        [](auto&) {});
+    visitor.visit(m_body);
     visitor.visit(m_reserved_client);
-    m_traversable_for_user_prompts.visit(
-        [&](GC::Ptr<HTML::EnvironmentSettingsObject> const& value) { visitor.visit(value); },
-        [&](GC::Ptr<HTML::TraversableNavigable> const& value) { visitor.visit(value); },
-        [](auto const&) {});
+    visitor.visit(m_traversable_for_user_prompts);
     visitor.visit(m_pending_responses);
-    m_policy_container.visit(
-        [&](GC::Ref<HTML::PolicyContainer> const& policy_container) { visitor.visit(policy_container); },
-        [](auto const&) {});
+    visitor.visit(m_policy_container);
 }
 
 // https://fetch.spec.whatwg.org/#concept-request-url
@@ -224,10 +223,8 @@ ByteString Request::byte_serialize_origin() const
 GC::Ref<Request> Request::clone(JS::Realm& realm) const
 {
     // To clone a request request, run these steps:
-    auto& vm = realm.vm();
-
     // 1. Let newRequest be a copy of request, except for its body.
-    auto new_request = Infrastructure::Request::create(vm);
+    auto new_request = Infrastructure::Request::create();
     new_request->set_method(m_method);
     new_request->set_local_urls_only(m_local_urls_only);
     for (auto const& header : *m_header_list)
@@ -425,8 +422,7 @@ StringView request_destination_to_string(Request::Destination destination)
     VERIFY_NOT_REACHED();
 }
 
-// https://fetch.spec.whatwg.org/#concept-potential-destination-translate
-Optional<Request::Destination> translate_potential_destination(StringView potential_destination)
+static Optional<Request::Destination> translate_potential_destination_impl(auto potential_destination)
 {
     // 1. If potentialDestination is "fetch", then return the empty string.
     if (potential_destination == "fetch"sv)
@@ -481,6 +477,12 @@ Optional<Request::Destination> translate_potential_destination(StringView potent
     VERIFY_NOT_REACHED();
 }
 
+// https://fetch.spec.whatwg.org/#concept-potential-destination-translate
+Optional<Request::Destination> translate_potential_destination(Utf16View potential_destination)
+{
+    return translate_potential_destination_impl(potential_destination);
+}
+
 // https://fetch.spec.whatwg.org/#request-destination-script-like
 bool destination_is_script_like(Request::Destination destination)
 {
@@ -512,64 +514,82 @@ StringView request_mode_to_string(Request::Mode mode)
     VERIFY_NOT_REACHED();
 }
 
-FlyString initiator_type_to_string(Request::InitiatorType initiator_type)
+Utf16FlyString initiator_type_to_string(Request::InitiatorType initiator_type)
 {
     switch (initiator_type) {
     case Request::InitiatorType::Audio:
-        return "audio"_fly_string;
+        return "audio"_utf16_fly_string;
     case Request::InitiatorType::Beacon:
-        return "beacon"_fly_string;
+        return "beacon"_utf16_fly_string;
     case Request::InitiatorType::Body:
-        return "body"_fly_string;
+        return "body"_utf16_fly_string;
     case Request::InitiatorType::CSS:
-        return "css"_fly_string;
+        return "css"_utf16_fly_string;
     case Request::InitiatorType::EarlyHint:
-        return "early-hints"_fly_string;
+        return "early-hints"_utf16_fly_string;
     case Request::InitiatorType::Embed:
-        return "embed"_fly_string;
+        return "embed"_utf16_fly_string;
     case Request::InitiatorType::Fetch:
-        return "fetch"_fly_string;
+        return "fetch"_utf16_fly_string;
     case Request::InitiatorType::Font:
-        return "font"_fly_string;
+        return "font"_utf16_fly_string;
     case Request::InitiatorType::Frame:
-        return "frame"_fly_string;
+        return "frame"_utf16_fly_string;
     case Request::InitiatorType::IFrame:
-        return "iframe"_fly_string;
+        return "iframe"_utf16_fly_string;
     case Request::InitiatorType::Image:
-        return "image"_fly_string;
+        return "image"_utf16_fly_string;
     case Request::InitiatorType::IMG:
-        return "img"_fly_string;
+        return "img"_utf16_fly_string;
     case Request::InitiatorType::Input:
-        return "input"_fly_string;
+        return "input"_utf16_fly_string;
     case Request::InitiatorType::Link:
-        return "link"_fly_string;
+        return "link"_utf16_fly_string;
     case Request::InitiatorType::Object:
-        return "object"_fly_string;
+        return "object"_utf16_fly_string;
     case Request::InitiatorType::Ping:
-        return "ping"_fly_string;
+        return "ping"_utf16_fly_string;
     case Request::InitiatorType::Script:
-        return "script"_fly_string;
+        return "script"_utf16_fly_string;
     case Request::InitiatorType::Track:
-        return "track"_fly_string;
+        return "track"_utf16_fly_string;
     case Request::InitiatorType::Video:
-        return "video"_fly_string;
+        return "video"_utf16_fly_string;
     case Request::InitiatorType::XMLHttpRequest:
-        return "xmlhttprequest"_fly_string;
+        return "xmlhttprequest"_utf16_fly_string;
     case Request::InitiatorType::Other:
-        return "other"_fly_string;
+        return "other"_utf16_fly_string;
     }
     VERIFY_NOT_REACHED();
 }
 
-Optional<Request::Priority> request_priority_from_string(StringView string)
+static bool equals_ignoring_ascii_case(Utf16View string, StringView ascii_string)
 {
-    if (string.equals_ignoring_ascii_case("high"sv))
+    if (string.length_in_code_units() != ascii_string.length())
+        return false;
+
+    for (size_t i = 0; i < string.length_in_code_units(); ++i) {
+        if (AK::to_ascii_lowercase(string.code_unit_at(i)) != AK::to_ascii_lowercase(ascii_string[i]))
+            return false;
+    }
+
+    return true;
+}
+
+Optional<Request::Priority> request_priority_from_string(Utf16View string)
+{
+    if (equals_ignoring_ascii_case(string, "high"sv))
         return Request::Priority::High;
-    if (string.equals_ignoring_ascii_case("low"sv))
+    if (equals_ignoring_ascii_case(string, "low"sv))
         return Request::Priority::Low;
-    if (string.equals_ignoring_ascii_case("auto"sv))
+    if (equals_ignoring_ascii_case(string, "auto"sv))
         return Request::Priority::Auto;
     return {};
+}
+
+Optional<Request::Priority> request_priority_from_string(Utf16String const& string)
+{
+    return request_priority_from_string(string.utf16_view());
 }
 
 }

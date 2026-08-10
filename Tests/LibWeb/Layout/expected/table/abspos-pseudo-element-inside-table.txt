@@ -6,18 +6,17 @@ Viewport <#document> at [0,0] [0+0+0 800 0+0+0] [0+0+0 600 0+0+0] [BFC] children
           Box <thead> at [10,10] table-header-group [0+0+0 780 0+0+0] [0+0+0 0 0+0+0] children: not-inline
             Box <tr> at [10,10] table-row [0+0+0 780 0+0+0] [0+0+0 0 0+0+0] children: not-inline
               BlockContainer <(anonymous)> at [10,10] table-cell [0+0+0 780 0+0+0] [0+0+0 0 0+0+0] [BFC] children: not-inline
-                BlockContainer <(anonymous)> at [0,590] positioned [0+0+0 800 0+0+0] [0+0+0 10 0+0+0] [BFC] children: inline
-                  TextNode <#text> (not painted)
+                BlockContainer <(anonymous)> at [0,590] positioned [0+0+0 800 0+0+0] [0+0+0 10 0+0+0] [BFC] children: not-inline
 
 ViewportPaintable (Viewport<#document>) [0,0 800x600]
   PaintableWithLines (BlockContainer<HTML>) [0,0 800x20]
     PaintableWithLines (BlockContainer<BODY>) [8,8 784x4]
       PaintableWithLines (TableWrapper(anonymous)) [8,8 784x4]
-        PaintableBox (Box<TABLE>) [8,8 784x4]
-          PaintableBox (Box<THEAD>) [10,10 780x0]
-            PaintableBox (Box<TR>) [10,10 780x0]
+        Paintable (Box<TABLE>) [8,8 784x4]
+          Paintable (Box<THEAD>) [10,10 780x0]
+            Paintable (Box<TR>) [10,10 780x0]
               PaintableWithLines (BlockContainer(anonymous)) [10,10 780x0]
                 PaintableWithLines (BlockContainer(anonymous)) [0,590 800x10]
 
-SC for Viewport<#document> [0,0 800x600] [children: 1] (z-index: auto)
- SC for BlockContainer<HTML> [0,0 800x20] [children: 0] (z-index: auto)
+SC for Viewport<#document> [0,0 800x600] (z-index: auto)
+ SC for BlockContainer<HTML> [0,0 800x20] (z-index: auto)

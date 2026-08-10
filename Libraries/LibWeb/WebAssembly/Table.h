@@ -9,42 +9,39 @@
 
 #include <AK/Optional.h>
 #include <LibGC/Ptr.h>
-#include <LibJS/Forward.h>
-#include <LibJS/Runtime/Value.h>
 #include <LibWasm/AbstractMachine/AbstractMachine.h>
-#include <LibWeb/Bindings/ExceptionOrUtils.h>
-#include <LibWeb/Bindings/PlatformObject.h>
-#include <LibWeb/Bindings/TablePrototype.h>
+#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/WebAssembly/WebAssembly.h>
+#include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::WebAssembly {
 
-struct TableDescriptor {
-    Bindings::TableKind element;
-    u32 initial { 0 };
-    Optional<u32> maximum;
-};
-
-class Table : public Bindings::PlatformObject {
-    WEB_PLATFORM_OBJECT(Table, Bindings::PlatformObject);
+class Table : public Bindings::GCAllocatedWrappable {
+    WEB_WRAPPABLE(Table, Bindings::GCAllocatedWrappable);
     GC_DECLARE_ALLOCATOR(Table);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<Table>> construct_impl(JS::Realm&, TableDescriptor& descriptor, JS::Value value);
+    static WebIDL::ExceptionOr<GC::Ref<Table>> create(NonnullRefPtr<Detail::WebAssemblyCache>, Wasm::ValueType, Wasm::AddressType, u64 initial, Optional<u64> maximum, Wasm::Reference);
 
-    WebIDL::ExceptionOr<u32> grow(u32 delta, JS::Value value);
+    WebIDL::ExceptionOr<u64> grow(u64 delta, Wasm::Reference);
 
-    WebIDL::ExceptionOr<JS::Value> get(u32 index) const;
-    WebIDL::ExceptionOr<void> set(u32 index, JS::Value value);
+    WebIDL::ExceptionOr<Wasm::Reference> get(u64 index) const;
+    WebIDL::ExceptionOr<void> set(u64 index, Wasm::Reference);
 
-    WebIDL::ExceptionOr<u32> length() const;
+    WebIDL::ExceptionOr<u64> length() const;
+    WebIDL::ExceptionOr<Wasm::AddressType> address_type() const;
+    WebIDL::ExceptionOr<Wasm::ValueType> element_type() const;
 
     Wasm::TableAddress address() const { return m_address; }
+    Detail::WebAssemblyCache& cache() { return *m_cache; }
+    Detail::WebAssemblyCache& cache() const { return *m_cache; }
 
 private:
-    Table(JS::Realm&, Wasm::TableAddress);
+    Table(NonnullRefPtr<Detail::WebAssemblyCache>, Wasm::TableAddress);
 
-    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
+    NonnullRefPtr<Detail::WebAssemblyCache> m_cache;
     Wasm::TableAddress m_address;
 };
 

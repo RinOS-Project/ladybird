@@ -1,4 +1,4 @@
-$b1c0097f var-shadow-in-default-param.js:7:1
+$542e1f1b var-shadow-in-default-param.js:7:1
   Registers: 8
   Blocks:    1
   Constants:
@@ -6,16 +6,15 @@ $b1c0097f var-shadow-in-default-param.js:7:1
     [1] = Undefined
 
 block0:
-  [   0] GetLexicalEnvironment dst:reg4
-  [   8] SetGlobal `shadow`, src:String("outer")
-  [  20] GetGlobal dst:reg6, `shadow_in_default`
-  [  38] Call dst:reg5, callee:reg6, this_value:Undefined, shadow_in_default
-  [  58] GetGlobal dst:reg7, `no_conflict`
-  [  70] Call dst:reg6, callee:reg7, this_value:Undefined, no_conflict
-  [  90] End value:reg6
+  [   0] SetGlobal `shadow`, src:String("outer")
+  [  10] GetGlobal dst:reg6, `shadow_in_default`
+  [  20] Call dst:reg5, callee:reg6, this_value:Undefined, shadow_in_default
+  [  40] GetGlobal dst:reg7, `no_conflict`
+  [  50] Call dst:reg6, callee:reg7, this_value:Undefined, no_conflict
+  [  70] End value:reg6
 
 
-shadow_in_default$8b450421 var-shadow-in-default-param.js:8:32
+shadow_in_default$b0bb3597 var-shadow-in-default-param.js:8:32
   Registers: 7
   Blocks:    3
   Constants:
@@ -23,24 +22,23 @@ shadow_in_default$8b450421 var-shadow-in-default-param.js:8:32
     [1] = String("inner")
 
 block0:
-  [   0] GetLexicalEnvironment dst:reg4
-  [   8] JumpUndefined condition:arg0, true_target:block1, false_target:block2
+  [   0] JumpUndefined condition:arg0, true_target:block1, false_target:block2
 
 block1:
-  [  18] GetInitializedBinding dst:reg5, `shadow`
-  [  30] Mov dst:arg0, src:reg5
+  [  10] DynamicGetInitializedBinding dst:reg5, `shadow`
+  [  20] Mov dst:arg0, src:reg5
 
 block2:
-  [  40] CreateVariableEnvironment capacity:1
-  [  48] GetLexicalEnvironment dst:reg5
-  [  50] Mov dst:reg6, src:Undefined
-  [  60] CreateVariable `shadow`, is_immutable:false, is_global:false, is_strict:false
-  [  70] InitializeVariableBinding `shadow`, src:reg6
-  [  88] SetLexicalBinding `shadow`, src:String("inner")
-  [  a0] Return value:arg0
+  [  30] CreateVariableEnvironment capacity:1
+  [  38] GetLexicalEnvironment dst:reg5
+  [  40] MovSrcUndefined dst:reg6
+  [  48] CreateVariable `shadow`, is_immutable:false, is_global:false, is_strict:false
+  [  58] InitializeVariableBinding `shadow`, src:reg6
+  [  70] SetLexicalBinding `shadow`, src:String("inner")
+  [  88] Return value:arg0
 
 
-no_conflict$0d2d606f var-shadow-in-default-param.js:17:5
+no_conflict$f0c5f291 var-shadow-in-default-param.js:17:5
   Registers: 6
   Blocks:    3
   Locals:    y~0
@@ -50,12 +48,11 @@ no_conflict$0d2d606f var-shadow-in-default-param.js:17:5
     [2] = Int32(2)
 
 block0:
-  [   0] GetLexicalEnvironment dst:reg4
-  [   8] JumpUndefined condition:arg0, true_target:block1, false_target:block2
+  [   0] JumpUndefined condition:arg0, true_target:block1, false_target:block2
 
 block1:
-  [  18] Mov dst:arg0, src:Int32(1)
+  [  10] Mov dst:arg0, src:Int32(1)
 
 block2:
-  [  28] Mov3 dst1:reg5, src1:Undefined, dst2:y~0, src2:reg5, dst3:y~0, src3:Int32(2)
-  [  48] Return value:y~0
+  [  20] Mov3 c0_dst:reg5, c0_src:Undefined, c1_dst:y~0, c1_src:reg5, c2_dst:y~0, c2_src:Int32(2)
+  [  40] Return value:y~0

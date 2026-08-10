@@ -6,26 +6,33 @@
 
 #pragma once
 
-#include <AK/String.h>
-#include <AK/StringBuilder.h>
-#include <AK/StringView.h>
+#include <AK/Span.h>
 #include <AK/Time.h>
+#include <AK/Utf16FlyString.h>
+#include <AK/Utf16String.h>
+#include <AK/Utf16StringBuilder.h>
+#include <AK/Utf16View.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
 #include <LibURL/URL.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/Infra/SerializedURL.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 #include <LibWeb/WebIDL/Types.h>
 
+namespace Web::Bindings {
+
+struct EventSourceInit;
+
+}
+
 namespace Web::HTML {
 
-struct EventSourceInit {
-    bool with_credentials { false };
-};
+using EventSourceInit = Bindings::EventSourceInit;
 
 class EventSource : public DOM::EventTarget {
-    WEB_PLATFORM_OBJECT(EventSource, DOM::EventTarget);
+    WEB_WRAPPABLE(EventSource, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(EventSource);
 
 public:
@@ -33,10 +40,11 @@ public:
 
     virtual ~EventSource() override;
 
-    static WebIDL::ExceptionOr<GC::Ref<EventSource>> construct_impl(JS::Realm&, StringView url, EventSourceInit event_source_init_dict = {});
+    static WebIDL::ExceptionOr<GC::Ref<EventSource>> create(WindowOrWorkerGlobalScopeMixin&, Utf16View url, EventSourceInit const&);
+    static WebIDL::ExceptionOr<GC::Ref<EventSource>> create_for_constructor(JS::Object&, Utf16View url, EventSourceInit const&);
 
     // https://html.spec.whatwg.org/multipage/server-sent-events.html#dom-eventsource-url
-    String url() const { return m_url.serialize(); }
+    Utf16String url() const { return utf16_string_from_url_ascii(m_url.serialize()); }
 
     // https://html.spec.whatwg.org/multipage/server-sent-events.html#dom-eventsource-withcredentials
     bool with_credentials() const { return m_with_credentials; }
@@ -63,9 +71,8 @@ public:
     void forcibly_close();
 
 private:
-    explicit EventSource(JS::Realm&);
+    explicit EventSource(GC::Ref<DOM::EventTarget> relevant_global_object);
 
-    virtual void initialize(JS::Realm&) override;
     virtual void finalize() override;
     virtual void visit_edges(Cell::Visitor&) override;
 
@@ -73,9 +80,12 @@ private:
     void reestablish_the_connection();
     void fail_the_connection();
 
-    void interpret_response(StringView);
-    void process_field(StringView field, StringView value);
+    void interpret_response(ReadonlyBytes);
+    void process_field(Utf16View field, Utf16View value);
     void dispatch_the_event();
+    JS::Object& relevant_global_object() const;
+    GC::Ref<DOM::Event> create_associated_event(Utf16FlyString const&) const;
+    WindowOrWorkerGlobalScopeMixin& relevant_global() const;
 
     // https://html.spec.whatwg.org/multipage/server-sent-events.html#concept-eventsource-url
     URL::URL m_url;
@@ -87,10 +97,10 @@ private:
     AK::Duration m_reconnection_time { AK::Duration::from_seconds(3) };
 
     // https://html.spec.whatwg.org/multipage/server-sent-events.html#concept-event-stream-last-event-id
-    String m_last_event_id;
+    Utf16String m_last_event_id;
 
-    String m_event_type;
-    StringBuilder m_data;
+    Utf16FlyString m_event_type;
+    Utf16StringBuilder m_data;
 
     bool m_with_credentials { false };
 
@@ -98,6 +108,7 @@ private:
 
     GC::Ptr<Fetch::Infrastructure::FetchAlgorithms> m_fetch_algorithms;
     GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
+    GC::Ref<DOM::EventTarget> m_global_object;
 };
 
 }

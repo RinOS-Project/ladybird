@@ -7,12 +7,16 @@
  */
 
 #include <AK/GenericShorthands.h>
+#include <LibGC/RootHashTable.h>
+#include <LibGC/RootVector.h>
 #include <LibJS/CyclicModule.h>
 #include <LibJS/Module.h>
+#include <LibJS/Runtime/ExternalMemory.h>
 #include <LibJS/Runtime/ModuleEnvironment.h>
 #include <LibJS/Runtime/ModuleNamespaceObject.h>
 #include <LibJS/Runtime/ModuleRequest.h>
 #include <LibJS/Runtime/Promise.h>
+#include <LibJS/Runtime/PromiseCapability.h>
 #include <LibJS/Runtime/VM.h>
 
 namespace JS {
@@ -40,27 +44,32 @@ void Module::visit_edges(Cell::Visitor& visitor)
         m_host_defined->visit_host_defined_self(visitor);
 }
 
+size_t Module::external_memory_size() const
+{
+    return byte_string_external_memory_size(m_filename);
+}
+
 // 16.2.1.5.1 EvaluateModuleSync ( module ), https://tc39.es/ecma262/#sec-EvaluateModuleSync
 ThrowCompletionOr<void> Module::evaluate_module_sync(VM& vm)
 {
     // 1. Assert: module is not a Cyclic Module Record.
     // 2. Let promise be module.Evaluate().
-    auto promise = TRY(evaluate(vm));
+    auto& promise = static_cast<JS::Promise&>(*TRY(evaluate(vm))->promise());
 
     // 3. Assert: promise.[[PromiseState]] is either FULFILLED or REJECTED.
-    VERIFY(first_is_one_of(promise->state(), Promise::State::Fulfilled, Promise::State::Rejected));
+    VERIFY(first_is_one_of(promise.state(), Promise::State::Fulfilled, Promise::State::Rejected));
 
     // 4. If promise.[[PromiseState]] is REJECTED, then
-    if (promise->state() == Promise::State::Rejected) {
+    if (promise.state() == Promise::State::Rejected) {
         // a. If promise.[[PromiseIsHandled]] is false, perform HostPromiseRejectionTracker(promise, "handle").
-        if (!promise->is_handled())
+        if (!promise.is_handled())
             vm.host_promise_rejection_tracker(promise, Promise::RejectionOperation::Handle);
 
         // b. Set promise.[[PromiseIsHandled]] to true.
-        promise->set_is_handled();
+        promise.set_is_handled();
 
         // c. Return ThrowCompletion(promise.[[PromiseResult]]).
-        return throw_completion(promise->result());
+        return throw_completion(promise.result());
     }
 
     // 5. Return UNUSED.
@@ -68,7 +77,7 @@ ThrowCompletionOr<void> Module::evaluate_module_sync(VM& vm)
 }
 
 // 16.2.1.5.1.1 InnerModuleLinking ( module, stack, index ), https://tc39.es/ecma262/#sec-InnerModuleLinking
-ThrowCompletionOr<u32> Module::inner_module_linking(VM& vm, Vector<Module*>&, u32 index)
+ThrowCompletionOr<u32> Module::inner_module_linking(VM& vm, GC::RootVector<GC::Ref<Module>>&, u32 index)
 {
     // 1. If module is not a Cyclic Module Record, then
     // a. Perform ? module.Link().
@@ -78,7 +87,7 @@ ThrowCompletionOr<u32> Module::inner_module_linking(VM& vm, Vector<Module*>&, u3
 }
 
 // 16.2.1.5.2.1 InnerModuleEvaluation ( module, stack, index ), https://tc39.es/ecma262/#sec-innermoduleevaluation
-ThrowCompletionOr<u32> Module::inner_module_evaluation(VM& vm, Vector<Module*>&, u32 index)
+ThrowCompletionOr<u32> Module::inner_module_evaluation(VM& vm, GC::RootVector<GC::Ref<Module>>&, u32 index)
 {
     // 1. If module is not a Cyclic Module Record, then
     // a. Perform ? EvaluateModuleSync(module).
@@ -179,7 +188,7 @@ GC::Ref<Object> Module::get_module_namespace(VM& vm)
 
 Vector<Utf16FlyString> Module::get_exported_names(VM& vm)
 {
-    HashTable<Module const*> export_star_set;
+    GC::RootHashTable<GC::Ref<Module const>> export_star_set;
     return get_exported_names(vm, export_star_set);
 }
 

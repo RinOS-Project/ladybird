@@ -7,20 +7,35 @@
 
 #pragma once
 
-#include <AK/MemoryStream.h>
+#include <AK/Atomic.h>
 #include <AK/Queue.h>
+#include <AK/SinglyLinkedList.h>
+#include <AK/SinglyLinkedListSizePolicy.h>
 #include <LibCore/Socket.h>
 #include <LibIPC/Attachment.h>
 #include <LibIPC/AutoCloseFileDescriptor.h>
+#include <LibIPC/Forward.h>
+#include <LibIPC/ReceivedMessageBytes.h>
 #include <LibIPC/TransportHandle.h>
-#include <LibThreading/ConditionVariable.h>
+#include <LibSync/ConditionVariable.h>
+#include <LibSync/Mutex.h>
 #include <LibThreading/Forward.h>
 
 namespace IPC {
 
+struct SocketMessageHeader {
+    enum class Type : u8 {
+        Payload = 0,
+        FileDescriptorAcknowledgement = 1,
+    };
+    Type type { Type::Payload };
+    u32 payload_size { 0 };
+    u32 fd_count { 0 };
+};
+
 class SendQueue : public AtomicRefCounted<SendQueue> {
 public:
-    void enqueue_message(ReadonlyBytes header, ReadonlyBytes payload, Vector<int>&& fds);
+    void enqueue_message(SocketMessageHeader, MessageDataType payload, Vector<int>&& fds);
     struct BytesAndFds {
         Vector<u8> bytes;
         Vector<int> fds;
@@ -29,9 +44,19 @@ public:
     void discard(size_t bytes_count, size_t fds_count);
 
 private:
-    AllocatingMemoryStream m_stream;
+    struct QueuedMessage {
+        SocketMessageHeader header;
+        MessageDataType payload;
+        size_t unsent_fd_count { 0 };
+        size_t start_offset { 0 };
+
+        size_t size() const { return sizeof(SocketMessageHeader) + payload.size(); }
+    };
+
+    SinglyLinkedList<QueuedMessage, AK::DefaultSizeCalculationPolicy> m_queued_messages;
+    size_t m_queued_byte_count { 0 };
     Vector<int> m_fds;
-    Threading::Mutex m_mutex;
+    Sync::Mutex m_mutex;
 };
 
 class TransportSocket {
@@ -59,19 +84,30 @@ public:
 
     void wait_until_readable();
 
-    void post_message(Vector<u8> const&, Vector<Attachment>& attachments);
+    ErrorOr<void> post_message(MessageDataType, Vector<Attachment>& attachments);
 
     enum class ShouldShutdown {
         No,
         Yes,
     };
     struct Message {
-        Vector<u8> bytes;
+        ReceivedMessageBytes bytes;
         Queue<Attachment> attachments;
     };
     ShouldShutdown read_as_many_messages_as_possible_without_blocking(Function<void(Message&&)>&&);
 
     ErrorOr<TransportHandle> release_for_transfer();
+
+    // Test seam: When set to a non-zero value, the IO thread wakes the consumer and then pauses for the given duration
+    // on EOF — before the messages it has just read are parsed and appended. That forces a consumer drain into the
+    // narrow window between observing EOF and the final message becoming available — which is otherwise hit only under
+    // rare timing. No-op in production.
+    static void set_eof_drain_window_for_test(u32 milliseconds);
+
+    // Test seam: When set, the IO thread skips its in-loop read on POLLIN — modelling a stop path that ends the loop
+    // without having read a message already buffered on the socket (e.g. SocketClosed from a failed send). Exercises
+    // the loop-exit drain. No-op in production.
+    static void set_skip_inloop_read_for_test(bool);
 
 private:
     enum class TransferState {
@@ -94,22 +130,30 @@ private:
     void notify_read_available();
 
     NonnullOwnPtr<Core::LocalSocket> m_socket;
+    Atomic<bool> m_socket_is_open { true };
 
     // After file descriptor is sent, it is moved to the wait queue until an acknowledgement is received from the peer.
     // This is necessary to handle a specific behavior of the macOS kernel, which may prematurely garbage-collect the file
     // descriptor contained in the message before the peer receives it. https://openradar.me/9477351
     Queue<NonnullRefPtr<AutoCloseFileDescriptor>> m_fds_retained_until_received_by_peer;
-    Threading::Mutex m_fds_retained_until_received_by_peer_mutex;
+    Sync::Mutex m_fds_retained_until_received_by_peer_mutex;
 
     RefPtr<Threading::Thread> m_io_thread;
     RefPtr<SendQueue> m_send_queue;
     Atomic<IOThreadState> m_io_thread_state { IOThreadState::Running };
+    Atomic<bool> m_is_being_transferred { false };
     Atomic<bool> m_peer_eof { false };
     ByteBuffer m_unprocessed_bytes;
     Queue<Attachment> m_unprocessed_attachments;
-    Threading::Mutex m_incoming_mutex;
-    Threading::ConditionVariable m_incoming_cv { m_incoming_mutex };
+    Sync::Mutex m_incoming_mutex;
+    Sync::ConditionVariable m_incoming_cv { m_incoming_mutex };
     Vector<NonnullOwnPtr<Message>> m_incoming_messages;
+    // Consumer-visible EOF, guarded by m_incoming_mutex. Distinct from m_peer_eof. This is set only after the final
+    // batch of messages have been parsed and appended to m_incoming_messages under the same lock.
+    bool m_incoming_eof { false };
+
+    static Atomic<u32> s_eof_drain_window_for_test_ms;
+    static Atomic<bool> s_skip_inloop_read_for_test;
 
     RefPtr<AutoCloseFileDescriptor> m_wakeup_io_thread_read_fd;
     RefPtr<AutoCloseFileDescriptor> m_wakeup_io_thread_write_fd;

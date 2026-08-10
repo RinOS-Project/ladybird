@@ -7,27 +7,27 @@
 #pragma once
 
 #include <AK/String.h>
+#include <LibJS/Forward.h>
+#include <LibWeb/Bindings/CommandEvent.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/Utils.h>
+#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 
 namespace Web::HTML {
 
-struct CommandEventInit : public DOM::EventInit {
-    GC::Ptr<DOM::Element> source;
-    String command;
-};
+using CommandEventInit = Bindings::CommandEventInit;
 
 class CommandEvent : public DOM::Event {
-    WEB_PLATFORM_OBJECT(CommandEvent, DOM::Event);
+    WEB_WRAPPABLE(CommandEvent, DOM::Event);
     GC_DECLARE_ALLOCATOR(CommandEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<CommandEvent> create(JS::Realm&, FlyString const& event_name, CommandEventInit = {});
-    static WebIDL::ExceptionOr<GC::Ref<CommandEvent>> construct_impl(JS::Realm&, FlyString const& event_name, CommandEventInit);
+    [[nodiscard]] static GC::Ref<CommandEvent> create(FlyString const& event_name, CommandEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static GC::Ref<CommandEvent> create(Utf16FlyString const& event_name, CommandEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
 
     // https://html.spec.whatwg.org/multipage/interaction.html#dom-commandevent-command
-    String const& command() const { return m_command; }
+    Utf16String const& command() const { return m_command; }
 
     // https://html.spec.whatwg.org/multipage/interaction.html#dom-commandevent-source
     GC::Ptr<DOM::Element> source() const { return as<DOM::Element>(retarget(m_source, current_target())); }
@@ -35,12 +35,10 @@ public:
 private:
     void visit_edges(Visitor&) override;
 
-    CommandEvent(JS::Realm&, FlyString const& event_name, CommandEventInit event_init);
-
-    void initialize(JS::Realm&) override;
+    CommandEvent(FlyString const& event_name, CommandEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
 
     GC::Ptr<DOM::Element> m_source;
-    String m_command;
+    Utf16String m_command;
 };
 
 }

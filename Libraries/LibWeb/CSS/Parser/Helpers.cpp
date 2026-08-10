@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018-2025, Andreas Kling <andreas@ladybird.org>
  * Copyright (c) 2020-2023, the SerenityOS developers.
- * Copyright (c) 2021-2024, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2026, Sam Atkins <sam@ladybird.org>
  * Copyright (c) 2021, Tobias Christiansen <tobyase@serenityos.org>
  * Copyright (c) 2022, MacDue <macdue@dueutil.tech>
  * Copyright (c) 2025, Lorenz Ackermann <me@lorenzackermann.xyz>
@@ -9,13 +9,18 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGC/Heap.h>
 #include <LibTextCodec/Decoder.h>
+#include <LibWeb/Bindings/HostDefined.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
-#include <LibWeb/Bindings/PrincipalHostDefined.h>
-#include <LibWeb/CSS/CSSMediaRule.h>
+#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/WrapperWorld.h>
 #include <LibWeb/CSS/CSSRuleList.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/Keyword.h>
+#include <LibWeb/CSS/MediaList.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/HTML/Window.h>
 
@@ -23,24 +28,37 @@ namespace Web {
 
 GC::Ref<JS::Realm> internal_css_realm()
 {
-    static GC::Root<JS::Realm> realm;
-    static GC::Root<HTML::Window> window;
-    static OwnPtr<JS::ExecutionContext> execution_context;
+    static auto& realm = *new GC::Root<JS::Realm>;
+    static auto& principal_realm = *new GC::Root<JS::Realm>;
+    static auto& window = *new GC::Root<HTML::Window>;
+    static auto& execution_context = *new OwnPtr<JS::ExecutionContext>;
     if (!realm) {
+        auto& vm = Bindings::main_thread_vm();
+        auto depth = vm.execution_context_stack().size();
+        principal_realm = Bindings::create_a_principal_javascript_realm();
+        while (vm.execution_context_stack().size() > depth)
+            vm.pop_execution_context();
+
+        GC::Ptr<Bindings::PlatformObject> global_object;
         execution_context = Bindings::create_a_new_javascript_realm(
-            Bindings::main_thread_vm(),
-            [&](JS::Realm& realm) -> JS::Object* {
-                window = HTML::Window::create(realm);
-                return window;
+            vm,
+            [&](JS::Realm& new_realm) -> JS::Object* {
+                window = HTML::Window::create();
+                // initialize_host_defined_realm() asks for the global object
+                // before HostDefined is installed. Cache the wrapper after
+                // installing HostDefined below, matching Window realm setup.
+                global_object = Bindings::create_global_object_wrapper(new_realm, GC::Ref { *window });
+                return global_object.ptr();
             },
             [&](JS::Realm&) -> JS::Object* {
-                return window;
+                return global_object.ptr();
             });
 
         realm = *execution_context->realm;
         auto intrinsics = realm->create<Bindings::Intrinsics>(*realm);
-        auto host_defined = make<Bindings::HostDefined>(intrinsics);
-        realm->set_host_defined(move(host_defined));
+        auto wrapper_world = GC::Heap::the().allocate<Bindings::WrapperWorld>(Bindings::WrapperWorld::Type::Internal);
+        realm->set_host_defined(make<Bindings::HostDefined>(intrinsics, wrapper_world, *principal_realm));
+        Bindings::cache_global_object_wrapper(*realm);
     }
     return *realm;
 }
@@ -48,27 +66,41 @@ GC::Ref<JS::Realm> internal_css_realm()
 GC::Ref<CSS::CSSStyleSheet> parse_css_stylesheet(CSS::Parser::ParsingParams const& context, StringView css, Optional<::URL::URL> location, GC::Ptr<CSS::MediaList> media_list)
 {
     if (css.is_empty()) {
-        auto rule_list = CSS::CSSRuleList::create(*context.realm);
+        auto rule_list = CSS::CSSRuleList::create();
         if (!media_list)
-            media_list = CSS::MediaList::create(*context.realm, {});
-        auto style_sheet = CSS::CSSStyleSheet::create(*context.realm, rule_list, *media_list, location);
+            media_list = CSS::MediaList::create({});
+        auto style_sheet = CSS::CSSStyleSheet::create(rule_list, *media_list, location);
         style_sheet->set_source_text({});
         return style_sheet;
     }
     auto style_sheet = CSS::Parser::Parser::create(context, css).parse_as_css_stylesheet(location, move(media_list));
-    // FIXME: Avoid this copy
-    style_sheet->set_source_text(MUST(String::from_utf8(css)));
+    style_sheet->set_source_text(Utf16String::from_utf8(css));
     return style_sheet;
 }
 
-CSS::Parser::Parser::PropertiesAndCustomProperties parse_css_property_declaration_block(CSS::Parser::ParsingParams const& context, StringView css)
+GC::Ref<CSS::CSSStyleSheet> parse_css_stylesheet(CSS::Parser::ParsingParams const& context, Utf16View css, Optional<::URL::URL> location, GC::Ptr<CSS::MediaList> media_list)
+{
+    if (css.is_empty()) {
+        auto rule_list = CSS::CSSRuleList::create();
+        if (!media_list)
+            media_list = CSS::MediaList::create({});
+        auto style_sheet = CSS::CSSStyleSheet::create(rule_list, *media_list, location);
+        style_sheet->set_source_text({});
+        return style_sheet;
+    }
+    auto style_sheet = CSS::Parser::Parser::create(context, css).parse_as_css_stylesheet(location, move(media_list));
+    style_sheet->set_source_text(Utf16String::from_utf16(css));
+    return style_sheet;
+}
+
+CSS::Parser::Parser::PropertiesAndCustomProperties parse_css_property_declaration_block(CSS::Parser::ParsingParams const& context, Utf16View css)
 {
     if (css.is_empty())
         return {};
     return CSS::Parser::Parser::create(context, css).parse_as_property_declaration_block();
 }
 
-Vector<CSS::Descriptor> parse_css_descriptor_declaration_block(CSS::Parser::ParsingParams const& parsing_params, CSS::AtRuleID at_rule_id, StringView css)
+Vector<CSS::Descriptor> parse_css_descriptor_declaration_block(CSS::Parser::ParsingParams const& parsing_params, CSS::AtRuleID at_rule_id, Utf16View css)
 {
     if (css.is_empty())
         return {};
@@ -82,31 +114,52 @@ RefPtr<CSS::StyleValue const> parse_css_value(CSS::Parser::ParsingParams const& 
     return CSS::Parser::Parser::create(context, string).parse_as_css_value(property_id);
 }
 
-RefPtr<CSS::StyleValue const> parse_css_type(CSS::Parser::ParsingParams const& context, StringView string, CSS::ValueType value_type)
+RefPtr<CSS::StyleValue const> parse_css_value(CSS::Parser::ParsingParams const& context, Utf16View string, CSS::PropertyID property_id)
+{
+    if (string.is_empty())
+        return nullptr;
+    return CSS::Parser::Parser::create(context, string).parse_as_css_value(property_id);
+}
+
+RefPtr<CSS::StyleValue const> parse_css_type(CSS::Parser::ParsingParams const& context, Utf16View string, CSS::ValueType value_type)
 {
     if (string.is_empty())
         return nullptr;
     return CSS::Parser::Parser::create(context, string).parse_as_type(value_type);
 }
 
-RefPtr<CSS::StyleValue const> parse_css_descriptor(CSS::Parser::ParsingParams const& parsing_params, CSS::AtRuleID at_rule_id, CSS::DescriptorNameAndID const& descriptor_name_and_id, StringView string)
+GC::Ptr<CSS::CSSKeyframeRule> CSS::Parser::parse_keyframe_rule(CSS::Parser::ParsingParams const& context, Utf16View string)
+{
+    if (string.is_empty())
+        return nullptr;
+    return CSS::Parser::Parser::create(context, string).parse_as_keyframe_rule();
+}
+
+Vector<CSS::Percentage> CSS::Parser::parse_keyframe_selectors(CSS::Parser::ParsingParams const& context, Utf16View string)
+{
+    if (string.is_empty())
+        return {};
+    return CSS::Parser::Parser::create(context, string).parse_as_keyframe_selectors();
+}
+
+RefPtr<CSS::StyleValue const> parse_css_descriptor(CSS::Parser::ParsingParams const& parsing_params, CSS::AtRuleID at_rule_id, CSS::DescriptorNameAndID const& descriptor_name_and_id, Utf16View string)
 {
     if (string.is_empty())
         return nullptr;
     return CSS::Parser::Parser::create(parsing_params, string).parse_as_descriptor_value(at_rule_id, descriptor_name_and_id);
 }
 
-CSS::CSSRule* parse_css_rule(CSS::Parser::ParsingParams const& context, StringView css_text)
+CSS::CSSRule* parse_css_rule(CSS::Parser::ParsingParams const& context, Utf16View css_text, bool nested)
 {
-    return CSS::Parser::Parser::create(context, css_text).parse_as_css_rule();
+    return CSS::Parser::Parser::create(context, css_text).parse_as_css_rule(nested);
 }
 
-Optional<CSS::SelectorList> parse_selector(CSS::Parser::ParsingParams const& context, StringView selector_text)
+Optional<CSS::SelectorList> parse_selector(CSS::Parser::ParsingParams const& context, Utf16View selector_text)
 {
     return CSS::Parser::Parser::create(context, selector_text).parse_as_selector();
 }
 
-Optional<CSS::SelectorList> parse_selector_for_nested_style_rule(CSS::Parser::ParsingParams const& context, StringView selector_text)
+Optional<CSS::SelectorList> parse_selector_for_nested_style_rule(CSS::Parser::ParsingParams const& context, Utf16View selector_text, CSS::StyleNestingParent parent_is_scope_rule)
 {
     auto parser = CSS::Parser::Parser::create(context, selector_text);
 
@@ -114,50 +167,50 @@ Optional<CSS::SelectorList> parse_selector_for_nested_style_rule(CSS::Parser::Pa
     if (!maybe_selectors.has_value())
         return {};
 
-    return adapt_nested_relative_selector_list(*maybe_selectors);
+    return adapt_nested_relative_selector_list(*maybe_selectors, parent_is_scope_rule);
 }
 
-Optional<CSS::PageSelectorList> parse_page_selector_list(CSS::Parser::ParsingParams const& params, StringView selector_text)
+Optional<CSS::PageSelectorList> parse_page_selector_list(CSS::Parser::ParsingParams const& params, Utf16View selector_text)
 {
     return CSS::Parser::Parser::create(params, selector_text).parse_as_page_selector_list();
 }
 
-Optional<CSS::Selector::PseudoElementSelector> parse_pseudo_element_selector(CSS::Parser::ParsingParams const& context, StringView selector_text)
+Optional<CSS::Selector::PseudoElementSelector> parse_pseudo_element_selector(CSS::Parser::ParsingParams const& context, Utf16View selector_text)
 {
     return CSS::Parser::Parser::create(context, selector_text).parse_as_pseudo_element_selector();
 }
 
-RefPtr<CSS::MediaQuery> parse_media_query(CSS::Parser::ParsingParams const& context, StringView string)
+RefPtr<CSS::MediaQuery> parse_media_query(CSS::Parser::ParsingParams const& context, Utf16View string)
 {
     return CSS::Parser::Parser::create(context, string).parse_as_media_query();
 }
 
-Vector<NonnullRefPtr<CSS::MediaQuery>> parse_media_query_list(CSS::Parser::ParsingParams const& context, StringView string)
+Vector<NonnullRefPtr<CSS::MediaQuery>> parse_media_query_list(CSS::Parser::ParsingParams const& context, Utf16View string)
 {
     return CSS::Parser::Parser::create(context, string).parse_as_media_query_list();
 }
 
-RefPtr<CSS::Supports> parse_css_supports(CSS::Parser::ParsingParams const& context, StringView string)
+RefPtr<CSS::Supports> parse_css_supports(CSS::Parser::ParsingParams const& context, Utf16View string)
 {
     if (string.is_empty())
         return {};
     return CSS::Parser::Parser::create(context, string).parse_as_supports();
 }
 
-Vector<CSS::Parser::ComponentValue> parse_component_values_list(CSS::Parser::ParsingParams const& parsing_params, StringView string)
+Vector<CSS::Parser::ComponentValue> parse_component_values_list(CSS::Parser::ParsingParams const& parsing_params, Utf16View string)
 {
     return CSS::Parser::Parser::create(parsing_params, string).parse_as_list_of_component_values();
 }
 
 // https://drafts.csswg.org/css-syntax/#css-decode-bytes
-ErrorOr<String> css_decode_bytes(Optional<StringView> const& environment_encoding, Optional<String> mime_type_charset, ByteBuffer const& encoded_string)
+ErrorOr<Utf16String> css_decode_bytes(Optional<StringView> const& environment_encoding, Optional<StringView> mime_type_charset, ReadonlyBytes encoded_string)
 {
     // https://drafts.csswg.org/css-syntax/#determine-the-fallback-encoding
     auto determine_the_fallback_encoding = [&mime_type_charset, &environment_encoding, &encoded_string]() -> StringView {
         // 1. If HTTP or equivalent protocol provides an encoding label (e.g. via the charset parameter of the Content-Type header) for the stylesheet,
         //    get an encoding from encoding label. If that does not return failure, return it.
         if (mime_type_charset.has_value()) {
-            if (auto encoding = TextCodec::get_standardized_encoding(mime_type_charset.value()); encoding.has_value())
+            if (auto encoding = TextCodec::get_standardized_encoding(*mime_type_charset); encoding.has_value())
                 return encoding.value();
         }
         // 2. Otherwise, check stylesheet’s byte stream. If the first 1024 bytes of the stream begin with the hex sequence
@@ -172,7 +225,7 @@ ErrorOr<String> css_decode_bytes(Optional<StringView> const& environment_encodin
             if (scan_length < pattern_start.length())
                 return {};
 
-            StringView buffer_view = encoded_string.bytes().slice(0, scan_length);
+            StringView buffer_view = encoded_string.slice(0, scan_length);
             if (!buffer_view.starts_with(pattern_start))
                 return {};
 
@@ -217,14 +270,14 @@ ErrorOr<String> css_decode_bytes(Optional<StringView> const& environment_encodin
         return Error::from_string_literal("No Decoder found");
     }
     // 2. Decode stylesheet’s stream of bytes with fallback encoding fallback, and return the result.
-    return TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, encoded_string);
+    return TextCodec::convert_input_to_utf16_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, encoded_string);
 }
 
 // https://drafts.csswg.org/css-values-4/#identifier-value
-bool is_valid_custom_ident(FlyString const& ident, ReadonlySpan<StringView> const& blacklist)
+bool is_valid_custom_ident(Utf16View ident, ReadonlySpan<Utf16View> const& blacklist)
 {
     // The CSS-wide keywords are not valid <custom-ident>s.
-    if (CSS::is_css_wide_keyword(ident))
+    if (auto keyword = CSS::keyword_from_string(ident); keyword.has_value() && CSS::is_css_wide_keyword(keyword.value()))
         return false;
 
     // The default keyword is reserved and is also not a valid <custom-ident>.

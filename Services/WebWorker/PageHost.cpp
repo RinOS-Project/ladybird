@@ -4,19 +4,19 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/Runtime/VM.h>
-#include <LibGfx/SystemTheme.h>
-#include <LibWeb/Bindings/MainThreadVM.h>
+#include <LibGC/Heap.h>
+#include <LibWeb/HTML/WorkerAgentTypes.h>
 #include <WebWorker/ConnectionFromClient.h>
 #include <WebWorker/PageHost.h>
+#include <WebWorker/WebWorkerCompositorHost.h>
 
 namespace WebWorker {
 
 GC_DEFINE_ALLOCATOR(PageHost);
 
-GC::Ref<PageHost> PageHost::create(JS::VM& vm, ConnectionFromClient& client)
+GC::Ref<PageHost> PageHost::create(ConnectionFromClient& client)
 {
-    return vm.heap().allocate<PageHost>(client);
+    return GC::Heap::the().allocate<PageHost>(client);
 }
 
 PageHost::~PageHost() = default;
@@ -91,15 +91,56 @@ HTTP::Cookie::VersionedCookie PageHost::page_did_request_cookie(URL::URL const& 
     return m_client.did_request_cookie(url, source);
 }
 
+void PageHost::page_did_store_hsts_policy(String const& domain, HTTP::HSTS::ParsedHSTSPolicy const& policy)
+{
+    m_client.async_did_store_hsts_policy(domain, policy);
+}
+
+bool PageHost::page_did_is_known_hsts_host(String const& domain)
+{
+    return m_client.did_is_known_hsts_host(domain);
+}
+
+void PageHost::page_did_report_worker_exception(Utf16String const& message, Utf16String const& filename, u32 lineno, u32 colno)
+{
+    m_client.async_did_report_worker_exception(message, filename, lineno, colno);
+}
+
+void PageHost::page_did_post_broadcast_channel_message(Web::HTML::BroadcastChannelMessage const& message)
+{
+    m_client.async_did_post_broadcast_channel_message(message);
+}
+
 void PageHost::request_file(Web::FileRequest request)
 {
     m_client.request_file(move(request));
 }
 
-Web::PageClient::WorkerAgentResponse PageHost::request_worker_agent(Web::Bindings::AgentType worker_type)
+Web::HTML::WorkerAgentId PageHost::start_worker_agent(Web::HTML::WorkerAgentStartRequest&& request)
 {
-    auto response = m_client.request_worker_agent(worker_type);
-    return { response.take_handle(), response.take_request_server_handle(), response.take_image_decoder_handle() };
+    return m_client.start_worker_agent(move(request));
+}
+
+void PageHost::close_worker_agent(Web::HTML::WorkerAgentId agent_id, Web::HTML::WorkerAgentOwnerToken owner_token)
+{
+    m_client.async_close_worker_agent(agent_id, owner_token);
+}
+
+void PageHost::ensure_compositor_host()
+{
+    if (m_compositor_host)
+        return;
+    m_compositor_host = create_web_worker_compositor_host(m_client);
+}
+
+void PageHost::compositor_process_lost()
+{
+    page().notify_all_webgl_contexts_lost();
+}
+
+void PageHost::did_finish_loading_worker_script(bool worker_is_secure_context)
+{
+    m_client.async_did_finish_loading_worker_script(worker_is_secure_context);
 }
 
 void PageHost::did_fail_loading_worker_script()
@@ -109,7 +150,7 @@ void PageHost::did_fail_loading_worker_script()
 
 PageHost::PageHost(ConnectionFromClient& client)
     : m_client(client)
-    , m_page(Web::Page::create(Web::Bindings::main_thread_vm(), *this))
+    , m_page(Web::Page::create(*this))
 {
     setup_palette();
 }

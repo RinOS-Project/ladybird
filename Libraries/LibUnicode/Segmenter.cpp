@@ -4,8 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/CharacterTypes.h>
+#include <AK/GenericShorthands.h>
+#include <AK/OwnPtr.h>
 #include <AK/Utf16View.h>
-#include <AK/Utf32View.h>
 #include <LibUnicode/CharacterTypes.h>
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/Locale.h>
@@ -34,17 +36,30 @@ SegmenterGranularity segmenter_granularity_from_string(StringView segmenter_gran
     VERIFY_NOT_REACHED();
 }
 
-StringView segmenter_granularity_to_string(SegmenterGranularity segmenter_granularity)
+SegmenterGranularity segmenter_granularity_from_string(Utf16View segmenter_granularity)
+{
+    if (segmenter_granularity == "grapheme"sv)
+        return SegmenterGranularity::Grapheme;
+    if (segmenter_granularity == "line"sv)
+        return SegmenterGranularity::Line;
+    if (segmenter_granularity == "sentence"sv)
+        return SegmenterGranularity::Sentence;
+    if (segmenter_granularity == "word"sv)
+        return SegmenterGranularity::Word;
+    VERIFY_NOT_REACHED();
+}
+
+Utf16String segmenter_granularity_to_string(SegmenterGranularity segmenter_granularity)
 {
     switch (segmenter_granularity) {
     case SegmenterGranularity::Grapheme:
-        return "grapheme"sv;
+        return "grapheme"_utf16;
     case SegmenterGranularity::Line:
-        return "line"sv;
+        return "line"_utf16;
     case SegmenterGranularity::Sentence:
-        return "sentence"sv;
+        return "sentence"_utf16;
     case SegmenterGranularity::Word:
-        return "word"sv;
+        return "word"_utf16;
     }
     VERIFY_NOT_REACHED();
 }
@@ -111,12 +126,6 @@ public:
         for_each_boundary_impl(callback);
     }
 
-    virtual void for_each_boundary(Utf32View const& text, SegmentationCallback callback) override
-    {
-        m_length = text.length();
-        for_each_boundary_impl(callback);
-    }
-
     virtual bool is_current_boundary_word_like() const override
     {
         return false;
@@ -135,38 +144,312 @@ private:
     size_t m_current { 0 };
 };
 
-#ifdef AK_OS_RINOS
+static bool can_use_ascii_line_breaking_fast_path(ReadonlyBytes bytes)
+{
+    return all_of(bytes, [](u8 byte) { return is_ascii_printable(byte) || is_ascii_space(byte); });
+}
 
-// RinOS: segmentation via rinicu IPC
-class RinSegmenterImpl : public Segmenter {
+// UAX#14 line-break classes that occur in printable ASCII plus ASCII whitespace.
+// https://www.unicode.org/reports/tr14/#Table1
+enum class AsciiLineBreakClass : u8 {
+    AL, // Alphabetic (alphabets and regular symbols)
+    BA, // Break After (TAB, '|')
+    BK, // Mandatory Break (VT, FF)
+    CL, // Close Punctuation ('}')
+    CP, // Close Parenthesis (')', ']')
+    CR, // Carriage Return
+    EX, // Exclamation/Interrogation ('!', '?')
+    HY, // Hyphen ('-')
+    IS, // Infix Numeric Separator (',', '.', ':', ';')
+    LF, // Line Feed
+    NU, // Numeric (digits)
+    OP, // Open Punctuation ('(', '[', '{')
+    PO, // Postfix Numeric ('%')
+    PR, // Prefix Numeric ('$', '+', '\\')
+    QU, // Quotation ('"', '\'')
+    SP, // Space
+    SY, // Symbols Allowing Break After ('/')
+};
+
+static constexpr AsciiLineBreakClass classify_ascii_byte(u8 byte)
+{
+    using enum AsciiLineBreakClass;
+    switch (byte) {
+    case '\t':
+    case '|':
+        return BA;
+    case '\n':
+        return LF;
+    case '\v':
+    case '\f':
+        return BK;
+    case '\r':
+        return CR;
+    case ' ':
+        return SP;
+    case '!':
+    case '?':
+        return EX;
+    case '"':
+    case '\'':
+        return QU;
+    case '$':
+    case '+':
+    case '\\':
+        return PR;
+    case '%':
+        return PO;
+    case '(':
+    case '[':
+    case '{':
+        return OP;
+    case ')':
+    case ']':
+        return CP;
+    case ',':
+    case '.':
+    case ':':
+    case ';':
+        return IS;
+    case '-':
+        return HY;
+    case '/':
+        return SY;
+    case '}':
+        return CL;
+    default:
+        return is_ascii_digit(byte) ? NU : AL;
+    }
+}
+
+static void mark_ascii_numeric_expression_interiors(ReadonlyBytes text, Vector<bool>& interior_of_numeric_expression)
+{
+    // Identify spans matching UAX#14 LB25's numeric-expression grammar:
+    //     (PR | PO)? (OP | HY)? IS? NU (NU | SY | IS)* (CL | CP)? (PR | PO)?
+    // Positions strictly inside such a span are kept atomic by LB25 — positions at the very start or end of a span are
+    // governed by surrounding rules so adjacent numeric expressions can still break apart.
+
+    using enum AsciiLineBreakClass;
+    interior_of_numeric_expression.clear_with_capacity();
+    interior_of_numeric_expression.resize(text.size() + 1);
+
+    size_t i = 0;
+    while (i < text.size()) {
+        if (classify_ascii_byte(text[i]) != NU) {
+            ++i;
+            continue;
+        }
+
+        // Walk the prefix backwards: NU is preceded by an optional IS, then optional OP/HY, then optional PR/PO.
+        size_t start = i;
+        if (start > 0 && classify_ascii_byte(text[start - 1]) == IS)
+            --start;
+        if (start > 0 && first_is_one_of(classify_ascii_byte(text[start - 1]), OP, HY))
+            --start;
+        if (start > 0 && first_is_one_of(classify_ascii_byte(text[start - 1]), PR, PO))
+            --start;
+
+        // Walk the body and suffix forward: NU (NU | SY | IS)* (CL | CP)? (PR | PO)?
+        size_t end = i + 1;
+        while (end < text.size() && first_is_one_of(classify_ascii_byte(text[end]), NU, SY, IS))
+            ++end;
+        if (end < text.size() && first_is_one_of(classify_ascii_byte(text[end]), CL, CP))
+            ++end;
+        if (end < text.size() && first_is_one_of(classify_ascii_byte(text[end]), PR, PO))
+            ++end;
+
+        // Mark positions strictly between `start` and `end` as interior. Position `start` and position `end`
+        // are left alone so adjacent expressions can still break against each other.
+        for (size_t position = start + 1; position < end; ++position)
+            interior_of_numeric_expression[position] = true;
+
+        i = end;
+    }
+}
+
+static void compute_ascii_line_boundaries(ReadonlyBytes text, Vector<bool>& is_boundary)
+{
+    // Compute soft and mandatory line-break opportunities for ASCII text following UAX#14: https://www.unicode.org/reports/tr14/)
+    // Only the rules whose left- and right-hand classes can occur in printable ASCII plus ASCII whitespace are
+    // implemented.
+    using enum AsciiLineBreakClass;
+
+    is_boundary.clear_with_capacity();
+    is_boundary.resize(text.size() + 1);
+    is_boundary[0] = true;
+    if (text.is_empty())
+        return;
+    is_boundary[text.size()] = true;
+
+    // LB25: precompute positions interior to numeric expressions.
+    Vector<bool> interior_of_numeric_expression;
+    mark_ascii_numeric_expression_interiors(text, interior_of_numeric_expression);
+
+    // LB14 state: have we just seen `OP SP*` (with no intervening non-SP)?
+    bool in_op_sp_run = false;
+
+    for (size_t i = 1; i < text.size(); ++i) {
+        auto previous_class = classify_ascii_byte(text[i - 1]);
+        auto current_class = classify_ascii_byte(text[i]);
+
+        // LB5: CR × LF; CR ! ; LF ! .
+        if (previous_class == CR && current_class == LF) {
+            is_boundary[i] = false;
+            continue;
+        }
+        // LB4: BK ! .  LB5 (continued): CR ! and LF ! .
+        if (first_is_one_of(previous_class, BK, CR, LF)) {
+            is_boundary[i] = true;
+            in_op_sp_run = false;
+            continue;
+        }
+        // LB6: × ( BK | CR | LF ).
+        if (first_is_one_of(current_class, BK, CR, LF)) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB14 trigger: `OP` starts an `OP SP*` run that suppresses breaks until the next non-SP.
+        if (previous_class == OP)
+            in_op_sp_run = true;
+
+        // LB7: × SP. The OP-SP* run is preserved across spaces.
+        if (current_class == SP) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB14: OP SP* × (no break after OP, even across intervening spaces).
+        if (in_op_sp_run) {
+            is_boundary[i] = false;
+            in_op_sp_run = false;
+            continue;
+        }
+
+        // LB13: × CL × CP × EX × SY (IS is handled by LB15c/d below).
+        if (first_is_one_of(current_class, CL, CP, EX, SY)) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB15d: do not break before IS unless preceded by SP, and even then only when SP IS is followedby NU.
+        if (current_class == IS) {
+            if (previous_class != SP) {
+                is_boundary[i] = false;
+                continue;
+            }
+            auto next_class = i + 1 < text.size() ? classify_ascii_byte(text[i + 1]) : AL;
+            bool next_forces_break = i + 1 < text.size() && next_class == NU;
+            if (!next_forces_break) {
+                is_boundary[i] = false;
+                continue;
+            }
+            // Fall through: SP × IS NU → break before IS (per LB15c "leading decimal point").
+            is_boundary[i] = true;
+            continue;
+        }
+
+        // LB18: SP ÷ (default break opportunity after spaces).
+        if (previous_class == SP) {
+            is_boundary[i] = true;
+            continue;
+        }
+
+        // LB19: × QU; QU × (treat ASCII straight quotes as ambiguous QU).
+        if (current_class == QU || previous_class == QU) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB20a: do not break between a hyphen and a following letter when the hyphen comes at the start of a line -
+        // that is, at the start of the text, after a space, or after a forced break.
+        if (previous_class == HY && current_class == AL) {
+            bool hy_starts_line = i == 1;
+            if (!hy_starts_line && i >= 2)
+                hy_starts_line = first_is_one_of(classify_ascii_byte(text[i - 2]), SP, BK, CR, LF);
+            if (hy_starts_line) {
+                is_boundary[i] = false;
+                continue;
+            }
+        }
+
+        // LB21: × BA; × HY (break-before suppression for BA and HY).
+        if (first_is_one_of(current_class, BA, HY)) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB23: AL × NU; NU × AL.
+        if ((previous_class == AL && current_class == NU) || (previous_class == NU && current_class == AL)) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB24: (PR | PO) × AL; AL × (PR | PO).
+        if ((first_is_one_of(previous_class, PR, PO) && current_class == AL)
+            || (previous_class == AL && first_is_one_of(current_class, PR, PO))) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB25: positions strictly inside a numeric expression are kept atomic.
+        if (interior_of_numeric_expression[i]) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB28: AL × AL.
+        if (previous_class == AL && current_class == AL) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB29: IS × AL.
+        if (previous_class == IS && current_class == AL) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB30: (AL | NU) × OP; CP × (AL | NU). All ASCII OP/CP characters are non-East-Asian.
+        if (current_class == OP && first_is_one_of(previous_class, AL, NU)) {
+            is_boundary[i] = false;
+            continue;
+        }
+        if (previous_class == CP && first_is_one_of(current_class, AL, NU)) {
+            is_boundary[i] = false;
+            continue;
+        }
+
+        // LB31: ÷ (default).
+        is_boundary[i] = true;
+    }
+}
+
+// Implements UAX#14 line breaking rules for ASCII text: https://www.unicode.org/reports/tr14/tr14-39.html
+class AsciiLineSegmenter : public Segmenter {
 public:
-    RinSegmenterImpl(SegmenterGranularity granularity, StringView locale)
-        : Segmenter(granularity)
-        , m_locale(MUST(String::from_utf8(locale)))
+    AsciiLineSegmenter()
+        : Segmenter(SegmenterGranularity::Line)
     {
     }
 
-    virtual ~RinSegmenterImpl() override
-    {
-        destroy_handle();
-    }
+    virtual ~AsciiLineSegmenter() override = default;
 
     virtual NonnullOwnPtr<Segmenter> clone() const override
     {
-        return make<RinSegmenterImpl>(m_segmenter_granularity, m_locale);
+        return make<AsciiLineSegmenter>();
     }
 
     virtual void set_segmented_text(String text) override
     {
-        destroy_handle();
-        m_text_utf8 = move(text);
-        m_text_length = m_text_utf8.byte_count();
-        create_handle();
+        apply(text.bytes());
     }
 
     virtual void set_segmented_text(Utf16View const& text) override
     {
-        set_segmented_text(MUST(text.to_utf8()));
+        VERIFY(text.has_ascii_storage());
+        auto span = text.ascii_span();
+        apply({ span.data(), span.size() });
     }
 
     virtual size_t current_boundary() override
@@ -176,57 +459,30 @@ public:
 
     virtual Optional<size_t> previous_boundary(size_t index, Inclusive inclusive) override
     {
-        // Simple backward iteration: find boundaries from start up to index
-        bool word_like = false;
-        if (inclusive == Inclusive::Yes && is_boundary(index, &word_like)) {
-            m_current = index;
-            m_current_boundary_word_like = word_like;
+        if (inclusive == Inclusive::Yes && index <= text_size() && is_boundary(index))
             return index;
-        }
         if (index == 0)
             return {};
-
-        // Reset and iterate forward collecting boundaries before index
-        Optional<size_t> last_before;
-        bool last_word_like = false;
-        reset_iteration();
-        while (true) {
-            auto next = next_from_icu();
-            if (!next.has_value() || next->position >= index)
-                break;
-            last_before = next->position;
-            last_word_like = next->word_like;
+        size_t i = min(index, text_size() + 1);
+        while (i > 0) {
+            --i;
+            if (is_boundary(i))
+                return i;
         }
-        if (last_before.has_value()) {
-            m_current = *last_before;
-            m_current_boundary_word_like = last_word_like;
-        }
-        return last_before;
+        return {};
     }
 
     virtual Optional<size_t> next_boundary(size_t index, Inclusive inclusive) override
     {
-        bool word_like = false;
-        if (inclusive == Inclusive::Yes && is_boundary(index, &word_like)) {
-            m_current = index;
-            m_current_boundary_word_like = word_like;
+        if (inclusive == Inclusive::Yes && index <= text_size() && is_boundary(index))
             return index;
-        }
-        if (index >= m_text_length)
+        if (index >= text_size())
             return {};
-
-        // Reset and find next boundary after index
-        reset_iteration();
-        while (true) {
-            auto next = next_from_icu();
-            if (!next.has_value())
-                return {};
-            if (next->position > index) {
-                m_current = next->position;
-                m_current_boundary_word_like = next->word_like;
-                return next->position;
-            }
+        for (size_t i = index + 1; i <= text_size(); ++i) {
+            if (is_boundary(i))
+                return i;
         }
+        return {};
     }
 
     virtual void for_each_boundary(String text, SegmentationCallback callback) override
@@ -234,7 +490,7 @@ public:
         if (text.is_empty())
             return;
         set_segmented_text(move(text));
-        for_each_boundary_impl(callback);
+        iterate(callback);
     }
 
     virtual void for_each_boundary(Utf16View const& text, SegmentationCallback callback) override
@@ -242,141 +498,44 @@ public:
         if (text.is_empty())
             return;
         set_segmented_text(text);
-        for_each_boundary_impl(callback);
-    }
-
-    virtual void for_each_boundary(Utf32View const& text, SegmentationCallback callback) override
-    {
-        if (text.is_empty())
-            return;
-        set_segmented_text(MUST(String::formatted("{}", text)));
-
-        auto code_points = m_text_utf8.code_points();
-        auto current = code_points.begin();
-        size_t code_point_index = 0;
-
-        for_each_boundary_impl([&](auto byte_index) {
-            auto it = code_points.iterator_at_byte_offset(byte_index);
-            while (current != it) {
-                ++code_point_index;
-                ++current;
-            }
-            return callback(code_point_index);
-        });
+        iterate(callback);
     }
 
     virtual bool is_current_boundary_word_like() const override
     {
-        return m_current_boundary_word_like;
+        return false;
     }
 
 private:
-    struct BoundaryInfo {
-        size_t position { 0 };
-        bool word_like { false };
-    };
-
-    void create_handle()
+    void apply(ReadonlyBytes bytes)
     {
-        rin_icu_segmenter_options_t options {};
-        options.kind = rin_icu_segmenter_granularity(m_segmenter_granularity);
-
-        ByteString locale_z(m_locale);
-        if (rin_icu_segmenter_create(&rin_icu_client(), locale_z.characters(), &options, &m_handle) != 0 || m_handle == 0)
-            return;
-
-        if (rin_icu_segmenter_reset(&rin_icu_client(), m_handle, ByteString(m_text_utf8).characters()) != 0)
-            destroy_handle();
+        VERIFY(can_use_ascii_line_breaking_fast_path(bytes));
+        compute_ascii_line_boundaries(bytes, m_is_boundary);
+        m_current = 0;
     }
 
-    void destroy_handle()
+    size_t text_size() const { return m_is_boundary.size() - 1; }
+
+    bool is_boundary(size_t index) const
     {
-        if (m_handle != 0) {
-            rin_icu_segmenter_destroy(&rin_icu_client(), m_handle);
-            m_handle = 0;
-        }
-        m_current_boundary_word_like = false;
+        VERIFY(index < m_is_boundary.size());
+        return m_is_boundary[index];
     }
 
-    void reset_iteration()
+    void iterate(SegmentationCallback& callback)
     {
-        if (m_handle != 0)
-            (void)rin_icu_segmenter_reset(&rin_icu_client(), m_handle, ByteString(m_text_utf8).characters());
-    }
-
-    Optional<BoundaryInfo> next_from_icu()
-    {
-        if (m_handle == 0)
-            return {};
-        rin_icu_segment_t segment {};
-        int has_value = 0;
-        if (rin_icu_segmenter_next(&rin_icu_client(), m_handle, &segment, &has_value) != 0 || has_value == 0)
-            return {};
-        return BoundaryInfo {
-            .position = static_cast<size_t>(segment.end),
-            .word_like = (segment.flags & RIN_ICU_SEGMENT_FLAG_WORD_LIKE) != 0,
-        };
-    }
-
-    bool is_boundary(size_t index, bool* word_like = nullptr)
-    {
-        if (index == 0 || index >= m_text_length) {
-            if (word_like != nullptr)
-                *word_like = false;
-            return true;
-        }
-        reset_iteration();
-        while (true) {
-            auto next = next_from_icu();
-            if (!next.has_value())
-                return false;
-            if (next->position == index) {
-                if (word_like != nullptr)
-                    *word_like = next->word_like;
-                return true;
-            }
-            if (next->position > index)
-                return false;
-        }
-    }
-
-    template<typename Callback>
-    void for_each_boundary_impl(Callback&& callback)
-    {
-        if (callback(0) == IterationDecision::Break)
-            return;
-        reset_iteration();
-        while (true) {
-            auto next = next_from_icu();
-            if (!next.has_value())
-                return;
-            m_current = next->position;
-            m_current_boundary_word_like = next->word_like;
-            if (callback(next->position) == IterationDecision::Break)
+        for (size_t i = 0; i <= text_size(); ++i) {
+            if (!m_is_boundary[i])
+                continue;
+            m_current = i;
+            if (callback(i) == IterationDecision::Break)
                 return;
         }
     }
 
-    String m_locale;
-    String m_text_utf8;
-    size_t m_text_length { 0 };
+    Vector<bool> m_is_boundary;
     size_t m_current { 0 };
-    bool m_current_boundary_word_like { false };
-    rin_icu_handle_t m_handle { 0 };
 };
-
-NonnullOwnPtr<Segmenter> Segmenter::create(SegmenterGranularity segmenter_granularity)
-{
-    return Segmenter::create(default_locale(), segmenter_granularity);
-}
-
-NonnullOwnPtr<Segmenter> Segmenter::create(StringView locale, SegmenterGranularity segmenter_granularity)
-{
-    // ASCII grapheme fast path
-    return make<RinSegmenterImpl>(segmenter_granularity, locale);
-}
-
-#else // !AK_OS_RINOS
 
 class SegmenterImpl : public Segmenter {
 public:
@@ -474,30 +633,6 @@ public:
         for_each_boundary(move(callback));
     }
 
-    virtual void for_each_boundary(Utf32View const& text, SegmentationCallback callback) override
-    {
-        if (text.is_empty())
-            return;
-
-        // FIXME: We should be able to create a custom UText provider to avoid converting to UTF-8 here.
-        set_segmented_text(MUST(String::formatted("{}", text)));
-
-        auto code_points = m_segmented_text.get<String>().code_points();
-        auto current = code_points.begin();
-        size_t code_point_index = 0;
-
-        for_each_boundary([&](auto index) {
-            auto it = code_points.iterator_at_byte_offset(index);
-
-            while (current != it) {
-                ++code_point_index;
-                ++current;
-            }
-
-            return callback(code_point_index);
-        });
-    }
-
     virtual bool is_current_boundary_word_like() const override
     {
         auto status = m_segmenter->getRuleStatus();
@@ -560,11 +695,11 @@ NonnullOwnPtr<Segmenter> Segmenter::create(SegmenterGranularity segmenter_granul
     return Segmenter::create(default_locale(), segmenter_granularity);
 }
 
-NonnullOwnPtr<Segmenter> Segmenter::create(StringView locale, SegmenterGranularity segmenter_granularity)
+NonnullOwnPtr<Segmenter> Segmenter::create(Utf16View locale, SegmenterGranularity segmenter_granularity)
 {
     UErrorCode status = U_ZERO_ERROR;
 
-    auto locale_data = LocaleData::for_locale(locale);
+    auto locale_data = LocaleData::for_locale(locale.bytes());
     VERIFY(locale_data.has_value());
 
     auto segmenter = adopt_own_if_nonnull([&]() {
@@ -593,6 +728,19 @@ NonnullOwnPtr<Segmenter> Segmenter::create_for_ascii_grapheme(size_t length)
     return make<AsciiGraphemeSegmenter>(length);
 }
 
+OwnPtr<Segmenter> Segmenter::try_create_for_ascii_line(Utf16View const& text)
+{
+    if (!text.has_ascii_storage())
+        return {};
+    auto span = text.ascii_span();
+    ReadonlyBytes bytes { span.data(), span.size() };
+    if (!can_use_ascii_line_breaking_fast_path(bytes))
+        return {};
+    auto segmenter = make<AsciiLineSegmenter>();
+    segmenter->set_segmented_text(text);
+    return segmenter;
+}
+
 bool Segmenter::should_continue_beyond_word(Utf16View const& word)
 {
     for (auto code_point : word) {
@@ -602,4 +750,80 @@ bool Segmenter::should_continue_beyond_word(Utf16View const& word)
     return true;
 }
 
+}
+
+struct UnicodeLayoutSegmenterHandle {
+    NonnullOwnPtr<Unicode::Segmenter> segmenter;
+    Vector<char> ascii_storage;
+};
+
+extern "C" {
+void* unicode_layout_grapheme_segmenter_create(u16 const*, size_t);
+void* unicode_layout_line_segmenter_create(u16 const*, size_t);
+i64 unicode_layout_segmenter_next_boundary(void*, size_t, bool);
+void unicode_layout_segmenter_destroy(void*);
+}
+
+static Unicode::Segmenter& unicode_layout_segmenter_prototype(Unicode::SegmenterGranularity granularity)
+{
+    static thread_local Unicode::Segmenter* grapheme_prototype = nullptr;
+    static thread_local Unicode::Segmenter* line_prototype = nullptr;
+    auto& prototype = granularity == Unicode::SegmenterGranularity::Grapheme ? grapheme_prototype : line_prototype;
+    if (!prototype)
+        prototype = Unicode::Segmenter::create(granularity).leak_ptr();
+    return *prototype;
+}
+
+extern "C" void* unicode_layout_grapheme_segmenter_create(u16 const* text, size_t length_in_code_units)
+{
+    auto view = Utf16View { reinterpret_cast<char16_t const*>(text), length_in_code_units };
+    if (view.is_ascii()) {
+        return new UnicodeLayoutSegmenterHandle {
+            .segmenter = Unicode::Segmenter::create_for_ascii_grapheme(length_in_code_units),
+            .ascii_storage = {},
+        };
+    }
+    auto segmenter = unicode_layout_segmenter_prototype(Unicode::SegmenterGranularity::Grapheme).clone();
+    segmenter->set_segmented_text(view);
+    return new UnicodeLayoutSegmenterHandle { .segmenter = move(segmenter), .ascii_storage = {} };
+}
+
+extern "C" void* unicode_layout_line_segmenter_create(u16 const* text, size_t length_in_code_units)
+{
+    auto view = Utf16View { reinterpret_cast<char16_t const*>(text), length_in_code_units };
+    if (view.is_ascii()) {
+        Vector<char> ascii_storage;
+        ascii_storage.ensure_capacity(length_in_code_units);
+        for (size_t index = 0; index < length_in_code_units; ++index)
+            ascii_storage.unchecked_append(static_cast<char>(text[index]));
+        auto ascii_view = ascii_storage.is_empty()
+            ? Utf16View {}
+            : Utf16View { StringView { ascii_storage.data(), ascii_storage.size() } };
+        if (auto segmenter = Unicode::Segmenter::try_create_for_ascii_line(ascii_view)) {
+            return new UnicodeLayoutSegmenterHandle {
+                .segmenter = segmenter.release_nonnull(),
+                .ascii_storage = move(ascii_storage),
+            };
+        }
+    }
+    auto segmenter = unicode_layout_segmenter_prototype(Unicode::SegmenterGranularity::Line).clone();
+    segmenter->set_segmented_text(view);
+    return new UnicodeLayoutSegmenterHandle { .segmenter = move(segmenter), .ascii_storage = {} };
+}
+
+extern "C" i64 unicode_layout_segmenter_next_boundary(void* handle, size_t index, bool inclusive)
+{
+    VERIFY(handle);
+    auto& segmenter = *static_cast<UnicodeLayoutSegmenterHandle*>(handle)->segmenter;
+    auto boundary = segmenter.next_boundary(
+        index, inclusive ? Unicode::Segmenter::Inclusive::Yes : Unicode::Segmenter::Inclusive::No);
+    if (!boundary.has_value())
+        return -1;
+    return static_cast<i64>(*boundary);
+}
+
+extern "C" void unicode_layout_segmenter_destroy(void* handle)
+{
+    VERIFY(handle);
+    delete static_cast<UnicodeLayoutSegmenterHandle*>(handle);
 }

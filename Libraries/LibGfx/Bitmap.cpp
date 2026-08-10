@@ -66,12 +66,12 @@ static bool size_would_overflow(BitmapFormat format, IntSize size)
 {
     if (size.width() < 0 || size.height() < 0)
         return true;
-    // This check is a bit arbitrary, but should protect us from most shenanigans:
-    if (size.width() >= INT16_MAX || size.height() >= INT16_MAX)
+
+    if (size.width() > UINT16_MAX || size.height() > UINT16_MAX)
         return true;
-    // In contrast, this check is absolutely necessary:
+
     size_t pitch = Bitmap::minimum_pitch(size.width(), format);
-    return Checked<size_t>::multiplication_would_overflow(pitch, size.height());
+    return Checked<int32_t>::multiplication_would_overflow(pitch, size.height());
 }
 
 ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::create(BitmapFormat format, IntSize size)
@@ -110,8 +110,8 @@ Bitmap::Bitmap(BitmapFormat format, AlphaType alpha_type, IntSize size, BackingS
     VERIFY(!size_would_overflow(format, size));
     VERIFY(m_data);
     VERIFY(backing_store.size_in_bytes == size_in_bytes());
-    m_destruction_callback = [data = m_data, size_in_bytes = this->size_in_bytes()] {
-        kfree_sized(data, size_in_bytes);
+    m_destruction_callback = [data = m_data] {
+        kfree(data);
     };
 }
 
@@ -140,6 +140,9 @@ ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::create_with_anonymous_buffer(BitmapFormat
     if (size_would_overflow(format, size))
         return Error::from_string_literal("Gfx::Bitmap::create_with_anonymous_buffer size overflow");
 
+    if (buffer.size() < size_in_bytes(minimum_pitch(size.width(), format), size.height()))
+        return Error::from_string_literal("Gfx::Bitmap::create_with_anonymous_buffer buffer too small for size");
+
     return adopt_nonnull_ref_or_enomem(new (nothrow) Bitmap(format, alpha_type, move(buffer), size));
 }
 
@@ -147,6 +150,9 @@ ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::create_with_raw_data(BitmapFormat format,
 {
     if (size_would_overflow(format, size))
         return Error::from_string_literal("Gfx::Bitmap::create_with_raw_data size overflow");
+
+    if (raw_data.size() < size_in_bytes(minimum_pitch(size.width(), format), size.height()))
+        return Error::from_string_literal("Gfx::Bitmap::create_with_raw_data data too small for size");
 
     auto backing_store = TRY(Bitmap::allocate_backing_store(format, size, InitializeBackingStore::No));
     raw_data.copy_to(Bytes { backing_store.data, backing_store.size_in_bytes });

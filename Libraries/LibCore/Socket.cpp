@@ -10,9 +10,6 @@
 
 namespace Core {
 
-// FIXME: This limit has been chosen arbitrarily
-size_t const LocalSocket::MAX_TRANSFER_FDS = 64;
-
 ErrorOr<int> Socket::create_fd(SocketDomain domain, SocketType type)
 {
     int socket_domain;
@@ -52,7 +49,7 @@ ErrorOr<int> Socket::create_fd(SocketDomain domain, SocketType type)
 #endif
 }
 
-ErrorOr<Vector<Variant<IPv4Address, IPv6Address>>> Socket::resolve_host(ByteString const& host, SocketType type)
+ErrorOr<Vector<Variant<IPv4Address, IPv6Address>>> Socket::resolve_host(ByteString const& host, SocketType type, AddressFamily address_family)
 {
     int socket_type;
     switch (type) {
@@ -66,8 +63,23 @@ ErrorOr<Vector<Variant<IPv4Address, IPv6Address>>> Socket::resolve_host(ByteStri
         VERIFY_NOT_REACHED();
     }
 
+    int ai_family;
+    switch (address_family) {
+    case AddressFamily::Unspecified:
+        ai_family = AF_UNSPEC;
+        break;
+    case AddressFamily::IPv4Only:
+        ai_family = AF_INET;
+        break;
+    case AddressFamily::IPv6Only:
+        ai_family = AF_INET6;
+        break;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+
     struct addrinfo hints = {};
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = ai_family;
     hints.ai_socktype = socket_type;
     hints.ai_flags = 0;
     hints.ai_protocol = 0;

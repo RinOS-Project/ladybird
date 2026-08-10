@@ -6,9 +6,11 @@
 
 #pragma once
 
+#include <AK/OwnPtr.h>
 #include <LibGfx/Path.h>
 
 class SkPath;
+class SkPathBuilder;
 
 namespace Gfx {
 
@@ -34,28 +36,38 @@ public:
     virtual void append_path(Gfx::Path const&) override;
     virtual void intersect(Gfx::Path const&) override;
 
+    [[nodiscard]] virtual Vector<u8> serialize_to_bytes() const override;
+    virtual void deserialize_from_bytes(ReadonlyBytes) override;
+
     [[nodiscard]] virtual bool is_empty() const override;
     virtual Gfx::FloatPoint last_point() const override;
     virtual Gfx::FloatRect bounding_box() const override;
+    virtual float length() const override;
     virtual bool contains(FloatPoint point, Gfx::WindingRule) const override;
     virtual void set_fill_type(Gfx::WindingRule winding_rule) override;
 
     virtual NonnullOwnPtr<PathImpl> clone() const override;
     virtual NonnullOwnPtr<PathImpl> copy_transformed(Gfx::AffineTransform const&) const override;
-    virtual NonnullOwnPtr<PathImpl> place_text_along(Utf8View const& text, Font const&) const override;
-    virtual NonnullOwnPtr<PathImpl> place_text_along(Utf16View const& text, Font const&) const override;
+    virtual NonnullOwnPtr<PathImpl> place_text_along(Utf8View const& text, Font const&, float offset = 0) const override;
+    virtual NonnullOwnPtr<PathImpl> place_text_along(Utf16View const& text, Font const&, float offset = 0) const override;
 
     virtual String to_svg_string() const override;
 
-    SkPath const& sk_path() const { return *m_path; }
-    SkPath& sk_path() { return *m_path; }
+    SkPath const& sk_path() const;
+    SkPathBuilder& sk_path_builder();
+    void update_state_from_builder();
 
 private:
     PathImplSkia();
     PathImplSkia(PathImplSkia const& other);
 
+    void set_path(SkPath const&);
+    void update_state_from_path(SkPath const&);
+
     Gfx::FloatPoint m_last_move_to;
-    NonnullOwnPtr<SkPath> m_path;
+    bool m_has_current_point { false };
+    NonnullOwnPtr<SkPathBuilder> m_path_builder;
+    mutable OwnPtr<SkPath> m_cached_path;
 };
 
 }

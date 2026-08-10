@@ -7,22 +7,19 @@
 #pragma once
 
 #include <AK/Optional.h>
+#include <AK/Utf16FlyString.h>
+#include <AK/Utf16View.h>
+#include <LibWeb/Bindings/HTMLElement.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/GlobalEventHandlers.h>
-#include <LibWeb/HTML/HTMLOrSVGElement.h>
+#include <LibWeb/HTML/HTMLOrSVGOrMathMLElement.h>
 #include <LibWeb/HTML/ToggleTaskTracker.h>
 #include <LibWeb/HTML/TokenizedFeatures.h>
 
 namespace Web::HTML {
-
-// https://html.spec.whatwg.org/multipage/dom.html#attr-dir
-#define ENUMERATE_HTML_ELEMENT_DIR_ATTRIBUTES   \
-    __ENUMERATE_HTML_ELEMENT_DIR_ATTRIBUTE(ltr) \
-    __ENUMERATE_HTML_ELEMENT_DIR_ATTRIBUTE(rtl) \
-    __ENUMERATE_HTML_ELEMENT_DIR_ATTRIBUTE(auto)
 
 // https://html.spec.whatwg.org/multipage/interaction.html#attr-contenteditable
 enum class ContentEditableState : u8 {
@@ -32,13 +29,8 @@ enum class ContentEditableState : u8 {
     Inherit,
 };
 
-struct ShowPopoverOptions {
-    GC::Ptr<HTMLElement> source;
-};
-
-struct TogglePopoverOptions : public ShowPopoverOptions {
-    Optional<bool> force {};
-};
+using ShowPopoverOptions = Bindings::ShowPopoverOptions;
+using TogglePopoverOptions = Bindings::TogglePopoverOptions;
 
 using TogglePopoverOptionsOrForceBoolean = Variant<TogglePopoverOptions, bool>;
 
@@ -75,27 +67,27 @@ enum class IsPopover {
 class WEB_API HTMLElement
     : public DOM::Element
     , public HTML::GlobalEventHandlers
-    , public HTML::HTMLOrSVGElement<HTMLElement>
+    , public HTML::HTMLOrSVGOrMathMLElement<HTMLElement>
     , public FormAssociatedElement {
-    WEB_PLATFORM_OBJECT(HTMLElement, DOM::Element);
+    WEB_WRAPPABLE(HTMLElement, DOM::Element);
     GC_DECLARE_ALLOCATOR(HTMLElement);
 
 public:
     virtual ~HTMLElement() override;
 
-    Optional<String> title() const { return attribute(HTML::AttributeNames::title); }
+    Optional<Utf16String> title() const { return attribute(HTML::AttributeNames::title); }
 
     bool translate() const;
     void set_translate(bool);
 
-    StringView dir() const;
-    void set_dir(String const&);
+    Utf16FlyString dir() const;
+    void set_dir(Utf16View);
 
     virtual bool is_focusable() const override;
     bool is_content_editable() const;
-    StringView content_editable() const;
+    Utf16FlyString content_editable() const;
     ContentEditableState content_editable_state() const { return m_content_editable_state; }
-    WebIDL::ExceptionOr<void> set_content_editable(StringView);
+    WebIDL::ExceptionOr<void> set_content_editable(Utf16FlyString const&);
 
     Utf16String inner_text();
     void set_inner_text(Utf16View const&);
@@ -110,18 +102,18 @@ public:
     GC::Ptr<Element> offset_parent() const;
     GC::Ptr<Element> scroll_parent() const;
 
-    Variant<bool, double, String, Empty> hidden() const;
-    void set_hidden(Variant<bool, double, String, Empty> const&);
+    Variant<bool, double, Utf16String, Empty> hidden() const;
+    void set_hidden(Variant<bool, double, Utf16String, Empty> const&);
 
     void click();
 
-    [[nodiscard]] String access_key_label() const;
+    [[nodiscard]] Utf16String access_key_label() const;
 
     bool spellcheck() const;
     void set_spellcheck(bool);
 
-    String writing_suggestions() const;
-    void set_writing_suggestions(String const&);
+    Utf16FlyString writing_suggestions() const;
+    void set_writing_suggestions(Utf16View);
 
     enum class AutocapitalizationHint {
         Default,
@@ -132,8 +124,8 @@ public:
     };
 
     AutocapitalizationHint own_autocapitalization_hint() const;
-    String autocapitalize() const;
-    void set_autocapitalize(String const&);
+    Utf16FlyString autocapitalize() const;
+    void set_autocapitalize(Utf16View);
 
     enum class AutocorrectionState {
         On,
@@ -144,7 +136,7 @@ public:
     bool autocorrect() const;
     void set_autocorrect(bool);
 
-    bool fire_a_synthetic_pointer_event(FlyString const& type, DOM::Element& target, bool not_trusted);
+    bool fire_a_synthetic_pointer_event(Utf16FlyString const& type, DOM::Element& target, bool not_trusted);
 
     // https://html.spec.whatwg.org/multipage/forms.html#category-label
     virtual bool is_labelable() const { return is_form_associated_custom_element(); }
@@ -155,12 +147,12 @@ public:
 
     WebIDL::ExceptionOr<GC::Ref<ElementInternals>> attach_internals();
 
-    void set_popover(Optional<String> value);
-    Optional<String> popover() const;
-    Optional<String> opened_in_popover_mode() const { return m_opened_in_popover_mode; }
+    void set_popover(Optional<Utf16String> value);
+    Optional<Utf16FlyString> popover() const;
+    Optional<Utf16FlyString> opened_in_popover_mode() const { return m_opened_in_popover_mode; }
 
-    virtual void removed_from(Node* old_parent, Node& old_root) override;
-    virtual void moved_from(GC::Ptr<DOM::Node> old_parent) override;
+    virtual void removed_from(IsSubtreeRoot, Node* old_ancestor, Node& old_root) override;
+    virtual void moved_from(IsSubtreeRoot, GC::Ptr<DOM::Node> old_ancestor) override;
 
     enum class PopoverVisibilityState : u8 {
         Hidden,
@@ -168,7 +160,7 @@ public:
     };
     PopoverVisibilityState popover_visibility_state() const { return m_popover_visibility_state; }
 
-    WebIDL::ExceptionOr<void> show_popover_for_bindings(ShowPopoverOptions const& = {});
+    WebIDL::ExceptionOr<void> show_popover(ShowPopoverOptions const& = {});
     WebIDL::ExceptionOr<void> hide_popover_for_bindings();
     WebIDL::ExceptionOr<bool> toggle_popover(TogglePopoverOptionsOrForceBoolean const&);
 
@@ -186,8 +178,8 @@ public:
     bool draggable() const;
     void set_draggable(bool draggable);
 
-    virtual bool is_valid_command(String&) { return false; }
-    virtual void command_steps(DOM::Element&, String&) { }
+    virtual bool is_valid_command(Utf16View) { return false; }
+    virtual void command_steps(DOM::Element&, Utf16View) { }
 
     bool is_form_associated_custom_element() const;
 
@@ -200,9 +192,7 @@ public:
 protected:
     HTMLElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual void initialize(JS::Realm&) override;
-
-    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
     virtual WebIDL::ExceptionOr<void> cloned(DOM::Node&, bool) const override;
     virtual void inserted() override;
 
@@ -219,10 +209,8 @@ private:
     // ^FormAssociatedElement
     virtual HTMLElement& form_associated_element_to_html_element() override { return *this; }
 
-    virtual void adjust_computed_style(CSS::ComputedProperties&) override;
-
     // ^HTML::GlobalEventHandlers
-    virtual GC::Ptr<DOM::EventTarget> global_event_handlers_to_event_target(FlyString const&) override { return *this; }
+    virtual GC::Ptr<DOM::EventTarget> global_event_handlers_to_event_target(Utf16FlyString const&) override { return *this; }
     virtual void did_receive_focus() override;
     virtual void did_lose_focus() override;
 
@@ -230,9 +218,9 @@ private:
 
     GC::Ptr<DOM::NodeList> m_labels;
 
-    void queue_a_popover_toggle_event_task(String old_state, String new_state, GC::Ptr<HTMLElement> source);
+    void queue_a_popover_toggle_event_task(Utf16FlyString old_state, Utf16FlyString new_state, GC::Ptr<HTMLElement> source);
 
-    static Optional<String> popover_value_to_state(Optional<String> value);
+    static Optional<Utf16FlyString> popover_value_to_state(Optional<Utf16View> value);
     void hide_popover_stack_until(Vector<GC::Ref<HTMLElement>> const& popover_list, FocusPreviousElement focus_previous_element, FireEvents fire_events);
     GC::Ptr<HTMLElement> nearest_inclusive_open_popover();
     GC::Ptr<HTMLElement> nearest_inclusive_target_popover();
@@ -268,7 +256,7 @@ private:
     // https://html.spec.whatwg.org/multipage/popover.html#popover-close-watcher
     GC::Ptr<CloseWatcher> m_popover_close_watcher;
 
-    Optional<String> m_opened_in_popover_mode;
+    Optional<Utf16FlyString> m_opened_in_popover_mode;
 };
 
 }
@@ -277,15 +265,5 @@ namespace Web::DOM {
 
 template<>
 inline bool Node::fast_is<HTML::HTMLElement>() const { return is_html_element(); }
-
-}
-
-namespace JS {
-
-template<>
-inline bool Object::fast_is<Web::HTML::HTMLElement>() const
-{
-    return is_dom_node() && static_cast<Web::DOM::Node const&>(*this).is_html_element();
-}
 
 }

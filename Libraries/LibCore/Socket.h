@@ -57,9 +57,19 @@ public:
     /// Conversely, set_notifications_enabled(true) will re-enable notifications.
     virtual void set_notifications_enabled(bool) { }
 
+    // Address family preference for resolve_host. Maps to AF_UNSPEC / AF_INET /
+    // AF_INET6 on POSIX. Useful for issuing parallel A and AAAA queries on
+    // separate sockets to work around stub-resolver bugs that drop one of the
+    // two queries when both are sent over the same socket.
+    enum class AddressFamily : u8 {
+        Unspecified, // AF_UNSPEC — both A and AAAA via one getaddrinfo call.
+        IPv4Only,    // AF_INET   — only A.
+        IPv6Only,    // AF_INET6  — only AAAA.
+    };
+
     // FIXME: This will need to be updated when IPv6 socket arrives. Perhaps a
     //        base class for all address types is appropriate.
-    static ErrorOr<Vector<Variant<IPv4Address, IPv6Address>>> resolve_host(ByteString const&, SocketType);
+    static ErrorOr<Vector<Variant<IPv4Address, IPv6Address>>> resolve_host(ByteString const&, SocketType, AddressFamily = AddressFamily::Unspecified);
 
     Function<void()> on_ready_to_read;
 
@@ -110,9 +120,7 @@ class CORE_API PosixSocketHelper {
     AK_MAKE_NONCOPYABLE(PosixSocketHelper);
 
 public:
-    template<typename T>
-    PosixSocketHelper(Badge<T>)
-    requires(IsBaseOf<Socket, T>)
+    PosixSocketHelper(Badge<Socket>)
     {
     }
 
@@ -339,7 +347,7 @@ public:
 
     virtual ~LocalSocket() { close(); }
 
-    static size_t const MAX_TRANSFER_FDS;
+    static constexpr size_t MAX_TRANSFER_FDS = 128;
 
 private:
     explicit LocalSocket(PreventSIGPIPE prevent_sigpipe = PreventSIGPIPE::Yes)

@@ -1,10 +1,8 @@
-#import <CSS/CSSStyleDeclaration.idl>
-#import <CSS/GeneratedCSSStyleProperties.idl>
-
 // https://drafts.csswg.org/cssom/#cssstyleproperties
+// Generated property accessors live on the shared prototype.
 [Exposed=Window]
 interface CSSStyleProperties : CSSStyleDeclaration {
-    [CEReactions, LegacyNullToEmptyString] attribute CSSOMString cssFloat;
+    [CEReactions, LegacyNullToEmptyString] attribute Utf16CSSOMString cssFloat;
 };
 
 CSSStyleProperties includes GeneratedCSSStyleProperties;

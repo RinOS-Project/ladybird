@@ -14,7 +14,7 @@
 namespace Web::HTML {
 
 class HTMLTableSectionElement final : public HTMLElement {
-    WEB_PLATFORM_OBJECT(HTMLTableSectionElement, HTMLElement);
+    WEB_WRAPPABLE(HTMLTableSectionElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLTableSectionElement);
 
 public:
@@ -33,12 +33,10 @@ private:
     HTMLTableSectionElement(DOM::Document&, DOM::QualifiedName);
 
     virtual bool is_html_table_section_element() const override { return true; }
-
-    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    virtual bool is_presentational_hint(FlyString const&) const override;
-    virtual void apply_presentational_hints(GC::Ref<CSS::CascadedProperties>) const override;
+    virtual bool is_presentational_hint(Utf16FlyString const&) const override;
+    virtual void apply_presentational_hints(Vector<CSS::StyleProperty>&) const override;
 
     GC::Ptr<DOM::HTMLCollection> mutable m_rows;
 };

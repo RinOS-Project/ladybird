@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/NeverDestroyed.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/IndexedDB/IDBDatabase.h>
 #include <LibWeb/IndexedDB/IDBTransaction.h>
 #include <LibWeb/IndexedDB/Internal/Algorithms.h>
@@ -12,12 +14,16 @@
 
 namespace Web::IndexedDB {
 
-using IDBDatabaseMapping = HashMap<StorageAPI::StorageKey, HashMap<String, GC::Root<Database>>>;
-static IDBDatabaseMapping m_databases;
+using IDBDatabaseMapping = HashMap<StorageAPI::StorageKey, HashMap<Utf16String, GC::Root<Database>>>;
+static IDBDatabaseMapping& idb_databases()
+{
+    static NeverDestroyed<IDBDatabaseMapping> databases;
+    return *databases;
+}
 
 void Database::for_each_database(AK::Function<void(Database&)> const& visitor)
 {
-    for (auto const& [key, mapping] : m_databases) {
+    for (auto const& [key, mapping] : idb_databases()) {
         for (auto const& [_, database] : mapping) {
             if (!database)
                 continue;
@@ -30,25 +36,22 @@ GC_DEFINE_ALLOCATOR(Database);
 
 Database::~Database() = default;
 
-GC::Ref<Database> Database::create(JS::Realm& realm, String const& name)
+GC::Ref<Database> Database::create(GC::Heap& heap, Utf16String const& name)
 {
-    return realm.create<Database>(realm, name);
+    return heap.allocate<Database>(name);
 }
 
 void Database::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(m_associated_connections);
     visitor.visit(m_upgrade_transaction);
     visitor.visit(m_object_stores);
 
-    if (m_pending_connection_wait.has_value()) {
-        visitor.visit(m_pending_connection_wait->connections);
+    if (m_pending_connection_wait.has_value())
         visitor.visit(m_pending_connection_wait->callback);
-    }
 }
 
-GC::Ptr<ObjectStore> Database::object_store_with_name(String const& name) const
+GC::Ptr<ObjectStore> Database::object_store_with_name(Utf16String const& name) const
 {
     for (auto const& object_store : m_object_stores) {
         if (object_store->name() == name)
@@ -61,14 +64,14 @@ GC::Ptr<ObjectStore> Database::object_store_with_name(String const& name) const
 Vector<GC::Weak<Database>> Database::for_key(StorageAPI::StorageKey const& key)
 {
     Vector<GC::Weak<Database>> databases;
-    for (auto const& database_mapping : m_databases.get(key).value_or({})) {
+    for (auto const& database_mapping : idb_databases().get(key).value_or({})) {
         databases.append(*database_mapping.value);
     }
 
     return databases;
 }
 
-RequestList& ConnectionQueueHandler::for_key_and_name(StorageAPI::StorageKey const& key, String const& name)
+RequestList& ConnectionQueueHandler::for_key_and_name(StorageAPI::StorageKey const& key, Utf16String const& name)
 {
     auto& instance = ConnectionQueueHandler::the();
     auto maybe_connection = instance.m_open_requests.find_if([&key, &name](Connection const& connection) {
@@ -83,32 +86,32 @@ RequestList& ConnectionQueueHandler::for_key_and_name(StorageAPI::StorageKey con
     return new_connection->request_list;
 }
 
-Optional<Database&> Database::for_key_and_name(StorageAPI::StorageKey const& key, String const& name)
+Optional<Database&> Database::for_key_and_name(StorageAPI::StorageKey const& key, Utf16String const& name)
 {
-    auto database_mapping = m_databases.ensure(key, [] { return HashMap<String, GC::Root<Database>>(); });
+    auto database_mapping = idb_databases().ensure(key, [] { return HashMap<Utf16String, GC::Root<Database>>(); });
     if (auto maybe_database = database_mapping.get(name); maybe_database.has_value())
         return *maybe_database.value();
     return {};
 }
 
-ErrorOr<GC::Ref<Database>> Database::create_for_key_and_name(JS::Realm& realm, StorageAPI::StorageKey const& key, String const& name)
+ErrorOr<GC::Ref<Database>> Database::create_for_key_and_name(GC::Heap& heap, StorageAPI::StorageKey const& key, Utf16String const& name)
 {
-    auto database_mapping = TRY(m_databases.try_ensure(key, [] {
-        return HashMap<String, GC::Root<Database>>();
+    auto database_mapping = TRY(idb_databases().try_ensure(key, [] {
+        return HashMap<Utf16String, GC::Root<Database>>();
     }));
 
-    auto value = Database::create(realm, name);
+    auto value = Database::create(heap, name);
 
     database_mapping.set(name, value);
-    m_databases.set(key, database_mapping);
+    idb_databases().set(key, database_mapping);
 
     return value;
 }
 
-ErrorOr<void> Database::delete_for_key_and_name(StorageAPI::StorageKey const& key, String const& name)
+ErrorOr<void> Database::delete_for_key_and_name(StorageAPI::StorageKey const& key, Utf16String const& name)
 {
     // FIXME: Is a missing entry a failure?
-    auto maybe_database_mapping = m_databases.get(key);
+    auto maybe_database_mapping = idb_databases().get(key);
     if (!maybe_database_mapping.has_value())
         return {};
 
@@ -121,36 +124,47 @@ ErrorOr<void> Database::delete_for_key_and_name(StorageAPI::StorageKey const& ke
     if (!did_remove)
         return {};
 
-    m_databases.set(key, database_mapping);
+    idb_databases().set(key, database_mapping);
 
     return {};
 }
 
-GC::Ref<Database::AssociatedConnections> Database::associated_connections_as_heap_vector()
+void Database::associate(GC::Ref<IDBDatabase> connection)
 {
-    auto connections = realm().heap().allocate<AssociatedConnections>();
-    connections->elements().ensure_capacity(m_associated_connections.size());
+    m_associated_connections.append(connection);
+}
+
+void Database::dissociate(IDBDatabase& connection)
+{
+    m_associated_connections.remove_first_matching([&](auto& entry) { return entry == &connection; });
+}
+
+GC::Ref<Database::AssociatedConnections> Database::associated_connections_as_heap_vector(GC::Heap& heap)
+{
+    auto connections = heap.allocate<AssociatedConnections>();
     for (auto& associated_connection : m_associated_connections) {
-        connections->elements().unchecked_append(associated_connection);
+        if (associated_connection)
+            connections->elements().append(*associated_connection);
     }
     return connections;
 }
 
 GC::RootVector<GC::Ref<IDBDatabase>> Database::associated_connections_as_root_vector()
 {
-    GC::RootVector<GC::Ref<IDBDatabase>> connections(realm().heap());
-    connections.ensure_capacity(m_associated_connections.size());
-    for (auto& connection : m_associated_connections)
-        connections.unchecked_append(connection);
+    GC::RootVector<GC::Ref<IDBDatabase>> connections {};
+    for (auto& connection : m_associated_connections) {
+        if (connection)
+            connections.append(*connection);
+    }
     return connections;
 }
 
-GC::Ref<Database::AssociatedConnections> Database::associated_connections_as_heap_vector_except(IDBDatabase& connection)
+GC::Ref<Database::AssociatedConnections> Database::associated_connections_as_heap_vector_except(GC::Heap& heap, IDBDatabase& connection)
 {
-    auto connections = realm().heap().allocate<AssociatedConnections>();
+    auto connections = heap.allocate<AssociatedConnections>();
     for (auto& associated_connection : m_associated_connections) {
-        if (associated_connection != &connection)
-            connections->elements().append(associated_connection);
+        if (associated_connection && associated_connection != &connection)
+            connections->elements().append(*associated_connection);
     }
     return connections;
 }
@@ -171,8 +185,12 @@ void Database::wait_for_connections_to_close(ReadonlySpan<GC::Ref<IDBDatabase>> 
     }
 
     VERIFY(!m_pending_connection_wait.has_value());
+    Vector<GC::Weak<IDBDatabase>> weak_connections;
+    weak_connections.ensure_capacity(connections.size());
+    for (auto const& connection : connections)
+        weak_connections.unchecked_append(connection);
     m_pending_connection_wait = PendingConnectionWait {
-        .connections = Vector<GC::Ref<IDBDatabase>> { connections },
+        .connections = move(weak_connections),
         .callback = after_all,
     };
 }
@@ -184,7 +202,7 @@ void Database::check_pending_connection_wait()
 
     auto& wait = m_pending_connection_wait.value();
     for (auto const& connection : wait.connections) {
-        if (connection->state() != ConnectionState::Closed)
+        if (connection && connection->state() != ConnectionState::Closed)
             return;
     }
 

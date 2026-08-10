@@ -1,4 +1,4 @@
-$a2397124 bigint-truthiness.js:1:1
+$947262ee bigint-truthiness.js:2:1
   Registers: 6
   Blocks:    1
   Constants:
@@ -18,14 +18,13 @@ $a2397124 bigint-truthiness.js:1:1
     [13] = Undefined
 
 block0:
-  [   0] GetLexicalEnvironment dst:reg4
-  [   8] SetGlobal `a`, src:String("falsy")
-  [  20] SetGlobal `b`, src:String("falsy")
-  [  38] SetGlobal `c`, src:String("falsy")
-  [  50] SetGlobal `d`, src:String("falsy")
-  [  68] SetGlobal `e`, src:String("truthy")
-  [  80] SetGlobal `f`, src:String("truthy")
-  [  98] SetGlobal `g`, src:String("truthy")
-  [  b0] SetGlobal `h`, src:Bool(true)
-  [  c8] SetGlobal `i`, src:Bool(false)
-  [  e0] End value:Undefined
+  [   0] SetGlobal `a`, src:String("falsy")
+  [  10] SetGlobal `b`, src:String("falsy")
+  [  20] SetGlobal `c`, src:String("falsy")
+  [  30] SetGlobal `d`, src:String("falsy")
+  [  40] SetGlobal `e`, src:String("truthy")
+  [  50] SetGlobal `f`, src:String("truthy")
+  [  60] SetGlobal `g`, src:String("truthy")
+  [  70] SetGlobal `h`, src:Bool(true)
+  [  80] SetGlobal `i`, src:Bool(false)
+  [  90] End value:Undefined

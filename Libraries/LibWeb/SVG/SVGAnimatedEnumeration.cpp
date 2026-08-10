@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/SVGAnimatedEnumerationPrototype.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/SVG/SVGAnimatedEnumeration.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
@@ -13,14 +12,13 @@ namespace Web::SVG {
 
 GC_DEFINE_ALLOCATOR(SVGAnimatedEnumeration);
 
-GC::Ref<SVGAnimatedEnumeration> SVGAnimatedEnumeration::create(JS::Realm& realm, u16 value)
+GC::Ref<SVGAnimatedEnumeration> SVGAnimatedEnumeration::create(u16 value)
 {
-    return realm.create<SVGAnimatedEnumeration>(realm, value);
+    return GC::Heap::the().allocate<SVGAnimatedEnumeration>(value);
 }
 
-SVGAnimatedEnumeration::SVGAnimatedEnumeration(JS::Realm& realm, u16 value)
-    : PlatformObject(realm)
-    , m_value(value)
+SVGAnimatedEnumeration::SVGAnimatedEnumeration(u16 value)
+    : m_value(value)
 {
 }
 
@@ -35,7 +33,7 @@ WebIDL::ExceptionOr<void> SVGAnimatedEnumeration::set_base_val(u16 base_val)
     // FIXME: 2. If value is 0 or is not the numeric type value for any value of the reflected attribute, then throw a
     //    TypeError.
     if (value == 0)
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "invalid value for baseVal"sv };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "invalid value for baseVal"_utf16 };
 
     // FIXME: 3. Otherwise, if the reflecting IDL attribute is orientType and value is SVG_MARKER_ORIENT_ANGLE, then set the
     //    reflected attribute to the string "0".
@@ -45,12 +43,6 @@ WebIDL::ExceptionOr<void> SVGAnimatedEnumeration::set_base_val(u16 base_val)
     m_value = value;
 
     return {};
-}
-
-void SVGAnimatedEnumeration::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGAnimatedEnumeration);
-    Base::initialize(realm);
 }
 
 // https://svgwg.org/svg2-draft/types.html#__svg__SVGAnimatedEnumeration__baseVal

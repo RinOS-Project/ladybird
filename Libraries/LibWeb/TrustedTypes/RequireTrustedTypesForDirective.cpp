@@ -6,24 +6,43 @@
 
 #include <LibWeb/TrustedTypes/RequireTrustedTypesForDirective.h>
 
+#include <AK/Utf16StringBuilder.h>
 #include <LibWeb/ContentSecurityPolicy/Directives/Names.h>
 #include <LibWeb/ContentSecurityPolicy/PolicyList.h>
 #include <LibWeb/ContentSecurityPolicy/Violation.h>
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+#include <LibWeb/HTML/PolicyContainers.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/TrustedTypes/TrustedScript.h>
 #include <LibWeb/TrustedTypes/TrustedTypePolicy.h>
 
 namespace Web::TrustedTypes {
 
 #define __ENUMERATE_REQUIRE_KEYWORD_TRUSTED_TYPES_FOR(name, value) \
-    FlyString name = value##_fly_string;
+    Utf16FlyString const& name = *new Utf16FlyString(value##_utf16_fly_string);
 ENUMERATE_REQUIRE_KEYWORD_TRUSTED_TYPES_FOR
 #undef __ENUMERATE_REQUIRE_KEYWORD_TRUSTED_TYPES_FOR
 
+static bool sink_group_matches(Utf16String const& directive_value, Utf16View sink_group)
+{
+    auto strip_quotes = [](Utf16View value) {
+        if (value.length_in_code_units() >= 2) {
+            auto first = value.code_unit_at(0);
+            auto last = value.code_unit_at(value.length_in_code_units() - 1);
+            if ((first == u'\'' && last == u'\'') || (first == u'"' && last == u'"'))
+                return value.substring_view(1, value.length_in_code_units() - 2);
+        }
+        return value;
+    };
+    auto value = strip_quotes(directive_value.utf16_view());
+    sink_group = strip_quotes(sink_group);
+    return value.equals_ignoring_ascii_case(sink_group);
+}
+
 GC_DEFINE_ALLOCATOR(RequireTrustedTypesForDirective);
 
-RequireTrustedTypesForDirective::RequireTrustedTypesForDirective(String name, Vector<String> value)
+RequireTrustedTypesForDirective::RequireTrustedTypesForDirective(Utf16FlyString name, Vector<Utf16String> value)
     : Directive(move(name), move(value))
 {
 }
@@ -60,16 +79,16 @@ ContentSecurityPolicy::Directives::Directive::Result RequireTrustedTypesForDirec
     if (converted_script_source.is_error() || !converted_script_source.value().has_value())
         return Result::Blocked;
 
-    auto const* converted_script_source_value = converted_script_source.value().value().get_pointer<GC::Root<TrustedScript>>();
+    auto const* converted_script_source_value = converted_script_source.value().value().get_pointer<GC::Ref<TrustedScript>>();
 
     if (!converted_script_source_value)
         return Result::Blocked;
 
     // 5. Set urlString to be the result of prepending "javascript:" to stringified convertedScriptSource.
-    url_string = MUST(String::formatted("javascript:{}", (*converted_script_source_value)->to_string()));
+    auto new_url_string = Utf16String::formatted("javascript:{}", (*converted_script_source_value)->to_string());
 
     // 6. Let newURL be the result of running the URL parser on urlString. If the parser returns a failure, return "Blocked" and abort further steps.
-    auto const new_url = DOMURL::parse(url_string);
+    auto const new_url = DOMURL::parse(new_url_string);
     if (!new_url.has_value())
         return Result::Blocked;
 
@@ -81,10 +100,13 @@ ContentSecurityPolicy::Directives::Directive::Result RequireTrustedTypesForDirec
 }
 
 // https://w3c.github.io/trusted-types/dist/spec/#does-sink-require-trusted-types
-bool does_sink_require_trusted_types(JS::Object& global, String sink_group, IncludeReportOnlyPolicies include_report_only_policies)
+bool does_sink_require_trusted_types(JS::Object& global, Utf16View sink_group, IncludeReportOnlyPolicies include_report_only_policies)
 {
     // 1. For each policy in global’s CSP list:
-    for (auto const policy : ContentSecurityPolicy::PolicyList::from_object(global)->policies()) {
+    auto csp_list = ContentSecurityPolicy::PolicyList::from_object(global);
+    if (!csp_list)
+        return false;
+    for (auto const policy : csp_list->policies()) {
         // 1. If policy’s directive set does not contain a directive whose name is "require-trusted-types-for", skip to the next policy.
         if (!policy->contains_directive_with_name(ContentSecurityPolicy::Directives::Names::RequireTrustedTypesFor))
             continue;
@@ -93,8 +115,8 @@ bool does_sink_require_trusted_types(JS::Object& global, String sink_group, Incl
         auto const directive = policy->get_directive_by_name(ContentSecurityPolicy::Directives::Names::RequireTrustedTypesFor);
 
         // 3. If directive’s value does not contain a trusted-types-sink-group which is a match for sinkGroup, skip to the next policy.
-        auto const maybe_sink_group = directive->value().find_if([&sink_group](auto const& directive_value) {
-            return directive_value.equals_ignoring_ascii_case(sink_group);
+        auto const maybe_sink_group = directive->value().find_if([sink_group](auto const& directive_value) {
+            return sink_group_matches(directive_value, sink_group);
         });
         if (maybe_sink_group.is_end())
             continue;
@@ -116,7 +138,7 @@ bool does_sink_require_trusted_types(JS::Object& global, String sink_group, Incl
 }
 
 // https://w3c.github.io/trusted-types/dist/spec/#should-block-sink-type-mismatch
-ContentSecurityPolicy::Directives::Directive::Result should_sink_type_mismatch_violation_be_blocked_by_content_security_policy(JS::Object& global, TrustedTypes::InjectionSink sink, String sink_group, Utf16String source)
+ContentSecurityPolicy::Directives::Directive::Result should_sink_type_mismatch_violation_be_blocked_by_content_security_policy(JS::Object& global, TrustedTypes::InjectionSink sink, Utf16View sink_group, Utf16String source)
 {
     auto& realm = HTML::relevant_realm(global);
 
@@ -150,7 +172,10 @@ ContentSecurityPolicy::Directives::Directive::Result should_sink_type_mismatch_v
     }
 
     // 4. For each policy in global’s CSP list:
-    for (auto const policy : ContentSecurityPolicy::PolicyList::from_object(global)->policies()) {
+    auto csp_list = ContentSecurityPolicy::PolicyList::from_object(global);
+    if (!csp_list)
+        return result;
+    for (auto const policy : csp_list->policies()) {
         // 1. If policy’s directive set does not contain a directive whose name is "require-trusted-types-for", skip to the next policy.
         if (!policy->contains_directive_with_name(ContentSecurityPolicy::Directives::Names::RequireTrustedTypesFor))
             continue;
@@ -159,14 +184,14 @@ ContentSecurityPolicy::Directives::Directive::Result should_sink_type_mismatch_v
         auto const directive = policy->get_directive_by_name(ContentSecurityPolicy::Directives::Names::RequireTrustedTypesFor);
 
         // 3. If directive’s value does not contain a trusted-types-sink-group which is a match for sinkGroup, skip to the next policy.
-        auto const maybe_sink_group = directive->value().find_if([&sink_group](auto const& directive_value) {
-            return directive_value.equals_ignoring_ascii_case(sink_group);
+        auto const maybe_sink_group = directive->value().find_if([sink_group](auto const& directive_value) {
+            return sink_group_matches(directive_value, sink_group);
         });
         if (maybe_sink_group.is_end())
             continue;
 
         // 4. Let violation be the result of executing Create a violation object for global, policy, and directive on global, policy and "require-trusted-types-for"
-        auto violation = ContentSecurityPolicy::Violation::create_a_violation_object_for_global_policy_and_directive(realm, global, policy, ContentSecurityPolicy::Directives::Names::RequireTrustedTypesFor.to_string());
+        auto violation = ContentSecurityPolicy::Violation::create_a_violation_object_for_global_policy_and_directive(global, policy, ContentSecurityPolicy::Directives::Names::RequireTrustedTypesFor.view().to_utf8_but_should_be_ported_to_utf16());
 
         // 5. Set violation’s resource to "trusted-types-sink".
         violation->set_resource(ContentSecurityPolicy::Violation::Resource::TrustedTypesSink);
@@ -175,7 +200,11 @@ ContentSecurityPolicy::Directives::Directive::Result should_sink_type_mismatch_v
         auto const trimmed_sample = sample.substring_view(0, min(sample.length_in_code_points(), 40));
 
         // 7. Set violation’s sample to be the result of concatenating the list « sink, trimmedSample « using "|" as a separator.
-        violation->set_sample(MUST(String::formatted("{}|{}", to_string(sink), trimmed_sample)));
+        Utf16StringBuilder sample_builder;
+        sample_builder.append(to_string(sink));
+        sample_builder.append_ascii('|');
+        sample_builder.append(trimmed_sample);
+        violation->set_sample(sample_builder.to_string());
 
         // 8. Execute Report a violation on violation.
         violation->report_a_violation(realm);

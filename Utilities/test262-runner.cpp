@@ -15,7 +15,6 @@
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/File.h>
 #include <LibCore/System.h>
-#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Contrib/Test262/GlobalObject.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibJS/Runtime/ValueInlines.h>
@@ -45,17 +44,23 @@ struct TestError {
     ByteString harness_file;
 };
 
+static String value_to_utf8_string_without_side_effects(JS::Value value)
+{
+    return value.to_utf16_string_without_side_effects().to_utf8();
+}
+
 using ScriptOrModuleProgram = Variant<GC::Ref<JS::Script>, GC::Ref<JS::SourceTextModule>>;
 
 template<typename ScriptType>
 static ErrorOr<ScriptOrModuleProgram, TestError> parse_program(JS::Realm& realm, StringView source, StringView filepath)
 {
-    auto script_or_error = ScriptType::parse(source, realm, filepath);
+    auto source_utf16 = Utf16String::from_utf8(source);
+    auto script_or_error = ScriptType::parse(source_utf16, realm, filepath);
     if (script_or_error.is_error()) {
         return TestError {
             NegativePhase::ParseOrEarly,
             "SyntaxError"_string,
-            script_or_error.error()[0].to_string(),
+            script_or_error.error()[0].to_utf16_string().to_utf8(),
             ""
         };
     }
@@ -104,22 +109,22 @@ static ErrorOr<void, TestError> run_program(InterpreterT& interpreter, ScriptOrM
         if (auto object = error_value.template as_if<JS::Object>()) {
             auto name = object->get_without_side_effects("name"_utf16_fly_string);
             if (!name.is_undefined() && !name.is_accessor()) {
-                error.type = name.to_string_without_side_effects();
+                error.type = value_to_utf8_string_without_side_effects(name);
             } else {
                 auto constructor_value = object->get_without_side_effects("constructor"_utf16_fly_string);
                 if (auto constructor = constructor_value.template as_if<JS::Object>()) {
                     name = constructor->get_without_side_effects("name"_utf16_fly_string);
                     if (!name.is_undefined())
-                        error.type = name.to_string_without_side_effects();
+                        error.type = value_to_utf8_string_without_side_effects(name);
                 }
             }
 
             auto message = object->get_without_side_effects("message"_utf16_fly_string);
             if (!message.is_undefined() && !message.is_accessor())
-                error.details = message.to_string_without_side_effects();
+                error.details = value_to_utf8_string_without_side_effects(message);
         }
         if (error.type.is_empty())
-            error.type = error_value.to_string_without_side_effects();
+            error.type = value_to_utf8_string_without_side_effects(error_value);
         return error;
     }
     return {};
@@ -235,7 +240,7 @@ static ErrorOr<void, TestError> run_test(StringView source, StringView filepath,
     if (!harness_builder.is_empty()) {
         ScriptOrModuleProgram harness_program { TRY(parse_harness_contents(*realm, harness_builder.string_view())) };
 
-        if (auto result = run_program(vm->bytecode_interpreter(), harness_program); result.is_error()) {
+        if (auto result = run_program(*vm, harness_program); result.is_error()) {
             return TestError {
                 NegativePhase::Harness,
                 result.error().type,
@@ -245,7 +250,7 @@ static ErrorOr<void, TestError> run_test(StringView source, StringView filepath,
         }
     }
 
-    return run_program(vm->bytecode_interpreter(), program);
+    return run_program(*vm, program);
 }
 
 static ErrorOr<TestMetadata, String> extract_metadata(StringView source)
@@ -287,7 +292,31 @@ static ErrorOr<TestMetadata, String> extract_metadata(StringView source)
 
     Vector<StringView> include_list;
     bool parsing_includes_list = false;
+    bool parsing_flags_block = false;
     bool has_phase = false;
+
+    auto apply_flag = [&](StringView flag) {
+        if (flag == "raw"sv) {
+            metadata.strict_mode = StrictMode::NoStrict;
+            metadata.harness_files.clear();
+        } else if (flag == "noStrict"sv) {
+            metadata.strict_mode = StrictMode::NoStrict;
+        } else if (flag == "onlyStrict"sv) {
+            metadata.strict_mode = StrictMode::OnlyStrict;
+        } else if (flag == "module"sv) {
+            VERIFY(metadata.strict_mode == StrictMode::Both);
+            metadata.program_type = JS::RustIntegration::ProgramType::Module;
+            metadata.strict_mode = StrictMode::NoStrict;
+        } else if (flag == "async"sv) {
+            metadata.harness_files.append(async_include);
+            metadata.is_async = true;
+        } else if (flag == "CanBlockIsFalse"sv) {
+            // NOTE: This should only be skipped if AgentCanSuspend is set to true. This is currently always the case.
+            //       Ideally we would check that, but we don't have the VM by this stage. So for now, we rely on that
+            //       assumption.
+            metadata.skip_test = SkipTest::Yes;
+        }
+    };
 
     for (auto raw_line : lines) {
         if (!failed_message.is_empty())
@@ -352,30 +381,22 @@ static ErrorOr<TestMetadata, String> extract_metadata(StringView source)
             }
         }
 
+        if (parsing_flags_block) {
+            if (line.starts_with('-')) {
+                apply_flag(second_word(line));
+                continue;
+            } else {
+                parsing_flags_block = false;
+            }
+        }
+
         if (line.starts_with("flags:"sv)) {
             auto flags = parse_list(line);
-
-            for (auto flag : flags) {
-                if (flag == "raw"sv) {
-                    metadata.strict_mode = StrictMode::NoStrict;
-                    metadata.harness_files.clear();
-                } else if (flag == "noStrict"sv) {
-                    metadata.strict_mode = StrictMode::NoStrict;
-                } else if (flag == "onlyStrict"sv) {
-                    metadata.strict_mode = StrictMode::OnlyStrict;
-                } else if (flag == "module"sv) {
-                    VERIFY(metadata.strict_mode == StrictMode::Both);
-                    metadata.program_type = JS::RustIntegration::ProgramType::Module;
-                    metadata.strict_mode = StrictMode::NoStrict;
-                } else if (flag == "async"sv) {
-                    metadata.harness_files.append(async_include);
-                    metadata.is_async = true;
-                } else if (flag == "CanBlockIsFalse"sv) {
-                    // NOTE: This should only be skipped if AgentCanSuspend is set to true. This is currently always the case.
-                    //       Ideally we would check that, but we don't have the VM by this stage. So for now, we rely on that
-                    //       assumption.
-                    metadata.skip_test = SkipTest::Yes;
-                }
+            if (!flags.is_empty()) {
+                for (auto flag : flags)
+                    apply_flag(flag);
+            } else if (!line.contains('[')) {
+                parsing_flags_block = true;
             }
         } else if (line.starts_with("includes:"sv)) {
             auto files = parse_list(line);

@@ -8,31 +8,49 @@
 
 #pragma once
 
+#include <AK/Badge.h>
 #include <AK/Function.h>
+#include <AK/NonnullRefPtr.h>
+#include <AK/OwnPtr.h>
+#include <AK/RefPtr.h>
+#include <AK/Utf16View.h>
+#include <LibWeb/Bindings/CSSStyleSheet.h>
 #include <LibWeb/CSS/CSSNamespaceRule.h>
 #include <LibWeb/CSS/CSSRule.h>
 #include <LibWeb/CSS/CSSRuleList.h>
 #include <LibWeb/CSS/CSSStyleRule.h>
+#include <LibWeb/CSS/SelectorInsights.h>
 #include <LibWeb/CSS/StyleSheet.h>
 #include <LibWeb/CSS/StyleValues/ImageStyleValue.h>
 #include <LibWeb/DOM/StyleInvalidationReason.h>
 #include <LibWeb/Export.h>
+#include <LibWeb/WebIDL/Promise.h>
 #include <LibWeb/WebIDL/Types.h>
+
+namespace Web::ViewTransition {
+
+class ViewTransition;
+
+}
 
 namespace Web::CSS {
 
 class CSSImportRule;
-class FontLoader;
+class StyleScope;
+struct CachedStyleSheetInvalidationSet;
+struct ShadowRootStylesheetEffects;
+struct StyleCache;
 
-struct CSSStyleSheetInit {
-    Optional<String> base_url {};
-    Variant<GC::Root<MediaList>, String> media { String {} };
-    bool disabled { false };
-};
+using CSSStyleSheetOptions = Bindings::CSSStyleSheetInit;
+
+WEB_API CSSStyleSheet* css_style_sheet_from_value(JS::Value);
+WEB_API JS::Value css_style_sheet(JS::Realm&, CSSStyleSheet&);
+WEB_API void resolve_css_style_sheet_promise(JS::Realm&, WebIDL::Promise const&, CSSStyleSheet&);
+WEB_API GC::Ref<JS::SyntheticModule> create_css_style_sheet_default_export_module(JS::Realm&, CSSStyleSheet&, StringView filename);
 
 // https://drafts.csswg.org/cssom-1/#cssstylesheet
 class WEB_API CSSStyleSheet final : public StyleSheet {
-    WEB_PLATFORM_OBJECT(CSSStyleSheet, StyleSheet);
+    WEB_WRAPPABLE(CSSStyleSheet, StyleSheet);
     GC_DECLARE_ALLOCATOR(CSSStyleSheet);
 
 public:
@@ -50,7 +68,7 @@ public:
 
         virtual GC::Ptr<CSSStyleSheet> parent_style_sheet_for_subresource() = 0;
         LoadingState loading_state() const { return m_loading_state; }
-        virtual void visit_edges(Cell::Visitor&) = 0;
+        virtual void visit_edges(GC::Cell::Visitor&) = 0;
 
         void set_loading_state(LoadingState);
 
@@ -58,16 +76,17 @@ public:
         LoadingState m_loading_state { LoadingState::Unloaded };
     };
 
-    [[nodiscard]] static GC::Ref<CSSStyleSheet> create(JS::Realm&, CSSRuleList&, MediaList&, Optional<::URL::URL> location);
-    static WebIDL::ExceptionOr<GC::Ref<CSSStyleSheet>> construct_impl(JS::Realm&, Optional<CSSStyleSheetInit> const& options = {});
+    static WebIDL::ExceptionOr<GC::Ref<CSSStyleSheet>> create_for_constructor(JS::Object&, CSSStyleSheetOptions const& options = {});
+    [[nodiscard]] static GC::Ref<CSSStyleSheet> create(CSSRuleList&, MediaList&, Optional<::URL::URL> location);
+    static WebIDL::ExceptionOr<GC::Ref<CSSStyleSheet>> create_constructed(DOM::Document const&, CSSStyleSheetOptions const& options = {});
 
-    virtual ~CSSStyleSheet() override = default;
+    virtual ~CSSStyleSheet() override;
 
     GC::Ptr<CSSRule const> owner_rule() const { return m_owner_css_rule; }
     GC::Ptr<CSSRule> owner_rule() { return m_owner_css_rule; }
     void set_owner_css_rule(CSSRule* rule) { m_owner_css_rule = rule; }
 
-    virtual String type() const override { return "text/css"_string; }
+    virtual Utf16FlyString type() const override { return "text/css"_utf16_fly_string; }
 
     CSSRuleList const& rules() const { return *m_rules; }
     CSSRuleList& rules() { return *m_rules; }
@@ -75,32 +94,44 @@ public:
     CSSRuleList* css_rules() { return m_rules; }
     CSSRuleList const* css_rules() const { return m_rules; }
 
-    WebIDL::ExceptionOr<unsigned> insert_rule(StringView rule, unsigned index);
-    WebIDL::ExceptionOr<WebIDL::Long> add_rule(Optional<String> selector, Optional<String> style, Optional<WebIDL::UnsignedLong> index);
+    WebIDL::ExceptionOr<unsigned> insert_rule(Utf16View rule, unsigned index);
+    WebIDL::ExceptionOr<WebIDL::Long> add_rule(Optional<Utf16String> selector, Optional<Utf16String> style, Optional<WebIDL::UnsignedLong> index);
     WebIDL::ExceptionOr<void> remove_rule(Optional<WebIDL::UnsignedLong> index);
     WebIDL::ExceptionOr<void> delete_rule(unsigned index);
 
-    GC::Ref<WebIDL::Promise> replace(String text);
-    WebIDL::ExceptionOr<void> replace_sync(StringView text);
+    GC::Ref<WebIDL::Promise> replace(Utf16String text);
+    WebIDL::ExceptionOr<void> replace_sync(Utf16View text);
 
     void for_each_effective_rule(TraversalOrder, Function<void(CSSRule const&)> const& callback) const;
     void for_each_effective_style_producing_rule(Function<void(CSSRule const&)> const& callback) const;
     // Returns whether the match state of any media queries changed after evaluation.
     bool evaluate_media_queries(DOM::Document const&);
+    bool evaluate_media_queries(DOM::Document const&, Function<void(CSSRule const&)> const& changed_rule_callback);
+    void reload_fonts_after_media_query_change();
     void for_each_effective_keyframes_at_rule(Function<void(CSSKeyframesRule const&)> const& callback) const;
     void for_each_effective_counter_style_at_rule(Function<void(CSSCounterStyleRule const&)> const& callback) const;
+    void for_each_effective_function_at_rule(Function<void(CSSFunctionRule const&)> const& callback) const;
 
-    HashTable<GC::Ptr<DOM::Node>> owning_documents_or_shadow_roots() const { return m_owning_documents_or_shadow_roots; }
+    HashTable<GC::Ptr<DOM::Node>> const& owning_documents_or_shadow_roots() const { return m_owning_documents_or_shadow_roots; }
     void add_owning_document_or_shadow_root(DOM::Node& document_or_shadow_root);
     void remove_owning_document_or_shadow_root(DOM::Node& document_or_shadow_root);
-    void invalidate_owners(DOM::StyleInvalidationReason);
+    void invalidate_owners(DOM::StyleInvalidationReason, ShadowRootStylesheetEffects const* previous_sheet_effects = nullptr);
     GC::Ptr<DOM::Document> owning_document() const;
+    virtual void set_disabled(bool) override;
+    void for_each_owning_style_scope(Function<void(StyleScope&)> const&) const;
+    NonnullRefPtr<StyleCache> shared_single_constructed_sheet_style_cache();
+    SelectorInsights const& selector_insights() const;
+    CachedStyleSheetInvalidationSet const& cached_style_sheet_invalidation_set() const;
 
-    Optional<FlyString> default_namespace() const;
+    // Bumped whenever state that shared style caches derive from changes (rule mutations, media match-state flips).
+    // Lets sheet-set style cache registry entries detect staleness at lookup time.
+    u64 shared_style_cache_generation() const { return m_shared_style_cache_generation; }
+
+    Optional<Utf16FlyString> default_namespace() const;
     GC::Ptr<CSSNamespaceRule> default_namespace_rule() const { return m_default_namespace_rule; }
-    HashTable<FlyString> declared_namespaces() const;
+    HashTable<Utf16FlyString> declared_namespaces() const;
 
-    Optional<FlyString> namespace_uri(StringView namespace_prefix) const;
+    Optional<Utf16FlyString> namespace_uri(Utf16View namespace_prefix) const;
 
     Vector<GC::Ref<CSSImportRule>> const& import_rules() const { return m_import_rules; }
 
@@ -117,14 +148,8 @@ public:
 
     bool disallow_modification() const { return m_disallow_modification; }
 
-    void set_source_text(String);
-    Optional<String> source_text(Badge<DOM::Document>) const;
-
-    void add_associated_font_loader(GC::Ref<FontLoader const> font_loader)
-    {
-        m_associated_font_loaders.append(font_loader);
-    }
-    bool has_associated_font_loader(FontLoader& font_loader) const;
+    void set_source_text(Utf16String source) { m_source_text = move(source); }
+    Optional<Utf16String> source_text() const { return m_source_text; }
 
     void add_critical_subresource(Subresource&);
     void remove_critical_subresource(Subresource&);
@@ -132,23 +157,24 @@ public:
     void check_if_loading_completed();
 
 private:
-    CSSStyleSheet(JS::Realm&, CSSRuleList&, MediaList&, Optional<::URL::URL> location);
+    CSSStyleSheet(CSSRuleList&, MediaList&, Optional<::URL::URL> location);
 
-    virtual void initialize(JS::Realm&) override;
-    virtual void visit_edges(Cell::Visitor&) override;
+    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual size_t external_memory_size() const override;
 
     void recalculate_rule_caches();
+    void invalidate_shared_style_cache();
 
     void set_constructed(bool constructed) { m_constructed = constructed; }
     void set_disallow_modification(bool disallow_modification) { m_disallow_modification = disallow_modification; }
 
     Parser::ParsingParams make_parsing_params() const;
 
-    Optional<String> m_source_text;
+    Optional<Utf16String> m_source_text;
 
     GC::Ptr<CSSRuleList> m_rules;
     GC::Ptr<CSSNamespaceRule> m_default_namespace_rule;
-    HashMap<FlyString, GC::Ptr<CSSNamespaceRule>> m_namespace_rules;
+    HashMap<Utf16FlyString, GC::Ptr<CSSNamespaceRule>> m_namespace_rules;
     Vector<GC::Ref<CSSImportRule>> m_import_rules;
 
     GC::Ptr<CSSRule> m_owner_css_rule;
@@ -159,12 +185,14 @@ private:
     bool m_constructed { false };
     bool m_disallow_modification { false };
     Optional<bool> m_did_match;
-
-    Vector<GC::Ptr<FontLoader const>> m_associated_font_loaders;
+    mutable Optional<SelectorInsights> m_selector_insights;
+    mutable OwnPtr<CachedStyleSheetInvalidationSet> m_cached_style_sheet_invalidation_set;
+    RefPtr<StyleCache> m_shared_single_constructed_sheet_style_cache;
+    u64 m_shared_style_cache_generation { 0 };
 
     Vector<Subresource&> m_critical_subresources;
 
-    IGNORE_GC Vector<WeakPtr<ImageStyleValue>> m_pending_image_values;
+    Vector<WeakPtr<ImageStyleValue>> m_pending_image_values;
 };
 
 }

@@ -1,6 +1,3 @@
-#import <WebIDL/Function.idl>
-#import <WebXR/XRSystem.idl>
-
 // https://github.com/immersive-web/webxr-test-api/blob/main/explainer.md
 dictionary FakeXRDeviceInit {
     // Deprecated - use `supportedModes` instead.
@@ -17,7 +14,7 @@ dictionary FakeXRDeviceInit {
     // If not specified/empty, the device supports no features.
     // NOTE: This is meant to emulate hardware support, not whether a feature is
     // currently available (e.g. bounds not being tracked per below)
-    sequence<DOMString> supportedFeatures;
+    sequence<Utf16DOMString> supportedFeatures;
     
     // The bounds coordinates. If empty, no bounded reference space is currently tracked.
     // If not, must have at least three elements.

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/DocumentTypePrototype.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentType.h>
 
@@ -14,7 +14,7 @@ GC_DEFINE_ALLOCATOR(DocumentType);
 
 GC::Ref<DocumentType> DocumentType::create(Document& document)
 {
-    return document.realm().create<DocumentType>(document);
+    return GC::Heap::the().allocate<DocumentType>(document);
 }
 
 DocumentType::DocumentType(Document& document)
@@ -22,18 +22,12 @@ DocumentType::DocumentType(Document& document)
 {
 }
 
-void DocumentType::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(DocumentType);
-    Base::initialize(realm);
-}
-
 // https://dom.spec.whatwg.org/#valid-doctype-name
-bool is_valid_doctype_name(String const& name)
+bool is_valid_doctype_name(Utf16View const& name)
 {
     // A string is a valid doctype name if it does not contain ASCII whitespace, U+0000 NULL, or U+003E (>).
     constexpr Array<u32, 7> INVALID_DOCTYPE_CHARACTERS { '\t', '\n', '\f', '\r', ' ', '\0', '>' };
-    return !name.code_points().contains_any_of(INVALID_DOCTYPE_CHARACTERS);
+    return !name.contains_any_of(INVALID_DOCTYPE_CHARACTERS);
 }
 
 }

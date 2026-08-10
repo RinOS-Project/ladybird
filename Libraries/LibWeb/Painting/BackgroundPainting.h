@@ -9,6 +9,7 @@
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Painting/BorderPainting.h>
+#include <LibWeb/Painting/BorderRadiiData.h>
 
 namespace Web::Painting {
 
@@ -44,8 +45,8 @@ struct ResolvedBackground {
     Color color {};
 };
 
-WEB_API ResolvedBackground resolve_background_layers(Vector<CSS::BackgroundLayerData> const& layers, PaintableBox const& paintable_box, Color background_color, CSS::BackgroundBox background_color_clip, CSSPixelRect const& border_rect, BorderRadiiData const& border_radii);
+WEB_API ResolvedBackground resolve_background_layers(Vector<CSS::BackgroundLayerData> const& layers, Paintable const& paintable_box, Color background_color, CSS::BackgroundBox background_color_clip, CSSPixelRect const& border_rect, BorderRadiiData const& border_radii);
 
-WEB_API void paint_background(DisplayListRecordingContext&, PaintableBox const&, CSS::ImageRendering, ResolvedBackground const&, BorderRadiiData const&);
+WEB_API void paint_background(DisplayListRecordingContext&, Paintable const&, CSS::ImageRendering, ResolvedBackground const&, BorderRadiiData const&);
 
 }

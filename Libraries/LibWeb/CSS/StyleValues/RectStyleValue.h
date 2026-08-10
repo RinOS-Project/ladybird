@@ -16,24 +16,52 @@ namespace Web::CSS {
 
 class RectStyleValue : public StyleValueWithDefaultOperators<RectStyleValue> {
 public:
-    static ValueComparingNonnullRefPtr<RectStyleValue const> create(EdgeRect rect);
+    static ValueComparingNonnullRefPtr<RectStyleValue const> create(NonnullRefPtr<StyleValue const> top, NonnullRefPtr<StyleValue const> right, NonnullRefPtr<StyleValue const> bottom, NonnullRefPtr<StyleValue const> left);
     virtual ~RectStyleValue() override = default;
 
-    EdgeRect rect() const { return m_rect; }
-    virtual void serialize(StringBuilder&, SerializationMode) const override;
+    ValueComparingNonnullRefPtr<StyleValue const> top() const { return m_top; }
+    ValueComparingNonnullRefPtr<StyleValue const> right() const { return m_right; }
+    ValueComparingNonnullRefPtr<StyleValue const> bottom() const { return m_bottom; }
+    ValueComparingNonnullRefPtr<StyleValue const> left() const { return m_left; }
 
-    bool properties_equal(RectStyleValue const& other) const { return m_rect == other.m_rect; }
+    EdgeRect rect() const { return { LengthOrAuto::from_style_value(top(), {}), LengthOrAuto::from_style_value(right(), {}), LengthOrAuto::from_style_value(bottom(), {}), LengthOrAuto::from_style_value(left(), {}) }; }
+    void serialize(StringBuilder&, SerializationMode) const;
 
-    virtual bool is_computationally_independent() const override { return m_rect.is_computationally_independent(); }
+    ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const&) const;
+
+    bool properties_equal(RectStyleValue const& other) const
+    {
+        return top() == other.top()
+            && right() == other.right()
+            && bottom() == other.bottom()
+            && left() == other.left();
+    }
 
 private:
-    explicit RectStyleValue(EdgeRect rect)
-        : StyleValueWithDefaultOperators(Type::Rect)
-        , m_rect(move(rect))
+    friend class StyleValue;
+
+    explicit RectStyleValue(StyleValueFFI::StyleValueData const* data)
+        : StyleValueWithDefaultOperators(Type::Rect, data)
+        , m_top(StyleValue::adopt_rust_style_value_data(StyleValueFFI::rust_style_value_retain(static_cast<StyleValueFFI::StyleValueData const*>(data->rect.top.pointer))))
+        , m_right(StyleValue::adopt_rust_style_value_data(StyleValueFFI::rust_style_value_retain(static_cast<StyleValueFFI::StyleValueData const*>(data->rect.right.pointer))))
+        , m_bottom(StyleValue::adopt_rust_style_value_data(StyleValueFFI::rust_style_value_retain(static_cast<StyleValueFFI::StyleValueData const*>(data->rect.bottom.pointer))))
+        , m_left(StyleValue::adopt_rust_style_value_data(StyleValueFFI::rust_style_value_retain(static_cast<StyleValueFFI::StyleValueData const*>(data->rect.left.pointer))))
     {
     }
 
-    EdgeRect m_rect;
+    explicit RectStyleValue(NonnullRefPtr<StyleValue const> top, NonnullRefPtr<StyleValue const> right, NonnullRefPtr<StyleValue const> bottom, NonnullRefPtr<StyleValue const> left)
+        : StyleValueWithDefaultOperators(Type::Rect, StyleValueFFI::rust_style_value_create_rect(StyleValueFFI::rust_style_value_retain(top->rust_style_value_data()), StyleValueFFI::rust_style_value_retain(right->rust_style_value_data()), StyleValueFFI::rust_style_value_retain(bottom->rust_style_value_data()), StyleValueFFI::rust_style_value_retain(left->rust_style_value_data())))
+        , m_top(move(top))
+        , m_right(move(right))
+        , m_bottom(move(bottom))
+        , m_left(move(left))
+    {
+    }
+
+    ValueComparingNonnullRefPtr<StyleValue const> m_top;
+    ValueComparingNonnullRefPtr<StyleValue const> m_right;
+    ValueComparingNonnullRefPtr<StyleValue const> m_bottom;
+    ValueComparingNonnullRefPtr<StyleValue const> m_left;
 };
 
 }

@@ -1,0 +1,22 @@
+<!doctype html>
+<style>
+    @function --var-default(--x: var(--fallback)) {
+    }
+
+    @function --invalid-var-default(--x: var(, 1px)) {
+    }
+
+    @function --typed-var-default(--x <length>: var(--fallback)) {
+    }
+
+    @function --typed-invalid-var-default(--x <length>: var(, 1px)) {
+    }
+</style>
+<script src="../include.js"></script>
+<script>
+    test(() => {
+        for (const rule of document.styleSheets[0].cssRules) {
+            println(rule.cssText);
+        }
+    });
+</script>

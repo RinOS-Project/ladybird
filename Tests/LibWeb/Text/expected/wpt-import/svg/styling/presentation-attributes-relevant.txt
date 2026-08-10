@@ -1,18 +1,20 @@
 Harness status: OK
 
-Found 59 tests
+Found 62 tests
 
-58 Pass
+61 Pass
 1 Fail
 Pass	clip-path presentation attribute supported on a relevant element
 Pass	clip-rule presentation attribute supported on a relevant element
 Pass	color presentation attribute supported on a relevant element
+Pass	color-interpolation-filters presentation attribute supported on a relevant element
 Pass	color-interpolation presentation attribute supported on a relevant element
 Pass	cursor presentation attribute supported on a relevant element
 Pass	cx presentation attribute supported on a relevant element
 Pass	cy presentation attribute supported on a relevant element
 Pass	direction presentation attribute supported on a relevant element
 Pass	display presentation attribute supported on a relevant element
+Pass	d presentation attribute supported on a relevant element
 Pass	dominant-baseline presentation attribute supported on a relevant element
 Pass	fill presentation attribute supported on a relevant element
 Pass	fill-opacity presentation attribute supported on a relevant element
@@ -56,6 +58,7 @@ Pass	text-rendering presentation attribute supported on a relevant element
 Pass	transform-origin presentation attribute supported on a relevant element
 Fail	transform presentation attribute supported on a relevant element
 Pass	unicode-bidi presentation attribute supported on a relevant element
+Pass	vector-effect presentation attribute supported on a relevant element
 Pass	visibility presentation attribute supported on a relevant element
 Pass	white-space presentation attribute supported on a relevant element
 Pass	width presentation attribute supported on a relevant element

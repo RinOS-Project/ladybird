@@ -4,11 +4,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <AK/NumericLimits.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/WebAudio/AudioNode.h>
 #include <LibWeb/WebAudio/AudioParam.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/GainNode.h>
+#include <LibWeb/WebAudio/Rendering/RenderNodes.h>
 
 namespace Web::WebAudio {
 
@@ -16,39 +18,36 @@ GC_DEFINE_ALLOCATOR(GainNode);
 
 GainNode::~GainNode() = default;
 
-WebIDL::ExceptionOr<GC::Ref<GainNode>> GainNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, GainOptions const& options)
-{
-    return construct_impl(realm, context, options);
-}
-
-// https://webaudio.github.io/web-audio-api/#dom-gainnode-gainnode
-WebIDL::ExceptionOr<GC::Ref<GainNode>> GainNode::construct_impl(JS::Realm& realm, GC::Ref<BaseAudioContext> context, GainOptions const& options)
+WebIDL::ExceptionOr<GC::Ref<GainNode>> GainNode::create(GC::Ref<BaseAudioContext> context, GainOptions const& options)
 {
     // Create the node and allocate memory
-    auto node = realm.create<GainNode>(realm, context, options);
+    auto node = GC::Heap::the().allocate<GainNode>(context, options);
 
     // Default options for channel count and interpretation
     // https://webaudio.github.io/web-audio-api/#GainNode
     AudioNodeDefaultOptions default_options;
-    default_options.channel_count_mode = Bindings::ChannelCountMode::Max;
-    default_options.channel_interpretation = Bindings::ChannelInterpretation::Speakers;
+    default_options.channel_count_mode = ChannelCountMode::Max;
+    default_options.channel_interpretation = ChannelInterpretation::Speakers;
     default_options.channel_count = 2;
     // FIXME: Set tail-time to no
 
     TRY(node->initialize_audio_node_options(options, default_options));
+
+    node->queue_render_node_creation(make<Rendering::GainRenderNode>(node->node_id(), BaseAudioContext::render_quantum_size(), node->m_gain->render_param()));
+
     return node;
 }
 
-GainNode::GainNode(JS::Realm& realm, GC::Ref<BaseAudioContext> context, GainOptions const& options)
-    : AudioNode(realm, context)
-    , m_gain(AudioParam::create(realm, context, options.gain, NumericLimits<float>::lowest(), NumericLimits<float>::max(), Bindings::AutomationRate::ARate))
+// https://webaudio.github.io/web-audio-api/#dom-gainnode-gainnode
+WebIDL::ExceptionOr<GC::Ref<GainNode>> GainNode::create_for_constructor(GC::Ref<BaseAudioContext> context, GainOptions const& options)
 {
+    return create(context, options);
 }
 
-void GainNode::initialize(JS::Realm& realm)
+GainNode::GainNode(GC::Ref<BaseAudioContext> context, GainOptions const& options)
+    : AudioNode(context)
+    , m_gain(AudioParam::create(context, this, options.gain, NumericLimits<float>::lowest(), NumericLimits<float>::max(), AutomationRate::ARate))
 {
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(GainNode);
-    Base::initialize(realm);
 }
 
 void GainNode::visit_edges(Cell::Visitor& visitor)

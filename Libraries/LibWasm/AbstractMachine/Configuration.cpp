@@ -13,10 +13,29 @@ namespace Wasm {
 
 void Configuration::unwind_impl()
 {
-    auto last_frame = m_frame_stack.take_last();
     m_depth--;
-    m_locals_base = m_frame_stack.is_empty() ? nullptr : m_frame_stack.unchecked_last().locals().data();
-    release_arguments_allocation(last_frame.locals(), m_locals_base != nullptr);
+
+    Optional<Vector<Value, ArgumentsStaticSize>> released_locals;
+    auto const* popped_module = &m_frame_stack.last().module();
+    if (m_frame_stack.last().owns_locals())
+        released_locals = m_owned_locals_stack.take_last();
+    m_frame_stack.remove(m_frame_stack.size() - 1);
+
+    if (m_frame_stack.is_empty()) {
+        m_locals_base = nullptr;
+        m_memory_instances = nullptr;
+        m_global_instances = nullptr;
+    } else {
+        auto& caller = m_frame_stack.last();
+        m_locals_base = caller.owns_locals() ? m_owned_locals_stack.last().data() : caller.locals_data();
+        if (&caller.module() != popped_module) {
+            m_memory_instances = caller.module().resolved_memories(m_store);
+            m_global_instances = caller.module().resolved_globals(m_store);
+        }
+    }
+
+    if (released_locals.has_value())
+        release_arguments_allocation(released_locals.value());
 }
 
 Result Configuration::call(Interpreter& interpreter, FunctionAddress address, Vector<Value, ArgumentsStaticSize>& arguments)
@@ -34,24 +53,38 @@ ErrorOr<Optional<HostFunction&>, Trap> Configuration::prepare_call(FunctionAddre
         return Trap::from_string("Attempt to call nonexistent function by address");
 
     if (auto* wasm_function = function->get_pointer<WasmFunction>()) {
-        if (is_tailcall)
-            unwind_impl(); // Unwind the current frame, the "return" in the tail-called function will unwind the frame we're gonna push now.
-        arguments.ensure_capacity(arguments.size() + wasm_function->code().func().total_local_count());
-        for (auto& local : wasm_function->code().func().locals()) {
-            for (size_t i = 0; i < local.n(); ++i)
-                arguments.unchecked_append(Value(local.type()));
-        }
-
-        set_frame(
-            is_tailcall ? IsTailcall::Yes : IsTailcall::No,
-            wasm_function->module(),
-            move(arguments),
-            wasm_function->code().func().body(),
-            wasm_function->type().results().size());
+        TRY(prepare_wasm_call(*wasm_function, arguments, is_tailcall));
         return OptionalNone {};
     }
 
     return function->get<HostFunction>();
+}
+
+ErrorOr<void, Trap> Configuration::prepare_wasm_call(WasmFunction const& wasm_function, Vector<Value, ArgumentsStaticSize>& arguments, bool is_tailcall)
+{
+    // Tier-0 by default: don't block the call waiting for native compilation. Non-Web embedders
+    // compile synchronously at instantiate time (so the JIT is already live here); the Web path
+    // compiles in the background and the interpreter picks up the native entry on a later call
+    // once it's published. Either way, execution falls back to the interpreter until then.
+    if (is_tailcall)
+        unwind_impl();
+
+    auto inlined_locals = wasm_function.code().func().body().compiled_instructions.cranelift_inlined_locals;
+    arguments.ensure_capacity(arguments.size() + wasm_function.code().func().total_local_count() + inlined_locals);
+    for (auto const& local : wasm_function.code().func().locals()) {
+        for (size_t i = 0; i < local.n(); ++i)
+            arguments.unchecked_append(Value(local.type()));
+    }
+    for (u32 i = 0; i < inlined_locals; ++i)
+        arguments.unchecked_append(Value(ValueType { ValueType::I32 }));
+
+    set_frame(
+        is_tailcall ? IsTailcall::Yes : IsTailcall::No,
+        wasm_function.module(),
+        move(arguments),
+        wasm_function.code().func().body(),
+        wasm_function.type().results().size());
+    return {};
 }
 
 Result Configuration::execute(Interpreter& interpreter)
@@ -65,10 +98,29 @@ Result Configuration::execute(Interpreter& interpreter)
     results.reverse();
 
     // If we reached here from a tailcall -> return, we might not have a label to pop (because the return already popped it)
+    if (label_stack().size() > frame().label_index())
+        label_stack().shrink(frame().label_index(), true);
+
+    return Result { move(results) };
+}
+
+ErrorOr<void, Trap> Configuration::execute_for_compiled_call(Interpreter& interpreter, Value* single_result)
+{
+    interpreter.interpret(*this);
+    if (interpreter.did_trap())
+        return interpreter.trap();
+
+    VERIFY(frame().arity() <= 1);
+    if (frame().arity() == 1) {
+        auto result = value_stack().unsafe_take_last();
+        if (single_result)
+            *single_result = result;
+    }
+
     if (!label_stack().is_empty())
         label_stack().take_last();
 
-    return Result { move(results) };
+    return {};
 }
 
 void Configuration::dump_stack()

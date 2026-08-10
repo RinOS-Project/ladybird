@@ -7,11 +7,18 @@
 
 #include <AK/Math.h>
 #include <AK/MemoryStream.h>
+#include <AK/QuickSort.h>
 #include <AK/Stream.h>
 #include <AK/Time.h>
+#include <LibMedia/Containers/ConstantBitrateContainerNavigator.h>
+#include <LibMedia/Containers/FLACNavigator.h>
+#include <LibMedia/Containers/IndexedContainerNavigator.h>
+#include <LibMedia/Containers/MP3Navigator.h>
+#include <LibMedia/Containers/OggNavigator.h>
 #include <LibMedia/FFmpeg/FFmpegDemuxer.h>
 #include <LibMedia/FFmpeg/FFmpegHelpers.h>
 #include <LibMedia/MediaStream.h>
+#include <LibMedia/SeekMode.h>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -30,6 +37,9 @@ FFmpegDemuxer::~FFmpegDemuxer()
         if (context->format_context != nullptr)
             avformat_close_input(&context->format_context);
     }
+
+    if (m_buffered_scan_thread != nullptr)
+        m_buffered_scan_thread->shutdown();
 }
 
 static DecoderErrorOr<void> initialize_format_context(AVFormatContext*& format_context, AVIOContext& io_context)
@@ -38,7 +48,16 @@ static DecoderErrorOr<void> initialize_format_context(AVFormatContext*& format_c
     if (format_context == nullptr)
         return DecoderError::with_description(DecoderErrorCategory::Memory, "Failed to allocate format context"sv);
     format_context->pb = &io_context;
-    if (avformat_open_input(&format_context, nullptr, nullptr, nullptr) < 0)
+    format_context->flags |= AVFMT_FLAG_FAST_SEEK;
+
+    AVDictionary* options = nullptr;
+    ScopeGuard free_options = [&] { av_dict_free(&options); };
+
+    // Reduce the maximum packet size for the WAV demuxer, so that playback begins sooner.
+    av_dict_set(&options, "max_size", "4096", 0);
+
+    auto open_result = avformat_open_input(&format_context, nullptr, nullptr, &options);
+    if (open_result < 0)
         return DecoderError::with_description(DecoderErrorCategory::Corrupted, "Failed to open input for format parsing"sv);
 
     // Read stream info; doing this is required for headerless formats like MPEG
@@ -48,7 +67,7 @@ static DecoderErrorOr<void> initialize_format_context(AVFormatContext*& format_c
     return {};
 }
 
-static DecoderErrorOr<Track> create_track_from_stream(AVStream const& stream)
+static DecoderErrorOr<Track> create_track_from_stream(AVStream const& stream, StringView format_name, HashTable<TrackType>& seen_types)
 {
     auto type = track_type_from_ffmpeg_media_type(stream.codecpar->codec_type);
     auto get_string_metadata = [&](char const* key) {
@@ -57,9 +76,26 @@ static DecoderErrorOr<Track> create_track_from_stream(AVStream const& stream)
             return Utf16String();
         return Utf16String::from_utf8(StringView(name_entry->value, strlen(name_entry->value)));
     };
+
+    // https://dev.w3.org/html5/html-sourcing-inband-tracks/
+    auto kind = [&] {
+        auto is_first_of_type = seen_types.set(type) == HashSetResult::InsertedNewEntry;
+        if (format_name.starts_with("mov"sv)) {
+            // https://dev.w3.org/html5/html-sourcing-inband-tracks/#mpeg4avta
+            // "main": first audio (video) track
+            if (is_first_of_type)
+                return Track::Kind::Main;
+            // "translation": not first audio (video) track
+            return Track::Kind::Translation;
+        }
+
+        // AD-HOC: For container formats not covered by the spec, default to "main".
+        return Track::Kind::Main;
+    }();
+
     auto name = get_string_metadata("title");
     auto language = get_string_metadata("language");
-    Track track(type, stream.index, name, language);
+    Track track(type, stream.index, kind, name, language);
 
     if (type == TrackType::Video) {
         auto color_primaries = static_cast<ColorPrimaries>(stream.codecpar->color_primaries);
@@ -111,11 +147,16 @@ DecoderErrorOr<NonnullRefPtr<FFmpegDemuxer>> FFmpegDemuxer::from_stream(NonnullR
 
     auto demuxer = DECODER_TRY_ALLOC(adopt_nonnull_ref_or_enomem(new (nothrow) FFmpegDemuxer(stream)));
     demuxer->m_total_duration = AK::Duration::from_time_units(format_context->duration, 1, AV_TIME_BASE);
+    if (format_context->start_time_realtime != AV_NOPTS_VALUE)
+        demuxer->m_start_time_realtime = AK::UnixDateTime::from_microseconds_since_epoch(format_context->start_time_realtime);
+
+    auto format_name = StringView(format_context->iformat->name, strlen(format_context->iformat->name));
+    auto seen_types = HashTable<TrackType>();
 
     for (u32 i = 0; i < format_context->nb_streams; i++) {
         auto& stream = *format_context->streams[i];
 
-        auto track = TRY(create_track_from_stream(stream));
+        auto track = TRY(create_track_from_stream(stream, format_name, seen_types));
         auto codec_id = media_codec_id_from_ffmpeg_codec_id(stream.codecpar->codec_id);
         auto codec_initialization_data = DECODER_TRY_ALLOC(ByteBuffer::copy(stream.codecpar->extradata, stream.codecpar->extradata_size));
 
@@ -136,18 +177,181 @@ DecoderErrorOr<NonnullRefPtr<FFmpegDemuxer>> FFmpegDemuxer::from_stream(NonnullR
     }
 
     demuxer->m_preferred_track_for_type.fill(-1);
-    for (size_t type_index = 0; type_index < demuxer->m_preferred_track_for_type.size(); type_index++) {
-        auto type = static_cast<TrackType>(type_index);
-        auto media_type = ffmpeg_media_type_from_track_type(type);
-        auto best_stream_index = av_find_best_stream(format_context, media_type, -1, -1, nullptr, 0);
-        if (best_stream_index >= 0) {
-            VERIFY(static_cast<size_t>(best_stream_index) < demuxer->m_stream_info.size());
-            demuxer->m_preferred_track_for_type[type_index] = best_stream_index;
-        }
+    for (u32 i = 0; i < format_context->nb_streams; i++) {
+        auto& stream = *format_context->streams[i];
+        auto type = track_type_from_ffmpeg_media_type(stream.codecpar->codec_type);
+        auto type_index = to_underlying(type);
+        if (type_index >= demuxer->m_preferred_track_for_type.size())
+            continue;
+        if (demuxer->m_preferred_track_for_type[type_index] >= 0)
+            continue;
+        if (stream.disposition & AV_DISPOSITION_DEFAULT)
+            demuxer->m_preferred_track_for_type[type_index] = static_cast<int>(i);
     }
+
+    demuxer->start_buffered_scan_thread(*format_context);
 
     avformat_close_input(&format_context);
     return demuxer;
+}
+
+static inline AK::Duration time_units_to_duration(i64 time_units, AVRational const& time_base)
+{
+    VERIFY(time_base.num > 0);
+    VERIFY(time_base.den > 0);
+    return AK::Duration::from_time_units(time_units, time_base.num, time_base.den);
+}
+
+static AK::Duration frame_duration_from_frame_rate(AVRational const& frame_rate)
+{
+    if (frame_rate.num <= 0 || frame_rate.den <= 0)
+        return AK::Duration::zero();
+    return AK::Duration::from_time_units(frame_rate.den, 1, frame_rate.num);
+}
+
+static inline i64 duration_to_time_units(AK::Duration duration, AVRational const& time_base)
+{
+    VERIFY(time_base.num > 0);
+    VERIFY(time_base.den > 0);
+    return duration.to_time_units(time_base.num, time_base.den);
+}
+
+OwnPtr<ContainerNavigator> FFmpegDemuxer::create_single_track_container_navigator(AVFormatContext& context, AK::Duration total_duration, NonnullRefPtr<MediaStream> const& stream)
+{
+    auto format_name = StringView(context.iformat->name, strlen(context.iformat->name));
+
+    if (format_name == "flac"sv && context.nb_streams == 1) {
+        auto& av_stream = *context.streams[0];
+        if (av_stream.codecpar->sample_rate > 0) {
+            auto sample_rate = static_cast<u32>(av_stream.codecpar->sample_rate);
+            AVPacket* packet = av_packet_alloc();
+            ScopeGuard free_packet = [&] { av_packet_free(&packet); };
+
+            if (av_read_frame(&context, packet) >= 0) {
+                VERIFY(packet->size >= 0);
+                auto cursor = stream->create_cursor();
+                cursor->set_is_blocking(false);
+                return FLACNavigator::create({ packet->data, static_cast<size_t>(packet->size) }, move(cursor), sample_rate);
+            }
+        }
+    }
+
+    if (format_name == "wav"sv && context.nb_streams > 0) {
+        auto* stream = context.streams[0];
+        auto* codec_par = stream->codecpar;
+        if (codec_par->block_align <= 0)
+            return nullptr;
+        if (codec_par->sample_rate <= 0)
+            return nullptr;
+        if (Checked<u32>::multiplication_would_overflow(static_cast<u32>(codec_par->block_align), codec_par->sample_rate))
+            return nullptr;
+        auto bytes_per_second = static_cast<u32>(codec_par->block_align) * codec_par->sample_rate;
+        auto entry_count = avformat_index_get_entries_count(stream);
+        if (entry_count <= 0)
+            return nullptr;
+        auto data_offset = avformat_index_get_entry(stream, 0)->pos;
+        return make<ConstantBitrateContainerNavigator>(data_offset, bytes_per_second, codec_par->block_align);
+    }
+
+    if (format_name == "mp3"sv && context.nb_streams == 1) {
+        AVPacket* packet = av_packet_alloc();
+        ScopeGuard free_packet = [&] { av_packet_free(&packet); };
+
+        if (av_read_frame(&context, packet) >= 0 && packet->pos >= 0)
+            return make<MP3Navigator>(stream, static_cast<size_t>(packet->pos), total_duration);
+    }
+
+    if (format_name == "ogg"sv) {
+        if (context.nb_streams != 1)
+            return nullptr;
+
+        auto& av_stream = *context.streams[0];
+        if (av_stream.time_base.num <= 0 || av_stream.time_base.den <= 0)
+            return nullptr;
+
+        auto cursor = stream->create_cursor();
+        cursor->set_is_blocking(false);
+
+        auto codec_id = FFmpeg::media_codec_id_from_ffmpeg_codec_id(av_stream.codecpar->codec_id);
+        ReadonlyBytes first_packet;
+        AVPacket* packet = nullptr;
+        ScopeGuard free_packet = [&] { av_packet_free(&packet); };
+
+        if (codec_id == CodecID::FLAC) {
+            if (av_stream.codecpar->sample_rate <= 0)
+                return nullptr;
+
+            packet = av_packet_alloc();
+            VERIFY(packet);
+            if (av_read_frame(&context, packet) >= 0 && packet->size >= 0)
+                first_packet = { packet->data, static_cast<size_t>(packet->size) };
+        }
+
+        auto sample_rate = av_stream.codecpar->sample_rate > 0 ? static_cast<u32>(av_stream.codecpar->sample_rate) : 0;
+        auto codec_initialization_data = ReadonlyBytes { av_stream.codecpar->extradata, static_cast<size_t>(av_stream.codecpar->extradata_size) };
+        return OggNavigator::create(first_packet, move(cursor), codec_id, static_cast<u32>(av_stream.time_base.num), static_cast<u32>(av_stream.time_base.den), sample_rate, codec_initialization_data);
+    }
+
+    return nullptr;
+}
+
+void FFmpegDemuxer::start_buffered_scan_thread(AVFormatContext& context)
+{
+    m_fallback_scan_state.duration = m_total_duration;
+
+    if (m_stream_info.is_empty())
+        return;
+
+    OwnPtr<ContainerNavigator> navigator = create_single_track_container_navigator(context, m_total_duration, m_stream);
+    if (navigator == nullptr) {
+        Vector<IndexedContainerNavigator::TrackIndex> track_indices;
+        for (u32 i = 0; i < context.nb_streams; i++) {
+            auto* stream = context.streams[i];
+            auto entry_count = avformat_index_get_entries_count(stream);
+            if (entry_count <= 0)
+                continue;
+
+            Vector<IndexEntry> entries;
+            MUST(entries.try_ensure_capacity(entry_count));
+            for (int j = 0; j < entry_count; j++) {
+                auto const* entry = avformat_index_get_entry(stream, j);
+                entries.unchecked_append({
+                    .position = static_cast<size_t>(entry->pos),
+                    .timestamp = time_units_to_duration(entry->timestamp, stream->time_base),
+                });
+            }
+
+            // Ensure monotonic ordering of both positions and timestamps.
+            bool is_monotonic = true;
+            for (size_t j = 1; j < entries.size(); j++) {
+                if (entries[j - 1].position >= entries[j].position || entries[j - 1].timestamp > entries[j].timestamp) {
+                    is_monotonic = false;
+                    break;
+                }
+            }
+            if (!is_monotonic)
+                continue;
+
+            track_indices.empend(m_stream_info[i].track.identifier(), move(entries));
+        }
+        if (!track_indices.is_empty())
+            navigator = make<IndexedContainerNavigator>(move(track_indices), m_total_duration);
+    }
+    if (navigator == nullptr)
+        return;
+
+    Vector<Track> tracks;
+    for (auto const& stream_info : m_stream_info)
+        tracks.append(stream_info.track);
+
+    DemuxerScanState initial_state;
+    initial_state.duration = m_total_duration;
+    m_buffered_scan_thread = DemuxerScanThread<BufferedScanPayload>::start(m_stream, move(initial_state),
+        BufferedScanPayload { navigator.release_nonnull(), move(tracks), m_total_duration },
+        [](MediaStream& stream, BufferedScanPayload& payload) {
+            auto scans = payload.navigator->buffered_time_ranges_by_track(stream.available_byte_ranges());
+            return DemuxerScanState::create_from_track_scans(payload.tracks, move(scans), payload.initial_duration, stream.closing_bytes_are_available());
+        });
 }
 
 DecoderErrorOr<void> FFmpegDemuxer::create_context_for_track(Track const& track)
@@ -178,23 +382,28 @@ FFmpegDemuxer::TrackContext& FFmpegDemuxer::get_track_context(Track const& track
     return *m_track_contexts.get(track).release_value();
 }
 
-static inline AK::Duration time_units_to_duration(i64 time_units, AVRational const& time_base)
-{
-    VERIFY(time_base.num > 0);
-    VERIFY(time_base.den > 0);
-    return AK::Duration::from_time_units(time_units, time_base.num, time_base.den);
-}
-
-static inline i64 duration_to_time_units(AK::Duration duration, AVRational const& time_base)
-{
-    VERIFY(time_base.num > 0);
-    VERIFY(time_base.den > 0);
-    return duration.to_time_units(time_base.num, time_base.den);
-}
-
 DecoderErrorOr<AK::Duration> FFmpegDemuxer::total_duration()
 {
     return m_total_duration;
+}
+
+Optional<AK::UnixDateTime> FFmpegDemuxer::start_time_realtime() const
+{
+    return m_start_time_realtime;
+}
+
+DemuxerScanState const& FFmpegDemuxer::scan_state() const
+{
+    if (m_buffered_scan_thread == nullptr)
+        return m_fallback_scan_state;
+    return m_buffered_scan_thread->main_thread_state();
+}
+
+void FFmpegDemuxer::set_scan_state_change_handler(Function<void()> handler)
+{
+    if (m_buffered_scan_thread == nullptr)
+        return;
+    m_buffered_scan_thread->set_change_handler(move(handler));
 }
 
 DecoderErrorOr<AK::Duration> FFmpegDemuxer::duration_of_track(Track const& track)
@@ -222,6 +431,21 @@ DecoderErrorOr<Optional<Track>> FFmpegDemuxer::get_preferred_track_for_type(Trac
     return m_stream_info[preferred_index].track;
 }
 
+AK::Duration FFmpegDemuxer::select_fast_seek_target_for_track(Track const&, AK::Duration target, SeekMode)
+{
+    // FIXME: We can do this using the index getter functions, but unfortunately FFmpeg's seek table is in
+    //        DTS -> byte position, so for files with reordered frames (H.264), seeking to a keyframe will often
+    //        result in the first frame back being at a later PTS than the seek target, so we would display a blank
+    //        frame. To avoid this being especially common, just always accurately seek.
+    //
+    //        Note that we can end up showing a blank frame anyway by accurately seeking very close to a keyframe,
+    //        it's just much less likely to happen under normal usage.
+    //
+    //        This FIXME can be dropped when MP4/MOV is demuxed separately from FFmpeg, and then inclusion of an
+    //        index scan here can be re-evaluated.
+    return target;
+}
+
 DecoderErrorOr<DemuxerSeekResult> FFmpegDemuxer::seek_to_most_recent_keyframe(Track const& track, AK::Duration timestamp, DemuxerSeekOptions)
 {
     auto& track_context = get_track_context(track);
@@ -232,7 +456,32 @@ DecoderErrorOr<DemuxerSeekResult> FFmpegDemuxer::seek_to_most_recent_keyframe(Tr
     auto av_timestamp = duration_to_time_units(timestamp, stream.time_base);
 
     auto seek_succeeded = false;
-    if (track_context.is_seekable && av_seek_frame(&format_context, stream.index, av_timestamp, AVSEEK_FLAG_BACKWARD) >= 0)
+
+    // AVIOContext can skip calling through to the underlying seek callback if the new position lands in its buffer,
+    // leaving us in EOF/error, so we need to clear these here.
+    format_context.pb->eof_reached = 0;
+    format_context.pb->error = 0;
+
+    if (m_buffered_scan_thread != nullptr) {
+        auto seek_result = TRY(m_buffered_scan_thread->payload().navigator->seek_to_timestamp(track.identifier(), timestamp));
+        if (seek_result.has<SeekSkipped>()) {
+            return DemuxerSeekResult::KeptCurrentPosition;
+        }
+        if (auto const* seeked = seek_result.get_pointer<SeekedPosition>()) {
+            if (av_seek_frame(&format_context, stream.index, seeked->byte_position, AVSEEK_FLAG_BYTE) >= 0) {
+                seek_succeeded = true;
+                track_context.pending_timestamp_offset = seeked->timestamp;
+                track_context.timestamp_offset = AK::Duration::zero();
+            }
+        }
+    }
+
+    if (!seek_succeeded) {
+        track_context.pending_timestamp_offset.clear();
+        track_context.timestamp_offset = AK::Duration::zero();
+    }
+
+    if (!seek_succeeded && track_context.is_seekable && av_seek_frame(&format_context, stream.index, av_timestamp, AVSEEK_FLAG_BACKWARD) >= 0)
         seek_succeeded = true;
     if (!seek_succeeded) {
         track_context.is_seekable = false;
@@ -299,10 +548,19 @@ DecoderErrorOr<CodedFrame> FFmpegDemuxer::get_next_sample_for_track(Track const&
         // to wipe the packet afterwards.
         auto packet_data = DECODER_TRY_ALLOC(ByteBuffer::copy(packet.data, packet.size));
 
+        if (track_context.pending_timestamp_offset.has_value() && packet.pts == 0)
+            track_context.timestamp_offset = track_context.pending_timestamp_offset.release_value();
+
         auto flags = (packet.flags & AV_PKT_FLAG_KEY) != 0 ? FrameFlags::Keyframe : FrameFlags::None;
+        auto duration = time_units_to_duration(packet.duration, stream.time_base);
+        // FIXME: This is a hack to work around a bug in libavformat where the stts box of an MP4 track is ignored if
+        //        it also contains a ctts box. This should not be necessary when we move to our own MP4 demuxer.
+        if (duration.is_zero() && track.type() == TrackType::Video)
+            duration = frame_duration_from_frame_rate(av_guess_frame_rate(&format_context, &stream, nullptr));
+
         auto sample = CodedFrame(
-            time_units_to_duration(packet.pts, stream.time_base),
-            time_units_to_duration(packet.duration, stream.time_base),
+            track_context.timestamp_offset + time_units_to_duration(packet.pts, stream.time_base),
+            duration,
             flags,
             move(packet_data),
             auxiliary_data);
@@ -325,10 +583,10 @@ void FFmpegDemuxer::reset_blocking_reads_aborted_for_track(Track const& track)
     track_context.cursor->reset_abort();
 }
 
-bool FFmpegDemuxer::is_read_blocked_for_track(Track const& track)
+void FFmpegDemuxer::set_read_blocked_change_handler_for_track(Track const& track, ReadBlockedChangeHandler handler)
 {
     auto& track_context = get_track_context(track);
-    return track_context.cursor->is_blocked();
+    track_context.cursor->set_blocked_change_handler(move(handler));
 }
 
 FFmpegDemuxer::TrackContext::~TrackContext()

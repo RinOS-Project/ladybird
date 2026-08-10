@@ -11,6 +11,7 @@
 #include <AK/HashTable.h>
 #include <AK/OwnPtr.h>
 #include <AK/StringView.h>
+#include <AK/Traits.h>
 #include <AK/Weakable.h>
 #include <LibGC/CellAllocator.h>
 #include <LibGC/Heap.h>
@@ -44,7 +45,8 @@ public:
     GC::Ref<T> create(Args&&... args)
     {
         auto object = heap().allocate<T>(forward<Args>(args)...);
-        static_cast<Cell*>(object)->initialize(*this);
+        if constexpr (IsBaseOf<Cell, T>)
+            static_cast<Cell*>(object)->initialize(*this);
         return *object;
     }
 
@@ -71,8 +73,6 @@ public:
 
     void set_host_defined(OwnPtr<HostDefined> host_defined) { m_host_defined = move(host_defined); }
 
-    HashTable<GC::RawPtr<Shape>>& all_prototype_shapes() { return m_all_prototype_shapes; }
-
 private:
     Realm() = default;
 
@@ -80,11 +80,9 @@ private:
 
     GC::Ptr<Intrinsics> m_intrinsics;                                 // [[Intrinsics]]
     GC::Ptr<Object> m_global_object;                                  // [[GlobalObject]]
-    GC::Ptr<GlobalEnvironment> m_global_environment;                  // [[GlobalEnv]]
     GC::Ptr<DeclarativeEnvironment> m_global_declarative_environment; // Cached from GlobalEnv
+    GC::Ptr<GlobalEnvironment> m_global_environment;                  // [[GlobalEnv]]
     OwnPtr<HostDefined> m_host_defined;                               // [[HostDefined]]
-
-    HashTable<GC::RawPtr<Shape>> m_all_prototype_shapes;
 };
 
 }

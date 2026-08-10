@@ -13,6 +13,8 @@ namespace Web::CSS {
 struct CounterStyleRangeEntry {
     i32 start;
     i32 end;
+
+    bool operator==(CounterStyleRangeEntry const&) const = default;
 };
 
 // https://drafts.csswg.org/css-counter-styles-3/#counter-style-symbols
@@ -21,37 +23,51 @@ struct CounterStyleRangeEntry {
 //       and it complicates some usages of counter() in ways that haven’t been fully handled.
 // FIXME: Given the above note we don't currently support <image> here - we may need to revisit this if other browsers
 //        implement it.
-using CounterStyleSymbol = FlyString;
+using CounterStyleSymbol = Utf16FlyString;
 
 struct CounterStyleNegativeSign {
     CounterStyleSymbol prefix;
     CounterStyleSymbol suffix;
+
+    bool operator==(CounterStyleNegativeSign const&) const = default;
 };
 
 struct CounterStylePad {
     i32 minimum_length;
     CounterStyleSymbol symbol;
+
+    bool operator==(CounterStylePad const&) const = default;
 };
 
 struct AdditiveCounterStyleAlgorithm {
     struct AdditiveTuple {
         i32 weight;
         CounterStyleSymbol symbol;
+
+        bool operator==(AdditiveTuple const&) const = default;
     };
     Vector<AdditiveTuple> symbol_list;
+
+    bool operator==(AdditiveCounterStyleAlgorithm const&) const = default;
 };
 
 struct FixedCounterStyleAlgorithm {
     i32 first_symbol;
     Vector<CounterStyleSymbol> symbol_list;
+
+    bool operator==(FixedCounterStyleAlgorithm const&) const = default;
 };
 
 struct GenericCounterStyleAlgorithm {
     CounterStyleSystem type;
     Vector<CounterStyleSymbol> symbol_list;
+
+    bool operator==(GenericCounterStyleAlgorithm const&) const = default;
 };
 
-struct EthiopicNumericCounterStyleAlgorithm { };
+struct EthiopicNumericCounterStyleAlgorithm {
+    bool operator==(EthiopicNumericCounterStyleAlgorithm const&) const = default;
+};
 
 struct ExtendedCJKCounterStyleAlgorithm {
     enum class Type : u8 {
@@ -65,6 +81,8 @@ struct ExtendedCJKCounterStyleAlgorithm {
         KoreanHanjaInformal,
         KoreanHanjaFormal,
     } type;
+
+    bool operator==(ExtendedCJKCounterStyleAlgorithm const&) const = default;
 };
 
 using CounterStyleAlgorithm = Variant<AdditiveCounterStyleAlgorithm, FixedCounterStyleAlgorithm, GenericCounterStyleAlgorithm, EthiopicNumericCounterStyleAlgorithm, ExtendedCJKCounterStyleAlgorithm>;
@@ -76,14 +94,14 @@ struct AutoRange {
 
 class CounterStyleDefinition {
 public:
-    static CounterStyleDefinition create(FlyString name, CounterStyleAlgorithmOrExtends algorithm, Optional<CounterStyleNegativeSign> negative_sign, Optional<CounterStyleSymbol> prefix, Optional<CounterStyleSymbol> suffix, Variant<Empty, AutoRange, Vector<CounterStyleRangeEntry>> range, Optional<FlyString> fallback, Optional<CounterStylePad> pad)
+    static CounterStyleDefinition create(Utf16FlyString name, CounterStyleAlgorithmOrExtends algorithm, Optional<CounterStyleNegativeSign> negative_sign, Optional<CounterStyleSymbol> prefix, Optional<CounterStyleSymbol> suffix, Variant<Empty, AutoRange, Vector<CounterStyleRangeEntry>> range, Optional<Utf16FlyString> fallback, Optional<CounterStylePad> pad)
     {
         return CounterStyleDefinition(move(name), move(algorithm), move(negative_sign), move(prefix), move(suffix), move(range), move(fallback), move(pad));
     }
 
     static Optional<CounterStyleDefinition> from_counter_style_rule(CSSCounterStyleRule const&, ComputationContext const&);
 
-    FlyString const& name() const { return m_name; }
+    Utf16FlyString const& name() const { return m_name; }
 
     CounterStyleAlgorithmOrExtends const& algorithm() const { return m_algorithm; }
     void set_algorithm(CounterStyleAlgorithmOrExtends algorithm) { m_algorithm = move(algorithm); }
@@ -96,7 +114,7 @@ public:
 
     Variant<Empty, AutoRange, Vector<CounterStyleRangeEntry>> const& range() const { return m_range; }
 
-    Optional<FlyString> const& fallback() const { return m_fallback; }
+    Optional<Utf16FlyString> const& fallback() const { return m_fallback; }
 
     Optional<CounterStylePad> const& pad() const { return m_pad; }
 
@@ -108,7 +126,7 @@ private:
     static Variant<AutoRange, Vector<CounterStyleRangeEntry>> resolve_range(NonnullRefPtr<StyleValue const> const&, ComputationContext const&);
     static CounterStylePad resolve_pad(NonnullRefPtr<StyleValue const> const&, ComputationContext const&);
 
-    CounterStyleDefinition(FlyString name, CounterStyleAlgorithmOrExtends algorithm, Optional<CounterStyleNegativeSign> negative_sign, Optional<CounterStyleSymbol> prefix, Optional<CounterStyleSymbol> suffix, Variant<Empty, AutoRange, Vector<CounterStyleRangeEntry>> range, Optional<FlyString> fallback, Optional<CounterStylePad> pad)
+    CounterStyleDefinition(Utf16FlyString name, CounterStyleAlgorithmOrExtends algorithm, Optional<CounterStyleNegativeSign> negative_sign, Optional<CounterStyleSymbol> prefix, Optional<CounterStyleSymbol> suffix, Variant<Empty, AutoRange, Vector<CounterStyleRangeEntry>> range, Optional<Utf16FlyString> fallback, Optional<CounterStylePad> pad)
         : m_name(move(name))
         , m_algorithm(move(algorithm))
         , m_negative_sign(move(negative_sign))
@@ -120,13 +138,13 @@ private:
     {
     }
 
-    FlyString m_name;
+    Utf16FlyString m_name;
     CounterStyleAlgorithmOrExtends m_algorithm;
     Optional<CounterStyleNegativeSign> m_negative_sign;
     Optional<CounterStyleSymbol> m_prefix;
     Optional<CounterStyleSymbol> m_suffix;
     Variant<Empty, AutoRange, Vector<CounterStyleRangeEntry>> m_range;
-    Optional<FlyString> m_fallback;
+    Optional<Utf16FlyString> m_fallback;
     Optional<CounterStylePad> m_pad;
 };
 

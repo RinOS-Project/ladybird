@@ -6,30 +6,36 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/PlatformObject.h>
+#include <AK/String.h>
+#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Forward.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/system-state.html#mimetype
-class MimeType : public Bindings::PlatformObject {
-    WEB_PLATFORM_OBJECT(MimeType, Bindings::PlatformObject);
+class MimeType : public Bindings::GCAllocatedWrappable {
+    WEB_WRAPPABLE(MimeType, Bindings::GCAllocatedWrappable);
     GC_DECLARE_ALLOCATOR(MimeType);
 
 public:
+    [[nodiscard]] static GC::Ref<MimeType> create(Window&, String type);
+
     virtual ~MimeType() override;
 
-    String const& type() const;
-    String description() const;
-    String const& suffixes() const;
+    Utf16FlyString const& type() const;
+    Utf16FlyString description() const;
+    Utf16FlyString suffixes() const;
     GC::Ref<Plugin> enabled_plugin() const;
 
 private:
-    MimeType(JS::Realm&, String type);
+    MimeType(Window&, Utf16FlyString type);
 
-    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(GC::Cell::Visitor&) override;
 
     // https://html.spec.whatwg.org/multipage/system-state.html#concept-mimetype-type
-    String m_type;
+    Utf16FlyString m_type;
+
+    GC::Ref<Window> m_window;
 };
 
 }

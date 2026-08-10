@@ -1,13 +1,13 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <andreas@ladybird.org>
- * Copyright (c) 2023-2025, Sam Atkins <sam@ladybird.org>
+ * Copyright (c) 2023-2026, Sam Atkins <sam@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/HTMLIFrameElementPrototype.h>
-#include <LibWeb/CSS/CascadedProperties.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/CSS/ComputedProperties.h>
+#include <LibWeb/CSS/Invalidation/EmbeddedContentInvalidator.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/CSS/StyleValues/LengthStyleValue.h>
 #include <LibWeb/DOM/DOMTokenList.h>
@@ -15,11 +15,14 @@
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/HTMLIFrameElement.h>
-#include <LibWeb/HTML/Navigable.h>
+#include <LibWeb/HTML/LocalNavigable.h>
+#include <LibWeb/HTML/LocalTraversableNavigable.h>
 #include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
-#include <LibWeb/HTML/TraversableNavigable.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
+#include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/Layout/NavigableContainerViewport.h>
+#include <LibWeb/ResourceTiming/PerformanceResourceTiming.h>
 #include <LibWeb/TrustedTypes/RequireTrustedTypesForDirective.h>
 #include <LibWeb/TrustedTypes/TrustedTypePolicy.h>
 
@@ -34,31 +37,18 @@ HTMLIFrameElement::HTMLIFrameElement(DOM::Document& document, DOM::QualifiedName
 
 HTMLIFrameElement::~HTMLIFrameElement() = default;
 
-void HTMLIFrameElement::initialize(JS::Realm& realm)
+RefPtr<Layout::Node> HTMLIFrameElement::create_layout_node(NonnullRefPtr<CSS::ComputedValues const> style)
 {
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLIFrameElement);
-    Base::initialize(realm);
+    return make_ref_counted<Layout::NavigableContainerViewport>(document(), *this, style);
 }
 
-GC::Ptr<Layout::Node> HTMLIFrameElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
-{
-    return heap().allocate<Layout::NavigableContainerViewport>(document(), *this, move(style));
-}
-
-void HTMLIFrameElement::adjust_computed_style(CSS::ComputedProperties& style)
-{
-    // https://drafts.csswg.org/css-display-3/#unbox
-    if (style.display().is_contents())
-        style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::None)));
-}
-
-void HTMLIFrameElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
+void HTMLIFrameElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
 {
     Base::attribute_changed(name, old_value, value, namespace_);
 
     if (name == HTML::AttributeNames::sandbox) {
         if (m_sandbox)
-            m_sandbox->associated_attribute_changed(value.value_or(String {}));
+            m_sandbox->associated_attribute_changed(value.has_value() ? value->utf16_view() : u""sv);
     }
 
     // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-iframe-element:process-the-iframe-attributes-2
@@ -80,17 +70,15 @@ void HTMLIFrameElement::attribute_changed(FlyString const& name, Optional<String
         // agent must empty the iframe element's iframe sandboxing flag set.
         if (name == AttributeNames::sandbox) {
             if (value.has_value()) {
-                m_iframe_sandboxing_flag_set = parse_a_sandboxing_directive(value.value());
+                m_iframe_sandboxing_flag_set = parse_a_sandboxing_directive(value->utf16_view());
             } else {
                 m_iframe_sandboxing_flag_set = {};
             }
         }
     }
 
-    if (name == HTML::AttributeNames::width || name == HTML::AttributeNames::height) {
-        // FIXME: This should only invalidate the layout, not the style.
-        invalidate_style(DOM::StyleInvalidationReason::HTMLIFrameElementGeometryChange);
-    }
+    if (name == HTML::AttributeNames::width || name == HTML::AttributeNames::height)
+        CSS::Invalidation::invalidate_style_after_embedded_content_geometry_change(*this);
 
     if (name == HTML::AttributeNames::marginwidth || name == HTML::AttributeNames::marginheight) {
         if (auto* document = this->content_document_without_origin_check()) {
@@ -109,31 +97,16 @@ void HTMLIFrameElement::post_connection()
     if (!document.browsing_context() || !document.is_fully_active())
         return;
 
-    // The iframe HTML element post-connection steps, given insertedNode, are:
-    // 1. Create a new child navigable for insertedNode.
-    MUST(create_new_child_navigable(GC::create_function(realm().heap(), [this] {
-        // 2. If insertedNode has a sandbox attribute, then parse the sandboxing directive given the attribute's
-        //    value and insertedNode's iframe sandboxing flag set.
-        if (has_attribute(AttributeNames::sandbox)) {
-            auto sandbox_attribute = attribute(AttributeNames::sandbox);
-            VERIFY(sandbox_attribute.has_value());
-            m_iframe_sandboxing_flag_set = parse_a_sandboxing_directive(sandbox_attribute.value());
-        }
+    // 1. If insertedNode has a sandbox attribute, then parse the sandboxing directive given the attribute's
+    //    value and insertedNode's iframe sandboxing flag set.
+    if (auto sandbox = attribute(AttributeNames::sandbox); sandbox.has_value())
+        m_iframe_sandboxing_flag_set = parse_a_sandboxing_directive(sandbox->utf16_view());
 
-        // 3. Process the iframe attributes for insertedNode, with initialInsertion set to true.
-        process_the_iframe_attributes(InitialInsertion::Yes);
+    // 2. Create a new child navigable for insertedNode.
+    create_new_child_navigable();
 
-        if (auto navigable = content_navigable()) {
-            auto traversable = navigable->traversable_navigable();
-            traversable->append_session_history_traversal_steps(GC::create_function(heap(), [this] {
-                // NB: Use Core::Promise to signal SessionHistoryTraversalQueue that it can continue to execute next entry.
-                auto signal_to_continue_session_history_processing = Core::Promise<Empty>::construct();
-                set_content_navigable_has_session_history_entry_and_ready_for_navigation();
-                signal_to_continue_session_history_processing->resolve({});
-                return signal_to_continue_session_history_processing;
-            }));
-        }
-    })));
+    // 3. Process the iframe attributes for insertedNode, with initialInsertion set to true.
+    process_the_iframe_attributes(InitialInsertion::Yes);
 }
 
 // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#process-the-iframe-attributes
@@ -193,7 +166,7 @@ void HTMLIFrameElement::process_the_iframe_attributes(InitialInsertion initial_i
     }
 
     // 4. Let referrerPolicy be the current state of element's referrerpolicy content attribute.
-    auto referrer_policy = ReferrerPolicy::from_string(get_attribute_value(HTML::AttributeNames::referrerpolicy)).value_or(ReferrerPolicy::ReferrerPolicy::EmptyString);
+    auto referrer_policy = ReferrerPolicy::from_string(get_attribute_value_view(HTML::AttributeNames::referrerpolicy).value_or({})).value_or(ReferrerPolicy::ReferrerPolicy::EmptyString);
 
     // 5. Set element's current navigation was lazy loaded boolean to false.
     set_current_navigation_was_lazy_loaded(false);
@@ -221,16 +194,16 @@ void HTMLIFrameElement::process_the_iframe_attributes(InitialInsertion initial_i
 }
 
 // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-iframe-element:the-iframe-element-7
-void HTMLIFrameElement::removed_from(DOM::Node* old_parent, DOM::Node& old_root)
+void HTMLIFrameElement::removed_from(IsSubtreeRoot is_subtree_root, DOM::Node* old_ancestor, DOM::Node& old_root)
 {
-    HTMLElement::removed_from(old_parent, old_root);
+    HTMLElement::removed_from(is_subtree_root, old_ancestor, old_root);
 
     // When an iframe element is removed from a document, the user agent must destroy the nested navigable of the element.
     destroy_the_child_navigable();
 }
 
 // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#iframe-load-event-steps
-void run_iframe_load_event_steps(HTML::HTMLIFrameElement& element)
+void run_iframe_load_event_steps(HTMLIFrameElement& element)
 {
     // FIXME: 1. Assert: element's content navigable is not null.
     if (!element.content_navigable()) {
@@ -239,17 +212,35 @@ void run_iframe_load_event_steps(HTML::HTMLIFrameElement& element)
         return;
     }
 
-    // 2. Let childDocument be element's content navigable's active document.
-    [[maybe_unused]] auto child_document = element.content_navigable()->active_document();
+    // The iframe load event is queued by the child document's completely-finish-loading
+    // steps, but the parent's load event must continue to wait while anything in the
+    // child document (including a replacement parser created by document.open()) delays
+    // that document's load event. The task may already be queued when a descendant is
+    // reopened, so check again when the task runs and try again after the child unblocks.
+    auto& local_navigable = as<LocalNavigable>(*element.content_navigable());
+    if (auto active_document = local_navigable.active_document(); active_document && active_document->anything_is_delaying_the_load_event()) {
+        auto element_ref = GC::Ref(element);
+        element.queue_an_element_task(HTML::Task::Source::DOMManipulation, [element_ref] {
+            run_iframe_load_event_steps(element_ref);
+        });
+        return;
+    }
 
+    // FIXME: 2. Let childDocument be element's content navigable's active document.
     // FIXME: 3. If childDocument has its mute iframe load flag set, then return.
 
-    // FIXME: 4. Set childDocument's iframe load in progress flag.
+    // 4. If element's pending resource-timing start time is not null:
+    if (element.pending_resource_start_time().has_value()) {
+        // 1. Assert: element's pending resource-timing URL is not null.
+        VERIFY(element.pending_resource_timing_url().has_value());
+    }
 
     // 5. Fire an event named load at element.
-    element.dispatch_event(DOM::Event::create(element.realm(), HTML::EventNames::load));
+    element.dispatch_event(DOM::Event::create(
+        HTML::EventNames::load,
+        HighResolutionTime::current_high_resolution_time(relevant_global_object(element))));
 
-    // FIXME: 6. Unset childDocument's iframe load in progress flag.
+    // FIXME: 7. Unset childDocument's iframe load in progress flag.
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-tabindex
@@ -259,7 +250,7 @@ i32 HTMLIFrameElement::default_tab_index_value() const
     return 0;
 }
 
-bool HTMLIFrameElement::is_presentational_hint(FlyString const& name) const
+bool HTMLIFrameElement::is_presentational_hint(Utf16FlyString const& name) const
 {
     if (Base::is_presentational_hint(name))
         return true;
@@ -267,9 +258,9 @@ bool HTMLIFrameElement::is_presentational_hint(FlyString const& name) const
     return name == HTML::AttributeNames::frameborder;
 }
 
-void HTMLIFrameElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
+void HTMLIFrameElement::apply_presentational_hints(Vector<CSS::StyleProperty>& properties) const
 {
-    Base::apply_presentational_hints(cascaded_properties);
+    Base::apply_presentational_hints(properties);
 
     // https://html.spec.whatwg.org/multipage/rendering.html#attributes-for-embedded-content-and-images:attr-iframe-frameborder
     // When an iframe element has a frameborder attribute whose value, when parsed using the rules for parsing integers,
@@ -279,10 +270,10 @@ void HTMLIFrameElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperti
         auto frameborder = parse_integer(*frameborder_attribute);
         if (!frameborder.has_value() || frameborder == 0) {
             auto zero = CSS::LengthStyleValue::create(CSS::Length::make_px(0));
-            cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderTopWidth, zero);
-            cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderRightWidth, zero);
-            cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderBottomWidth, zero);
-            cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderLeftWidth, zero);
+            properties.append({ .property_id = CSS::PropertyID::BorderTopWidth, .value = zero });
+            properties.append({ .property_id = CSS::PropertyID::BorderRightWidth, .value = zero });
+            properties.append({ .property_id = CSS::PropertyID::BorderBottomWidth, .value = zero });
+            properties.append({ .property_id = CSS::PropertyID::BorderLeftWidth, .value = zero });
         }
     }
 }
@@ -319,7 +310,7 @@ TrustedTypes::TrustedHTMLOrString HTMLIFrameElement::srcdoc()
     //    local name, and this.
     // 2. If attribute is null, then return the empty string.
     // 3. Return attribute's value.
-    return Utf16String::from_utf8(get_attribute_value(AttributeNames::srcdoc));
+    return get_attribute_value(AttributeNames::srcdoc);
 }
 
 // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#dom-iframe-srcdoc
@@ -332,11 +323,24 @@ WebIDL::ExceptionOr<void> HTMLIFrameElement::set_srcdoc(TrustedTypes::TrustedHTM
         HTML::relevant_global_object(*this),
         value,
         TrustedTypes::InjectionSink::HTMLIFrameElement_srcdoc,
-        TrustedTypes::Script.to_string()));
+        TrustedTypes::Script.view()));
 
     // 2. Set an attribute value given this, srcdoc's local name, and compliantString.
-    set_attribute_value(AttributeNames::srcdoc, compliant_string.to_utf8_but_should_be_ported_to_utf16());
+    set_attribute_value(AttributeNames::srcdoc, compliant_string);
     return {};
+}
+
+// https://html.spec.whatwg.org/multipage/browsers.html#determining-the-iframe-element-referrer-policy
+ReferrerPolicy::ReferrerPolicy determine_iframe_element_referrer_policy(GC::Ptr<DOM::Element> embedder)
+{
+    // 1. If embedder is an iframe element, then return embedder's referrerpolicy attribute's state's corresponding
+    //    keyword.
+    if (auto* iframe = as_if<HTMLIFrameElement>(embedder.ptr())) {
+        return ReferrerPolicy::from_string(iframe->get_attribute_value_view(HTML::AttributeNames::referrerpolicy).value_or({})).value_or(ReferrerPolicy::ReferrerPolicy::EmptyString);
+    }
+
+    // 2. Return the empty string.
+    return ReferrerPolicy::ReferrerPolicy::EmptyString;
 }
 
 }

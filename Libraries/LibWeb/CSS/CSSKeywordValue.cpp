@@ -5,13 +5,12 @@
  */
 
 #include "CSSKeywordValue.h"
-#include <AK/StringBuilder.h>
-#include <LibWeb/Bindings/CSSKeywordValuePrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/CSSKeywordValue.h>
 #include <LibWeb/CSS/Keyword.h>
 #include <LibWeb/CSS/PropertyNameAndID.h>
 #include <LibWeb/CSS/Serialize.h>
 #include <LibWeb/CSS/StyleValues/CustomIdentStyleValue.h>
+#include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
@@ -19,60 +18,54 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSKeywordValue);
 
-GC::Ref<CSSKeywordValue> CSSKeywordValue::create(JS::Realm& realm, FlyString value)
+GC::Ref<CSSKeywordValue> CSSKeywordValue::create(Utf16FlyString value)
 {
-    return realm.create<CSSKeywordValue>(realm, move(value));
+    return GC::Heap::the().allocate<CSSKeywordValue>(move(value));
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-csskeywordvalue-csskeywordvalue
-WebIDL::ExceptionOr<GC::Ref<CSSKeywordValue>> CSSKeywordValue::construct_impl(JS::Realm& realm, FlyString value)
+WebIDL::ExceptionOr<GC::Ref<CSSKeywordValue>> CSSKeywordValue::construct_impl(Utf16String value)
 {
     // 1. If value is an empty string, throw a TypeError.
     if (value.is_empty())
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot create a CSSKeywordValue with an empty string as the value"sv };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot create a CSSKeywordValue with an empty string as the value"_utf16 };
 
     // 2. Otherwise, return a new CSSKeywordValue with its value internal slot set to value.
-    return CSSKeywordValue::create(realm, move(value));
+    return CSSKeywordValue::create(Utf16FlyString { move(value) });
 }
 
-CSSKeywordValue::CSSKeywordValue(JS::Realm& realm, FlyString value)
-    : CSSStyleValue(realm)
+CSSKeywordValue::CSSKeywordValue(Utf16FlyString value)
+    : CSSStyleValue()
     , m_value(move(value))
 {
 }
 
-void CSSKeywordValue::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSKeywordValue);
-    Base::initialize(realm);
-}
-
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-csskeywordvalue-value
-WebIDL::ExceptionOr<void> CSSKeywordValue::set_value(FlyString value)
+WebIDL::ExceptionOr<void> CSSKeywordValue::set_value(Utf16String value)
 {
     // 1. If value is an empty string, throw a TypeError.
     if (value.is_empty())
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot set CSSKeywordValue.value to an empty string"sv };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot set CSSKeywordValue.value to an empty string"_utf16 };
 
     // 2. Otherwise, set this’s value internal slot, to value.
-    m_value = move(value);
+    m_value = Utf16FlyString { move(value) };
     return {};
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#keywordvalue-serialization
-void CSSKeywordValue::serialize(StringBuilder& builder) const
+void CSSKeywordValue::serialize(Utf16StringBuilder& builder) const
 {
     // To serialize a CSSKeywordValue this:
     // 1. Return this’s value internal slot.
     // AD-HOC: Serialize it as an identifier. Spec issue: https://github.com/w3c/csswg-drafts/issues/12545
-    serialize_an_identifier(builder, m_value);
+    builder.append(serialize_an_identifier_to_utf16(m_value));
 }
 
-WebIDL::ExceptionOr<String> CSSKeywordValue::to_string() const
+WebIDL::ExceptionOr<Utf16String> CSSKeywordValue::to_string() const
 {
-    StringBuilder builder;
+    Utf16StringBuilder builder;
     serialize(builder);
-    return builder.to_string_without_validation();
+    return builder.to_string();
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#create-an-internal-representation
@@ -86,7 +79,7 @@ WebIDL::ExceptionOr<NonnullRefPtr<StyleValue const>> CSSKeywordValue::create_an_
         // identifier.
         // If case-folding rules are in effect normally for that <ident> (such as Auto matching the keyword auto
         // specified in the grammar for width), they apply to this comparison as well.
-        if (is_css_wide_keyword(m_value))
+        if (auto keyword = keyword_from_string(m_value); keyword.has_value() && is_css_wide_keyword(*keyword))
             return true;
         if (property.is_custom_property()) {
             // FIXME: If this is a registered custom property, check if that allows the keyword.
@@ -96,7 +89,7 @@ WebIDL::ExceptionOr<NonnullRefPtr<StyleValue const>> CSSKeywordValue::create_an_
         return keyword.has_value() && property_accepts_keyword(property.id(), keyword.value());
     }();
     if (perform_type_check == PerformTypeCheck::Yes && !matches_grammar) {
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, MUST(String::formatted("Property '{}' does not accept the keyword '{}'", property.name(), m_value)) };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, Utf16String::formatted("Property '{}' does not accept the keyword '{}'", property.name(), m_value) };
     }
 
     //     If any component of property’s CSS grammar has a limited numeric range, and the corresponding part of value
@@ -105,24 +98,31 @@ WebIDL::ExceptionOr<NonnullRefPtr<StyleValue const>> CSSKeywordValue::create_an_
     // NB: Non-applicable.
 
     //     Return the value.
-    if (auto keyword = keyword_from_string(m_value); keyword.has_value())
+    if (auto keyword = keyword_from_string(m_value); keyword.has_value()) {
+        if (!is_css_wide_keyword(*keyword)) {
+            // NB: Non-css-wide keyword `display` values are represented internally by DisplayStyleValue, not KeywordStyleValue.
+            if (property.id() == PropertyID::Display)
+                return DisplayStyleValue::create(Display::from_keyword(keyword.release_value()));
+        }
+
         return KeywordStyleValue::create(*keyword);
+    }
     return CustomIdentStyleValue::create(m_value);
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#rectify-a-keywordish-value
-GC::Ref<CSSKeywordValue> rectify_a_keywordish_value(JS::Realm& realm, CSSKeywordish const& keywordish)
+GC::Ref<CSSKeywordValue> rectify_a_keywordish_value(CSSKeywordish const& keywordish)
 {
     // To rectify a keywordish value val, perform the following steps:
     return keywordish.visit(
         // 1. If val is a CSSKeywordValue, return val.
-        [](GC::Root<CSSKeywordValue> const& value) -> GC::Ref<CSSKeywordValue> {
-            return *value;
+        [](GC::Ref<CSSKeywordValue> const& value) -> GC::Ref<CSSKeywordValue> {
+            return value;
         },
 
         // 2. If val is a DOMString, return a new CSSKeywordValue with its value internal slot set to val.
-        [&realm](FlyString const& value) -> GC::Ref<CSSKeywordValue> {
-            return CSSKeywordValue::create(realm, value);
+        [](Utf16String const& value) -> GC::Ref<CSSKeywordValue> {
+            return CSSKeywordValue::create(Utf16FlyString { value });
         });
 }
 

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Utf16String.h>
 #include <LibIPC/Forward.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Export.h>
@@ -24,7 +25,7 @@ struct StyleSheetIdentifier {
 
     Type type;
     Optional<UniqueNodeID> dom_element_unique_id {};
-    Optional<String> url {};
+    Optional<Utf16String> url {};
     size_t rule_count { 0 };
 
     bool operator==(StyleSheetIdentifier const& other) const
@@ -33,8 +34,9 @@ struct StyleSheetIdentifier {
     }
 };
 
-StringView style_sheet_identifier_type_to_string(StyleSheetIdentifier::Type);
-Optional<StyleSheetIdentifier::Type> style_sheet_identifier_type_from_string(StringView);
+WEB_API StringView style_sheet_identifier_type_to_string(StyleSheetIdentifier::Type);
+WEB_API Optional<StyleSheetIdentifier::Type> style_sheet_identifier_type_from_string(StringView);
+WEB_API Optional<StyleSheetIdentifier> style_sheet_identifier_for(CSSStyleSheet const&);
 
 }
 

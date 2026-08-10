@@ -6,38 +6,64 @@
 
 #pragma once
 
+#include <AK/Utf16FlyString.h>
+#include <AK/Utf16String.h>
+#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibWeb/UIEvents/MouseEvent.h>
 #include <LibWeb/WebIDL/Types.h>
 
+namespace Web::HTML {
+
+class Window;
+
+}
+
+namespace Web::Bindings {
+
+struct PointerEventInit;
+
+}
+
 namespace Web::UIEvents {
 
-struct PointerEventInit : public MouseEventInit {
+class PointerEvent;
+
+struct PointerEventOptions : public MouseEventOptions {
     WebIDL::Long pointer_id { 0 };
     double width { 1 };
     double height { 1 };
     float pressure { 0 };
     float tangential_pressure { 0 };
-    Optional<WebIDL::Long> tilt_x;
-    Optional<WebIDL::Long> tilt_y;
+    WebIDL::Long tilt_x { 0 };
+    WebIDL::Long tilt_y { 0 };
     WebIDL::Long twist { 0 };
-    Optional<double> altitude_angle;
-    Optional<double> azimuth_angle;
-    String pointer_type;
+    double altitude_angle { AK::Pi<double> / 2 };
+    double azimuth_angle { 0 };
+    Utf16FlyString pointer_type {};
     bool is_primary { false };
     WebIDL::Long persistent_device_id { 0 };
-    AK::Vector<GC::Root<PointerEvent>> coalesced_events;
-    AK::Vector<GC::Root<PointerEvent>> predicted_events;
+    Vector<GC::Ref<PointerEvent>> coalesced_events;
+    Vector<GC::Ref<PointerEvent>> predicted_events;
 };
 
 // https://w3c.github.io/pointerevents/#pointerevent-interface
 class PointerEvent : public MouseEvent {
-    WEB_PLATFORM_OBJECT(PointerEvent, MouseEvent);
+    WEB_WRAPPABLE(PointerEvent, MouseEvent);
     GC_DECLARE_ALLOCATOR(PointerEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<PointerEvent> create(JS::Realm&, FlyString const& type, PointerEventInit const& = {}, double page_x = 0, double page_y = 0, double offset_x = 0, double offset_y = 0);
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PointerEvent>> create_from_platform_event(JS::Realm&, GC::Ptr<HTML::WindowProxy>, FlyString const& event_name, CSSPixelPoint screen, CSSPixelPoint page, CSSPixelPoint client, CSSPixelPoint offset, Optional<CSSPixelPoint> movement, unsigned button, unsigned buttons, unsigned modifiers);
-    static WebIDL::ExceptionOr<GC::Ref<PointerEvent>> construct_impl(JS::Realm&, FlyString const& type, PointerEventInit const&);
+    [[nodiscard]] static GC::Ref<PointerEvent> create(
+        FlyString const& type, PointerEventOptions&&,
+        double page_x, double page_y, double offset_x, double offset_y,
+        HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static GC::Ref<PointerEvent> create(
+        Utf16FlyString const& type, PointerEventOptions&&,
+        double page_x, double page_y, double offset_x, double offset_y,
+        HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PointerEvent>> create_for_constructor(FlyString const&, Bindings::PointerEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PointerEvent>> create_for_constructor(Utf16String const&, Bindings::PointerEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PointerEvent>> create_from_platform_event(JS::Object const& relevant_global_object, GC::Ptr<HTML::WindowProxy>, FlyString const& event_name, CSSPixelPoint screen, CSSPixelPoint page, CSSPixelPoint client, CSSPixelPoint offset, Optional<CSSPixelPoint> movement, unsigned button, unsigned buttons, unsigned modifiers);
+    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PointerEvent>> create_from_platform_event(JS::Object const& relevant_global_object, GC::Ptr<HTML::WindowProxy>, Utf16FlyString const& event_name, CSSPixelPoint screen, CSSPixelPoint page, CSSPixelPoint client, CSSPixelPoint offset, Optional<CSSPixelPoint> movement, unsigned button, unsigned buttons, unsigned modifiers);
 
     virtual ~PointerEvent() override;
 
@@ -62,23 +88,21 @@ public:
     WebIDL::Long twist() const { return m_twist; }
     double altitude_angle() const { return m_altitude_angle; }
     double azimuth_angle() const { return m_azimuth_angle; }
-    String const& pointer_type() const { return m_pointer_type; }
+    Utf16FlyString const& pointer_type() const { return m_pointer_type; }
     bool is_primary() const { return m_is_primary; }
     WebIDL::Long persistent_device_id() const { return m_persistent_device_id; }
     AK::ReadonlySpan<GC::Ref<PointerEvent>> get_coalesced_events() const { return m_coalesced_events; }
     AK::ReadonlySpan<GC::Ref<PointerEvent>> get_predicted_events() const { return m_predicted_events; }
-
-    [[nodiscard]] virtual GC::Ref<MouseEvent> clone() const override;
 
     // https://w3c.github.io/pointerevents/#dom-pointerevent-pressure
     // For hardware and platforms that do not support pressure, the value MUST be 0.5 when in the active buttons state and 0 otherwise.
     static constexpr float ACTIVE_PRESSURE_DEFAULT_IN_ACTIVE_BUTTON_STATE { 0.5 };
 
 protected:
-    PointerEvent(JS::Realm&, FlyString const& type, PointerEventInit const&, double page_x, double page_y, double offset_x, double offset_y);
+    PointerEvent(FlyString const& type, PointerEventOptions&&, double page_x, double page_y, double offset_x, double offset_y, HighResolutionTime::DOMHighResTimeStamp);
+    PointerEvent(Utf16FlyString const& type, PointerEventOptions&&, double page_x, double page_y, double offset_x, double offset_y, HighResolutionTime::DOMHighResTimeStamp);
 
-    virtual void initialize(JS::Realm&) override;
-    virtual void visit_edges(Cell::Visitor&) override;
+    virtual void visit_edges(GC::Cell::Visitor&) override;
 
 private:
     bool should_have_fractional_coordinates() const;
@@ -137,7 +161,7 @@ private:
 
     // Indicates the device type that caused the event (mouse, pen, touch, etc.)
     // https://w3c.github.io/pointerevents/#dom-pointerevent-pointertype
-    String m_pointer_type;
+    Utf16FlyString m_pointer_type;
 
     // Indicates if the pointer represents the primary pointer of this pointer type
     // https://w3c.github.io/pointerevents/#dom-pointerevent-isprimary

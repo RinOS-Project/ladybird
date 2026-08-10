@@ -52,6 +52,36 @@ function timeout(ms) {
     return promise;
 }
 
+function withCollectedWrapper(makeAndMark, reacquire, verify) {
+    let wasPreserved = false;
+    (() => {
+        const wrapper = makeAndMark();
+        wasPreserved = internals.wrapperIsPreserved(wrapper);
+    })();
+
+    if (!wasPreserved) {
+        throw new Error("Expected wrapper to be preserved before GC");
+    }
+
+    internals.gc();
+    verify(reacquire());
+}
+
+async function waitForImageAnimationState(url, predicate, targetWindow = window) {
+    return new Promise(async resolve => {
+        while (true) {
+            try {
+                const state = targetWindow.internals.imageAnimationStateForURL(url);
+                if (predicate(state)) return resolve(state);
+            } catch {
+                // The image hasn't loaded yet.
+            }
+
+            await animationFrame();
+        }
+    });
+}
+
 const __testErrorHandlerController = new AbortController();
 window.addEventListener(
     "error",
@@ -126,8 +156,15 @@ class HTTPTestServer {
 }
 
 const __httpTestServer = (function () {
-    if (globalThis.internals && globalThis.internals.getEchoServerPort)
-        return new HTTPTestServer(`http://localhost:${internals.getEchoServerPort()}`);
+    if (globalThis.internals && globalThis.internals.getEchoServerPort) {
+        const echoServerPort = internals.getEchoServerPort();
+        const isLoadedFromEchoServer = location.protocol === "http:" && location.port === String(echoServerPort);
+
+        // Tests loaded through the echo server should create echo URLs on their current origin,
+        // so same-origin iframe/fetch checks keep working with unique localhost hostnames.
+        const baseURL = isLoadedFromEchoServer ? location.origin : `http://localhost:${echoServerPort}`;
+        return new HTTPTestServer(baseURL);
+    }
 
     return null;
 })();
@@ -137,4 +174,10 @@ function httpTestServer() {
         throw new Error("window.internals must be exposed to use HTTPTestServer");
     }
     return __httpTestServer;
+}
+
+// Per-call unique loopback host, so tests that mutate global per-host state
+// (e.g. HSTS) don't collide under the parallel runner or --repeat clones.
+function uniqueLocalhostHostname(prefix) {
+    return `${prefix}-${crypto.randomUUID()}.localhost`;
 }

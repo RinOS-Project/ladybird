@@ -1,8 +1,3 @@
-#import <DOM/DocumentFragment.idl>
-#import <DOM/DocumentOrShadowRoot.idl>
-#import <DOM/Element.idl>
-#import <TrustedTypes/TrustedHTML.idl>
-
 // https://dom.spec.whatwg.org/#shadowroot
 [Exposed=Window]
 interface ShadowRoot : DocumentFragment {
@@ -16,13 +11,14 @@ interface ShadowRoot : DocumentFragment {
 
     // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-parsing-and-serialization
 
-    [CEReactions] undefined setHTMLUnsafe((TrustedHTML or Utf16DOMString) html);
+    [CEReactions, ImplementedInBindings] undefined setHTMLUnsafe((TrustedHTML or Utf16DOMString) html);
     DOMString getHTML(optional GetHTMLOptions options = {});
 
-    [CEReactions, LegacyNullToEmptyString] attribute (TrustedHTML or Utf16DOMString) innerHTML;
+    [CEReactions, ImplementedInBindings, LegacyNullToEmptyString] attribute (TrustedHTML or Utf16DOMString) innerHTML;
 };
 
 ShadowRoot includes DocumentOrShadowRoot;
 
 enum ShadowRootMode { "open", "closed" };
+[MissingValueDefault=named, InvalidValueDefault=named]
 enum SlotAssignmentMode { "manual", "named" };

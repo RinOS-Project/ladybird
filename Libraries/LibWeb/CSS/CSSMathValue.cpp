@@ -5,7 +5,6 @@
  */
 
 #include "CSSMathValue.h"
-#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/PropertyNameAndID.h>
 #include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
 
@@ -13,16 +12,10 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSMathValue);
 
-CSSMathValue::CSSMathValue(JS::Realm& realm, Bindings::CSSMathOperator operator_, NumericType type)
-    : CSSNumericValue(realm, move(type))
+CSSMathValue::CSSMathValue(CSSMathOperator operator_, NumericType type)
+    : CSSNumericValue(move(type))
     , m_operator(operator_)
 {
-}
-
-void CSSMathValue::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSMathValue);
-    Base::initialize(realm);
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#create-an-internal-representation
@@ -60,7 +53,7 @@ WebIDL::ExceptionOr<NonnullRefPtr<StyleValue const>> CSSMathValue::create_an_int
     }();
 
     if (perform_type_check == PerformTypeCheck::Yes && !matches)
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Property does not accept values of this type."sv };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Property does not accept values of this type."_utf16 };
 
     return CalculatedStyleValue::create(TRY(create_calculation_node(context)), type(), move(context));
 }

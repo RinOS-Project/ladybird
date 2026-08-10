@@ -103,7 +103,7 @@ static ThrowCompletionOr<GC::RootVector<Value>> get_own_property_keys(VM& vm, Va
     auto keys = TRY(object->internal_own_property_keys());
 
     // 3. Let nameList be a new empty List.
-    auto name_list = GC::RootVector<Value> { vm.heap() };
+    GC::RootVector<Value> name_list;
 
     // 4. For each element nextKey of keys, do
     for (auto& next_key : keys) {
@@ -279,7 +279,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::from_entries)
     // 6. Return ? AddEntriesFromIterable(obj, iterable, adder).
     (void)TRY(get_iterator_values(vm, iterable, [&](Value iterator_value) -> Optional<Completion> {
         if (!iterator_value.is_object())
-            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, ByteString::formatted("Iterator value {}", iterator_value));
+            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, Utf16String::formatted("Iterator value {}", iterator_value));
 
         auto key = TRY(iterator_value.as_object().get(0));
         auto value = TRY(iterator_value.as_object().get(1));

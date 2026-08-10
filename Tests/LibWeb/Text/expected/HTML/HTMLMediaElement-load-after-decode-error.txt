@@ -1,0 +1,7 @@
+loadstart: readyState >= HAVE_NOTHING
+loadedmetadata: readyState >= HAVE_METADATA
+error: readyState >= HAVE_NOTHING code=3
+abort: readyState >= HAVE_NOTHING
+emptied: readyState >= HAVE_NOTHING
+loadstart: readyState >= HAVE_NOTHING
+loadedmetadata: readyState >= HAVE_METADATA

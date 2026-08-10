@@ -10,18 +10,21 @@
 
 namespace DevTools {
 
-class Actor;
 class AccessibilityActor;
 class AccessibilityNodeActor;
 class AccessibilityWalkerActor;
+class Actor;
 class Connection;
 class ConsoleActor;
+class CookiesActor;
 class CSSPropertiesActor;
 class DeviceActor;
 class DevToolsDelegate;
 class DevToolsServer;
+class FirefoxClient;
 class FrameActor;
 class HighlighterActor;
+class IndexedDBActor;
 class InspectorActor;
 class LayoutInspectorActor;
 class NetworkEventActor;
@@ -32,6 +35,9 @@ class ParentAccessibilityActor;
 class PreferenceActor;
 class ProcessActor;
 class RootActor;
+class SourceActor;
+class StorageActor;
+class StyleRuleActor;
 class StyleSheetsActor;
 class TabActor;
 class TargetConfigurationActor;

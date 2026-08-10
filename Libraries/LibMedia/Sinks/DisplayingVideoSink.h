@@ -6,59 +6,75 @@
 
 #pragma once
 
+#include <AK/Function.h>
 #include <AK/NonnullRefPtr.h>
+#include <AK/Optional.h>
+#include <AK/RefPtr.h>
 #include <AK/Time.h>
-#include <LibGfx/ImmutableBitmap.h>
+#include <LibGfx/Size.h>
 #include <LibMedia/Export.h>
 #include <LibMedia/Forward.h>
+#include <LibMedia/MediaTime.h>
+#include <LibMedia/PipelineStatus.h>
 #include <LibMedia/Sinks/VideoSink.h>
-#include <LibMedia/TimedImage.h>
-#include <LibMedia/Track.h>
+#include <LibMedia/VideoPresentation/PresentedFramePage.h>
+#include <LibSync/Weakable.h>
 
 namespace Media {
 
-enum class DisplayingVideoSinkUpdateResult : u8 {
-    NewFrameAvailable,
-    NoChange,
+struct DisplayingVideoSinkUpdateResult {
+    bool new_frame_available { false };
+    bool may_require_updates { false };
 };
 
-class MEDIA_API DisplayingVideoSink final : public VideoSink {
+class MEDIA_API DisplayingVideoSink final : public VideoSink
+    , public Sync::Weakable<DisplayingVideoSink> {
 public:
-    static ErrorOr<NonnullRefPtr<DisplayingVideoSink>> try_create(NonnullRefPtr<MediaTimeProvider> const&);
+    static ErrorOr<NonnullRefPtr<DisplayingVideoSink>> try_create(MediaTimeReader);
 
-    DisplayingVideoSink(NonnullRefPtr<MediaTimeProvider> const&);
+    explicit DisplayingVideoSink(MediaTimeReader);
     virtual ~DisplayingVideoSink() override;
 
-    void set_time_provider(NonnullRefPtr<MediaTimeProvider> const&);
+    virtual void set_time_reader(MediaTimeReader) override;
+    virtual void set_state_change_handler(PipelineStateChangeHandler) override;
+    virtual void set_resize_handler(PipelineResizeHandler) override;
 
-    virtual void set_provider(Track const&, RefPtr<VideoDataProvider> const&) override;
-    RefPtr<VideoDataProvider> provider(Track const&) const override;
+    virtual ErrorOr<void> connect_input(NonnullRefPtr<VideoProducer> const&) override;
+    virtual void disconnect_input(NonnullRefPtr<VideoProducer> const&) override;
 
-    // Updates the frame returned by current_frame() based on the time provider's current timestamp.
-    //
-    // Note that push_frame may block until update() is called, so do not call them from the same thread.
-    DisplayingVideoSinkUpdateResult update();
-    void prepare_current_frame_for_next_update();
-    RefPtr<Gfx::ImmutableBitmap> current_frame();
+    virtual void seek(AK::Duration timestamp) override;
 
-    void pause_updates();
-    void resume_updates();
+    DisplayingVideoSinkUpdateResult update(MonotonicTime now);
+    virtual RefPtr<VideoFrame> current_frame() const override;
 
-    Function<void()> m_on_start_buffering;
+    void set_on_present_needed(Function<void()> handler) { m_on_present_needed = move(handler); }
+    void set_presented_frame_page(PresentedFramePage page) { m_presented_frame_page = move(page); }
 
 private:
-    static constexpr size_t DEFAULT_QUEUE_SIZE = 8;
+    void dispatch_state_if_changed(PipelineStatus);
 
-    void verify_track(Track const&) const;
+    MediaTimeReader m_time_reader;
+    RefPtr<VideoProducer> m_input;
 
-    NonnullRefPtr<MediaTimeProvider> m_time_provider;
-    RefPtr<VideoDataProvider> m_provider;
-    Optional<Track> m_track;
+    RefPtr<VideoFrame> m_next_frame;
+    RefPtr<VideoFrame> m_current_frame;
+    bool m_cached_frames_are_discontinuous { false };
 
-    TimedImage m_next_frame;
-    RefPtr<Gfx::ImmutableBitmap> m_current_frame;
-    bool m_pause_updates { false };
-    bool m_has_new_current_frame { false };
+    enum class SeekStatus : u8 {
+        None,
+        InProgress,
+    };
+    SeekStatus m_seek_status { SeekStatus::None };
+
+    PipelineStateChangeHandler m_on_state_changed;
+    PipelineStatus m_last_dispatched_status { PipelineStatus::Pending };
+    u32 m_seek_id { 0 };
+
+    PipelineResizeHandler m_on_resize;
+    Gfx::Size<u32> m_last_dispatched_size;
+
+    Function<void()> m_on_present_needed;
+    Optional<PresentedFramePage> m_presented_frame_page;
 };
 
 }

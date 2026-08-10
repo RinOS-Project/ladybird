@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
+#include <AK/Utf16FlyString.h>
 #include <LibWeb/Export.h>
 
 namespace Web::HTML {
@@ -81,6 +81,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(ended, "ended")                                                     \
     __ENUMERATE_HTML_ATTRIBUTE(enterkeyhint, "enterkeyhint")                                       \
     __ENUMERATE_HTML_ATTRIBUTE(event, "event")                                                     \
+    __ENUMERATE_HTML_ATTRIBUTE(exportparts, "exportparts")                                         \
     __ENUMERATE_HTML_ATTRIBUTE(face, "face")                                                       \
     __ENUMERATE_HTML_ATTRIBUTE(fetchpriority, "fetchpriority")                                     \
     __ENUMERATE_HTML_ATTRIBUTE(for_, "for")                                                        \
@@ -248,6 +249,10 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(onsuspend, "onsuspend")                                             \
     __ENUMERATE_HTML_ATTRIBUTE(ontimeupdate, "ontimeupdate")                                       \
     __ENUMERATE_HTML_ATTRIBUTE(ontoggle, "ontoggle")                                               \
+    __ENUMERATE_HTML_ATTRIBUTE(ontransitioncancel, "ontransitioncancel")                           \
+    __ENUMERATE_HTML_ATTRIBUTE(ontransitionend, "ontransitionend")                                 \
+    __ENUMERATE_HTML_ATTRIBUTE(ontransitionrun, "ontransitionrun")                                 \
+    __ENUMERATE_HTML_ATTRIBUTE(ontransitionstart, "ontransitionstart")                             \
     __ENUMERATE_HTML_ATTRIBUTE(onunhandledrejection, "onunhandledrejection")                       \
     __ENUMERATE_HTML_ATTRIBUTE(onunload, "onunload")                                               \
     __ENUMERATE_HTML_ATTRIBUTE(onvolumechange, "onvolumechange")                                   \
@@ -293,6 +298,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(shadowrootdelegatesfocus, "shadowrootdelegatesfocus")               \
     __ENUMERATE_HTML_ATTRIBUTE(shadowrootmode, "shadowrootmode")                                   \
     __ENUMERATE_HTML_ATTRIBUTE(shadowrootserializable, "shadowrootserializable")                   \
+    __ENUMERATE_HTML_ATTRIBUTE(shadowrootslotassignment, "shadowrootslotassignment")               \
     __ENUMERATE_HTML_ATTRIBUTE(shape, "shape")                                                     \
     __ENUMERATE_HTML_ATTRIBUTE(size, "size")                                                       \
     __ENUMERATE_HTML_ATTRIBUTE(sizes, "sizes")                                                     \
@@ -329,12 +335,12 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(wrap, "wrap")                                                       \
     __ENUMERATE_HTML_ATTRIBUTE(writingsuggestions, "writingsuggestions")
 
-#define __ENUMERATE_HTML_ATTRIBUTE(name, attribute) extern WEB_API FlyString name;
+#define __ENUMERATE_HTML_ATTRIBUTE(name, attribute) extern WEB_API Utf16FlyString const& name;
 ENUMERATE_HTML_ATTRIBUTES
 #undef __ENUMERATE_HTML_ATTRIBUTE
 
 }
 
-WEB_API bool is_boolean_attribute(FlyString const& attribute);
+WEB_API bool is_boolean_attribute(Utf16FlyString const& attribute);
 
 }

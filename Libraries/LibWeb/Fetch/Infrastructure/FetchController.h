@@ -22,6 +22,12 @@
 #include <LibWeb/HTML/EventLoop/Task.h>
 #include <LibWeb/HTML/StructuredSerializeTypes.h>
 
+namespace Web::Fetch::Fetching {
+
+class PendingResponse;
+
+}
+
 namespace Web::Fetch::Infrastructure {
 
 class ResponseReferenceHolder;
@@ -39,7 +45,7 @@ public:
         Stopped,
     };
 
-    [[nodiscard]] static GC::Ref<FetchController> create(JS::VM&);
+    [[nodiscard]] static GC::Ref<FetchController> create();
 
     void set_full_timing_info(GC::Ref<FetchTimingInfo> full_timing_info) { m_full_timing_info = full_timing_info; }
     void set_report_timing_steps(Function<void(JS::Object&)> report_timing_steps);
@@ -51,10 +57,12 @@ public:
     void process_next_manual_redirect() const;
     [[nodiscard]] GC::Ref<FetchTimingInfo> extract_full_timing_info() const;
     void abort(JS::Realm&, Optional<JS::Value>);
-    JS::Value deserialize_a_serialized_abort_reason(JS::Realm&);
+    Optional<HTML::IPCSerializationRecord> const& serialized_abort_reason() const { return m_serialized_abort_reason; }
     void terminate();
 
     void set_fetch_params(Badge<FetchParams>, GC::Ref<FetchParams> fetch_params) { m_fetch_params = fetch_params; }
+    [[nodiscard]] GC::Ptr<Fetching::PendingResponse> pending_preloaded_response() const { return m_pending_preloaded_response; }
+    void set_pending_preloaded_response(GC::Ptr<Fetching::PendingResponse> pending_preloaded_response) { m_pending_preloaded_response = pending_preloaded_response; }
 
     void set_pending_request(RefPtr<Requests::Request> const&);
     void set_inner_fetch_controller(GC::Ref<FetchController>);
@@ -108,7 +116,7 @@ private:
     // https://fetch.spec.whatwg.org/#fetch-controller-report-timing-steps
     // serialized abort reason (default null)
     //     Null or a Record (result of StructuredSerialize).
-    Optional<HTML::SerializationRecord> m_serialized_abort_reason;
+    Optional<HTML::IPCSerializationRecord> m_serialized_abort_reason;
 
     // https://fetch.spec.whatwg.org/#fetch-controller-next-manual-redirect-steps
     // next manual redirect steps (default null)
@@ -116,6 +124,9 @@ private:
     GC::Ptr<GC::Function<void()>> m_next_manual_redirect_steps;
 
     GC::Ptr<FetchParams> m_fetch_params;
+    // NB: Assumes one waiting consumer for a pending preloaded response.
+    // Widen this if preload handoff ever supports multiple consumers.
+    GC::Ptr<Fetching::PendingResponse> m_pending_preloaded_response;
 
     WeakPtr<Requests::Request> m_pending_request;
 
@@ -136,7 +147,7 @@ class FetchControllerHolder : public JS::Cell {
     GC_DECLARE_ALLOCATOR(FetchControllerHolder);
 
 public:
-    static GC::Ref<FetchControllerHolder> create(JS::VM&);
+    static GC::Ref<FetchControllerHolder> create();
 
     [[nodiscard]] GC::Ptr<FetchController> const& controller() const { return m_controller; }
     void set_controller(GC::Ref<FetchController> controller) { m_controller = controller; }

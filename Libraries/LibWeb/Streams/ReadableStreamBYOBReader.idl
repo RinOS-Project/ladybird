@@ -1,9 +1,5 @@
-#import <Streams/ReadableStream.idl>
-#import <Streams/ReadableStreamDefaultReader.idl>
-#import <Streams/ReadableStreamGenericReader.idl>
-
 // https://streams.spec.whatwg.org/#readablestreambyobreader
-[Exposed=*]
+    [Exposed=*]
 interface ReadableStreamBYOBReader {
     constructor(ReadableStream stream);
 

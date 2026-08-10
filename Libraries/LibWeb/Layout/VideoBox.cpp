@@ -4,17 +4,17 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGfx/Bitmap.h>
 #include <LibWeb/HTML/HTMLVideoElement.h>
 #include <LibWeb/Layout/VideoBox.h>
 #include <LibWeb/Painting/VideoPaintable.h>
 
 namespace Web::Layout {
 
-GC_DEFINE_ALLOCATOR(VideoBox);
-
-VideoBox::VideoBox(DOM::Document& document, DOM::Element& element, GC::Ref<CSS::ComputedProperties> style)
+VideoBox::VideoBox(DOM::Document& document, DOM::Element& element, NonnullRefPtr<CSS::ComputedValues const> style)
     : ReplacedBox(document, element, style)
 {
+    set_flag(RustFFI::NodeFlag::ReplacedBoxCanHaveChildren, element.shadow_root() != nullptr);
 }
 
 HTML::HTMLVideoElement& VideoBox::dom_node()
@@ -35,14 +35,15 @@ bool VideoBox::can_have_children() const
 
 CSS::SizeWithAspectRatio VideoBox::natural_size() const
 {
-    CSSPixels width = dom_node().video_width();
-    CSSPixels height = dom_node().video_height();
-    if (width > 0 && height > 0)
-        return { width, height, CSSPixelFraction(width, height) };
-    return { width, height, {} };
+    auto natural_size = dom_node().natural_element_size();
+    if (!natural_size.has_value())
+        return {};
+    if (natural_size->is_empty())
+        return { 0, 0, {} };
+    return { natural_size->width(), natural_size->height(), natural_size->width() / natural_size->height() };
 }
 
-GC::Ptr<Painting::Paintable> VideoBox::create_paintable() const
+RefPtr<Painting::Paintable> VideoBox::create_paintable() const
 {
     return Painting::VideoPaintable::create(*this);
 }

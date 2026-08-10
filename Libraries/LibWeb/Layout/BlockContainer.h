@@ -7,23 +7,20 @@
 #pragma once
 
 #include <LibWeb/Layout/Box.h>
-#include <LibWeb/Layout/LineBox.h>
 
 namespace Web::Layout {
 
 // https://www.w3.org/TR/css-display/#block-container
 class BlockContainer : public Box {
-    GC_CELL(BlockContainer, Box);
-    GC_DECLARE_ALLOCATOR(BlockContainer);
+    LAYOUT_NODE(BlockContainer, Box);
 
 public:
-    BlockContainer(DOM::Document&, DOM::Node*, GC::Ref<CSS::ComputedProperties>);
-    BlockContainer(DOM::Document&, DOM::Node*, NonnullOwnPtr<CSS::ComputedValues>);
+    BlockContainer(DOM::Document&, DOM::Node*, NonnullRefPtr<CSS::ComputedValues const>);
     virtual ~BlockContainer() override;
 
-    Painting::PaintableWithLines const* paintable_with_lines() const;
+    RefPtr<Painting::PaintableWithLines const> paintable_with_lines() const;
 
-    virtual GC::Ptr<Painting::Paintable> create_paintable() const override;
+    virtual RefPtr<Painting::Paintable> create_paintable() const override;
 
 private:
     virtual bool is_block_container() const final { return true; }

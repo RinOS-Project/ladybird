@@ -5,10 +5,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/StringBuilder.h>
+#include <AK/Utf16StringBuilder.h>
 #include <LibWeb/ARIA/Roles.h>
-#include <LibWeb/Bindings/HTMLOptionElementPrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/Invalidation/ElementStateInvalidator.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentFragment.h>
 #include <LibWeb/DOM/Node.h>
@@ -37,12 +36,6 @@ HTMLOptionElement::HTMLOptionElement(DOM::Document& document, DOM::QualifiedName
 
 HTMLOptionElement::~HTMLOptionElement() = default;
 
-void HTMLOptionElement::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLOptionElement);
-    Base::initialize(realm);
-}
-
 void HTMLOptionElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
@@ -54,12 +47,12 @@ void HTMLOptionElement::update_selection_label()
 {
     if (selected()) {
         if (auto* select_element = first_ancestor_of_type<HTMLSelectElement>()) {
-            select_element->update_inner_text_element({});
+            select_element->clone_selected_option_into_select_button();
         }
     }
 }
 
-void HTMLOptionElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
+void HTMLOptionElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
 {
     Base::attribute_changed(name, old_value, value, namespace_);
 
@@ -92,7 +85,7 @@ void HTMLOptionElement::set_selected(bool selected)
 void HTMLOptionElement::set_selected_internal(bool selected)
 {
     if (m_selected != selected)
-        invalidate_style(DOM::StyleInvalidationReason::HTMLOptionElementSelectedChange);
+        CSS::Invalidation::invalidate_style_after_option_selected_state_change(*this);
 
     m_selected = selected;
     if (selected)
@@ -108,17 +101,17 @@ Utf16String HTMLOptionElement::value() const
     // The value of an option element is the value of the value content attribute, if there is one.
     // ...or, if there is not, the value of the element's text IDL attribute.
     if (auto value = attribute(HTML::AttributeNames::value); value.has_value())
-        return Utf16String::from_utf8(*value);
+        return value.release_value();
     return text();
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-value
-void HTMLOptionElement::set_value(Utf16String const& value)
+void HTMLOptionElement::set_value(Utf16View value)
 {
-    set_attribute_value(HTML::AttributeNames::value, value.to_utf8_but_should_be_ported_to_utf16());
+    set_attribute_value(HTML::AttributeNames::value, value);
 }
 
-static void concatenate_descendants_text_content(DOM::Node const* node, StringBuilder& builder)
+static void concatenate_descendants_text_content(DOM::Node const* node, Utf16StringBuilder& builder)
 {
     if (is<HTMLScriptElement>(node) || is<SVG::SVGScriptElement>(node))
         return;
@@ -131,17 +124,17 @@ static void concatenate_descendants_text_content(DOM::Node const* node, StringBu
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-label
-String HTMLOptionElement::label() const
+Utf16String HTMLOptionElement::label() const
 {
     // The label IDL attribute, on getting, if there is a label content attribute,
     // must return that attribute's value; otherwise, it must return the element's label.
     if (auto label = attribute(HTML::AttributeNames::label); label.has_value())
         return label.release_value();
-    return text().to_utf8_but_should_be_ported_to_utf16();
+    return text();
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-label
-void HTMLOptionElement::set_label(String const& label)
+void HTMLOptionElement::set_label(Utf16View label)
 {
     set_attribute_value(HTML::AttributeNames::label, label);
     // Note: this causes attribute_changed() to be called, which will update the <select>'s label
@@ -150,7 +143,7 @@ void HTMLOptionElement::set_label(String const& label)
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-text
 Utf16String HTMLOptionElement::text() const
 {
-    StringBuilder builder(StringBuilder::Mode::UTF16);
+    Utf16StringBuilder builder;
 
     // Concatenation of data of all the Text node descendants of the option element, in tree order,
     // excluding any that are descendants of descendants of the option element that are themselves
@@ -161,11 +154,11 @@ Utf16String HTMLOptionElement::text() const
     });
 
     // Return the result of stripping and collapsing ASCII whitespace from the above concatenation.
-    return Infra::strip_and_collapse_whitespace(builder.to_utf16_string());
+    return Infra::strip_and_collapse_whitespace(builder.view());
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-option-text
-void HTMLOptionElement::set_text(Utf16String const& text)
+void HTMLOptionElement::set_text(Utf16View text)
 {
     string_replace_all(text);
     // Note: this causes children_changed() to be called, which will update the <select>'s label
@@ -228,7 +221,7 @@ void HTMLOptionElement::update_nearest_select_element()
     auto old_select = m_cached_nearest_select_element;
 
     // 2. Let newSelect be option's option element nearest ancestor select.
-    auto new_select = compute_nearest_select_element();
+    auto new_select = get_nearest_ancestor_select(*this);
 
     // 3. If oldSelect is not newSelect:
     if (old_select != new_select) {
@@ -243,39 +236,6 @@ void HTMLOptionElement::update_nearest_select_element()
 
     // 4. Set option's cached nearest ancestor select element to newSelect.
     m_cached_nearest_select_element = new_select;
-}
-
-// https://html.spec.whatwg.org/multipage/form-elements.html#option-element-nearest-ancestor-select
-GC::Ptr<HTMLSelectElement> HTMLOptionElement::compute_nearest_select_element()
-{
-    // 1. Let ancestorOptgroup be null.
-    GC::Ptr<HTMLOptGroupElement> ancestor_optgroup;
-
-    // 2. For each ancestor of option's ancestors, in reverse tree order:
-    for (auto* ancestor = parent(); ancestor; ancestor = ancestor->parent()) {
-        // 1. If ancestor is a datalist, hr, or option element, then return null.
-        if (is<HTMLDataListElement>(*ancestor)
-            || is<HTMLHRElement>(*ancestor)
-            || is<HTMLOptionElement>(*ancestor))
-            return nullptr;
-
-        // 2. If ancestor is an optgroup element:
-        if (auto* optgroup_element = as_if<HTMLOptGroupElement>(*ancestor)) {
-            // 1. If ancestorOptgroup is not null, then return null.
-            if (ancestor_optgroup)
-                return nullptr;
-
-            // 2. Set ancestorOptgroup to ancestor.
-            ancestor_optgroup = optgroup_element;
-        }
-
-        // 3. If ancestor is a select, then return ancestor.
-        if (auto* select_element = as_if<HTMLSelectElement>(*ancestor))
-            return select_element;
-    }
-
-    // 3. Return null.
-    return nullptr;
 }
 
 Optional<ARIA::Role> HTMLOptionElement::default_role() const
@@ -312,7 +272,7 @@ WebIDL::ExceptionOr<void> HTMLOptionElement::clone_into_selectedcontent(GC::Ref<
     // To clone an option into a selectedcontent, given an option element option and a selectedcontent element selectedcontent:
 
     // 1. Let documentFragment be a new DocumentFragment whose node document is option's node document.
-    auto fragment = realm().create<DOM::DocumentFragment>(document());
+    auto fragment = DOM::DocumentFragment::create(document());
 
     // 2. For each child of option's children:
     for (auto* child = first_child(); child; child = child->next_sibling()) {
@@ -340,12 +300,23 @@ void HTMLOptionElement::inserted()
     update_nearest_select_element();
 }
 
-void HTMLOptionElement::removed_from(Node* old_parent, Node& old_root)
+// https://html.spec.whatwg.org/multipage/form-elements.html#the-option-element:html-element-removing-steps
+void HTMLOptionElement::removed_from(IsSubtreeRoot is_subtree_root, Node* old_ancestor, Node& old_root)
 {
-    Base::removed_from(old_parent, old_root);
+    Base::removed_from(is_subtree_root, old_ancestor, old_root);
 
-    // The option HTML element removing steps, given removedOption and oldParent,
-    // are to run update an option's nearest ancestor select given removedOption.
+    // The option HTML element removing steps, given removedNode, isSubtreeRoot, and oldAncestor are to run update an
+    // option's nearest ancestor select given removedNode.
+    update_nearest_select_element();
+}
+
+// https://html.spec.whatwg.org/multipage/form-elements.html#the-option-element:html-element-moving-steps
+void HTMLOptionElement::moved_from(IsSubtreeRoot is_subtree_root, GC::Ptr<Node> old_ancestor)
+{
+    Base::moved_from(is_subtree_root, old_ancestor);
+
+    // The option HTML element moving steps, given movedNode, isSubtreeRoot, and oldAncestor are to run update an
+    // option's nearest ancestor select given movedNode.
     update_nearest_select_element();
 }
 

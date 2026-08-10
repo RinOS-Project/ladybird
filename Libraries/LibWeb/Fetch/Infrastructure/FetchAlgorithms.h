@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Optional.h>
+#include <LibCore/ImmutableBytes.h>
 #include <LibGC/Function.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Heap/Cell.h>
@@ -22,7 +23,7 @@ class WEB_API FetchAlgorithms : public JS::Cell {
 
 public:
     struct ConsumeBodyFailureTag { };
-    using BodyBytes = Variant<Empty, ConsumeBodyFailureTag, ByteBuffer>;
+    using BodyBytes = Variant<Empty, ConsumeBodyFailureTag, Core::ImmutableBytes>;
 
     using ProcessRequestBodyChunkLengthFunction = Function<void(u64)>;
     using ProcessRequestEndOfBodyFunction = Function<void()>;
@@ -47,6 +48,7 @@ public:
         ProcessResponseConsumeBodyFunction process_response_consume_body;
     };
 
+    [[nodiscard]] static GC::Ref<FetchAlgorithms> create(Input);
     [[nodiscard]] static GC::Ref<FetchAlgorithms> create(JS::VM&, Input);
 
     ProcessRequestBodyChunkLengthFunction const& process_request_body_chunk_length() const { return m_process_request_body_chunk_length->function(); }

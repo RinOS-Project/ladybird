@@ -1,0 +1,10 @@
+// https://html.spec.whatwg.org/multipage/dom.html#htmlorsvgelement
+interface mixin HTMLOrSVGOrMathMLElement {
+    [SameObject] readonly attribute DOMStringMap dataset;
+    attribute Utf16DOMString nonce; // intentionally no [CEReactions]
+
+    [CEReactions, Reflect] attribute boolean autofocus;
+    [CEReactions] attribute long tabIndex;
+    undefined focus(optional FocusOptions options = {});
+    undefined blur();
+};

@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/TrackEventPrototype.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/HTML/AudioTrack.h>
 #include <LibWeb/HTML/TextTrack.h>
 #include <LibWeb/HTML/TrackEvent.h>
@@ -16,48 +15,31 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(TrackEvent);
 
-GC::Ref<TrackEvent> TrackEvent::create(JS::Realm& realm, FlyString const& event_name, TrackEventInit event_init)
+GC::Ref<TrackEvent> TrackEvent::create(FlyString const& event_name, TrackEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
 {
-    return realm.create<TrackEvent>(realm, event_name, move(event_init));
+    return GC::Heap::the().allocate<TrackEvent>(event_name, event_init, time_stamp);
 }
 
-WebIDL::ExceptionOr<GC::Ref<TrackEvent>> TrackEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, TrackEventInit event_init)
+GC::Ref<TrackEvent> TrackEvent::create(Utf16FlyString const& event_name, TrackEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
 {
-    return create(realm, event_name, move(event_init));
+    return GC::Heap::the().allocate<TrackEvent>(FlyString { event_name.to_utf16_string().to_utf8() }, event_init, time_stamp);
 }
 
-TrackEvent::TrackTypeInternal TrackEvent::to_track_type_internal(NullableTrackType const& track_type)
+TrackEvent::TrackEvent(FlyString const& event_name, TrackEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
+    : DOM::Event(event_name, event_init, time_stamp)
+    , m_track(event_init.track)
 {
-    return track_type.visit(
-        [](Empty) -> TrackTypeInternal { return Empty {}; },
-        [](auto const& root) -> TrackTypeInternal { return GC::Ref { *root }; });
-}
-
-TrackEvent::TrackEvent(JS::Realm& realm, FlyString const& event_name, TrackEventInit event_init)
-    : DOM::Event(realm, event_name, event_init)
-    , m_track(to_track_type_internal(event_init.track))
-{
-}
-
-void TrackEvent::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(TrackEvent);
-    Base::initialize(realm);
 }
 
 void TrackEvent::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    m_track.visit(
-        [](Empty) {},
-        [&](auto const& ref) { visitor.visit(ref); });
+    visitor.visit(m_track);
 }
 
 NullableTrackType TrackEvent::track() const
 {
-    return m_track.visit(
-        [](Empty) -> NullableTrackType { return Empty {}; },
-        [](auto const& ref) -> NullableTrackType { return GC::Root { *ref }; });
+    return m_track;
 }
 
 }

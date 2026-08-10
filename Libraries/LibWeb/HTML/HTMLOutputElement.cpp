@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/HTMLOutputElementPrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/DOMTokenList.h>
 #include <LibWeb/HTML/HTMLOutputElement.h>
 
@@ -20,23 +18,17 @@ HTMLOutputElement::HTMLOutputElement(DOM::Document& document, DOM::QualifiedName
 
 HTMLOutputElement::~HTMLOutputElement() = default;
 
-void HTMLOutputElement::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLOutputElement);
-    Base::initialize(realm);
-}
-
 void HTMLOutputElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_html_for);
 }
 
-void HTMLOutputElement::form_associated_element_attribute_changed(FlyString const& name, Optional<String> const&, Optional<String> const& value, Optional<FlyString> const&)
+void HTMLOutputElement::form_associated_element_attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const&, Optional<Utf16String> const& value, Optional<Utf16FlyString> const&)
 {
     if (name == HTML::AttributeNames::for_) {
         if (m_html_for)
-            m_html_for->associated_attribute_changed(value.value_or(String {}));
+            m_html_for->associated_attribute_changed(value.has_value() ? value->utf16_view() : u""sv);
     }
 }
 
@@ -61,7 +53,7 @@ Utf16String HTMLOutputElement::default_value() const
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-output-defaultvalue
-void HTMLOutputElement::set_default_value(Utf16String const& default_value)
+void HTMLOutputElement::set_default_value(Utf16View default_value)
 {
     // 1. If this's default value override is null, then string replace all with the given value within this and return.
     if (!m_default_value_override.has_value()) {
@@ -70,7 +62,7 @@ void HTMLOutputElement::set_default_value(Utf16String const& default_value)
     }
 
     // 2. Set this's default value override to the given value.
-    m_default_value_override = default_value;
+    m_default_value_override = Utf16String::from_utf16(default_value);
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-output-value
@@ -81,7 +73,7 @@ Utf16String HTMLOutputElement::value() const
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-output-value
-void HTMLOutputElement::set_value(Utf16String const& value)
+void HTMLOutputElement::set_value(Utf16View value)
 {
     // 1. Set this's default value override to its default value.
     m_default_value_override = default_value();
@@ -107,7 +99,7 @@ void HTMLOutputElement::clear_algorithm()
     m_default_value_override = default_value();
 
     // and then to set the element's textContent IDL attribute to an empty string (thus clearing the element's child nodes).
-    string_replace_all({});
+    string_replace_all(u""sv);
 }
 
 }

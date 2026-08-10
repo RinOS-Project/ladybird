@@ -6,8 +6,9 @@
  */
 
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/ImmutableBitmap.h>
+#include <LibGfx/DecodedImageFrame.h>
 #include <LibMedia/Sinks/DisplayingVideoSink.h>
+#include <LibMedia/VideoFrame.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/HTMLMediaElement.h>
 #include <LibWeb/HTML/HTMLVideoElement.h>
@@ -15,19 +16,23 @@
 #include <LibWeb/Layout/VideoBox.h>
 #include <LibWeb/Painting/BorderRadiusCornerClipper.h>
 #include <LibWeb/Painting/DisplayListRecorder.h>
+#include <LibWeb/Painting/ReplacedElementCommon.h>
 #include <LibWeb/Painting/VideoPaintable.h>
 
 namespace Web::Painting {
 
-GC_DEFINE_ALLOCATOR(VideoPaintable);
-
-GC::Ref<VideoPaintable> VideoPaintable::create(Layout::VideoBox const& layout_box)
+static CSSPixelSize to_css_pixel_size(Gfx::IntSize size)
 {
-    return layout_box.heap().allocate<VideoPaintable>(layout_box);
+    return CSSPixelSize { CSSPixels(size.width()), CSSPixels(size.height()) };
+}
+
+NonnullRefPtr<VideoPaintable> VideoPaintable::create(Layout::VideoBox const& layout_box)
+{
+    return adopt_ref(*new VideoPaintable(layout_box));
 }
 
 VideoPaintable::VideoPaintable(Layout::VideoBox const& layout_box)
-    : PaintableBox(layout_box)
+    : Paintable(layout_box)
 {
 }
 
@@ -36,7 +41,7 @@ void VideoPaintable::paint(DisplayListRecordingContext& context, PaintPhase phas
     if (!is_visible())
         return;
 
-    Base::paint(context, phase);
+    Paintable::paint(context, phase);
 
     if (phase != PaintPhase::Foreground)
         return;
@@ -53,19 +58,26 @@ void VideoPaintable::paint(DisplayListRecordingContext& context, PaintPhase phas
     auto const& poster_frame = video_element.poster_frame();
 
     auto paint_bitmap = [&](auto const& bitmap) {
-        auto immutable = Gfx::ImmutableBitmap::create(*bitmap);
-        auto dst_rect = video_rect.to_type<int>();
-        auto scaling_mode = to_gfx_scaling_mode(computed_values().image_rendering(), immutable->rect().size(), dst_rect.size());
-        context.display_list_recorder().draw_scaled_immutable_bitmap(dst_rect, dst_rect, *immutable, scaling_mode);
+        auto frame = Gfx::DecodedImageFrame { bitmap };
+        auto dst_rect = get_replaced_box_painting_area(*this, context, computed_values().object_fit(), to_css_pixel_size(bitmap.size()));
+        if (dst_rect.is_empty())
+            return;
+        auto scaling_mode = to_gfx_scaling_mode(computed_values().image_rendering(), frame.size(), dst_rect.size());
+        context.display_list_recorder().draw_scaled_decoded_image_frame(dst_rect, move(frame), scaling_mode);
     };
 
     auto paint_video_frame = [&]() {
-        auto& source = const_cast<HTML::HTMLMediaElement&>(static_cast<HTML::HTMLMediaElement const&>(video_element)).ensure_external_content_source();
-        auto dst_rect = video_rect.to_type<int>();
-        auto current = source.current_bitmap();
-        auto src_size = current ? current->size() : dst_rect.size();
+        auto sink_handle = video_element.video_sink_handle();
+        if (!sink_handle.has_value() || !video_element.natural_media_size().has_value())
+            return;
+        auto src_size = video_element.natural_media_size()->to_type<int>();
+
+        auto dst_rect = get_replaced_box_painting_area(*this, context, computed_values().object_fit(), to_css_pixel_size(src_size));
+        if (dst_rect.is_empty())
+            return;
         auto scaling_mode = to_gfx_scaling_mode(computed_values().image_rendering(), src_size, dst_rect.size());
-        context.display_list_recorder().draw_external_content(dst_rect, source, scaling_mode);
+        auto video_sink_id = video_element.video_sink_resource_id().value();
+        context.display_list_recorder().draw_video_frame(dst_rect, video_sink_id, *sink_handle, scaling_mode);
     };
 
     auto paint_transparent_black = [&]() {
@@ -83,7 +95,7 @@ void VideoPaintable::paint(DisplayListRecordingContext& context, PaintPhase phas
 
     case HTML::HTMLVideoElement::Representation::PosterFrame:
         VERIFY(poster_frame);
-        paint_bitmap(poster_frame);
+        paint_bitmap(*poster_frame);
         break;
 
     case HTML::HTMLVideoElement::Representation::TransparentBlack:

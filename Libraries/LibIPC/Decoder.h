@@ -17,6 +17,7 @@
 #include <AK/Time.h>
 #include <AK/Try.h>
 #include <AK/TypeList.h>
+#include <AK/Utf16FlyString.h>
 #include <AK/Variant.h>
 #include <LibCore/Forward.h>
 #include <LibCore/SharedCircularQueue.h>
@@ -85,11 +86,20 @@ ErrorOr<T> decode(Decoder& decoder)
     return static_cast<T>(value);
 }
 
+template<Concepts::DistinctNumeric T>
+ErrorOr<T> decode(Decoder& decoder)
+{
+    return T { TRY(decoder.decode<typename T::Type>()) };
+}
+
 template<>
 ErrorOr<String> decode(Decoder&);
 
 template<>
 ErrorOr<Utf16String> decode(Decoder&);
+
+template<>
+ErrorOr<Utf16FlyString> decode(Decoder&);
 
 template<>
 ErrorOr<ByteString> decode(Decoder&);

@@ -74,7 +74,6 @@ namespace JS {
     P(ceil)                                  \
     P(charAt)                                \
     P(charCodeAt)                            \
-    P(cleanupSome)                           \
     P(clear)                                 \
     P(clz32)                                 \
     P(codePointAt)                           \
@@ -194,7 +193,6 @@ namespace JS {
     P(fromHex)                               \
     P(fround)                                \
     P(Function)                              \
-    P(gc)                                    \
     P(get)                                   \
     P(getBigInt64)                           \
     P(getBigUint64)                          \

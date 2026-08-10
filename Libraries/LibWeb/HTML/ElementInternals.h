@@ -1,16 +1,18 @@
 /*
- * Copyright (c) 2024, the Ladybird developers.
+ * Copyright (c) 2024-present, the Ladybird developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/Utf16String.h>
 #include <AK/WeakPtr.h>
 #include <LibGC/Ptr.h>
-#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/DOM/NodeList.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/HTMLElement.h>
 #include <LibWeb/HTML/HTMLFormElement.h>
 #include <LibWeb/HTML/ValidityState.h>
@@ -18,24 +20,24 @@
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/custom-elements.html#elementinternals
-class ElementInternals final : public Bindings::PlatformObject {
-    WEB_PLATFORM_OBJECT(ElementInternals, Bindings::PlatformObject);
+class ElementInternals final : public Bindings::GCAllocatedWrappable {
+    WEB_WRAPPABLE(ElementInternals, Bindings::GCAllocatedWrappable);
     GC_DECLARE_ALLOCATOR(ElementInternals);
 
 public:
-    static GC::Ref<ElementInternals> create(JS::Realm&, HTMLElement& target_element);
+    static GC::Ref<ElementInternals> create(HTMLElement& target_element);
 
     GC::Ptr<DOM::ShadowRoot> shadow_root() const;
 
-    using ElementInternalsFormValue = Variant<GC::Root<FileAPI::File>, String, GC::Root<XHR::FormData>, Empty>;
+    using ElementInternalsFormValue = Variant<GC::Ref<FileAPI::File>, Utf16String, GC::Ref<XHR::FormData>, Empty>;
     WebIDL::ExceptionOr<void> set_form_value(ElementInternalsFormValue value, Optional<ElementInternalsFormValue> state);
 
     WebIDL::ExceptionOr<GC::Ptr<HTMLFormElement>> form() const;
 
-    WebIDL::ExceptionOr<void> set_validity(ValidityStateFlags const& flags, Optional<String> message, GC::Ptr<HTMLElement> anchor);
+    WebIDL::ExceptionOr<void> set_validity(ValidityStateFlags const& flags, Optional<Utf16String> message, GC::Ptr<HTMLElement> anchor);
     WebIDL::ExceptionOr<bool> will_validate() const;
     WebIDL::ExceptionOr<GC::Ref<ValidityState const>> validity() const;
-    WebIDL::ExceptionOr<String> validation_message() const;
+    WebIDL::ExceptionOr<Utf16String> validation_message() const;
     WebIDL::ExceptionOr<bool> check_validity() const;
     WebIDL::ExceptionOr<bool> report_validity() const;
 
@@ -43,10 +45,9 @@ public:
     GC::Ptr<CustomStateSet> states();
 
 private:
-    explicit ElementInternals(JS::Realm&, HTMLElement& target_element);
+    explicit ElementInternals(HTMLElement& target_element);
 
-    virtual void initialize(JS::Realm&) override;
-    virtual void visit_edges(JS::Cell::Visitor& visitor) override;
+    virtual void visit_edges(GC::Cell::Visitor& visitor) override;
 
     // https://html.spec.whatwg.org/multipage/custom-elements.html#internals-target
     GC::Ref<HTMLElement> m_target_element;

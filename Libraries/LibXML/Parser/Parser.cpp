@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, the Ladybird developers.
+ * Copyright (c) 2026-present, the Ladybird developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,6 +11,74 @@
 namespace XML {
 
 static constexpr int MAX_XML_TREE_DEPTH = 5000;
+
+struct ParserContext {
+    Listener* listener { nullptr };
+    Optional<ParseError> error;
+    bool document_ended { false };
+
+    OwnPtr<Node> root_node;
+    Node* current_node { nullptr };
+    Optional<Doctype> doctype;
+    HashMap<Name, ByteString> processing_instructions;
+    Version version { Version::Version11 };
+
+    Vector<ParseError> parse_errors;
+
+    Parser::Options const* options { nullptr };
+    bool is_xhtml_document { false };
+    int depth { 0 };
+};
+
+static ByteString xml_char_to_byte_string(xmlChar const* str)
+{
+    if (!str)
+        return {};
+    return ByteString(reinterpret_cast<char const*>(str));
+}
+
+static ByteString xml_char_to_byte_string(xmlChar const* str, int len)
+{
+    if (!str || len <= 0)
+        return {};
+    return ByteString(StringView(reinterpret_cast<char const*>(str), static_cast<size_t>(len)));
+}
+
+static StringView xml_char_to_string_view(xmlChar const* str)
+{
+    if (!str)
+        return {};
+    return StringView(reinterpret_cast<char const*>(str), strlen(reinterpret_cast<char const*>(str)));
+}
+
+static StringView xml_char_to_string_view(xmlChar const* str, int len)
+{
+    if (!str || len <= 0)
+        return {};
+    return StringView(reinterpret_cast<char const*>(str), static_cast<size_t>(len));
+}
+
+static Utf16FlyString xml_name_to_utf16_fly_string(xmlChar const* localname, xmlChar const* prefix)
+{
+    StringBuilder builder;
+    if (prefix) {
+        builder.append(xml_char_to_string_view(prefix));
+        builder.append(':');
+    }
+    builder.append(xml_char_to_string_view(localname));
+    return Utf16FlyString::from_utf8(builder.string_view());
+}
+
+static ByteString xml_name_to_byte_string(xmlChar const* localname, xmlChar const* prefix)
+{
+    StringBuilder builder;
+    if (prefix) {
+        builder.append(xml_char_to_string_view(prefix));
+        builder.append(':');
+    }
+    builder.append(xml_char_to_string_view(localname));
+    return builder.to_byte_string();
+}
 
 static bool is_known_xhtml_public_id(StringView public_id)
 {
@@ -178,19 +246,48 @@ public:
         return {};
     }
 
-    Vector<ParseError> take_parse_errors() { return move(m_parse_errors); }
-    Version version() const { return m_version; }
+    if (context->listener) {
+        auto name = xml_name_to_utf16_fly_string(localname, prefix);
+        Vector<ListenerAttribute> attrs;
+        attrs.ensure_capacity(static_cast<size_t>(nb_namespaces + nb_attributes));
 
-private:
-    static bool is_name_char(char ch)
-    {
-        return is_ascii_alphanumeric(static_cast<unsigned char>(ch)) || ch == '_' || ch == ':' || ch == '-' || ch == '.';
+        for (int i = 0; i < nb_namespaces; i++) {
+            auto* ns_prefix = namespaces[i * 2];
+            auto* ns_uri = namespaces[i * 2 + 1];
+
+            StringBuilder attr_name;
+            if (ns_prefix) {
+                attr_name.append("xmlns:"sv);
+                attr_name.append(xml_char_to_string_view(ns_prefix));
+            } else {
+                attr_name.append("xmlns"sv);
+            }
+
+            attrs.unchecked_append({
+                Utf16FlyString::from_utf8(attr_name.string_view()),
+                Utf16String::from_utf8(xml_char_to_string_view(ns_uri)),
+            });
+        }
+
+        for (int i = 0; i < nb_attributes; i++) {
+            auto* attr_localname = attributes[i * 5 + 0];
+            auto* attr_prefix = attributes[i * 5 + 1];
+            auto* value_begin = attributes[i * 5 + 3];
+            auto* value_end = attributes[i * 5 + 4];
+
+            auto value_len = static_cast<int>(value_end - value_begin);
+            attrs.unchecked_append({
+                xml_name_to_utf16_fly_string(attr_localname, attr_prefix),
+                Utf16String::from_utf8(xml_char_to_string_view(value_begin, value_len)),
+            });
+        }
+
+        context->listener->element_start(name, attrs);
+        return;
     }
 
-    ParseError make_parse_error(StringView message, Optional<LineTrackingLexer::Position> position = {})
-    {
-        return ParseError { position.value_or(m_lexer.current_position()), ByteString(message) };
-    }
+    auto name = xml_name_to_byte_string(localname, prefix);
+    OrderedHashMap<Name, ByteString> attrs;
 
     ErrorOr<void, ParseError> make_error(StringView message, Optional<LineTrackingLexer::Position> position = {})
     {
@@ -217,117 +314,23 @@ private:
         return ByteString(m_lexer.input().substring_view(start, m_lexer.tell() - start));
     }
 
-    ErrorOr<ByteString, ParseError> decode_entities(StringView raw)
-    {
-        StringBuilder builder;
-        size_t index = 0;
-        while (index < raw.length()) {
-            if (raw[index] != '&') {
-                builder.append(raw.substring_view(index, 1));
-                ++index;
-                continue;
-            }
+    auto element = adopt_own(*new Node {
+        .offset = {},
+        .content = Node::Element { name, move(attrs), {} },
+        .parent = context->current_node,
+    });
 
-            auto end = raw.find(';', index + 1);
-            if (!end.has_value()) {
-                builder.append('&');
-                ++index;
-                continue;
-            }
+    auto* element_ptr = element.ptr();
 
-            auto entity = raw.substring_view(index + 1, *end - index - 1);
-            index = *end + 1;
-
-            if (entity == "lt"sv) {
-                builder.append('<');
-                continue;
-            }
-            if (entity == "gt"sv) {
-                builder.append('>');
-                continue;
-            }
-            if (entity == "amp"sv) {
-                builder.append('&');
-                continue;
-            }
-            if (entity == "quot"sv) {
-                builder.append('"');
-                continue;
-            }
-            if (entity == "apos"sv) {
-                builder.append('\'');
-                continue;
-            }
-
-            if (entity.starts_with('#')) {
-                u32 code_point = 0;
-                bool valid = false;
-                if (entity.length() > 2 && (entity[1] == 'x' || entity[1] == 'X')) {
-                    auto value = entity.substring_view(2).to_number<u32>(TrimWhitespace::No, 16);
-                    if (value.has_value()) {
-                        code_point = value.value();
-                        valid = true;
-                    }
-                } else {
-                    auto value = entity.substring_view(1).to_number<u32>(TrimWhitespace::No, 10);
-                    if (value.has_value()) {
-                        code_point = value.value();
-                        valid = true;
-                    }
-                }
-
-                if (valid) {
-                    builder.append_code_point(code_point);
-                    continue;
-                }
-            }
-
-            if (m_is_xhtml_document && m_options.resolve_named_html_entity) {
-                auto resolved = m_options.resolve_named_html_entity(entity);
-                if (resolved.has_value()) {
-                    builder.append(resolved.value());
-                    continue;
-                }
-            }
-
-            builder.append('&');
-            builder.append(entity);
-            builder.append(';');
-        }
-
-        return builder.to_byte_string();
+    if (context->current_node) {
+        VERIFY(context->current_node->is_element());
+        context->current_node->content.get<Node::Element>().children.append(move(element));
+    } else {
+        context->root_node = move(element);
     }
 
-    ErrorOr<ByteString, ParseError> parse_attribute_value()
-    {
-        if (m_lexer.is_eof())
-            return make_parse_error("Unexpected EOF in attribute value"sv);
-
-        char quote = m_lexer.peek();
-        size_t start = 0;
-        size_t end = 0;
-        if (quote == '"' || quote == '\'') {
-            m_lexer.ignore();
-            start = m_lexer.tell();
-            while (!m_lexer.is_eof() && m_lexer.peek() != quote)
-                m_lexer.ignore();
-            if (m_lexer.is_eof())
-                return make_parse_error("Unterminated quoted attribute value"sv);
-            end = m_lexer.tell();
-            m_lexer.ignore();
-        } else {
-            start = m_lexer.tell();
-            while (!m_lexer.is_eof()) {
-                auto ch = m_lexer.peek();
-                if (is_ascii_space(static_cast<unsigned char>(ch)) || ch == '>' || ch == '/')
-                    break;
-                m_lexer.ignore();
-            }
-            end = m_lexer.tell();
-        }
-
-        return decode_entities(m_lexer.input().substring_view(start, end - start));
-    }
+    context->current_node = element_ptr;
+}
 
     ErrorOr<void, ParseError> parse_comment()
     {
@@ -341,12 +344,11 @@ private:
         if (m_lexer.is_eof())
             return make_error("Unterminated comment"sv, position);
 
-        auto comment = m_lexer.input().substring_view(start, m_lexer.tell() - start);
-        m_lexer.ignore(3);
-
-        if (m_options.preserve_comments)
-            m_listener.comment(comment);
-        return {};
+    if (context->listener) {
+        auto name = xml_name_to_utf16_fly_string(localname, prefix);
+        context->listener->element_end(name);
+    } else if (context->current_node) {
+        context->current_node = context->current_node->parent;
     }
 
     ErrorOr<void, ParseError> parse_cdata()
@@ -391,33 +393,27 @@ private:
         return {};
     }
 
-    ErrorOr<void, ParseError> parse_xml_declaration()
-    {
-        auto position = m_lexer.current_position();
-        if (!m_lexer.consume_specific("<?xml"sv))
-            return make_error("Expected XML declaration"sv, position);
+static void processing_instruction_handler(void* ctx, xmlChar const* target, xmlChar const* data)
+{
+    auto* parser_ctx = static_cast<xmlParserCtxtPtr>(ctx);
+    auto* context = static_cast<ParserContext*>(parser_ctx->_private);
+    if (!context)
+        return;
 
-        while (!m_lexer.is_eof()) {
-            skip_whitespace();
-            if (m_lexer.next_is("?>"sv)) {
-                m_lexer.ignore(2);
-                return {};
-            }
+    // Processing instructions inside a DTD subset are not document children.
+    if (parser_ctx->inSubset != 0)
+        return;
 
-            auto attribute_name = TRY(parse_name());
-            skip_whitespace();
-            if (!m_lexer.consume_specific('='))
-                return make_error("Expected '=' in XML declaration"sv);
-            skip_whitespace();
-            auto attribute_value = TRY(parse_attribute_value());
-
-            if (attribute_name == "version"sv) {
-                if (attribute_value == "1.0"sv)
-                    m_version = Version::Version10;
-                else
-                    m_version = Version::Version11;
-            }
-        }
+    if (context->listener) {
+        auto target_str = Utf16FlyString::from_utf8(xml_char_to_string_view(target));
+        auto data_str = Utf16String::from_utf8(xml_char_to_string_view(data));
+        context->listener->processing_instruction(target_str, data_str);
+    } else {
+        auto target_str = xml_char_to_byte_string(target);
+        auto data_str = xml_char_to_byte_string(data);
+        context->processing_instructions.set(target_str, data_str);
+    }
+}
 
         return make_error("Unterminated XML declaration"sv, position);
     }

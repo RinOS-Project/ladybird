@@ -9,30 +9,36 @@
 
 #include <LibWeb/HTML/LazyLoadingElement.h>
 #include <LibWeb/HTML/NavigableContainer.h>
+#include <LibWeb/TrustedTypes/TrustedHTML.h>
+#include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::HTML {
 
-class HTMLIFrameElement final
+class WEB_API HTMLIFrameElement final
     : public NavigableContainer
     , public LazyLoadingElement<HTMLIFrameElement> {
 
-    WEB_PLATFORM_OBJECT(HTMLIFrameElement, NavigableContainer);
+    WEB_WRAPPABLE(HTMLIFrameElement, NavigableContainer);
     LAZY_LOADING_ELEMENT(HTMLIFrameElement);
     GC_DECLARE_ALLOCATOR(HTMLIFrameElement);
 
 public:
     virtual ~HTMLIFrameElement() override;
 
-    virtual GC::Ptr<Layout::Node> create_layout_node(GC::Ref<CSS::ComputedProperties>) override;
-    virtual void adjust_computed_style(CSS::ComputedProperties&) override;
-
+    virtual RefPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::ComputedValues const>) override;
     // ^EventTarget
-    virtual bool is_focusable() const override { return true; }
+    virtual bool is_focusable() const override
+    {
+        return meets_focusable_area_rendering_requirements();
+    }
 
     void set_current_navigation_was_lazy_loaded(bool value);
 
     Optional<HighResolutionTime::DOMHighResTimeStamp> const& pending_resource_start_time() const { return m_pending_resource_start_time; }
     void set_pending_resource_start_time(Optional<HighResolutionTime::DOMHighResTimeStamp> time) { m_pending_resource_start_time = time; }
+
+    Optional<URL::URL> const& pending_resource_timing_url() const { return m_pending_resource_timing_url; }
+    void set_pending_resource_timing_url(Optional<URL::URL> url) { m_pending_resource_timing_url = url; }
 
     GC::Ref<DOM::DOMTokenList> sandbox();
 
@@ -49,18 +55,16 @@ public:
 private:
     HTMLIFrameElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual void initialize(JS::Realm&) override;
-
     // ^DOM::Node
     virtual bool is_html_iframe_element() const override { return true; }
 
     // ^DOM::Element
     virtual void post_connection() override;
-    virtual void removed_from(Node* old_parent, Node& old_root) override;
-    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+    virtual void removed_from(IsSubtreeRoot, Node* old_ancestor, Node& old_root) override;
+    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
     virtual i32 default_tab_index_value() const override;
-    virtual bool is_presentational_hint(FlyString const&) const override;
-    virtual void apply_presentational_hints(GC::Ref<CSS::CascadedProperties>) const override;
+    virtual bool is_presentational_hint(Utf16FlyString const&) const override;
+    virtual void apply_presentational_hints(Vector<CSS::StyleProperty>&) const override;
 
     // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-iframe-element:dimension-attributes
     virtual bool supports_dimension_attributes() const override { return true; }
@@ -77,13 +81,18 @@ private:
     // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#iframe-pending-resource-timing-start-time
     Optional<HighResolutionTime::DOMHighResTimeStamp> m_pending_resource_start_time = {};
 
+    // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#iframe-pending-resource-timing-url
+    Optional<URL::URL> m_pending_resource_timing_url {};
+
     GC::Ptr<DOM::DOMTokenList> m_sandbox;
 
     // https://html.spec.whatwg.org/multipage/browsers.html#iframe-sandboxing-flag-set
     SandboxingFlagSet m_iframe_sandboxing_flag_set {};
 };
 
-void run_iframe_load_event_steps(HTML::HTMLIFrameElement&);
+WEB_API void run_iframe_load_event_steps(HTML::HTMLIFrameElement&);
+
+ReferrerPolicy::ReferrerPolicy determine_iframe_element_referrer_policy(GC::Ptr<DOM::Element> embedder);
 
 }
 

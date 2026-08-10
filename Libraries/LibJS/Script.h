@@ -9,16 +9,35 @@
 #include <AK/HashTable.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Utf16FlyString.h>
+#include <AK/Utf16View.h>
 #include <LibGC/Ptr.h>
 #include <LibGC/Root.h>
+#include <LibJS/ExecutableBacking.h>
 #include <LibJS/Export.h>
 #include <LibJS/Forward.h>
 #include <LibJS/ParserError.h>
 #include <LibJS/Runtime/Realm.h>
+#include <LibJS/Runtime/SharedFunctionInstanceData.h>
 
 namespace JS {
 
-class FunctionDeclaration;
+JS_API extern bool g_dump_ast;
+JS_API extern bool g_dump_ast_use_color;
+
+namespace FFI {
+
+struct ParsedProgram;
+struct CompiledProgram;
+struct DecodedBytecodeCacheBlob;
+
+}
+
+namespace RustIntegration {
+
+class DecodedBytecodeCache;
+struct ScriptResult;
+
+}
 
 // 16.1.4 Script Records, https://tc39.es/ecma262/#sec-script-records
 class JS_API Script final : public Cell {
@@ -37,11 +56,13 @@ public:
         virtual bool is_script() const { return false; }
         virtual bool is_classic_script() const { return false; }
         virtual bool is_module_script() const { return false; }
-        virtual bool is_javascript_module_script() const { return false; }
     };
 
     virtual ~Script() override;
-    static Result<GC::Ref<Script>, Vector<ParserError>> parse(StringView source_text, Realm&, StringView filename = {}, HostDefined* = nullptr, size_t line_number_offset = 1);
+    static Result<GC::Ref<Script>, Vector<ParserError>> parse(Utf16View source_text, Realm&, StringView filename = {}, Utf16View display_filename = {}, HostDefined* = nullptr, size_t line_number_offset = 1);
+    static Result<GC::Ref<Script>, Vector<ParserError>> create_from_parsed(FFI::ParsedProgram* parsed, NonnullRefPtr<SourceCode const> source_code, Realm&, StringView filename, HostDefined* = nullptr);
+    static Result<GC::Ref<Script>, Vector<ParserError>> create_from_compiled(FFI::CompiledProgram* compiled, NonnullRefPtr<SourceCode const> source_code, Realm&, StringView filename, HostDefined* = nullptr);
+    static Result<GC::Ref<Script>, Vector<ParserError>> create_from_bytecode_cache(NonnullRefPtr<RustIntegration::DecodedBytecodeCache>, NonnullRefPtr<SourceCode const> source_code, Realm&, StringView filename, HostDefined* = nullptr);
 
     Realm& realm() { return *m_realm; }
     Program const* parse_node() const { return m_parse_node; }
@@ -52,7 +73,13 @@ public:
     StringView filename() const LIFETIME_BOUND { return m_filename; }
 
     Bytecode::Executable* cached_executable() const { return m_executable; }
-    void cache_executable(Bytecode::Executable& executable) const { m_executable = &executable; }
+    ExecutableBacking const& executable_backing() const { return m_executable_backing; }
+    [[nodiscard]] bool can_generate_bytecode_cache() const;
+    [[nodiscard]] bool can_install_generated_bytecode_cache() const;
+    void begin_bytecode_cache_generation();
+    void finish_bytecode_cache_generation_without_install();
+    bool try_install_bytecode_cache(NonnullRefPtr<RustIntegration::DecodedBytecodeCache>, NonnullRefPtr<SourceCode const> source_code);
+    void install_generated_bytecode_cache(NonnullRefPtr<RustIntegration::DecodedBytecodeCache>, NonnullRefPtr<SourceCode const> source_code);
 
     ThrowCompletionOr<void> global_declaration_instantiation(VM&, GlobalEnvironment&);
 
@@ -80,6 +107,23 @@ private:
         Utf16FlyString name;
         bool is_constant { false };
     };
+
+private:
+    Script(Realm&, StringView filename, RustIntegration::ScriptResult&&, ExecutableBacking, HostDefined*);
+
+    virtual void visit_edges(Cell::Visitor&) override;
+    virtual size_t external_memory_size() const override;
+    Vector<SharedFunctionInstanceData*> collect_shared_function_data();
+    void complete_bytecode_cache_install(GC::Ref<Bytecode::Executable>, NonnullRefPtr<RustIntegration::DecodedBytecodeCache>);
+    void verify_executable_backing_invariants();
+
+    GC::Ptr<Realm> m_realm;                       // [[Realm]]
+    Vector<LoadedModuleRequest> m_loaded_modules; // [[LoadedModules]]
+
+    mutable GC::Ptr<Bytecode::Executable> m_executable;
+    SharedFunctionInstanceDataList m_shared_function_data;
+    ExecutableBacking m_executable_backing;
+
     Vector<Utf16FlyString> m_lexical_names;
     Vector<Utf16FlyString> m_var_names;
     Vector<FunctionToInitialize> m_functions_to_initialize;

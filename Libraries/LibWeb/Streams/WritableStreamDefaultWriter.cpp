@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGC/Heap.h>
+#include <LibJS/Runtime/Promise.h>
 #include <LibJS/Runtime/PromiseCapability.h>
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/WritableStreamDefaultWriterPrototype.h>
 #include <LibWeb/Streams/WritableStream.h>
 #include <LibWeb/Streams/WritableStreamDefaultWriter.h>
 #include <LibWeb/Streams/WritableStreamOperations.h>
@@ -16,12 +16,12 @@ namespace Web::Streams {
 
 GC_DEFINE_ALLOCATOR(WritableStreamDefaultWriter);
 
-WebIDL::ExceptionOr<GC::Ref<WritableStreamDefaultWriter>> WritableStreamDefaultWriter::construct_impl(JS::Realm& realm, GC::Ref<WritableStream> stream)
+WebIDL::ExceptionOr<GC::Ref<WritableStreamDefaultWriter>> WritableStreamDefaultWriter::create(JS::Realm& realm, GC::Ref<WritableStream> stream)
 {
-    auto writer = realm.create<WritableStreamDefaultWriter>(realm);
+    auto writer = GC::Heap::the().allocate<WritableStreamDefaultWriter>();
 
     // 1. Perform ? SetUpWritableStreamDefaultWriter(this, stream).
-    TRY(set_up_writable_stream_default_writer(*writer, stream));
+    TRY(set_up_writable_stream_default_writer(realm, *writer, stream));
 
     return writer;
 }
@@ -38,7 +38,7 @@ WebIDL::ExceptionOr<Optional<double>> WritableStreamDefaultWriter::desired_size(
 {
     // 1. If this.[[stream]] is undefined, throw a TypeError exception.
     if (!m_stream)
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot get desired size of writer that has no locked stream"sv };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot get desired size of writer that has no locked stream"_utf16 };
 
     // 2. Return ! WritableStreamDefaultWriterGetDesiredSize(this).
     return writable_stream_default_writer_get_desired_size(*this);
@@ -52,36 +52,36 @@ GC::Ptr<WebIDL::Promise> WritableStreamDefaultWriter::ready()
 }
 
 // https://streams.spec.whatwg.org/#default-writer-abort
-GC::Ref<WebIDL::Promise> WritableStreamDefaultWriter::abort(JS::Value reason)
+GC::Ref<WebIDL::Promise> WritableStreamDefaultWriter::abort(Optional<JS::Value> reason)
 {
-    auto& realm = this->realm();
+    auto& realm = closed_promise_realm();
 
     // 1. If this.[[stream]] is undefined, return a promise rejected with a TypeError exception.
     if (!m_stream) {
-        auto exception = JS::TypeError::create(realm, "Cannot abort a writer that has no locked stream"sv);
+        auto exception = JS::TypeError::create(realm, "Cannot abort a writer that has no locked stream"_utf16);
         return WebIDL::create_rejected_promise(realm, exception);
     }
 
     // 2. Return ! WritableStreamDefaultWriterAbort(this, reason).
-    return writable_stream_default_writer_abort(*this, reason);
+    return writable_stream_default_writer_abort(*this, reason.value_or(JS::js_undefined()));
 }
 
 // https://streams.spec.whatwg.org/#default-writer-close
 GC::Ref<WebIDL::Promise> WritableStreamDefaultWriter::close()
 {
-    auto& realm = this->realm();
+    auto& realm = closed_promise_realm();
 
     // 1. Let stream be this.[[stream]].
 
     // 2. If stream is undefined, return a promise rejected with a TypeError exception.
     if (!m_stream) {
-        auto exception = JS::TypeError::create(realm, "Cannot close a writer that has no locked stream"sv);
+        auto exception = JS::TypeError::create(realm, "Cannot close a writer that has no locked stream"_utf16);
         return WebIDL::create_rejected_promise(realm, exception);
     }
 
     // 3. If ! WritableStreamCloseQueuedOrInFlight(stream) is true, return a promise rejected with a TypeError exception.
     if (writable_stream_close_queued_or_in_flight(*m_stream)) {
-        auto exception = JS::TypeError::create(realm, "Cannot close a stream that is already closed or errored"sv);
+        auto exception = JS::TypeError::create(realm, "Cannot close a stream that is already closed or errored"_utf16);
         return WebIDL::create_rejected_promise(realm, exception);
     }
 
@@ -106,32 +106,37 @@ void WritableStreamDefaultWriter::release_lock()
 }
 
 // https://streams.spec.whatwg.org/#default-writer-write
-GC::Ref<WebIDL::Promise> WritableStreamDefaultWriter::write(JS::Value chunk)
+GC::Ref<WebIDL::Promise> WritableStreamDefaultWriter::write(Optional<JS::Value> chunk)
 {
-    auto& realm = this->realm();
+    auto& realm = ready_promise_realm();
 
     // 1. If this.[[stream]] is undefined, return a promise rejected with a TypeError exception.
     if (!m_stream) {
-        auto exception = JS::TypeError::create(realm, "Cannot write to a writer that has no locked stream"sv);
+        auto exception = JS::TypeError::create(realm, "Cannot write to a writer that has no locked stream"_utf16);
         return WebIDL::create_rejected_promise(realm, exception);
     }
 
     // 2. Return ! WritableStreamDefaultWriterWrite(this, chunk).
-    return writable_stream_default_writer_write(*this, chunk);
+    return writable_stream_default_writer_write(*this, chunk.value_or(JS::js_undefined()));
 }
 
-WritableStreamDefaultWriter::WritableStreamDefaultWriter(JS::Realm& realm)
-    : Bindings::PlatformObject(realm)
+WritableStreamDefaultWriter::WritableStreamDefaultWriter()
 {
 }
 
-void WritableStreamDefaultWriter::initialize(JS::Realm& realm)
+JS::Realm& WritableStreamDefaultWriter::closed_promise_realm() const
 {
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(WritableStreamDefaultWriter);
-    Base::initialize(realm);
+    VERIFY(m_closed_promise);
+    return WebIDL::promise_realm(*m_closed_promise);
 }
 
-void WritableStreamDefaultWriter::visit_edges(Cell::Visitor& visitor)
+JS::Realm& WritableStreamDefaultWriter::ready_promise_realm() const
+{
+    VERIFY(m_ready_promise);
+    return WebIDL::promise_realm(*m_ready_promise);
+}
+
+void WritableStreamDefaultWriter::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_closed_promise);

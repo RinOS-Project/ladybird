@@ -6,34 +6,33 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/Export.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/workers.html#worker-locations
-class WEB_API WorkerLocation : public Bindings::PlatformObject {
-    WEB_PLATFORM_OBJECT(WorkerLocation, Bindings::PlatformObject);
+class WEB_API WorkerLocation : public Bindings::GCAllocatedWrappable {
+    WEB_WRAPPABLE(WorkerLocation, Bindings::GCAllocatedWrappable);
     GC_DECLARE_ALLOCATOR(WorkerLocation);
 
 public:
     virtual ~WorkerLocation() override;
 
-    String href() const;
-    String origin() const;
-    String protocol() const;
-    String host() const;
-    String hostname() const;
-    String port() const;
-    String pathname() const;
-    String search() const;
-    String hash() const;
+    Utf16String href() const;
+    Utf16String origin() const;
+    Utf16String protocol() const;
+    Utf16String host() const;
+    Utf16String hostname() const;
+    Utf16String port() const;
+    Utf16String pathname() const;
+    Utf16String search() const;
+    Utf16String hash() const;
 
 private:
     explicit WorkerLocation(WorkerGlobalScope&);
 
-    virtual void initialize(JS::Realm&) override;
-    virtual void visit_edges(Cell::Visitor&) override;
+    virtual void visit_edges(GC::Cell::Visitor&) override;
 
     GC::Ref<WorkerGlobalScope> m_global_scope;
 };

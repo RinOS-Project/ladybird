@@ -5,7 +5,7 @@
 if(INCLUDE_WASM_SPEC_TESTS)
     set(WASM_SPEC_TEST_COMMIT 4b24564c844e3d34bf46dfcb3c774ee5163e31cc) # 2025-09-10
     set(WASM_SPEC_TEST_GZ_URL https://github.com/WebAssembly/testsuite/archive/${WASM_SPEC_TEST_COMMIT}.tar.gz)
-    set(WASM_SPEC_TEST_GZ_PATH ${CMAKE_BINARY_DIR}/wasm-spec-testsuite.tar.gz CACHE PATH "")
+    set(WASM_SPEC_TEST_GZ_PATH ${LADYBIRD_CACHE_DIR}/WasmSpecTests/wasm-spec-testsuite-${WASM_SPEC_TEST_COMMIT}.tar.gz CACHE PATH "")
     set(WASM_SPEC_TEST_PATH ${CMAKE_CURRENT_BINARY_DIR}/Tests/Fixtures/SpecTests CACHE PATH "")
 
     download_file(${WASM_SPEC_TEST_GZ_URL} ${WASM_SPEC_TEST_GZ_PATH})
@@ -30,7 +30,7 @@ if(INCLUDE_WASM_SPEC_TESTS)
             get_filename_component(NAME ${PATH} NAME_WLE)
             message(STATUS "Generating test cases for WebAssembly test ${NAME}...")
             execute_process(
-                COMMAND env SKIP_PRETTIER=${SKIP_PRETTIER} bash ${SerenityOS_SOURCE_DIR}/Meta/generate-libwasm-spec-test.sh "${PATH}" "${CMAKE_CURRENT_BINARY_DIR}/Tests/Spec" "${NAME}" "${WASM_SPEC_TEST_PATH}")
+                COMMAND env SKIP_PRETTIER=${SKIP_PRETTIER} bash ${LADYBIRD_SOURCE_DIR}/Meta/Generators/generate_libwasm_spec_test.sh "${PATH}" "${CMAKE_CURRENT_BINARY_DIR}/Tests/Spec" "${NAME}" "${WASM_SPEC_TEST_PATH}")
         endforeach()
         file(REMOVE testsuite-${WASM_SPEC_TEST_COMMIT})
     endif()

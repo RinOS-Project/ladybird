@@ -15,32 +15,38 @@ namespace Web::CSS {
 
 // https://www.w3.org/TR/css-conditional-3/#the-cssmediarule-interface
 class CSSMediaRule final : public CSSConditionRule {
-    WEB_PLATFORM_OBJECT(CSSMediaRule, CSSConditionRule);
+    WEB_WRAPPABLE(CSSMediaRule, CSSConditionRule);
     GC_DECLARE_ALLOCATOR(CSSMediaRule);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSMediaRule> create(JS::Realm&, MediaList& media_queries, CSSRuleList&);
+    [[nodiscard]] static GC::Ref<CSSMediaRule> create(MediaList& media_queries, CSSRuleList&);
 
     virtual ~CSSMediaRule() = default;
 
-    virtual String condition_text() const override;
+    virtual Utf16String serialized_condition_text() const override;
     bool matches() const { return condition_matches(); }
 
     virtual bool condition_matches() const override { return m_media->matches(); }
 
     MediaList* media() const { return m_media; }
 
-    bool evaluate(DOM::Document const& document) { return m_media->evaluate(document); }
+    bool evaluate(DOM::Document const& document)
+    {
+        m_did_evaluate = true;
+        return m_media->evaluate(document);
+    }
+
+    bool did_evaluate() const { return m_did_evaluate; }
 
 private:
-    CSSMediaRule(JS::Realm&, MediaList&, CSSRuleList&);
+    CSSMediaRule(MediaList&, CSSRuleList&);
 
-    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
-    virtual String serialized() const override;
+    virtual Utf16String serialized() const override;
     virtual void dump(StringBuilder&, int indent_levels) const override;
 
     GC::Ref<MediaList> m_media;
+    bool m_did_evaluate { false };
 };
 
 template<>

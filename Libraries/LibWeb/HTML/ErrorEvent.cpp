@@ -4,45 +4,33 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/ErrorEventPrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/HTML/ErrorEvent.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(ErrorEvent);
 
-GC::Ref<ErrorEvent> ErrorEvent::create(JS::Realm& realm, FlyString const& event_name, ErrorEventInit const& event_init)
+GC::Ref<ErrorEvent> ErrorEvent::create(Utf16FlyString const& event_name, ErrorEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
 {
-    auto event = realm.create<ErrorEvent>(realm, event_name, event_init);
+    auto event = GC::Heap::the().allocate<ErrorEvent>(event_name, event_init, time_stamp);
     event->set_is_trusted(true);
     return event;
 }
 
-WebIDL::ExceptionOr<GC::Ref<ErrorEvent>> ErrorEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, ErrorEventInit const& event_init)
-{
-    return realm.create<ErrorEvent>(realm, event_name, event_init);
-}
-
-ErrorEvent::ErrorEvent(JS::Realm& realm, FlyString const& event_name, ErrorEventInit const& event_init)
-    : DOM::Event(realm, event_name, event_init)
+ErrorEvent::ErrorEvent(Utf16FlyString const& event_name, ErrorEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
+    : DOM::Event(event_name, event_init, time_stamp)
     , m_message(event_init.message)
     , m_filename(event_init.filename)
     , m_lineno(event_init.lineno)
     , m_colno(event_init.colno)
-    , m_error(event_init.error)
+    , m_error(event_init.error.value_or(JS::js_undefined()))
 {
 }
 
 ErrorEvent::~ErrorEvent() = default;
 
-void ErrorEvent::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(ErrorEvent);
-    Base::initialize(realm);
-}
-
-void ErrorEvent::visit_edges(Cell::Visitor& visitor)
+void ErrorEvent::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_error);

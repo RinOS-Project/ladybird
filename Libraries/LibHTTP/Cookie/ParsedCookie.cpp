@@ -25,7 +25,6 @@ static void on_path_attribute(URL::URL const&, ParsedCookie& parsed_cookie, Stri
 static void on_secure_attribute(ParsedCookie& parsed_cookie);
 static void on_http_only_attribute(ParsedCookie& parsed_cookie);
 static void on_same_site_attribute(ParsedCookie& parsed_cookie, StringView attribute_value);
-static Optional<UnixDateTime> parse_date_time(StringView date_string);
 
 bool cookie_contains_invalid_control_character(StringView cookie_string)
 {
@@ -98,6 +97,66 @@ Optional<ParsedCookie> parse_cookie(URL::URL const& url, StringView cookie_strin
 
     if (parse_attributes(url, parsed_cookie, unparsed_attributes).is_error())
         return {};
+
+    return parsed_cookie;
+}
+
+ErrorOr<ParsedCookie> parse_cookie(Cookie const& cookie)
+{
+    if (cookie.name.is_empty() && cookie.value.is_empty())
+        return Error::from_string_literal("Cookie name and value cannot both be empty");
+
+    if (cookie_contains_invalid_control_character(cookie.name))
+        return Error::from_string_literal("Cookie name contains an invalid control character");
+    if (cookie_contains_invalid_control_character(cookie.value))
+        return Error::from_string_literal("Cookie value contains an invalid control character");
+
+    if (cookie.name.byte_count() + cookie.value.byte_count() > 4096)
+        return Error::from_string_literal("Cookie name and value exceed the maximum size");
+
+    if (!cookie.path.bytes_as_string_view().starts_with("/"sv))
+        return Error::from_string_literal("Cookie path must start with /");
+    if (cookie.path.byte_count() > 1024)
+        return Error::from_string_literal("Cookie path exceeds the maximum size");
+
+    if (cookie.same_site == SameSite::None && !cookie.secure)
+        return Error::from_string_literal("SameSite=None cookies must be secure");
+
+    if (cookie.name.starts_with_bytes("__Secure-"sv, CaseSensitivity::CaseInsensitive) && !cookie.secure)
+        return Error::from_string_literal("__Secure- cookies must be secure");
+
+    if (cookie.name.starts_with_bytes("__Host-"sv, CaseSensitivity::CaseInsensitive)) {
+        if (!cookie.secure)
+            return Error::from_string_literal("__Host- cookies must be secure");
+        if (!cookie.host_only)
+            return Error::from_string_literal("__Host- cookies must be host-only");
+        if (cookie.path != "/"sv)
+            return Error::from_string_literal("__Host- cookies must use path /");
+    }
+
+    if (cookie.name.is_empty()) {
+        if (cookie.value.starts_with_bytes("__Secure-"sv, CaseSensitivity::CaseInsensitive))
+            return Error::from_string_literal("__Secure- cookies must have a name");
+        if (cookie.value.starts_with_bytes("__Host-"sv, CaseSensitivity::CaseInsensitive))
+            return Error::from_string_literal("__Host- cookies must have a name");
+    }
+
+    ParsedCookie parsed_cookie;
+    parsed_cookie.name = cookie.name;
+    parsed_cookie.value = cookie.value;
+    parsed_cookie.same_site_attribute = cookie.same_site;
+    parsed_cookie.path = cookie.path;
+    parsed_cookie.secure_attribute_present = cookie.secure;
+    parsed_cookie.http_only_attribute_present = cookie.http_only;
+
+    if (!cookie.host_only && cookie.domain.byte_count() > 1024)
+        return Error::from_string_literal("Cookie host exceeds the maximum size");
+
+    if (!cookie.host_only)
+        TRY(on_domain_attribute(parsed_cookie, cookie.domain.bytes_as_string_view()));
+
+    if (cookie.persistent)
+        parsed_cookie.expiry_time_from_expires_attribute = cookie.expiry_time;
 
     return parsed_cookie;
 }
@@ -189,7 +248,7 @@ ErrorOr<void> process_attribute(URL::URL const& url, ParsedCookie& parsed_cookie
 void on_expires_attribute(ParsedCookie& parsed_cookie, StringView attribute_value)
 {
     // 1. Let the expiry-time be the result of parsing the attribute-value as cookie-date (see Section 5.1.1).
-    auto expiry_time = parse_date_time(attribute_value);
+    auto expiry_time = parse_cookie_date(attribute_value);
 
     // 2. If the attribute-value failed to parse as a cookie date, ignore the cookie-av.
     if (!expiry_time.has_value())
@@ -269,7 +328,11 @@ ErrorOr<void> on_domain_attribute(ParsedCookie& parsed_cookie, StringView attrib
     auto cookie_domain = attribute_value;
 
     // 2. If cookie-domain starts with %x2E ("."), let cookie-domain be cookie-domain without its leading %x2E (".").
-    if (cookie_domain.starts_with('.'))
+    // NB: We deliberately keep a lone "." rather than reducing it to "". By the letter of the spec this would
+    //     become an empty domain and be stored as a host cookie, but Chromium, Firefox, WPT (and the spec intent)
+    //     treat an treat `Domain=.` as an invalid domain.
+    //     See: https://github.com/httpwg/http-extensions/issues/1939
+    if (cookie_domain.length() > 1 && cookie_domain.starts_with('.'))
         cookie_domain = cookie_domain.substring_view(1);
 
     // 3. Convert the cookie-domain to lower case.
@@ -330,7 +393,7 @@ void on_same_site_attribute(ParsedCookie& parsed_cookie, StringView attribute_va
 }
 
 // https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis-22#section-5.1.1
-Optional<UnixDateTime> parse_date_time(StringView date_string)
+Optional<UnixDateTime> parse_cookie_date(StringView date_string)
 {
     // https://tools.ietf.org/html/rfc6265#section-5.1.1
     unsigned hour = 0;

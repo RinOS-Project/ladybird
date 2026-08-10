@@ -11,39 +11,34 @@
 #include <LibCore/Process.h>
 #include <LibCore/Resource.h>
 #include <LibCore/System.h>
+#include <LibCore/TimeZone.h>
+#include <LibCrypto/OpenSSLForward.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Font/PathFontProvider.h>
-#if RINOS_LEGACY_OPENSSL
-#include <LibCrypto/OpenSSLForward.h>
-#include <openssl/thread.h>
-#endif
-#if RINOS_USE_SKIA_GRAPHICS
-#include <LibGfx/SkiaBackendContext.h>
-#endif
 #include <LibIPC/ConnectionFromClient.h>
 #include <LibIPC/TransportHandle.h>
-#include <LibJS/Bytecode/Interpreter.h>
 #include <LibMain/Main.h>
 #include <LibRequests/RequestClient.h>
 #include <LibUnicode/TimeZone.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/HTML/UniversalGlobalScope.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Internals/Internals.h>
-#include <LibWeb/Loader/ContentFilter.h>
 #include <LibWeb/Loader/GeneratedPagesLoader.h>
 #include <LibWeb/Loader/ResourceLoader.h>
-#include <LibWeb/Painting/BackingStoreManager.h>
-#include <LibWeb/Painting/PaintableBox.h>
+#include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/Platform/FontPlugin.h>
 #include <LibWeb/WebIDL/Tracing.h>
 #include <LibWebView/Plugins/ImageCodecPlugin.h>
 #include <LibWebView/SiteIsolation.h>
 #include <LibWebView/Utilities.h>
+#include <Services/RendererSandbox.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/PageClient.h>
+#include <WebContent/WebContentCompositorHost.h>
 #include <WebContent/WebDriverConnection.h>
 
 #if defined(AK_OS_MACOS)
@@ -112,7 +107,7 @@ static void crash_signal_handler(int signo)
     }
     warnln("\n\033[31;1mCRASH\033[0m: Received signal {} ({})", name, signo);
     dump_backtrace(2, 100);
-    exit(128 + signo);
+    Core::Process::terminate_immediately(128 + signo);
 }
 
 static void install_crash_signal_handlers()
@@ -128,8 +123,6 @@ static void install_crash_signal_handlers()
     sigaction(SIGILL, &sa, nullptr);
 }
 #endif
-
-static ErrorOr<void> load_content_filters(StringView config_path);
 
 static ErrorOr<void> connect_to_resource_loader(GC::Heap& heap, IPC::TransportHandle const& handle);
 static ErrorOr<void> connect_to_image_decoder(IPC::TransportHandle const& handle);
@@ -157,7 +150,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     }
 #endif
 
-    Core::EventLoop event_loop;
+    auto& event_loop = Core::EventLoop::initialize_for_current_thread();
 
 #if defined(AK_OS_RINOS)
     WebView::platform_init(Optional<ByteString> { ByteString("/sys/apps/webcontent"sv) });
@@ -167,9 +160,8 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 
     Web::Platform::EventLoopPlugin::install(*new Web::Platform::EventLoopPlugin);
 
-    StringView command_line {};
-    StringView executable_path {};
-    auto config_path = ByteString::formatted("{}/ladybird/default-config", WebView::s_ladybird_resource_root);
+    auto config_path = WebView::s_ladybird_resource_root;
+    StringView cache_path;
     StringView mach_server_name {};
     Vector<ByteString> certificates;
     bool enable_test_mode = false;
@@ -177,22 +169,23 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     bool expose_internals_object = false;
     bool wait_for_debugger = false;
     bool log_all_js_exceptions = false;
-    bool disable_site_isolation = false;
+    auto site_isolation_mode = WebView::SiteIsolationMode::TopLevel;
     bool enable_idl_tracing = false;
     bool enable_http_memory_cache = false;
-    bool force_cpu_painting = false;
     bool force_fontconfig = false;
     bool collect_garbage_on_every_allocation = false;
     bool is_headless = false;
     bool disable_scrollbar_painting = false;
+    bool disable_async_scrolling = false;
+    bool disable_sandbox = false;
     StringView echo_server_port_string_view {};
     StringView default_time_zone {};
+    StringView style_invalidation_counter_dump_interval {};
     bool file_origins_are_tuple_origins = false;
 
     Core::ArgsParser args_parser;
-    args_parser.add_option(command_line, "Browser process command line", "command-line", 0, "command_line");
-    args_parser.add_option(executable_path, "Browser process executable path", "executable-path", 0, "executable_path");
     args_parser.add_option(config_path, "Ladybird configuration path", "config-path", 0, "config_path");
+    args_parser.add_option(cache_path, "Path to the profile cache", "cache-path", 0, "path");
     args_parser.add_option(enable_test_mode, "Enable test mode", "test-mode");
     args_parser.add_option(expose_experimental_interfaces, "Expose experimental IDL interfaces", "expose-experimental-interfaces");
     args_parser.add_option(expose_internals_object, "Expose internals object", "expose-internals-object");
@@ -200,16 +193,31 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     args_parser.add_option(wait_for_debugger, "Wait for debugger", "wait-for-debugger");
     args_parser.add_option(mach_server_name, "Mach server name", "mach-server-name", 0, "mach_server_name");
     args_parser.add_option(log_all_js_exceptions, "Log all JavaScript exceptions", "log-all-js-exceptions");
-    args_parser.add_option(disable_site_isolation, "Disable site isolation", "disable-site-isolation");
+    args_parser.add_option(Core::ArgsParser::Option {
+        .argument_mode = Core::ArgsParser::OptionArgumentMode::Required,
+        .help_string = "Set site isolation mode. Mode may be 'disable', 'top-level' (default), or 'iframe'.",
+        .long_name = "site-isolation",
+        .value_name = "mode",
+        .accept_value = [&](StringView value) {
+            auto parsed_mode = WebView::site_isolation_mode_from_string(value);
+            if (!parsed_mode.has_value())
+                return false;
+
+            site_isolation_mode = *parsed_mode;
+            return true;
+        },
+    });
     args_parser.add_option(enable_idl_tracing, "Enable IDL tracing", "enable-idl-tracing");
     args_parser.add_option(enable_http_memory_cache, "Enable HTTP cache", "enable-http-memory-cache");
-    args_parser.add_option(force_cpu_painting, "Force CPU painting", "force-cpu-painting");
     args_parser.add_option(force_fontconfig, "Force using fontconfig for font loading", "force-fontconfig");
     args_parser.add_option(collect_garbage_on_every_allocation, "Collect garbage after every JS heap allocation", "collect-garbage-on-every-allocation");
     args_parser.add_option(disable_scrollbar_painting, "Don't paint horizontal or vertical viewport scrollbars", "disable-scrollbar-painting");
+    args_parser.add_option(disable_async_scrolling, "Disable async scrolling", "disable-async-scrolling");
+    args_parser.add_option(disable_sandbox, "Disable process sandboxing", "disable-sandbox");
     args_parser.add_option(echo_server_port_string_view, "Echo server port used in test internals", "echo-server-port", 0, "echo_server_port");
     args_parser.add_option(is_headless, "Report that the browser is running in headless mode", "headless");
     args_parser.add_option(default_time_zone, "Default time zone", "default-time-zone", 0, "time-zone-id");
+    args_parser.add_option(style_invalidation_counter_dump_interval, "Dump style invalidation counters after every N style invalidations", "dump-style-invalidation-counters", 0, "N");
     args_parser.add_option(file_origins_are_tuple_origins, "Treat file:// URLs as having tuple origins", "tuple-file-origins");
 
     args_parser.parse(arguments);
@@ -219,8 +227,15 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     }
 
     if (!default_time_zone.is_empty()) {
-        if (auto result = Unicode::set_current_time_zone(default_time_zone); result.is_error())
+        if (auto result = Core::TimeZone::set_current_time_zone(default_time_zone); result.is_error())
             dbgln("Failed to set default time zone: {}", result.error());
+    }
+
+    if (!style_invalidation_counter_dump_interval.is_empty()) {
+        auto interval = style_invalidation_counter_dump_interval.to_number<u64>();
+        if (!interval.has_value() || *interval == 0)
+            VERIFY_NOT_REACHED();
+        Web::DOM::Document::set_style_invalidation_counter_dump_interval(*interval);
     }
 
     if (file_origins_are_tuple_origins)
@@ -229,33 +244,19 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     auto& font_provider = static_cast<Gfx::PathFontProvider&>(Gfx::FontDatabase::the().install_system_font_provider(make<Gfx::PathFontProvider>()));
     if (force_fontconfig) {
         font_provider.set_name_but_fixme_should_create_custom_system_font_provider("FontConfig"_string);
+        Gfx::FontDatabase::the().set_force_freetype_rasterization(true);
     }
     font_provider.load_all_fonts_from_uri("resource://fonts"sv);
 
-    Web::set_browser_process_command_line(command_line);
-    Web::set_browser_process_executable_path(executable_path);
-
-    // Always use the CPU backend for tests, as the GPU backend is not deterministic
-    if (force_cpu_painting) {
-        WebContent::PageClient::set_painter_backend_preference(WebContent::PageClient::PainterBackendPreference::CPUBackend);
-    } else {
-#if RINOS_USE_SKIA_GRAPHICS
-        Gfx::SkiaBackendContext::initialize_gpu_backend();
-        WebContent::PageClient::set_painter_backend_preference(WebContent::PageClient::PainterBackendPreference::GPUBackendIfAvailable);
-#else
-        WebContent::PageClient::set_painter_backend_preference(WebContent::PageClient::PainterBackendPreference::CPUBackend);
-#endif
-    }
-
     WebContent::PageClient::set_is_headless(is_headless);
 
-    if (disable_site_isolation)
-        WebView::disable_site_isolation();
+    WebView::set_site_isolation_mode(site_isolation_mode);
 
     if (enable_http_memory_cache)
         Web::Fetch::Fetching::set_http_memory_cache_enabled(true);
 
     Web::Painting::set_paint_viewport_scrollbars(!disable_scrollbar_painting);
+    WebContent::PageClient::set_async_scrolling_enabled(!disable_async_scrolling);
 
     if (!echo_server_port_string_view.is_empty()) {
         if (auto maybe_echo_server_port = echo_server_port_string_view.to_number<u16>(); maybe_echo_server_port.has_value())
@@ -274,7 +275,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 
     Web::Platform::FontPlugin::install(*new Web::Platform::FontPlugin(enable_test_mode, &font_provider));
 
-    Web::Bindings::initialize_main_thread_vm(Web::Bindings::AgentType::SimilarOriginWindow);
+    Web::Bindings::initialize_main_thread_vm(Web::HTML::AgentType::SimilarOriginWindow);
 
     if (collect_garbage_on_every_allocation)
         Web::Bindings::main_thread_vm().heap().set_should_collect_on_every_allocation(true);
@@ -287,9 +288,8 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
         Web::WebIDL::set_enable_idl_tracing(true);
     }
 
-    auto maybe_content_filter_error = load_content_filters(config_path);
-    if (maybe_content_filter_error.is_error())
-        dbgln("Failed to load content filters: {}", maybe_content_filter_error.error());
+    if (!disable_sandbox)
+        TRY(RendererSandbox::apply_sandbox(config_path, cache_path));
 
 #if defined(AK_OS_MACOS)
     auto browser_port = TRY(Core::MachPort::look_up_from_bootstrap_server(ByteString { mach_server_name }));
@@ -311,30 +311,6 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     };
 
     return event_loop.exec();
-}
-
-static ErrorOr<void> load_content_filters(StringView config_path)
-{
-    auto buffer = TRY(ByteBuffer::create_uninitialized(4096));
-
-    auto file = TRY(Core::File::open(ByteString::formatted("{}/BrowserContentFilters.txt", config_path), Core::File::OpenMode::Read));
-    auto ad_filter_list = TRY(Core::InputBufferedFile::create(move(file)));
-
-    Vector<String> patterns;
-
-    while (TRY(ad_filter_list->can_read_line())) {
-        auto line = TRY(ad_filter_list->read_line(buffer));
-        if (line.is_empty())
-            continue;
-
-        auto pattern = TRY(String::from_utf8(line));
-        TRY(patterns.try_append(move(pattern)));
-    }
-
-    auto& content_filter = Web::ContentFilter::the();
-    TRY(content_filter.set_patterns(patterns));
-
-    return {};
 }
 
 ErrorOr<void> connect_to_resource_loader(GC::Heap& heap, IPC::TransportHandle const& handle)

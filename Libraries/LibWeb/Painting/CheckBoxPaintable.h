@@ -7,16 +7,14 @@
 #pragma once
 
 #include <LibWeb/Forward.h>
-#include <LibWeb/Painting/PaintableBox.h>
+#include <LibWeb/Painting/Paintable.h>
 
 namespace Web::Painting {
 
-class CheckBoxPaintable final : public PaintableBox {
-    GC_CELL(CheckBoxPaintable, PaintableBox);
-    GC_DECLARE_ALLOCATOR(CheckBoxPaintable);
-
+class CheckBoxPaintable final : public Paintable {
 public:
-    static GC::Ref<CheckBoxPaintable> create(Layout::CheckBox const&);
+    static NonnullRefPtr<CheckBoxPaintable> create(Layout::CheckBox const&);
+    virtual StringView class_name() const override { return "CheckBoxPaintable"sv; }
 
     virtual void paint(DisplayListRecordingContext&, PaintPhase) const override;
 

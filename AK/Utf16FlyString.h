@@ -23,10 +23,40 @@ public:
     static Utf16FlyString from_utf8(StringView);
     static Utf16FlyString from_utf8(String const& string) { return from_utf8_without_validation(string); }
     static Utf16FlyString from_utf8(FlyString const& string) { return from_utf8_without_validation(string); }
+    static Utf16FlyString from_fly_string(FlyString const& string) { return from_utf8_without_validation(string); }
+    static Utf16FlyString from_ascii_without_validation(StringView);
     static Utf16FlyString from_utf8_without_validation(StringView);
     static Utf16FlyString from_utf8_but_should_be_ported_to_utf16(StringView string) { return from_utf8_without_validation(string); }
 
     static Utf16FlyString from_utf16(Utf16View const&);
+
+    // NB: These round-trip the one-word raw representation through FFI bridges (e.g. the LibWeb
+    //     Rust style value data), which retain the raw value and manage its reference manually.
+    //     to_raw_leaked() leaks one reference to the bridge, from_raw() reconstructs a fly string
+    //     without consuming the bridge's reference, and unref_raw() releases it.
+    [[nodiscard]] FlatPtr to_raw_leaked() const
+    {
+        if (m_data.has_long_storage())
+            m_data.data({})->ref();
+        return m_data.raw({});
+    }
+
+    [[nodiscard]] static Utf16FlyString from_raw(FlatPtr raw)
+    {
+        auto base = Detail::Utf16StringBase::adopt_raw({}, raw);
+        if (base.has_long_storage())
+            base.data({})->ref();
+
+        Utf16FlyString string;
+        string.m_data = move(base);
+        return string;
+    }
+
+    static void unref_raw(FlatPtr raw)
+    {
+        // Adopt the bridge's reference and let it drop.
+        auto base = Detail::Utf16StringBase::adopt_raw({}, raw);
+    }
 
     template<typename T>
     requires(IsOneOf<RemoveCVReference<T>, Utf16String, Utf16FlyString>)
@@ -110,6 +140,10 @@ public:
     }
 
     [[nodiscard]] ALWAYS_INLINE bool equals_ignoring_ascii_case(Utf16View const& other) const { return m_data.equals_ignoring_ascii_case(other); }
+    [[nodiscard]] ALWAYS_INLINE bool equals_ignoring_ascii_case(StringView other) const { return view().equals_ignoring_ascii_case(other); }
+
+    [[nodiscard]] ALWAYS_INLINE bool starts_with(StringView string) const { return view().starts_with(string); }
+    [[nodiscard]] ALWAYS_INLINE bool starts_with_ignoring_ascii_case(StringView string) const { return view().starts_with_ignoring_ascii_case(string); }
 
     template<typename... Ts>
     [[nodiscard]] ALWAYS_INLINE bool is_one_of(Ts&&... strings) const
@@ -124,6 +158,7 @@ public:
     }
 
     [[nodiscard]] ALWAYS_INLINE u32 hash() const { return m_data.hash(); }
+    [[nodiscard]] ALWAYS_INLINE u32 ascii_case_insensitive_hash() const { return view().ascii_case_insensitive_hash(); }
     [[nodiscard]] ALWAYS_INLINE bool is_empty() const { return m_data.is_empty(); }
     [[nodiscard]] ALWAYS_INLINE bool is_ascii() const { return m_data.is_ascii(); }
 
@@ -146,8 +181,26 @@ public:
     // This is primarily interesting to unit tests.
     [[nodiscard]] static size_t number_of_utf16_fly_strings();
 
+    [[nodiscard]] static constexpr Utf16FlyString from_ascii_short_string_without_validation(char const* data, size_t length)
+    {
+        VERIFY(length <= Detail::MAX_SHORT_STRING_BYTE_COUNT);
+        auto short_string = Detail::ShortString::create_with_byte_count(length);
+        for (size_t i = 0; i < length; ++i)
+            short_string.storage[i] = static_cast<u8>(data[i]);
+        return Utf16FlyString { Detail::Utf16StringBase { short_string } };
+    }
+
+    [[nodiscard]] static constexpr Utf16FlyString from_ascii_short_string_without_validation(char16_t const* data, size_t length)
+    {
+        VERIFY(length <= Detail::MAX_SHORT_STRING_BYTE_COUNT);
+        auto short_string = Detail::ShortString::create_with_byte_count(length);
+        for (size_t i = 0; i < length; ++i)
+            short_string.storage[i] = static_cast<u8>(data[i]);
+        return Utf16FlyString { Detail::Utf16StringBase { short_string } };
+    }
+
 private:
-    ALWAYS_INLINE explicit Utf16FlyString(Detail::Utf16StringBase data)
+    ALWAYS_INLINE constexpr explicit Utf16FlyString(Detail::Utf16StringBase data)
         : m_data(move(data))
     {
     }
@@ -180,7 +233,7 @@ template<>
 struct Formatter<Utf16FlyString> : Formatter<Utf16String> {
     ErrorOr<void> format(FormatBuilder& builder, Utf16FlyString const& string)
     {
-        return Formatter<Utf16String>::format(builder, string.to_utf16_string());
+        return Formatter<Utf16String> {}.format(builder, string.to_utf16_string());
     }
 };
 
@@ -202,15 +255,26 @@ inline constexpr bool IsHashCompatible<Utf16FlyString, Utf16String> = true;
 
 }
 
-[[nodiscard]] ALWAYS_INLINE AK::Utf16FlyString operator""_utf16_fly_string(char const* string, size_t length)
+[[nodiscard]] ALWAYS_INLINE constexpr AK::Utf16FlyString operator""_utf16_fly_string(char const* string, size_t length)
 {
+    // OPTIMIZATION: Short ASCII strings become compile-time constants with no runtime validation or table lookup.
+    if (length <= AK::Detail::MAX_SHORT_STRING_BYTE_COUNT
+        && AK::all_of(string, string + length, AK::is_ascii)) {
+        return AK::Utf16FlyString::from_ascii_short_string_without_validation(string, length);
+    }
+
     AK::StringView view { string, length };
 
     ASSERT(AK::Utf8View { view }.validate());
     return AK::Utf16FlyString::from_utf8_without_validation(view);
 }
 
-[[nodiscard]] ALWAYS_INLINE AK::Utf16FlyString operator""_utf16_fly_string(char16_t const* string, size_t length)
+[[nodiscard]] ALWAYS_INLINE constexpr AK::Utf16FlyString operator""_utf16_fly_string(char16_t const* string, size_t length)
 {
+    // OPTIMIZATION: Short ASCII strings become compile-time constants with no runtime work.
+    if (length <= AK::Detail::MAX_SHORT_STRING_BYTE_COUNT
+        && AK::all_of(string, string + length, AK::is_ascii))
+        return AK::Utf16FlyString::from_ascii_short_string_without_validation(string, length);
+
     return AK::Utf16FlyString::from_utf16({ string, length });
 }

@@ -11,6 +11,7 @@
 #include <AK/HashMap.h>
 #include <AK/IPv4Address.h>
 #include <AK/StdLibExtras.h>
+#include <AK/Utf16FlyString.h>
 #include <AK/Variant.h>
 #include <LibCore/Forward.h>
 #include <LibCore/SharedCircularQueue.h>
@@ -19,7 +20,7 @@
 #include <LibIPC/File.h>
 #include <LibIPC/Forward.h>
 #include <LibIPC/Message.h>
-#include <LibURL/Forward.h>
+#include <LibURL/URL.h>
 
 namespace IPC {
 
@@ -77,6 +78,12 @@ ErrorOr<void> encode(Encoder& encoder, T const& value)
     return encoder.encode(to_underlying(value));
 }
 
+template<Concepts::DistinctNumeric T>
+ErrorOr<void> encode(Encoder& encoder, T const& value)
+{
+    return encoder.encode(value.value());
+}
+
 template<>
 ErrorOr<void> encode(Encoder&, float const&);
 
@@ -91,6 +98,9 @@ ErrorOr<void> encode(Encoder&, StringView const&);
 
 template<>
 ErrorOr<void> encode(Encoder&, Utf16String const&);
+
+template<>
+ErrorOr<void> encode(Encoder&, Utf16FlyString const&);
 
 template<>
 ErrorOr<void> encode(Encoder&, Utf16View const&);

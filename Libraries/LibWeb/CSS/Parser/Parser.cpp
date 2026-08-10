@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018-2024, Andreas Kling <andreas@ladybird.org>
  * Copyright (c) 2020-2021, the SerenityOS developers.
- * Copyright (c) 2021-2025, Sam Atkins <sam@ladybird.org>
+ * Copyright (c) 2021-2026, Sam Atkins <sam@ladybird.org>
  * Copyright (c) 2021, Tobias Christiansen <tobyase@serenityos.org>
  * Copyright (c) 2022, MacDue <macdue@dueutil.tech>
  * Copyright (c) 2024, Shannon Booth <shannon@serenityos.org>
@@ -13,7 +13,6 @@
  */
 
 #include <AK/Debug.h>
-#include <LibGfx/ImmutableBitmap.h>
 #include <LibURL/Parser.h>
 #include <LibWeb/CSS/CSSFontFeatureValuesRule.h>
 #include <LibWeb/CSS/CSSFunctionDeclarations.h>
@@ -21,8 +20,10 @@
 #include <LibWeb/CSS/CSSStyleDeclaration.h>
 #include <LibWeb/CSS/CSSStyleProperties.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
+#include <LibWeb/CSS/ContainerQuery.h>
 #include <LibWeb/CSS/FontFace.h>
 #include <LibWeb/CSS/MediaList.h>
+#include <LibWeb/CSS/Parser/ArbitrarySubstitutionFunctions.h>
 #include <LibWeb/CSS/Parser/ErrorReporter.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyName.h>
@@ -45,21 +46,18 @@ ParsingParams::ParsingParams(ParsingMode mode)
 {
 }
 
-ParsingParams::ParsingParams(JS::Realm& realm, ParsingMode mode)
-    : realm(realm)
-    , mode(mode)
+ParsingParams::ParsingParams(ValueParsingContext value_context)
+    : value_context(Vector { move(value_context) })
 {
 }
 
-ParsingParams::ParsingParams(JS::Realm& realm, IsUAStyleSheet is_ua_style_sheet)
-    : realm(realm)
-    , is_ua_style_sheet(is_ua_style_sheet)
+ParsingParams::ParsingParams(IsUAStyleSheet is_ua_style_sheet)
+    : is_ua_style_sheet(is_ua_style_sheet)
 {
 }
 
 ParsingParams::ParsingParams(DOM::Document const& document, ParsingMode mode)
-    : realm(const_cast<JS::Realm&>(document.realm()))
-    , document(&document)
+    : document(&document)
     , mode(mode)
 {
 }
@@ -70,9 +68,14 @@ Parser Parser::create(ParsingParams const& context, StringView input, StringView
     return Parser { context, move(tokens) };
 }
 
+Parser Parser::create(ParsingParams const& context, Utf16View input)
+{
+    auto tokens = Tokenizer::tokenize(input);
+    return Parser { context, move(tokens) };
+}
+
 Parser::Parser(ParsingParams const& context, Vector<Token> tokens)
     : m_document(context.document)
-    , m_realm(context.realm)
     , m_parsing_mode(context.mode)
     , m_is_ua_style_sheet(context.is_ua_style_sheet)
     , m_tokens(move(tokens))
@@ -123,7 +126,7 @@ GC::RootVector<GC::Ref<CSSRule>> Parser::convert_rules(Vector<Rule> const& raw_r
     bool namespace_rules_valid = true;
 
     // Interpret all of the resulting top-level qualified rules as style rules, defined below.
-    GC::RootVector<GC::Ref<CSSRule>> rules(realm().heap());
+    GC::RootVector<GC::Ref<CSSRule>> rules;
     for (auto const& raw_rule : raw_rules) {
         auto rule = convert_to_rule<CSSNestedDeclarations>(raw_rule, Nested::No);
         // If any style rule is invalid, or any at-rule is not recognized or is invalid according to its grammar or context, it’s a parse error.
@@ -181,10 +184,10 @@ GC::Ref<CSS::CSSStyleSheet> Parser::parse_as_css_stylesheet(Optional<::URL::URL>
     // To parse a CSS stylesheet, first parse a stylesheet.
     auto const& style_sheet = parse_a_stylesheet(m_token_stream, location);
 
-    auto rule_list = CSSRuleList::create(realm(), convert_rules(style_sheet.rules));
+    auto rule_list = CSSRuleList::create(convert_rules(style_sheet.rules));
     if (!media_list)
-        media_list = MediaList::create(realm(), {});
-    return CSSStyleSheet::create(realm(), rule_list, *media_list, move(location));
+        media_list = MediaList::create({});
+    return CSSStyleSheet::create(rule_list, *media_list, move(location));
 }
 
 RefPtr<Supports> Parser::parse_as_supports()
@@ -220,7 +223,7 @@ OwnPtr<BooleanExpression> Parser::parse_boolean_expression(TokenStream<Component
 
     auto const& peeked_token = tokens.next_token();
     // `not <boolean-expr-group>`
-    if (peeked_token.is_ident("not"sv)) {
+    if (peeked_token.is_ident("not"_utf16)) {
         tokens.discard_a_token();
         tokens.discard_whitespace();
 
@@ -334,11 +337,46 @@ OwnPtr<BooleanExpression> Parser::parse_supports_condition(TokenStream<Component
     return maybe_condition;
 }
 
+static bool at_rule_is_supported(Utf16FlyString const& name)
+{
+    // https://drafts.csswg.org/css-conditional-5/#support-definition-at-rules
+    // A CSS processor supports an at-rule if it would accept an at-rule beginning with that
+    // at-keyword within any context. @charset is intentionally excluded: it is not a valid at-rule.
+    if (name.equals_ignoring_ascii_case("charset"sv))
+        return false;
+
+    if (name.equals_ignoring_ascii_case("container"sv)
+        || name.equals_ignoring_ascii_case("counter-style"sv)
+        || name.equals_ignoring_ascii_case("font-face"sv)
+        || name.equals_ignoring_ascii_case("font-feature-values"sv)
+        || name.equals_ignoring_ascii_case("function"sv)
+        || name.equals_ignoring_ascii_case("import"sv)
+        || name.equals_ignoring_ascii_case("keyframes"sv)
+        || name.equals_ignoring_ascii_case("-webkit-keyframes"sv)
+        || name.equals_ignoring_ascii_case("layer"sv)
+        || name.equals_ignoring_ascii_case("media"sv)
+        || name.equals_ignoring_ascii_case("namespace"sv)
+        || name.equals_ignoring_ascii_case("page"sv)
+        || name.equals_ignoring_ascii_case("property"sv)
+        || name.equals_ignoring_ascii_case("scope"sv)
+        || name.equals_ignoring_ascii_case("supports"sv))
+        return true;
+
+    if (CSSFontFeatureValuesRule::is_font_feature_value_type_at_keyword(name))
+        return true;
+
+    if (is_margin_rule_name(name))
+        return true;
+
+    return false;
+}
+
 // https://drafts.csswg.org/css-conditional-5/#typedef-supports-feature
 OwnPtr<BooleanExpression> Parser::parse_supports_feature(TokenStream<ComponentValue>& tokens)
 {
     // <supports-feature> = <supports-selector-fn> | <supports-font-tech-fn>
-    //                    | <supports-font-format-fn> | <supports-decl>
+    //                    | <supports-font-format-fn> | <supports-at-rule-fn> | <supports-env-fn>
+    //                    | <supports-decl>
     auto transaction = tokens.begin_transaction();
     tokens.discard_whitespace();
     auto const& first_token = tokens.consume_a_token();
@@ -353,11 +391,11 @@ OwnPtr<BooleanExpression> Parser::parse_supports_feature(TokenStream<ComponentVa
     }
 
     // `<supports-selector-fn> = selector( <complex-selector> )`
-    if (first_token.is_function("selector"sv)) {
+    if (first_token.is_function("selector"_utf16)) {
         // FIXME: Parsing and then converting back to a string is weird.
-        StringBuilder builder;
+        Utf16StringBuilder builder;
         for (auto const& item : first_token.function().value)
-            builder.append(item.to_string());
+            item.serialize_to(builder);
         transaction.commit();
         TokenStream selector_tokens { first_token.function().value };
         auto maybe_selector = parse_complex_selector(selector_tokens, SelectorType::Standalone);
@@ -366,11 +404,11 @@ OwnPtr<BooleanExpression> Parser::parse_supports_feature(TokenStream<ComponentVa
         // contain unknown -webkit- pseudo-elements.
         // https://drafts.csswg.org/css-conditional-4/#dfn-support-selector
         bool matches = !maybe_selector.is_error() && !maybe_selector.value()->contains_unknown_webkit_pseudo_element();
-        return Supports::Selector::create(builder.to_string_without_validation(), matches);
+        return Supports::Selector::create(builder.to_string(), matches);
     }
 
     // `<supports-font-tech-fn> = font-tech( <font-tech> )`
-    if (first_token.is_function("font-tech"sv)) {
+    if (first_token.is_function("font-tech"_utf16)) {
         TokenStream tech_tokens { first_token.function().value };
         tech_tokens.discard_whitespace();
         auto tech_token = tech_tokens.consume_a_token();
@@ -385,7 +423,7 @@ OwnPtr<BooleanExpression> Parser::parse_supports_feature(TokenStream<ComponentVa
     }
 
     // `<supports-font-format-fn> = font-format( <font-format> )`
-    if (first_token.is_function("font-format"sv)) {
+    if (first_token.is_function("font-format"_utf16)) {
         TokenStream format_tokens { first_token.function().value };
         format_tokens.discard_whitespace();
         auto format_token = format_tokens.consume_a_token();
@@ -397,6 +435,39 @@ OwnPtr<BooleanExpression> Parser::parse_supports_feature(TokenStream<ComponentVa
         auto format_name = format_token.token().ident();
         bool matches = font_format_is_supported(format_name);
         return Supports::FontFormat::create(move(format_name), matches);
+    }
+
+    // `<supports-at-rule-fn> = at-rule( <at-keyword-token> )`
+    if (first_token.is_function("at-rule"_utf16)) {
+        TokenStream at_rule_tokens { first_token.function().value };
+        at_rule_tokens.discard_whitespace();
+        auto at_rule_token = at_rule_tokens.consume_a_token();
+        at_rule_tokens.discard_whitespace();
+        if (at_rule_tokens.has_next_token() || !at_rule_token.is(Token::Type::AtKeyword))
+            return {};
+
+        transaction.commit();
+        auto at_rule_name = at_rule_token.token().at_keyword();
+        bool matches = at_rule_is_supported(at_rule_name);
+        return Supports::AtRule::create(move(at_rule_name), matches);
+    }
+
+    // `<supports-env-fn> = env( <ident> )`
+    if (first_token.is_function("env"_utf16)) {
+        TokenStream format_tokens { first_token.function().value };
+        format_tokens.discard_whitespace();
+        auto variable_token = format_tokens.consume_a_token();
+        format_tokens.discard_whitespace();
+        if (format_tokens.has_next_token() || !variable_token.is(Token::Type::Ident))
+            return {};
+
+        transaction.commit();
+        auto variable_name = variable_token.token().ident();
+        // https://drafts.csswg.org/css-conditional-5/#support-definition-env
+        // A CSS processor is considered to support an environment variable if the <ident> is a supported environment
+        // variable.
+        bool matches = environment_variable_from_string(variable_name).has_value();
+        return Supports::FontFormat::create(move(variable_name), matches);
     }
 
     return {};
@@ -419,24 +490,345 @@ OwnPtr<Supports::Declaration> Parser::parse_supports_declaration(TokenStream<Com
     return {};
 }
 
-// https://www.w3.org/TR/mediaqueries-4/#typedef-general-enclosed
+OwnPtr<BooleanExpression> Parser::parse_container_query_condition(TokenStream<ComponentValue>& tokens)
+{
+    // https://drafts.csswg.org/css-conditional-5/#container-rule
+    // As with media queries, <general-enclosed> evaluates to unknown.
+    return parse_boolean_expression(tokens, MatchResult::Unknown, [this](auto& tokens) {
+        return parse_container_query_feature(tokens);
+    });
+}
+
+OwnPtr<BooleanExpression> Parser::parse_style_query(TokenStream<ComponentValue>& tokens, MatchResult result_for_general_enclosed)
+{
+    return parse_boolean_expression(tokens, result_for_general_enclosed, [this](auto& tokens) {
+        return parse_style_feature(tokens);
+    });
+}
+
+static bool next_token_is_feature_comparison(TokenStream<ComponentValue>& tokens)
+{
+    auto transaction = tokens.begin_transaction();
+    return parse_feature_comparison(tokens).has_value();
+}
+
+static bool contains_feature_comparison(Vector<ComponentValue> const& component_values)
+{
+    TokenStream tokens { component_values };
+    while (tokens.has_next_token()) {
+        if (next_token_is_feature_comparison(tokens))
+            return true;
+        tokens.discard_a_token();
+    }
+    return false;
+}
+
+static ReadonlySpan<ComponentValue> trim_style_range_value_tokens(ReadonlySpan<ComponentValue> tokens)
+{
+    auto start = 0uz;
+    while (start < tokens.size() && tokens[start].is(Token::Type::Whitespace))
+        ++start;
+
+    auto end = tokens.size();
+    while (end > start && tokens[end - 1].is(Token::Type::Whitespace))
+        --end;
+
+    return tokens.slice(start, end - start);
+}
+
+static Optional<StyleFeature::StyleRangeValue> parse_style_range_value(ReadonlySpan<ComponentValue> tokens)
+{
+    auto trimmed_tokens = trim_style_range_value_tokens(tokens);
+    if (trimmed_tokens.is_empty())
+        return {};
+
+    if (trimmed_tokens.size() == 1 && trimmed_tokens.first().is(Token::Type::Ident)) {
+        auto const& ident = trimmed_tokens.first().token().ident();
+        if (is_a_custom_property_name_string(ident)) {
+            auto property = PropertyNameAndID::from_name(ident);
+            if (property.has_value())
+                return StyleFeature::StyleRangeValue { property.release_value() };
+        }
+    }
+
+    TokenStream value_tokens { trimmed_tokens };
+    if (!Parser::parse_declaration_value_as_span(value_tokens).has_value() || !value_tokens.is_empty())
+        return {};
+
+    return StyleFeature::StyleRangeValue { Vector<ComponentValue> { trimmed_tokens } };
+}
+
+static Optional<StyleFeature::StyleRangeValue> parse_style_range_value_until_comparison(TokenStream<ComponentValue>& tokens)
+{
+    auto start_index = tokens.current_index();
+    while (tokens.has_next_token()) {
+        if (next_token_is_feature_comparison(tokens))
+            break;
+        tokens.discard_a_token();
+    }
+
+    return parse_style_range_value(tokens.tokens_since(start_index));
+}
+
+// https://drafts.csswg.org/css-conditional-5/#typedef-style-feature
+OwnPtr<BooleanExpression> Parser::parse_style_feature(TokenStream<ComponentValue>& tokens)
+{
+    // <style-feature> = <style-feature-plain> | <style-feature-boolean> | <style-range>
+
+    auto parse_style_feature_name = [](Utf16FlyString const& name) -> Optional<PropertyNameAndID> {
+        // The <style-feature-name> can be either a supported CSS property or a valid <custom-property-name>.
+        // NB: This is the same as what's allowed by PropertyNameAndID.
+        return PropertyNameAndID::from_name(name);
+    };
+
+    // <style-range> = <style-range-value> <mf-comparison> <style-range-value>
+    //               | <style-range-value> <mf-lt> <style-range-value> <mf-lt> <style-range-value>
+    //               | <style-range-value> <mf-gt> <style-range-value> <mf-gt> <style-range-value>
+    {
+        auto transaction = tokens.begin_transaction();
+        tokens.discard_whitespace();
+
+        if (auto maybe_left = parse_style_range_value_until_comparison(tokens); maybe_left.has_value()) {
+            if (auto maybe_left_comparison = parse_feature_comparison(tokens); maybe_left_comparison.has_value()) {
+                if (auto maybe_middle = parse_style_range_value_until_comparison(tokens); maybe_middle.has_value()) {
+                    tokens.discard_whitespace();
+                    if (!tokens.has_next_token()) {
+                        transaction.commit();
+                        return StyleFeature::create_range(maybe_left.release_value(), maybe_left_comparison.release_value(), maybe_middle.release_value());
+                    }
+
+                    if (auto maybe_right_comparison = parse_feature_comparison(tokens); maybe_right_comparison.has_value()) {
+                        if (auto maybe_right = parse_style_range_value_until_comparison(tokens); maybe_right.has_value()) {
+                            tokens.discard_whitespace();
+
+                            auto left_comparison = maybe_left_comparison.release_value();
+                            auto right_comparison = maybe_right_comparison.release_value();
+
+                            if (!tokens.has_next_token()
+                                && feature_comparisons_match(left_comparison, right_comparison)
+                                && left_comparison != FeatureComparison::Equal) {
+                                transaction.commit();
+                                return StyleFeature::create_range(
+                                    maybe_left.release_value(),
+                                    left_comparison,
+                                    maybe_middle.release_value(),
+                                    right_comparison,
+                                    maybe_right.release_value());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // <style-feature-plain> = <style-feature-name> : <style-feature-value>
+    {
+        auto transaction = tokens.begin_transaction();
+        tokens.discard_whitespace();
+        m_rule_context.append(RuleContext::Style);
+        auto declaration = consume_a_declaration(tokens, Nested::No, SaveOriginalText::Yes);
+        m_rule_context.take_last();
+        if (declaration.has_value()) {
+            tokens.discard_whitespace();
+            if (tokens.has_next_token())
+                return nullptr;
+
+            // The <style-feature-value> production matches any valid <declaration-value> as long as it doesn't contain
+            // <mf-lt>, <mf-gt> and <mf-eq> tokens.
+            if (declaration->value.contains([](ComponentValue const& value) {
+                    return value.is(Token::Type::Delim)
+                        && first_is_one_of(static_cast<char>(value.token().delim()), '<', '>', '=');
+                })) {
+                return nullptr;
+            }
+
+            auto style_feature_name = parse_style_feature_name(declaration->name);
+            if (!style_feature_name.has_value())
+                return nullptr;
+            if (contains_feature_comparison(declaration->value))
+                return nullptr;
+
+            transaction.commit();
+            return StyleFeature::create_plain(style_feature_name.release_value(), move(declaration->value), move(declaration->original_value_text));
+        }
+    }
+
+    // <style-feature-boolean> = <style-feature-name>
+    auto transaction = tokens.begin_transaction();
+    tokens.discard_whitespace();
+    auto const& token = tokens.consume_a_token();
+    tokens.discard_whitespace();
+    if (tokens.has_next_token() || !token.is(Token::Type::Ident))
+        return nullptr;
+
+    auto style_feature_name = parse_style_feature_name(token.token().ident());
+    if (!style_feature_name.has_value())
+        return nullptr;
+
+    transaction.commit();
+    return StyleFeature::create_boolean(style_feature_name.release_value());
+}
+
+OwnPtr<BooleanExpression> Parser::parse_container_query_feature(TokenStream<ComponentValue>& tokens)
+{
+    // https://drafts.csswg.org/css-conditional-5/#typedef-query-in-parens
+    // <query-in-parens> = ( <container-query> )
+    //                   | ( <size-feature> )
+    //                   | style( <style-query> )
+    //                   | scroll-state( <scroll-state-query> )
+    //                   | <general-enclosed>
+
+    // https://drafts.csswg.org/css-anchor-position-2/#container-rule-anchored
+    // <query-in-parens> = ...
+    //                   | anchored( <anchored-query> )
+
+    // NB: Spec isn't yet in terms of `<boolean-condition>`, so this is the closest definition to what we want.
+    //     `( <container-query> )` and `<general-enclosed>` are handled by parse_boolean_expression() already.
+
+    auto transaction = tokens.begin_transaction();
+    tokens.discard_whitespace();
+
+    // `( <size-feature> )`
+    if (tokens.next_token().is_block() && tokens.next_token().block().is_paren()) {
+        auto const& block = tokens.consume_a_token().block();
+        TokenStream inner_tokens { block.value };
+        if (auto size_feature = parse_size_feature(inner_tokens)) {
+            inner_tokens.discard_whitespace();
+            if (inner_tokens.has_next_token()) {
+                ErrorReporter::the().report(InvalidQueryError {
+                    .query_type = "@container"_utf16_fly_string,
+                    .value_string = tokens.dump_string(),
+                    .description = "Trailing tokens in size feature."_string });
+                return nullptr;
+            }
+
+            transaction.commit();
+            return size_feature;
+        }
+
+        ErrorReporter::the().report(InvalidQueryError {
+            .query_type = "@container"_utf16_fly_string,
+            .value_string = tokens.dump_string(),
+            .description = "Failed to parse parenthesis block as a size feature."_string });
+        return nullptr;
+    }
+
+    // `style( <style-query> )`
+    if (tokens.next_token().is_function("style"sv)) {
+        auto const& function = tokens.consume_a_token().function();
+        TokenStream inner_tokens { function.value };
+        if (auto style_query = parse_style_query(inner_tokens, MatchResult::Unknown)) {
+            inner_tokens.discard_whitespace();
+            if (inner_tokens.has_next_token()) {
+                ErrorReporter::the().report(InvalidQueryError {
+                    .query_type = "@container"_utf16_fly_string,
+                    .value_string = function.to_string().to_well_formed_utf8(),
+                    .description = "Trailing tokens in style()."_string });
+                return nullptr;
+            }
+
+            transaction.commit();
+            return StyleQueryFunction::create(style_query.release_nonnull());
+        }
+
+        ErrorReporter::the().report(InvalidQueryError {
+            .query_type = "@container"_utf16_fly_string,
+            .value_string = function.to_string().to_well_formed_utf8(),
+            .description = "Failed to parse style()."_string });
+        return nullptr;
+    }
+
+    // FIXME: `scroll-state( <scroll-state-query> )`
+    // FIXME: `anchored( <anchored-query> )`
+
+    ErrorReporter::the().report(InvalidQueryError {
+        .query_type = "@container"_utf16_fly_string,
+        .value_string = tokens.dump_string(),
+        .description = MUST(String::formatted("Unexpected token in query feature: {}.", tokens.next_token().to_debug_string())) });
+    return nullptr;
+}
+
+RefPtr<ContainerQuery> Parser::parse_container_query(TokenStream<ComponentValue>& tokens)
+{
+    if (auto condition = parse_container_query_condition(tokens))
+        return ContainerQuery::create(condition.release_nonnull());
+    return nullptr;
+}
+
+// https://drafts.csswg.org/mediaqueries-5/#typedef-general-enclosed
 OwnPtr<GeneralEnclosed> Parser::parse_general_enclosed(TokenStream<ComponentValue>& tokens, MatchResult result)
 {
-    // FIXME: <general-enclosed> syntax changed in MediaQueries-5
+    // <general-enclosed> = [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]
+    //
+    // https://drafts.csswg.org/css-syntax-3/#typedef-any-value
+    // "The <any-value> production is identical to <declaration-value>",
+    // and <declaration-value> does not contain "<<bad-string-token>>,
+    // <<bad-url-token>>, unmatched <<)-token>>, <<]-token>>, or
+    // <<}-token>>".
+    auto contains_only_any_value = [](auto const& values, auto&& contains_only_any_value) -> bool {
+        for (auto const& value : values) {
+            if (value.is_function()) {
+                if (!contains_only_any_value(value.function().value, contains_only_any_value))
+                    return false;
+                continue;
+            }
+
+            if (value.is_block()) {
+                if (!contains_only_any_value(value.block().value, contains_only_any_value))
+                    return false;
+                continue;
+            }
+
+            if (!value.is_token())
+                continue;
+
+            switch (value.token().type()) {
+            case Token::Type::Invalid:
+            case Token::Type::EndOfFile:
+            case Token::Type::BadString:
+            case Token::Type::BadUrl:
+                // NB: Functions and blocks are emitted as component values, so any remaining bracket tokens are unmatched.
+            case Token::Type::Function:
+            case Token::Type::OpenCurly:
+            case Token::Type::OpenParen:
+            case Token::Type::OpenSquare:
+            case Token::Type::CloseCurly:
+            case Token::Type::CloseParen:
+            case Token::Type::CloseSquare:
+                return false;
+            default:
+                break;
+            }
+        }
+
+        return true;
+    };
+
     auto transaction = tokens.begin_transaction();
     tokens.discard_whitespace();
     auto const& first_token = tokens.consume_a_token();
+    auto serialize_general_enclosed = [](ComponentValue const& component_value) {
+        auto original_source_text = component_value.original_source_text();
+        if (!original_source_text.is_empty())
+            return Utf16String::from_utf8_without_validation(original_source_text.bytes_as_string_view());
+        return component_value.to_string();
+    };
 
     // `[ <function-token> <any-value>? ) ]`
     if (first_token.is_function()) {
+        if (!contains_only_any_value(first_token.function().value, contains_only_any_value))
+            return {};
         transaction.commit();
-        return GeneralEnclosed::create(first_token.to_string(), result);
+        return GeneralEnclosed::create(serialize_general_enclosed(first_token), result);
     }
 
     // `( <any-value>? )`
     if (first_token.is_block() && first_token.block().is_paren()) {
+        if (!contains_only_any_value(first_token.block().value, contains_only_any_value))
+            return {};
         transaction.commit();
-        return GeneralEnclosed::create(first_token.to_string(), result);
+        return GeneralEnclosed::create(serialize_general_enclosed(first_token), result);
     }
 
     return {};
@@ -576,6 +968,7 @@ Variant<Empty, QualifiedRule, Parser::InvalidRuleError> Parser::consume_a_qualif
         .prelude = {},
         .declarations = {},
         .child_rules = {},
+        .source_position = {},
     };
 
     // NOTE: Qualified rules inside @keyframes are a keyframe rule.
@@ -615,7 +1008,7 @@ Variant<Empty, QualifiedRule, Parser::InvalidRuleError> Parser::consume_a_qualif
             auto& first_non_whitespace = prelude_tokens.consume_a_token();
             prelude_tokens.discard_whitespace();
             auto& second_non_whitespace = prelude_tokens.consume_a_token();
-            if (first_non_whitespace.is(Token::Type::Ident) && first_non_whitespace.token().ident().starts_with_bytes("--"sv)
+            if (first_non_whitespace.is(Token::Type::Ident) && first_non_whitespace.token().ident().starts_with("--"sv)
                 && second_non_whitespace.is(Token::Type::Colon)) {
                 // If nested is true, consume the remnants of a bad declaration from input, with nested set to true, and return nothing.
                 if (nested == Nested::Yes) {
@@ -652,7 +1045,10 @@ Variant<Empty, QualifiedRule, Parser::InvalidRuleError> Parser::consume_a_qualif
         // anything else
         {
             // Consume a component value from input and append the result to rule’s prelude.
-            rule.prelude.append(consume_a_component_value(input));
+            auto component_value = consume_a_component_value(input);
+            if (!rule.source_position.has_value() && !component_value.is(Token::Type::Whitespace))
+                rule.source_position = component_value.start_position();
+            rule.prelude.append(move(component_value));
         }
     }
 }
@@ -1071,12 +1467,18 @@ Optional<Declaration> Parser::consume_a_declaration(TokenStream<T>& input, Neste
     Declaration declaration {
         .name {},
         .value {},
+        .important = Important::No,
+        .original_value_text = {},
+        .original_full_text = {},
+        .source_position = {},
     };
     auto start_token_index = input.current_index();
 
     // 1. If the next token is an <ident-token>, consume a token from input and set decl’s name to the token’s value.
     if (input.next_token().is(Token::Type::Ident)) {
-        declaration.name = ((Token)input.consume_a_token()).ident();
+        auto token = (Token)input.consume_a_token();
+        declaration.source_position = token.start_position();
+        declaration.name = token.ident();
     }
     //    Otherwise, consume the remnants of a bad declaration from input, with nested, and return nothing.
     else {
@@ -1112,7 +1514,7 @@ Optional<Declaration> Parser::consume_a_declaration(TokenStream<T>& input, Neste
         Optional<size_t> important_index;
         for (size_t i = declaration.value.size() - 1; i > 0; i--) {
             auto const& value = declaration.value[i];
-            if (value.is_ident("important"sv)) {
+            if (value.is_ident("important"_utf16)) {
                 important_index = i;
                 break;
             }
@@ -1199,11 +1601,11 @@ Optional<Declaration> Parser::consume_a_declaration(TokenStream<T>& input, Neste
     if (is_valid_in_the_current_context(declaration)) {
         // AD-HOC: Assemble source tokens.
         if (save_full_text == SaveOriginalText::Yes) {
-            StringBuilder original_full_text;
+            Utf16StringBuilder original_full_text;
             for (auto& token : input.tokens_since(start_token_index))
-                original_full_text.append(token.to_string());
+                token.serialize_to(original_full_text);
 
-            declaration.original_full_text = original_full_text.to_string_without_validation();
+            declaration.original_full_text = original_full_text.to_string();
         }
         return declaration;
     }
@@ -1246,16 +1648,39 @@ void Parser::consume_the_remnants_of_a_bad_declaration(TokenStream<T>& input, Ne
     }
 }
 
-CSSRule* Parser::parse_as_css_rule()
+CSSRule* Parser::parse_as_css_rule(bool nested)
 {
-    if (auto maybe_rule = parse_a_rule(m_token_stream); maybe_rule.has_value())
-        return convert_to_rule<CSSNestedDeclarations>(maybe_rule.value(), Nested::No);
+    auto nested_mode = nested ? Nested::Yes : Nested::No;
+    if (auto maybe_rule = parse_a_rule(m_token_stream, nested_mode); maybe_rule.has_value())
+        return convert_to_rule<CSSNestedDeclarations>(maybe_rule.value(), nested_mode);
     return {};
+}
+
+GC::Ptr<CSSKeyframeRule> Parser::parse_as_keyframe_rule()
+{
+    m_rule_context.append(RuleContext::AtKeyframes);
+    ScopeGuard guard = [&] {
+        [[maybe_unused]] auto last = m_rule_context.take_last();
+        VERIFY(last == RuleContext::AtKeyframes);
+    };
+
+    auto maybe_rule = parse_a_rule(m_token_stream);
+    if (!maybe_rule.has_value() || !maybe_rule->has<QualifiedRule>())
+        return {};
+
+    return convert_to_keyframe_rule(maybe_rule->get<QualifiedRule>());
+}
+
+Vector<Percentage> Parser::parse_as_keyframe_selectors()
+{
+    auto component_values = parse_a_list_of_component_values(m_token_stream);
+    auto tokens = TokenStream { component_values };
+    return parse_keyframe_selectors(tokens);
 }
 
 // https://drafts.csswg.org/css-syntax/#parse-rule
 template<typename T>
-Optional<Rule> Parser::parse_a_rule(TokenStream<T>& input)
+Optional<Rule> Parser::parse_a_rule(TokenStream<T>& input, Nested nested)
 {
     // To parse a rule from input:
     Optional<Rule> rule;
@@ -1273,14 +1698,12 @@ Optional<Rule> Parser::parse_a_rule(TokenStream<T>& input)
     //    Otherwise, if the next token from input is an <at-keyword-token>,
     //    consume an at-rule from input, and let rule be the return value.
     else if (input.next_token().is(Token::Type::AtKeyword)) {
-        rule = consume_an_at_rule(m_token_stream).map([](auto&& it) { return Rule { it }; });
+        rule = consume_an_at_rule(m_token_stream, nested).map([](auto&& it) { return Rule { it }; });
     }
     //    Otherwise, consume a qualified rule from input and let rule be the return value.
     //    If nothing or an invalid rule error was returned, return a syntax error.
     else {
-        consume_a_qualified_rule(input).visit(
-            [&](QualifiedRule qualified_rule) { rule = move(qualified_rule); },
-            [](auto&) {});
+        consume_a_qualified_rule(input, {}, nested).visit([&](QualifiedRule qualified_rule) { rule = move(qualified_rule); }, [](auto&) {});
 
         if (!rule.has_value())
             return {};
@@ -1306,18 +1729,6 @@ Vector<RuleOrListOfDeclarations> Parser::parse_a_blocks_contents(TokenStream<T>&
 
     // 2. Consume a block’s contents from input, and return the result.
     return consume_a_blocks_contents(input);
-}
-
-Optional<StyleProperty> Parser::parse_as_supports_condition()
-{
-    m_rule_context.append(RuleContext::SupportsCondition);
-    auto maybe_declaration = parse_a_declaration(m_token_stream);
-    m_rule_context.take_last();
-    if (maybe_declaration.has_value()) {
-        if (auto maybe_property_and_name = convert_to_style_property(maybe_declaration.release_value()); maybe_property_and_name.has_value())
-            return maybe_property_and_name->property;
-    }
-    return {};
 }
 
 // https://drafts.csswg.org/css-syntax/#parse-declaration
@@ -1466,6 +1877,55 @@ Parser::PropertiesAndCustomProperties Parser::parse_as_property_declaration_bloc
     return parsed_declarations;
 }
 
+Vector<DevToolsStyleDeclaration> Parser::parse_as_devtools_property_declaration_block()
+{
+    auto declarations_and_at_rules = parse_a_blocks_contents(m_token_stream);
+
+    Vector<DevToolsStyleDeclaration> parsed_declarations;
+    for (auto const& rule_or_list : declarations_and_at_rules) {
+        if (auto* rule_declarations = rule_or_list.get_pointer<Vector<Declaration>>()) {
+            for (auto const& declaration : *rule_declarations) {
+                auto property = PropertyNameAndID::from_name(declaration.name);
+
+                StringBuilder value_builder;
+                for (auto const& value : declaration.value)
+                    value_builder.append(value.original_source_text());
+
+                parsed_declarations.append(DevToolsStyleDeclaration {
+                    .name = declaration.name,
+                    .value = value_builder.to_string_without_validation(),
+                    .important = declaration.important,
+                    .is_custom_property = property.has_value() && property->is_custom_property(),
+                    .is_name_valid = property.has_value(),
+                    .is_valid = property.has_value() && convert_to_style_property(declaration).has_value(),
+                });
+            }
+        }
+    }
+
+    return parsed_declarations;
+}
+
+Vector<DevToolsStyleDeclaration> parse_css_declaration_block_for_devtools(ParsingParams const& parsing_params, StringView declaration_block)
+{
+    auto devtools_parsing_params = parsing_params;
+    if (devtools_parsing_params.rule_context.is_empty())
+        devtools_parsing_params.rule_context.append(RuleContext::Style);
+
+    auto parser = Parser::create(devtools_parsing_params, declaration_block);
+    return parser.parse_as_devtools_property_declaration_block();
+}
+
+Vector<DevToolsStyleDeclaration> parse_css_declaration_block_for_devtools(ParsingParams const& parsing_params, Utf16View declaration_block)
+{
+    auto devtools_parsing_params = parsing_params;
+    if (devtools_parsing_params.rule_context.is_empty())
+        devtools_parsing_params.rule_context.append(RuleContext::Style);
+
+    auto parser = Parser::create(devtools_parsing_params, declaration_block);
+    return parser.parse_as_devtools_property_declaration_block();
+}
+
 // https://drafts.csswg.org/cssom/#parse-a-css-declaration-block
 Vector<Descriptor> Parser::parse_as_descriptor_declaration_block(AtRuleID at_rule_id)
 {
@@ -1515,7 +1975,7 @@ Vector<Descriptor> Parser::parse_as_descriptor_declaration_block(AtRuleID at_rul
     return parsed_declarations;
 }
 
-bool Parser::is_valid_in_the_current_context(Declaration const&) const
+bool Parser::is_valid_in_the_current_context(Declaration const& declaration) const
 {
     // TODO: Determine if this *particular* declaration is valid here, not just declarations in general.
 
@@ -1529,15 +1989,43 @@ bool Parser::is_valid_in_the_current_context(Declaration const&) const
         return false;
 
     case RuleContext::Style:
-    case RuleContext::Keyframe:
-        // Style and keyframe rules contain property declarations
+        // Style rules contain property declarations
         return true;
 
+    case RuleContext::Keyframe: {
+        // https://drafts.csswg.org/css-animations-1/#keyframes
+        // The <declaration-list> inside of <keyframe-block> accepts any CSS property except those defined in this
+        // specification, but does accept the animation-timing-function property and interprets it specially
+        // NB: animation-composition is defined in CSS Animations Level 2, so it is not excluded by this rule.
+        auto property = PropertyNameAndID::from_name(declaration.name);
+        if (!property.has_value())
+            return true;
+        switch (property->id()) {
+        case PropertyID::Animation:
+        case PropertyID::AnimationDelay:
+        case PropertyID::AnimationDirection:
+        case PropertyID::AnimationDuration:
+        case PropertyID::AnimationFillMode:
+        case PropertyID::AnimationIterationCount:
+        case PropertyID::AnimationName:
+        case PropertyID::AnimationPlayState:
+        case PropertyID::AnimationTimeline:
+            return false;
+        default:
+            return true;
+        }
+    }
+
+    case RuleContext::AtContainer:
     case RuleContext::AtLayer:
     case RuleContext::AtMedia:
     case RuleContext::AtSupports:
         // Grouping rules can contain declarations if they are themselves inside a style or function rule
         return m_rule_context.contains([](auto const& context) { return context == RuleContext::Style || context == RuleContext::AtFunction; });
+
+    case RuleContext::AtScope:
+        // @scope can contain declarations directly, matching the scoping root with zero specificity.
+        return true;
 
     case RuleContext::FontFeatureValue:
         // Each feature value block accepts a list of declarations
@@ -1576,12 +2064,12 @@ bool Parser::is_valid_in_the_current_context(AtRule const& at_rule) const
 
     // Only grouping rules can be nested within style rules
     if (m_rule_context.contains_slow(RuleContext::Style))
-        return first_is_one_of(at_rule.name, "layer", "media", "supports");
+        return at_rule.name.is_one_of("container"sv, "layer"sv, "media"sv, "scope"sv, "supports"sv);
 
     if (m_rule_context.contains_slow(RuleContext::AtFunction)) {
         // https://drafts.csswg.org/css-mixins-1/#function-body
         // The body of a @function rule accepts conditional group rules
-        return first_is_one_of(at_rule.name, "media", "supports");
+        return at_rule.name.is_one_of("container"sv, "media"sv, "supports"sv);
     }
 
     switch (m_rule_context.last()) {
@@ -1593,11 +2081,13 @@ bool Parser::is_valid_in_the_current_context(AtRule const& at_rule) const
         // Already handled above
         VERIFY_NOT_REACHED();
 
+    case RuleContext::AtContainer:
     case RuleContext::AtLayer:
     case RuleContext::AtMedia:
+    case RuleContext::AtScope:
     case RuleContext::AtSupports:
         // Grouping rules can contain anything except @import or @namespace
-        return !first_is_one_of(at_rule.name, "import", "namespace");
+        return !at_rule.name.is_one_of("import"sv, "namespace"sv);
 
     case RuleContext::SupportsCondition:
         // @supports cannot check for at-rules
@@ -1643,8 +2133,10 @@ bool Parser::is_valid_in_the_current_context(QualifiedRule const&) const
         // Style rules can contain style rules
         return true;
 
+    case RuleContext::AtContainer:
     case RuleContext::AtLayer:
     case RuleContext::AtMedia:
+    case RuleContext::AtScope:
     case RuleContext::AtSupports:
         // Grouping rules can contain style rules
         return true;
@@ -1692,7 +2184,7 @@ GC::Ref<CSSStyleProperties> Parser::convert_to_style_declaration(Vector<Declarat
     for (auto const& declaration : declarations) {
         extract_property(declaration, dest);
     }
-    return CSSStyleProperties::create(realm(), move(properties.properties), move(properties.custom_properties));
+    return CSSStyleProperties::create(move(properties.properties), move(properties.custom_properties));
 }
 
 Optional<StylePropertyAndName> Parser::convert_to_style_property(Declaration const& declaration)
@@ -1731,18 +2223,31 @@ Optional<StylePropertyAndName> Parser::convert_to_style_property(Declaration con
     };
 }
 
-Optional<LengthOrAutoOrCalculated> Parser::parse_source_size_value(TokenStream<ComponentValue>& tokens)
+RefPtr<StyleValue const> Parser::parse_source_size_value(TokenStream<ComponentValue>& tokens)
 {
-    if (tokens.next_token().is_ident("auto"sv)) {
+    if (tokens.next_token().is_ident("auto"_utf16)) {
         tokens.discard_a_token(); // auto
-        return LengthOrAutoOrCalculated { LengthOrAuto::make_auto() };
+        return KeywordStyleValue::create(Keyword::Auto);
     }
 
-    if (auto parsed = parse_length(tokens); parsed.has_value()) {
-        if (parsed->is_calculated())
-            return LengthOrAutoOrCalculated { parsed->calculated() };
-        return LengthOrAutoOrCalculated { parsed->value() };
+    // https://html.spec.whatwg.org/multipage/images.html#valid-source-size-list
+    // "A <source-size-value> that is a <length> must not be negative,
+    // and must not use CSS functions other than the math functions."
+    if (auto parsed = parse_length_value(tokens, non_negative_range)) {
+        // FIXME: It seems odd that we disallow infinite calculated values here rather than clamping as we do for all
+        //        other values - is this correct?
+        if (parsed->is_calculated()) {
+            // https://drafts.csswg.org/css-values-4/#calc-range
+            // "the value resulting from a top-level calculation must be
+            // clamped to the range allowed in the target context."
+            auto raw_length = parsed->as_calculated().resolve_raw_length({});
+            if (raw_length.has_value() && !isfinite(*raw_length))
+                return {};
+        }
+
+        return parsed;
     }
+
     return {};
 }
 
@@ -1785,7 +2290,7 @@ bool Parser::context_allows_tree_counting_functions() const
         if (context.has<DescriptorContext>())
             return false;
 
-        if (auto const* special_context = context.get_pointer<SpecialContext>(); special_context && first_is_one_of(*special_context, SpecialContext::DOMMatrixInitString, SpecialContext::MediaCondition))
+        if (auto const* special_context = context.get_pointer<SpecialContext>(); special_context && first_is_one_of(*special_context, SpecialContext::CanvasContextGenericValue, SpecialContext::DOMMatrixInitString, SpecialContext::MediaCondition))
             return false;
 
         // TODO: Handle other contexts where tree counting functions are not allowed
@@ -1796,17 +2301,23 @@ bool Parser::context_allows_tree_counting_functions() const
 
 bool Parser::context_allows_random_functions() const
 {
+    if (auto const* special_context = m_value_context.first().get_pointer<SpecialContext>(); special_context && first_is_one_of(*special_context, SpecialContext::CanvasContextGenericValue, SpecialContext::OnScreenCanvasContextFontValue))
+        return false;
+
     // For now we only allow random functions within property contexts, see https://drafts.csswg.org/css-values-5/#issue-cd071f29
+    // FIXME: Should this instead check that the top-level context is a property context (our current configuration
+    //        allows these within DOMMatrixInitString for example)
     return m_value_context.contains([](ValueParsingContext context) { return context.has<PropertyID>(); });
 }
 
-FlyString Parser::random_value_sharing_auto_name() const
+Utf16FlyString Parser::random_value_sharing_auto_name() const
 {
     auto top_level_property_context_index = m_value_context.find_first_index_if([](ValueParsingContext const& context) { return context.has<PropertyID>(); });
 
     auto property_name = string_from_property_id(m_value_context[top_level_property_context_index.value()].get<PropertyID>());
 
-    return MUST(String::formatted("{} {}", property_name, m_random_function_index));
+    auto auto_name = Utf16String::formatted("{} {}", property_name, m_random_function_index);
+    return Utf16FlyString::from_utf16(auto_name.utf16_view());
 }
 
 Vector<ComponentValue> Parser::parse_as_list_of_component_values()
@@ -1838,18 +2349,25 @@ RefPtr<StyleValue const> Parser::parse_as_type(ValueType value_type)
 {
     auto component_values = parse_a_list_of_component_values(m_token_stream);
     TokenStream tokens { component_values };
-    return parse_value(value_type, tokens);
+    auto parsed_value = parse_value(value_type, tokens);
+
+    tokens.discard_whitespace();
+
+    if (!parsed_value || !tokens.is_empty())
+        return nullptr;
+
+    return parsed_value;
 }
 
 // https://html.spec.whatwg.org/multipage/images.html#parsing-a-sizes-attribute
-LengthOrCalculated Parser::parse_as_sizes_attribute(DOM::Element const& element, HTML::HTMLImageElement const* img)
+NonnullRefPtr<StyleValue const> Parser::parse_as_sizes_attribute(DOM::Element const& element, HTML::HTMLImageElement const* img)
 {
     // When asked to parse a sizes attribute from an element element, with an img element or null img:
 
     // AD-HOC: If element has no sizes attribute, this algorithm always logs a parse error and then returns 100vw.
     //         The attribute is optional, so avoid spamming the debug log with false positives by just returning early.
     if (!element.has_attribute(HTML::AttributeNames::sizes))
-        return Length(100, LengthUnit::Vw);
+        return LengthStyleValue::create(Length(100, LengthUnit::Vw));
 
     // 1. Let unparsed sizes list be the result of parsing a comma-separated list of component values
     //    from the value of element's sizes attribute (or the empty string, if the attribute is absent).
@@ -1857,7 +2375,7 @@ LengthOrCalculated Parser::parse_as_sizes_attribute(DOM::Element const& element,
     auto unparsed_sizes_list = parse_a_comma_separated_list_of_component_values(m_token_stream);
 
     // 2. Let size be null.
-    Optional<LengthOrAutoOrCalculated> size;
+    RefPtr<StyleValue const> size;
 
     auto remove_all_consecutive_whitespace_tokens_from_the_end_of = [](auto& tokens) {
         while (!tokens.is_empty() && tokens.last().is_token() && tokens.last().token().is(Token::Type::Whitespace))
@@ -1874,7 +2392,7 @@ LengthOrCalculated Parser::parse_as_sizes_attribute(DOM::Element const& element,
         if (unparsed_size.is_empty()) {
             log_parse_error();
             ErrorReporter::the().report(InvalidValueError {
-                .value_type = "sizes attribute"_fly_string,
+                .value_type = "sizes attribute"_utf16_fly_string,
                 .value_string = m_token_stream.dump_string(),
                 .description = "Failed in step 3.1; all whitespace"_string,
             });
@@ -1886,13 +2404,13 @@ LengthOrCalculated Parser::parse_as_sizes_attribute(DOM::Element const& element,
         //    Any CSS function other than the math functions is invalid.
         //    Otherwise, there is a parse error; continue.
         auto last_value_stream = TokenStream<ComponentValue>::of_single_token(unparsed_size.last());
-        if (auto source_size_value = parse_source_size_value(last_value_stream); source_size_value.has_value()) {
-            size = source_size_value.value();
+        if (auto source_size_value = parse_source_size_value(last_value_stream)) {
+            size = source_size_value.release_nonnull();
             unparsed_size.take_last();
         } else {
             log_parse_error();
             ErrorReporter::the().report(InvalidValueError {
-                .value_type = "sizes attribute"_fly_string,
+                .value_type = "sizes attribute"_utf16_fly_string,
                 .value_string = m_token_stream.dump_string(),
                 .description = "Failed in step 3.2; couldn't parse {} as a <source-size-value>"_string,
             });
@@ -1901,8 +2419,8 @@ LengthOrCalculated Parser::parse_as_sizes_attribute(DOM::Element const& element,
 
         // 3. If size is auto, and img is not null, and img is being rendered, and img allows auto-sizes,
         //    then set size to the concrete object size width of img, in CSS pixels.
-        // FIXME: "img is being rendered" - we just see if it has a bitmap for now
-        if (size->is_auto() && img && img->immutable_bitmap() && img->allows_auto_sizes()) {
+        // FIXME: "img is being rendered" - we just see if it has image data for now
+        if (size->has_auto() && img && img->is_image_available() && img->allows_auto_sizes()) {
             // FIXME: The spec doesn't seem to tell us how to determine the concrete size of an <img>, so use the default sizing algorithm.
             //        Should this use some of the methods from FormattingContext?
             auto concrete_size = run_default_sizing_algorithm(
@@ -1910,7 +2428,7 @@ LengthOrCalculated Parser::parse_as_sizes_attribute(DOM::Element const& element,
                 { img->natural_width(), img->natural_height(), img->intrinsic_aspect_ratio() },
                 // NOTE: https://html.spec.whatwg.org/multipage/rendering.html#img-contain-size
                 CSSPixelSize { 300, 150 });
-            size = Length::make_px(concrete_size.width());
+            size = LengthStyleValue::create(Length::make_px(concrete_size.width()));
         }
 
         // 4. Remove all consecutive <whitespace-token>s from the end of unparsed size.
@@ -1921,15 +2439,15 @@ LengthOrCalculated Parser::parse_as_sizes_attribute(DOM::Element const& element,
             if (i != unparsed_sizes_list.size() - 1) {
                 log_parse_error();
                 ErrorReporter::the().report(InvalidValueError {
-                    .value_type = "sizes attribute"_fly_string,
+                    .value_type = "sizes attribute"_utf16_fly_string,
                     .value_string = m_token_stream.dump_string(),
                     .description = MUST(String::formatted("Failed in step 3.4.1; is unparsed size #{}, count {}", i, unparsed_sizes_list.size())),
                 });
             }
 
             // 2. If size is not auto, then return size. Otherwise, continue.
-            if (!size->is_auto())
-                return size->without_auto();
+            if (!size->has_auto())
+                return size.release_nonnull();
             continue;
         }
 
@@ -1937,20 +2455,75 @@ LengthOrCalculated Parser::parse_as_sizes_attribute(DOM::Element const& element,
         //    If it does not parse correctly, or it does parse correctly but the <media-condition> evaluates to false, continue.
         TokenStream token_stream { unparsed_size };
         auto media_condition = parse_media_condition(token_stream);
-        if (!media_condition || (m_document && media_condition->evaluate(m_document) == MatchResult::False)) {
+        if (!media_condition)
             continue;
-        }
+
+        // https://drafts.csswg.org/mediaqueries-5/#evaluating
+        // "If the result of any of the above productions is used in any
+        // context that expects a two-valued boolean, 'unknown' must be
+        // converted to 'false'."
+        if (m_document && !media_condition->evaluate_to_boolean({ .document = m_document }))
+            continue;
 
         // 5. If size is not auto, then return size. Otherwise, continue.
-        if (!size->is_auto())
-            return size->without_auto();
+        if (!size->has_auto())
+            return size.release_nonnull();
     }
 
     // 4. Return 100vw.
-    return Length(100, LengthUnit::Vw);
+    return LengthStyleValue::create(Length(100, LengthUnit::Vw));
 }
 
-bool Parser::has_ignored_vendor_prefix(StringView string)
+Parser::ParseErrorOr<void> Parser::collect_arbitrary_substitution_function_presence(Vector<ComponentValue> const& component_values, SubstitutionFunctionsPresence& presence)
+{
+    for (auto const& component_value : component_values) {
+        if (collect_arbitrary_substitution_function_presence(component_value, presence).is_error())
+            return ParseError::SyntaxError;
+    }
+
+    return {};
+}
+
+Parser::ParseErrorOr<void> Parser::collect_arbitrary_substitution_function_presence(ComponentValue const& component_value, SubstitutionFunctionsPresence& presence)
+{
+    if (component_value.is_function()) {
+        auto const& function = component_value.function();
+        if (auto arbitrary_substitution_function = to_arbitrary_substitution_function(function.name); arbitrary_substitution_function.has_value()) {
+            if (!parse_according_to_argument_grammar(arbitrary_substitution_function.value(), function.value).has_value())
+                return ParseError::SyntaxError;
+
+            switch (arbitrary_substitution_function.value()) {
+            case ArbitrarySubstitutionFunction::Attr:
+                presence.attr = true;
+                break;
+            case ArbitrarySubstitutionFunction::DashedFunction:
+                presence.dashed_function = true;
+                break;
+            case ArbitrarySubstitutionFunction::Env:
+                presence.env = true;
+                break;
+            case ArbitrarySubstitutionFunction::If:
+                presence.if_ = true;
+                break;
+            case ArbitrarySubstitutionFunction::Inherit:
+                presence.inherit = true;
+                break;
+            case ArbitrarySubstitutionFunction::Var:
+                presence.var = true;
+                break;
+            }
+        }
+
+        return collect_arbitrary_substitution_function_presence(function.value, presence);
+    }
+
+    if (component_value.is_block())
+        return collect_arbitrary_substitution_function_presence(component_value.block().value, presence);
+
+    return {};
+}
+
+bool Parser::has_ignored_vendor_prefix(Utf16View string)
 {
     if (!string.starts_with('-'))
         return false;
@@ -1958,7 +2531,7 @@ bool Parser::has_ignored_vendor_prefix(StringView string)
         return false;
     if (string.starts_with("-libweb-"sv))
         return false;
-    if (string.count('-') == 1)
+    if (string.count("-"sv) == 1)
         return false;
     return true;
 }
@@ -1996,8 +2569,8 @@ template Optional<Declaration> Parser::consume_a_declaration(TokenStream<Compone
 template void Parser::consume_the_remnants_of_a_bad_declaration(TokenStream<Token>&, Nested);
 template void Parser::consume_the_remnants_of_a_bad_declaration(TokenStream<ComponentValue>&, Nested);
 
-template Optional<Rule> Parser::parse_a_rule(TokenStream<Token>&);
-template Optional<Rule> Parser::parse_a_rule(TokenStream<ComponentValue>&);
+template Optional<Rule> Parser::parse_a_rule(TokenStream<Token>&, Nested);
+template Optional<Rule> Parser::parse_a_rule(TokenStream<ComponentValue>&, Nested);
 
 template Vector<RuleOrListOfDeclarations> Parser::parse_a_blocks_contents(TokenStream<Token>&);
 template Vector<RuleOrListOfDeclarations> Parser::parse_a_blocks_contents(TokenStream<ComponentValue>&);
@@ -2024,12 +2597,6 @@ HTML::Window const* Parser::window() const
     if (!m_document)
         return nullptr;
     return m_document->window();
-}
-
-JS::Realm& Parser::realm() const
-{
-    VERIFY(m_realm);
-    return *m_realm;
 }
 
 bool Parser::in_quirks_mode() const

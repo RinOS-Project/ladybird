@@ -8,6 +8,7 @@
 
 #include <AK/Error.h>
 #include <AK/OwnPtr.h>
+#include <AK/Utf16String.h>
 #include <LibGC/Root.h>
 #include <LibGfx/Size.h>
 #include <LibURL/URL.h>
@@ -21,7 +22,7 @@ class ImageRequest final : public JS::Cell {
     GC_DECLARE_ALLOCATOR(ImageRequest);
 
 public:
-    [[nodiscard]] static GC::Ref<ImageRequest> create(JS::Realm&, GC::Ref<Page>);
+    [[nodiscard]] static GC::Ref<ImageRequest> create();
 
     ~ImageRequest();
 
@@ -39,8 +40,9 @@ public:
     State state() const;
     void set_state(State);
 
-    String const& current_url() const { return m_current_url; }
-    void set_current_url(JS::Realm&, String);
+    Utf16String const& current_url() const { return m_current_url; }
+    void set_current_url(DOM::Document&, String);
+    void set_current_url(DOM::Document&, Utf16String);
 
     [[nodiscard]] GC::Ptr<DecodedImageData> image_data() const;
     void set_image_data(GC::Ptr<DecodedImageData>);
@@ -54,17 +56,18 @@ public:
     // https://html.spec.whatwg.org/multipage/images.html#prepare-an-image-for-presentation
     void prepare_for_presentation(HTMLImageElement&);
 
-    void fetch_image(JS::Realm&, GC::Ref<Fetch::Infrastructure::Request>);
+    void fetch_image(GC::Ref<Fetch::Infrastructure::Request>);
     void add_callbacks(Function<void()> on_finish, Function<void()> on_fail);
 
     GC::Ptr<SharedResourceRequest const> shared_resource_request() const { return m_shared_resource_request; }
 
+    [[nodiscard]] bool was_aborted() const { return m_was_aborted; }
+    void set_was_aborted() { m_was_aborted = true; }
+
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
 private:
-    explicit ImageRequest(GC::Ref<Page>);
-
-    GC::Ref<Page> m_page;
+    ImageRequest();
 
     // https://html.spec.whatwg.org/multipage/images.html#img-req-state
     // An image request's state is initially unavailable.
@@ -72,7 +75,7 @@ private:
 
     // https://html.spec.whatwg.org/multipage/images.html#img-req-url
     // An image request's current URL is initially the empty string.
-    String m_current_url;
+    Utf16String m_current_url;
 
     // https://html.spec.whatwg.org/multipage/images.html#img-req-data
     GC::Ptr<DecodedImageData> m_image_data;
@@ -87,9 +90,14 @@ private:
     Optional<Gfx::FloatSize> m_preferred_density_corrected_dimensions;
 
     GC::Ptr<SharedResourceRequest> m_shared_resource_request;
+
+    // NB: Set when "abort the image request" is performed on this image request. Since our fetches happen through
+    //     a SharedResourceRequest that may be used by others, we don't abort the fetch itself; instead, fetch
+    //     callbacks use this flag to discard their work for aborted requests.
+    bool m_was_aborted { false };
 };
 
 // https://html.spec.whatwg.org/multipage/images.html#abort-the-image-request
-void abort_the_image_request(JS::Realm&, ImageRequest*);
+void abort_the_image_request(ImageRequest*);
 
 }

@@ -10,8 +10,6 @@
 #include <LibGfx/ImageFormats/ImageDecoder.h>
 #include <LibGfx/ImageFormats/JPEGLoader.h>
 #include <LibGfx/ImageFormats/PNGLoader.h>
-#include <LibGfx/ImageFormats/TIFFLoader.h>
-#include <LibGfx/ImageFormats/TinyVGLoader.h>
 #include <LibGfx/ImageFormats/WebPLoader.h>
 
 #if !defined(AK_OS_RINOS)
@@ -37,8 +35,6 @@ static ErrorOr<OwnPtr<ImageDecoderPlugin>> probe_and_sniff_for_appropriate_plugi
         { JPEGXLImageDecoderPlugin::sniff, JPEGXLImageDecoderPlugin::create },
 #endif
         { PNGImageDecoderPlugin::sniff, PNGImageDecoderPlugin::create },
-        { TIFFImageDecoderPlugin::sniff, TIFFImageDecoderPlugin::create },
-        { TinyVGImageDecoderPlugin::sniff, TinyVGImageDecoderPlugin::create },
         { WebPImageDecoderPlugin::sniff, WebPImageDecoderPlugin::create },
 #if !defined(AK_OS_RINOS)
         { AVIFImageDecoderPlugin::sniff, AVIFImageDecoderPlugin::create }
@@ -57,8 +53,17 @@ static ErrorOr<OwnPtr<ImageDecoderPlugin>> probe_and_sniff_for_appropriate_plugi
 ErrorOr<ColorSpace> ImageDecoder::color_space()
 {
     auto maybe_cicp = TRY(m_plugin->cicp());
-    if (maybe_cicp.has_value())
-        return ColorSpace::from_cicp(*maybe_cicp);
+    if (maybe_cicp.has_value()) {
+        auto cicp = maybe_cicp.release_value();
+
+        if (cicp.matrix_coefficients() != Media::MatrixCoefficients::Identity)
+            return Error::from_string_literal("Unsupported matrix coefficients for CICP");
+
+        if (cicp.video_full_range_flag() != Media::VideoFullRangeFlag::Full)
+            return Error::from_string_literal("Studio range is not supported");
+
+        return ColorSpace::from_cicp(cicp);
+    }
 
     auto maybe_icc_data = TRY(icc_data());
     if (!maybe_icc_data.has_value())

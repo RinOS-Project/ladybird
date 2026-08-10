@@ -6,20 +6,19 @@
 
 #pragma once
 
-#ifdef ENABLE_RUST
-
-#    include <AK/Error.h>
-#    include <AK/Noncopyable.h>
-#    include <AK/String.h>
-#    include <AK/Utf16View.h>
-#    include <AK/Vector.h>
-#    include <LibRegex/Export.h>
-#    include <RustFFI.h>
+#include <AK/Error.h>
+#include <AK/Noncopyable.h>
+#include <AK/String.h>
+#include <AK/Utf16FlyString.h>
+#include <AK/Utf16View.h>
+#include <AK/Vector.h>
+#include <LibRegex/Export.h>
+#include <RustFFI.h>
 
 namespace regex {
 
 struct RustNamedCaptureGroup {
-    String name;
+    Utf16FlyString name;
     unsigned int index;
 };
 
@@ -27,7 +26,7 @@ class REGEX_API CompiledRustRegex {
     AK_MAKE_NONCOPYABLE(CompiledRustRegex);
 
 public:
-    static ErrorOr<CompiledRustRegex, String> compile(StringView pattern, RustRegexFlags flags);
+    static ErrorOr<CompiledRustRegex, String> compile(Utf16View pattern, RustRegexFlags flags);
 
     ~CompiledRustRegex();
     CompiledRustRegex(CompiledRustRegex&& other);
@@ -74,5 +73,3 @@ private:
 };
 
 } // namespace regex
-
-#endif // ENABLE_RUST

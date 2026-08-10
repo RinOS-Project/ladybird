@@ -5,21 +5,21 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/StyleSheetPrototype.h>
+#include <LibJS/Runtime/ExternalMemory.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/StyleSheet.h>
 #include <LibWeb/DOM/Element.h>
+#include <LibWeb/Infra/SerializedURL.h>
 
 namespace Web::CSS {
 
-StyleSheet::StyleSheet(JS::Realm& realm, MediaList& media)
-    : PlatformObject(realm)
-    , m_media(media)
+StyleSheet::StyleSheet(MediaList& media)
+    : m_media(media)
 {
     m_media->set_associated_style_sheet(*this);
 }
 
-void StyleSheet::visit_edges(Cell::Visitor& visitor)
+void StyleSheet::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_owner_node);
@@ -27,10 +27,24 @@ void StyleSheet::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_media);
 }
 
+size_t StyleSheet::external_memory_size() const
+{
+    auto size = Base::external_memory_size();
+    size = JS::saturating_add_external_memory_size(size, JS::utf16_string_external_memory_size(m_title));
+    return size;
+}
+
 Optional<String> StyleSheet::href() const
 {
     if (m_location.has_value())
         return m_location->to_string();
+    return {};
+}
+
+Optional<Utf16String> StyleSheet::href_for_bindings() const
+{
+    if (auto href = this->href(); href.has_value())
+        return utf16_string_from_url_ascii(*href);
     return {};
 }
 
@@ -45,7 +59,7 @@ void StyleSheet::set_parent_css_style_sheet(CSSStyleSheet* parent)
 }
 
 // https://drafts.csswg.org/cssom/#dom-stylesheet-title
-Optional<String> StyleSheet::title_for_bindings() const
+Optional<Utf16String> StyleSheet::title_for_bindings() const
 {
     // The title attribute must return the title or null if title is the empty string.
     if (m_title.is_empty())

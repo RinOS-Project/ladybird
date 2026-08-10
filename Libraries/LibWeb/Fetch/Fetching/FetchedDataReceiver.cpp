@@ -6,17 +6,18 @@
  */
 
 #include <LibGC/Function.h>
+#include <LibGC/Heap.h>
 #include <LibHTTP/Cache/MemoryCache.h>
-#include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Fetch/Fetching/FetchedDataReceiver.h>
 #include <LibWeb/Fetch/Infrastructure/FetchParams.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Bodies.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
-#include <LibWeb/Fetch/Infrastructure/Task.h>
-#include <LibWeb/HTML/Scripting/ExceptionReporter.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
+#include <LibWeb/Platform/EventLoopPlugin.h>
+#include <LibWeb/Streams/ReadableByteStreamController.h>
 #include <LibWeb/Streams/ReadableStream.h>
-#include <LibWeb/WebIDL/Promise.h>
+#include <LibWeb/Streams/ReadableStreamOperations.h>
+#include <LibWeb/WebIDL/ExceptionOrUtils.h>
 
 namespace Web::Fetch::Fetching {
 
@@ -35,11 +36,13 @@ void FetchedDataReceiver::set_body(GC::Ref<Fetch::Infrastructure::Body> body)
 {
     m_body = body;
     // Flush any bytes that were buffered before the body was set
-    if (!m_buffer.is_empty())
-        m_body->append_sniff_bytes(m_buffer);
+    if (!m_pre_body_sniff_buffer.is_empty()) {
+        m_body->append_sniff_bytes(m_pre_body_sniff_buffer);
+        m_pre_body_sniff_buffer.clear();
+    }
     // If the stream already completed before the body was set,
-    // we missed the set_sniff_bytes_complete() call in handle_network_bytes.
-    if (m_lifecycle_state != LifecycleState::Receiving)
+    // we missed the set_sniff_bytes_complete() call in handle_network_data.
+    if (m_network_complete)
         m_body->set_sniff_bytes_complete();
 }
 
@@ -50,152 +53,128 @@ void FetchedDataReceiver::visit_edges(Visitor& visitor)
     visitor.visit(m_response);
     visitor.visit(m_body);
     visitor.visit(m_stream);
-    visitor.visit(m_pending_promise);
-}
-
-void FetchedDataReceiver::set_pending_promise(GC::Ref<WebIDL::Promise> promise)
-{
-    VERIFY(!m_pending_promise);
-    VERIFY(!m_has_unfulfilled_promise);
-    m_pending_promise = promise;
-
-    if (!buffer_is_eof()) {
-        pull_bytes_into_stream();
-    } else if (m_lifecycle_state == LifecycleState::ReadyToClose) {
-        close_stream();
-    }
 }
 
 // This implements the parallel steps of the pullAlgorithm in HTTP-network-fetch.
 // https://fetch.spec.whatwg.org/#ref-for-in-parallel⑤
-void FetchedDataReceiver::handle_network_bytes(ReadonlyBytes bytes, NetworkState state)
+void FetchedDataReceiver::handle_network_data(JS::Realm& realm, Requests::ResponseData data, NetworkState state)
 {
-    VERIFY(m_lifecycle_state == LifecycleState::Receiving);
-
     if (state == NetworkState::Complete) {
-        VERIFY(bytes.is_empty());
-        m_lifecycle_state = LifecycleState::CompletePending;
+        VERIFY(data.bytes().is_empty());
+        m_network_complete = true;
         // Mark sniff bytes as complete when the stream ends
         if (m_body)
             m_body->set_sniff_bytes_complete();
-    }
 
-    if (state == NetworkState::Ongoing) {
-        m_buffer.append(bytes);
-        // Capture bytes for MIME sniffing
-        if (m_body)
-            m_body->append_sniff_bytes(bytes);
-    }
-
-    if (!m_pending_promise) {
-        if (m_lifecycle_state == LifecycleState::CompletePending && buffer_is_eof() && !m_has_unfulfilled_promise)
-            m_lifecycle_state = LifecycleState::ReadyToClose;
+        // 2. Otherwise, if the bytes transmission for response’s message body is done normally and stream is readable,
+        //    then close stream, and abort these in-parallel steps.
+        Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(GC::Heap::the(), [this, &realm]() {
+            close_stream(realm);
+        }));
         return;
     }
+
+    if (state == NetworkState::Error)
+        return;
 
     // 1. If one or more bytes have been transmitted from response’s message body, then:
-    if (!bytes.is_empty()) {
-        // 1. Let bytes be the transmitted bytes.
-
-        // FIXME: 2. Let codings be the result of extracting header list values given `Content-Encoding` and response’s header list.
-        // FIXME: 3. Increase response’s body info’s encoded size by bytes’s length.
-        // FIXME: 4. Set bytes to the result of handling content codings given codings and bytes.
-        // FIXME: 5. Increase response’s body info’s decoded size by bytes’s length.
-        // FIXME: 6. If bytes is failure, then terminate fetchParams’s controller.
-
-        // 7. Append bytes to buffer.
-        pull_bytes_into_stream();
-
-        // FIXME: 8. If the size of buffer is larger than an upper limit chosen by the user agent, ask the user agent
-        //           to suspend the ongoing fetch.
+    auto bytes = data.bytes();
+    if (bytes.is_empty())
         return;
+
+    // 1. Let bytes be the transmitted bytes.
+
+    // FIXME: 2. Let codings be the result of extracting header list values given `Content-Encoding` and response’s header list.
+    // FIXME: 3. Increase response’s body info’s encoded size by bytes’s length.
+    // FIXME: 4. Set bytes to the result of handling content codings given codings and bytes.
+    // FIXME: 5. Increase response’s body info’s decoded size by bytes’s length.
+    // FIXME: 6. If bytes is failure, then terminate fetchParams’s controller.
+
+    // Capture bytes for MIME sniffing
+    if (m_body) {
+        if (auto const& immutable_bytes = data.immutable_bytes(); immutable_bytes.has_value() && immutable_bytes->is_file_backed() && m_body->source().has<Empty>() && bytes.size() == immutable_bytes->size())
+            m_body->set_source(*immutable_bytes, static_cast<u64>(immutable_bytes->size()));
+        m_body->append_sniff_bytes(bytes);
+    } else if (m_pre_body_sniff_buffer.size() < Infrastructure::MAX_SNIFF_BYTES) {
+        auto space_remaining = Infrastructure::MAX_SNIFF_BYTES - m_pre_body_sniff_buffer.size();
+        m_pre_body_sniff_buffer.append(bytes.slice(0, min(bytes.size(), space_remaining)));
     }
-    // 2. Otherwise, if the bytes transmission for response’s message body is done normally and stream is readable,
-    //    then close stream, and abort these in-parallel steps.
-    if (m_stream->is_readable()) {
-        VERIFY(m_lifecycle_state == LifecycleState::CompletePending);
-        close_stream();
+
+    if (m_http_cache && !m_cache_body_replaces_network_buffer) {
+        if (auto const& immutable_bytes = data.immutable_bytes(); immutable_bytes.has_value() && immutable_bytes->is_file_backed() && m_cache_buffer.is_empty() && !m_cache_body.has_value()) {
+            m_cache_body = *immutable_bytes;
+        } else {
+            if (m_cache_body.has_value()) {
+                m_cache_buffer.append(m_cache_body->bytes());
+                m_cache_body.clear();
+            }
+            m_cache_buffer.append(bytes);
+        }
     }
+
+    // 7. Append bytes to buffer.
+    enqueue_into_stream(realm, bytes);
+
+    // FIXME: 8. If the size of buffer is larger than an upper limit chosen by the user agent, ask the user agent
+    //           to suspend the ongoing fetch.
+}
+
+void FetchedDataReceiver::set_cached_response_body(Core::ImmutableBytes body)
+{
+    if (!m_http_cache)
+        return;
+
+    m_cache_buffer.clear();
+    m_cache_body = move(body);
+    m_cache_body_replaces_network_buffer = true;
 }
 
 // This implements the parallel steps of the pullAlgorithm in HTTP-network-fetch.
 // https://fetch.spec.whatwg.org/#ref-for-in-parallel④
-void FetchedDataReceiver::pull_bytes_into_stream()
+void FetchedDataReceiver::enqueue_into_stream(JS::Realm& realm, ReadonlyBytes bytes)
 {
-    VERIFY(m_lifecycle_state == LifecycleState::Receiving || m_lifecycle_state == LifecycleState::CompletePending);
-
     // FIXME: 1. If the size of buffer is smaller than a lower limit chosen by the user agent and the ongoing fetch
     //           is suspended, resume the fetch.
 
-    // 2. Wait until buffer is not empty.
-    // NB: It would be nice to avoid a copy here, but ReadableStream::pull_from_bytes currently requires an allocated
-    //     ByteBuffer to create a JS::ArrayBuffer.
-    auto bytes = copy_unpulled_bytes();
-    VERIFY(!bytes.is_empty());
+    if (!m_stream->is_readable())
+        return;
 
-    // 3. Queue a fetch task to run the following steps, with fetchParams’s task destination.
-    VERIFY(!m_has_unfulfilled_promise);
-    m_has_unfulfilled_promise = true;
+    auto& controller = m_stream->controller()->get<GC::Ref<Streams::ReadableByteStreamController>>();
+    HTML::TemporaryExecutionContext execution_context { realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
 
-    Infrastructure::queue_fetch_task(
-        m_fetch_params->controller(),
-        m_fetch_params->task_destination(),
-        GC::create_function(heap(), [this, bytes = move(bytes), pending_promise = m_pending_promise]() mutable {
-            m_has_unfulfilled_promise = false;
-            VERIFY(m_lifecycle_state == LifecycleState::Receiving || m_lifecycle_state == LifecycleState::CompletePending);
+    // 1. Pull from bytes buffer into stream.
+    auto byte_buffer = MUST(ByteBuffer::copy(bytes));
 
-            HTML::TemporaryExecutionContext execution_context { m_stream->realm(), HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
-
-            // 1. Pull from bytes buffer into stream.
-            if (auto result = m_stream->pull_from_bytes(move(bytes)); result.is_error()) {
-                auto throw_completion = Bindings::exception_to_throw_completion(m_stream->vm(), result.release_error());
-
-                dbgln("FetchedDataReceiver: Stream error pulling bytes");
-                HTML::report_exception(throw_completion, m_stream->realm());
-
-                return;
-            }
-
-            // 2. If stream is errored, then terminate fetchParams’s controller.
-            if (m_stream->is_errored())
-                m_fetch_params->controller()->terminate();
-
-            // 3. Resolve promise with undefined.
-            WebIDL::resolve_promise(m_stream->realm(), *pending_promise, JS::js_undefined());
-
-            if (m_lifecycle_state == LifecycleState::CompletePending && buffer_is_eof())
-                m_lifecycle_state = LifecycleState::ReadyToClose;
-        }));
-
-    m_pending_promise = {};
-}
-
-void FetchedDataReceiver::close_stream()
-{
-    VERIFY(m_has_unfulfilled_promise == 0);
-    VERIFY(buffer_is_eof());
-
-    WebIDL::resolve_promise(m_stream->realm(), *m_pending_promise, JS::js_undefined());
-    m_pending_promise = {};
-    m_lifecycle_state = LifecycleState::Closed;
-    m_stream->close();
-
-    if (m_http_cache) {
-        auto request = m_fetch_params->request();
-
-        if (m_response && request->cache_mode() != HTTP::CacheMode::NoStore)
-            m_http_cache->finalize_entry(request->current_url(), request->method(), request->header_list(), m_response->status(), m_response->header_list(), move(m_buffer));
-
-        m_http_cache.clear();
+    if (auto result = Streams::readable_byte_stream_controller_enqueue_native_bytes(realm, *controller, move(byte_buffer)); result.is_error()) {
+        auto throw_completion = WebIDL::exception_to_throw_completion(realm.vm(), realm, result.release_error());
+        // 2. If stream is errored, then terminate fetchParams’s controller.
+        Streams::readable_byte_stream_controller_error(*controller, throw_completion.value());
+        m_fetch_params->controller()->terminate();
     }
 }
 
-ByteBuffer FetchedDataReceiver::copy_unpulled_bytes()
+void FetchedDataReceiver::close_stream(JS::Realm& realm)
 {
-    auto bytes = MUST(m_buffer.slice(m_pulled_bytes, m_buffer.size() - m_pulled_bytes));
-    m_pulled_bytes += bytes.size();
+    if (m_http_cache) {
+        auto request = m_fetch_params->request();
+        if (m_stream->is_readable() && !m_fetch_params->is_canceled()
+            && m_response && request->cache_mode() != HTTP::CacheMode::NoStore) {
+            auto response_body = m_cache_body.has_value()
+                ? m_cache_body.release_value()
+                : Core::ImmutableBytes::adopt(move(m_cache_buffer));
+            m_http_cache->finalize_entry(request->current_url(), request->method(), request->header_list(), m_response->status(), m_response->header_list(), move(response_body));
+        }
 
-    return bytes;
+        m_http_cache.clear();
+        m_cache_body.clear();
+    }
+
+    if (!m_stream->is_readable())
+        return;
+
+    HTML::TemporaryExecutionContext execution_context { realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
+
+    m_stream->close();
 }
 
 }

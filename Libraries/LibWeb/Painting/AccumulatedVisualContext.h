@@ -6,37 +6,48 @@
 
 #pragma once
 
-#include <AK/AtomicRefCounted.h>
 #include <AK/DistinctNumeric.h>
 #include <AK/Variant.h>
 #include <AK/Vector.h>
 #include <LibGfx/CompositingAndBlendingOperator.h>
+#include <LibGfx/CornerRadii.h>
 #include <LibGfx/Filter.h>
+#include <LibGfx/Forward.h>
 #include <LibGfx/Matrix4x4.h>
 #include <LibGfx/Path.h>
 #include <LibGfx/Point.h>
 #include <LibGfx/Rect.h>
 #include <LibGfx/WindingRule.h>
-#include <LibWeb/Painting/BorderRadiiData.h>
-#include <LibWeb/Painting/ScrollFrame.h>
+#include <LibIPC/Forward.h>
+#include <LibWeb/Export.h>
+#include <LibWeb/Painting/ScrollNodeState.h>
 #include <LibWeb/PixelUnits.h>
+
+namespace Web::CSS {
+
+class ComputedValues;
+
+}
 
 namespace Web::Painting {
 
+class Paintable;
 class ScrollStateSnapshot;
 
-AK_TYPEDEF_DISTINCT_ORDERED_ID(size_t, VisualContextIndex);
-
+// The node's own VisualContextIndex keys the scroll offset snapshot; the paintable that owns the
+// node and its sticky constraints live in the ScrollState entry addressed by state_slot, stamped
+// at registration. The slot is process-local bookkeeping: it stays off the wire and takes no part
+// in tree compatibility or damage comparisons.
 struct ScrollData {
-    ScrollFrameIndex scroll_frame_index;
-    bool is_sticky;
+    bool is_sticky { false };
+    ScrollStateSlot state_slot { NO_SCROLL_STATE_SLOT };
 };
 
 struct ClipData {
     DevicePixelRect rect;
-    CornerRadii corner_radii;
+    Gfx::CornerRadii corner_radii;
 
-    ClipData(DevicePixelRect r, CornerRadii radii)
+    ClipData(DevicePixelRect r, Gfx::CornerRadii radii)
         : rect(r)
         , corner_radii(radii)
     {
@@ -48,11 +59,22 @@ struct ClipData {
 struct TransformData {
     Gfx::FloatMatrix4x4 matrix;
     Gfx::FloatPoint origin;
+    bool flattens_inherited_transform { false };
+
+    Gfx::FloatMatrix4x4 matrix_including_origin() const;
 };
 
 struct PerspectiveData {
     Gfx::FloatMatrix4x4 matrix;
+    bool flattens_inherited_transform { false };
 };
+
+struct BackfaceVisibilityData {
+    VisualContextIndex plane_root_index;
+    bool flattens_inherited_transform { false };
+};
+
+bool should_cull_back_face(Gfx::FloatMatrix4x4 const& accumulated_matrix, Gfx::FloatMatrix4x4 const& plane_root_matrix);
 
 struct ClipPathData {
     Gfx::Path path;
@@ -73,7 +95,38 @@ struct EffectsData {
     }
 };
 
-using VisualContextData = Variant<ScrollData, ClipData, TransformData, PerspectiveData, ClipPathData, EffectsData>;
+enum class MaskLayerOrigin : u8 {
+    CssMaskLayers,
+    SvgMask,
+    SvgClip,
+};
+
+struct MaskData {
+    DevicePixelRect rect;
+    Gfx::MaskKind kind { Gfx::MaskKind::Alpha };
+    MaskLayerOrigin origin { MaskLayerOrigin::CssMaskLayers };
+};
+
+// Translates by another scroll node's negated offset during display list replay, keeping fixed
+// backgrounds stationary relative to the viewport regardless of scroll position.
+struct ScrollCompensation {
+    VisualContextIndex scroll_node_index;
+};
+
+// One scroll node's contribution to the default scroll shift of an anchor-positioned box, masked to the axes in which
+// the box compensates for scroll. Nodes that move the box but not its default anchor contribute negated.
+struct AnchorScrollShift {
+    VisualContextIndex scroll_node_index;
+    bool negate { false };
+    bool compensate_horizontal_scroll { true };
+    bool compensate_vertical_scroll { true };
+
+    Gfx::FloatPoint masked_offset(ScrollStateSnapshot const&) const;
+};
+
+using VisualContextData = Variant<ScrollData, ClipData, TransformData, PerspectiveData, BackfaceVisibilityData, ClipPathData, EffectsData, ScrollCompensation, AnchorScrollShift, MaskData>;
+
+Optional<TransformData> compute_transform(Paintable const&, CSS::ComputedValues const&, double pixel_ratio);
 
 struct AccumulatedVisualContextNode {
     VisualContextData data;
@@ -82,29 +135,139 @@ struct AccumulatedVisualContextNode {
     bool has_empty_effective_clip { false };
 };
 
-class AccumulatedVisualContextTree : public AtomicRefCounted<AccumulatedVisualContextTree> {
+class AccumulatedVisualContextTree {
 public:
-    static NonnullRefPtr<AccumulatedVisualContextTree> create();
+    enum class IncludeVisualViewportTransform {
+        No,
+        Yes,
+    };
 
-    VisualContextIndex append(VisualContextData data, VisualContextIndex parent_index);
+    enum class ClipBehavior {
+        Respect,
+        // Transform the point without rejecting it against clip rects and clip paths. Used when searching for the
+        // closest caret position within a scope the point may lie entirely outside of.
+        Ignore,
+    };
+
+    static WEB_API AccumulatedVisualContextTree create();
+    static WEB_API AccumulatedVisualContextTree create(TransformData visual_viewport_transform);
+    // For nested display list trees (masks, patterns, background tiles) whose content is recorded
+    // in outer coordinates but replayed into a list-local surface: the offset becomes the root
+    // transform, keeping the tree the single source of coordinate truth for the list.
+    static WEB_API AccumulatedVisualContextTree create_with_content_offset(Gfx::IntPoint content_offset);
+
+    AccumulatedVisualContextTree(AccumulatedVisualContextTree const&) = default;
+    AccumulatedVisualContextTree& operator=(AccumulatedVisualContextTree const&) = default;
+    AccumulatedVisualContextTree(AccumulatedVisualContextTree&&) = default;
+    AccumulatedVisualContextTree& operator=(AccumulatedVisualContextTree&&) = default;
+    ~AccumulatedVisualContextTree() = default;
+
+    u64 version() const { return m_version; }
+
+    WEB_API VisualContextIndex append(VisualContextData data, VisualContextIndex parent_index);
+    WEB_API void set_visual_viewport_transform(TransformData);
+    WEB_API bool is_compatible_with(AccumulatedVisualContextTree const&) const;
+    WEB_API void reuse_version_from(AccumulatedVisualContextTree const&);
 
     AccumulatedVisualContextNode const& node_at(VisualContextIndex index) const { return m_nodes[index.value()]; }
+    AccumulatedVisualContextNode& node_at(VisualContextIndex index) { return m_nodes[index.value()]; }
+    ReadonlySpan<AccumulatedVisualContextNode> nodes() const { return m_nodes.span(); }
 
-    VisualContextIndex find_common_ancestor(VisualContextIndex a, VisualContextIndex b) const;
-    Optional<Gfx::FloatPoint> transform_point_for_hit_test(VisualContextIndex, Gfx::FloatPoint, ScrollStateSnapshot const&) const;
+    Optional<Gfx::FloatPoint> transform_point_for_hit_test(VisualContextIndex, Gfx::FloatPoint, ScrollStateSnapshot const&, ClipBehavior = ClipBehavior::Respect) const;
     Gfx::FloatPoint inverse_transform_point(VisualContextIndex, Gfx::FloatPoint) const;
-    Gfx::FloatRect transform_rect_to_viewport(VisualContextIndex, Gfx::FloatRect const&, ScrollStateSnapshot const&) const;
+    Gfx::FloatRect transform_rect_to_viewport(VisualContextIndex, Gfx::FloatRect const&, ScrollStateSnapshot const&, IncludeVisualViewportTransform = IncludeVisualViewportTransform::Yes) const;
     void dump(VisualContextIndex, StringBuilder&) const;
 
-    bool is_effect(VisualContextIndex i) const { return m_nodes[i.value()].data.has<EffectsData>(); }
     bool has_empty_effective_clip(VisualContextIndex i) const { return m_nodes[i.value()].has_empty_effective_clip; }
 
+    ScrollStateSlot scroll_state_slot_for_node(VisualContextIndex index) const
+    {
+        if (!index.value())
+            return NO_SCROLL_STATE_SLOT;
+        return m_nodes[index.value()].data.get<ScrollData>().state_slot;
+    }
+
 private:
-    AccumulatedVisualContextTree() = default;
+    AccumulatedVisualContextTree(u64 version, Vector<AccumulatedVisualContextNode>&& nodes)
+        : m_version(version)
+        , m_nodes(move(nodes))
+    {
+    }
 
     Vector<size_t, 8> build_ancestor_chain(VisualContextIndex index) const;
+    bool chain_contains_3d_transform(VisualContextIndex index) const;
 
+    u64 m_version { 0 };
     Vector<AccumulatedVisualContextNode> m_nodes;
+
+    template<typename T>
+    friend ErrorOr<void> IPC::encode(IPC::Encoder&, T const&);
+    template<typename T>
+    friend ErrorOr<T> IPC::decode(IPC::Decoder&);
 };
+
+}
+
+namespace IPC {
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::ScrollData const&);
+template<>
+WEB_API ErrorOr<Web::Painting::ScrollData> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::ClipData const&);
+template<>
+WEB_API ErrorOr<Web::Painting::ClipData> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::TransformData const&);
+template<>
+WEB_API ErrorOr<Web::Painting::TransformData> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::PerspectiveData const&);
+template<>
+WEB_API ErrorOr<Web::Painting::PerspectiveData> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::BackfaceVisibilityData const&);
+template<>
+WEB_API ErrorOr<Web::Painting::BackfaceVisibilityData> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::ClipPathData const&);
+template<>
+WEB_API ErrorOr<Web::Painting::ClipPathData> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::EffectsData const&);
+template<>
+WEB_API ErrorOr<Web::Painting::EffectsData> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::MaskData const&);
+template<>
+WEB_API ErrorOr<Web::Painting::MaskData> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::ScrollCompensation const&);
+template<>
+WEB_API ErrorOr<Web::Painting::ScrollCompensation> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::AnchorScrollShift const&);
+template<>
+WEB_API ErrorOr<Web::Painting::AnchorScrollShift> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::AccumulatedVisualContextNode const&);
+template<>
+WEB_API ErrorOr<Web::Painting::AccumulatedVisualContextNode> decode(Decoder&);
+
+template<>
+WEB_API ErrorOr<void> encode(Encoder&, Web::Painting::AccumulatedVisualContextTree const&);
+template<>
+WEB_API ErrorOr<Web::Painting::AccumulatedVisualContextTree> decode(Decoder&);
 
 }

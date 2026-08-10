@@ -6,7 +6,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/SVGTextPositioningElementPrototype.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/StyleValues/LengthStyleValue.h>
 #include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
@@ -30,12 +29,6 @@ SVGTextPositioningElement::SVGTextPositioningElement(DOM::Document& document, DO
 {
 }
 
-void SVGTextPositioningElement::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGTextPositioningElement);
-    Base::initialize(realm);
-}
-
 void SVGTextPositioningElement::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
@@ -46,7 +39,7 @@ void SVGTextPositioningElement::visit_edges(Visitor& visitor)
     visitor.visit(m_rotate);
 }
 
-void SVGTextPositioningElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
+void SVGTextPositioningElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
 {
     Base::attribute_changed(name, old_value, value, namespace_);
 
@@ -68,12 +61,20 @@ TextPositioning SVGTextPositioningElement::text_positioning() const
 
     // https://svgwg.org/svg2-draft/text.html#TSpanAttributes
     // FIXME: This only handles single values, not lists.
-    auto resolve_value = [&](FlyString const& attribute) -> Vector<TextPositioning::Position> {
+    auto resolve_value = [&](Utf16FlyString const& attribute) -> Vector<TextPositioning::Position> {
         auto raw_value = get_attribute_value(attribute);
+
+        CSS::ComputationContext computation_context {
+            .length_resolution_context = CSS::Length::ResolutionContext::for_element(*this),
+            .abstract_element = *this,
+            // NB: color_scheme is irrelevant for resolving text positioning attribute values so isn't set.
+        };
+
+        // FIXME: Should we support tree-counting and/or calculated values here?
 
         auto style_value = parse_css_type(parsing_params, raw_value, CSS::ValueType::LengthPercentage);
         if (auto const* length_style_value = as_if<CSS::LengthStyleValue>(style_value.ptr()))
-            return { CSS::LengthPercentage::from_style_value(*length_style_value) };
+            return { CSS::LengthPercentage::from_style_value(*length_style_value->absolutized(computation_context)) };
 
         if (auto const* percentage_style_value = as_if<CSS::PercentageStyleValue>(style_value.ptr()))
             return { CSS::LengthPercentage::from_style_value(*percentage_style_value) };
@@ -96,7 +97,7 @@ TextPositioning SVGTextPositioningElement::text_positioning() const
 }
 
 GC::Ref<SVGAnimatedLengthList> SVGTextPositioningElement::ensure_length_list(GC::Ptr<SVGAnimatedLengthList>& list,
-    FlyString const& attribute_name) const
+    Utf16FlyString const& attribute_name) const
 {
     if (!list) {
         // FIXME: This only handles single values, not lists.
@@ -105,9 +106,9 @@ GC::Ref<SVGAnimatedLengthList> SVGTextPositioningElement::ensure_length_list(GC:
         if (maybe_number_percentage.has_value())
             value = maybe_number_percentage.release_value().value();
 
-        auto length = SVGLength::create(realm(), SVGLength::SVG_LENGTHTYPE_NUMBER, value, SVGLength::ReadOnly::Yes);
-        auto length_list = SVGLengthList::create(realm(), { length }, ReadOnlyList::Yes);
-        list = SVGAnimatedLengthList::create(realm(), length_list);
+        auto length = SVGLength::create_detached(document().relevant_settings_object().realm(), CSS::NumberStyleValue::create(value), SVGLength::ReadOnly::Yes);
+        auto length_list = SVGLengthList::create(Vector<GC::Ref<SVGLength>> { length }, ReadOnlyList::Yes);
+        list = SVGAnimatedLengthList::create(length_list);
     }
     return *list;
 }
@@ -146,9 +147,9 @@ GC::Ref<SVGAnimatedNumberList> SVGTextPositioningElement::rotate()
         if (maybe_number_percentage.has_value() && !maybe_number_percentage.value().is_percentage())
             value = maybe_number_percentage.release_value().value();
 
-        auto number = SVGNumber::create(realm(), value, SVGNumber::ReadOnly::Yes);
-        auto number_list = SVGNumberList::create(realm(), { number }, ReadOnlyList::Yes);
-        m_rotate = SVGAnimatedNumberList::create(realm(), number_list);
+        auto number = SVGNumber::create(value, SVGNumber::ReadOnly::Yes);
+        auto number_list = SVGNumberList::create({ number }, ReadOnlyList::Yes);
+        m_rotate = SVGAnimatedNumberList::create(number_list);
     }
     return *m_rotate;
 }

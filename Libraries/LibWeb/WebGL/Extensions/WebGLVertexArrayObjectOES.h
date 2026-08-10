@@ -10,21 +10,19 @@
 #include <LibWeb/WebGL/Types.h>
 #include <LibWeb/WebGL/WebGLObject.h>
 
-namespace Web::WebGL::Extensions {
+namespace Web::WebGL {
 
 class WebGLVertexArrayObjectOES : public WebGLObject {
-    WEB_PLATFORM_OBJECT(WebGLVertexArrayObjectOES, WebGLObject);
+    WEB_WRAPPABLE(WebGLVertexArrayObjectOES, WebGLObject);
     GC_DECLARE_ALLOCATOR(WebGLVertexArrayObjectOES);
 
 public:
-    static GC::Ref<WebGLVertexArrayObjectOES> create(JS::Realm& realm, WebGLRenderingContextBase&, GLuint handle);
+    static GC::Ref<WebGLVertexArrayObjectOES> create(WebGLRenderingContextBase&, GLuint handle);
 
     virtual ~WebGLVertexArrayObjectOES() override;
 
 protected:
     explicit WebGLVertexArrayObjectOES(JS::Realm&, WebGLRenderingContextBase&, GLuint handle);
-
-    virtual void initialize(JS::Realm&) override;
 };
 
 }

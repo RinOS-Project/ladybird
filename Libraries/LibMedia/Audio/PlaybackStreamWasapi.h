@@ -18,12 +18,11 @@ public:
 
     virtual SampleSpecification sample_specification() const override;
 
-    // The overrun callback must be realtime safe. The buffer size might be small.
-    virtual void set_underrun_callback(Function<void()>) override;
-
     virtual NonnullRefPtr<Core::ThreadedPromise<AK::Duration>> resume() override;
     virtual NonnullRefPtr<Core::ThreadedPromise<void>> drain_buffer_and_suspend() override;
     virtual NonnullRefPtr<Core::ThreadedPromise<void>> discard_buffer_and_suspend() override;
+
+    virtual void notify_data_available() override;
 
     virtual AK::Duration total_time_played() const override;
 

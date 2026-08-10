@@ -13,8 +13,8 @@
 namespace Wasm {
 
 struct Names {
-    static HashMap<OpCode, ByteString> instruction_names;
-    static HashMap<ByteString, OpCode> instructions_by_name;
+    static HashMap<OpCode, ByteString>& instruction_names;
+    static HashMap<ByteString, OpCode>& instructions_by_name;
 };
 
 ByteString instruction_name(OpCode const& opcode)
@@ -510,22 +510,22 @@ void Printer::print(Wasm::Instruction const& instruction)
                 TemporaryChange change { m_indent, m_indent + 1 };
                 print(args.block_type);
                 print_indent();
-                print("(else {}) (end {})", args.else_ip.has_value() ? ByteString::number(args.else_ip->value()) : "(none)", args.end_ip.value());
-                if (args.meta.has_value())
-                    print(" (meta arity {} params {})", args.meta->arity, args.meta->parameter_count);
+                print("(else {}) (end {})", args.else_ip().has_value() ? ByteString::number(args.else_ip()->value()) : "(none)", args.end_ip.value());
+                if (args.meta.arity != 0 || args.meta.parameter_count != 0)
+                    print(" (meta arity {} params {})", args.meta.arity, args.meta.parameter_count);
                 else
                     print(" (meta none)");
                 print(")");
             },
             [&](Instruction::TryTableArgs const& args) {
                 print("(try_table ");
-                print(args.try_.block_type);
+                print(args.block_type);
                 print(" (catches\n");
                 TemporaryChange change { m_indent, m_indent + 1 };
-                for (auto& catch_ : args.catches)
+                for (auto& catch_ : args.catches())
                     print(catch_);
                 print_indent();
-                print(") (end {}))", args.try_.end_ip.value());
+                print(") (end {}))", args.end_ip.value());
             },
             [&](Instruction::TableBranchArgs const& args) {
                 print("(table_branch");
@@ -535,6 +535,17 @@ void Printer::print(Wasm::Instruction const& instruction)
             },
             [&](Instruction::TableElementArgs const& args) { print("(table_element (table index {}) (element index {}))", args.table_index.value(), args.element_index.value()); },
             [&](Instruction::TableTableArgs const& args) { print("(table_table (table index {}) (table index {}))", args.lhs.value(), args.rhs.value()); },
+            [&](Instruction::StructFieldArgs const& args) { print("(type index {}) (field index {})", args.type_index.value(), args.field_index); },
+            [&](Instruction::ArrayNewFixedArgs const& args) { print("(type index {}) (count {})", args.type_index.value(), args.count); },
+            [&](Instruction::ArrayDataArgs const& args) { print("(type index {}) (data index {})", args.type_index.value(), args.data_index.value()); },
+            [&](Instruction::ArrayElemArgs const& args) { print("(type index {}) (element index {})", args.type_index.value(), args.element_index.value()); },
+            [&](Instruction::ArrayCopyArgs const& args) { print("(to (type index {}) from (type index {}))", args.destination_type_index.value(), args.source_type_index.value()); },
+            [&](Instruction::BranchOnCastArgs const& args) {
+                print("(label index {}) (source (type {}{})) (target (type {}{}))",
+                    args.branch.label.value(),
+                    args.source_type.kind_name(), args.source_type.is_nullable() ? " nullable"sv : ""sv,
+                    args.target_type.kind_name(), args.target_type.is_nullable() ? " nullable"sv : ""sv);
+            },
             [&](ValueType const& type) { print(type); },
             [&](Vector<ValueType> const&) { print("(types...)"); },
             [&](auto const& value) { print("(const {})", value); });
@@ -806,20 +817,34 @@ void Printer::print(Wasm::Value const& value, Wasm::ValueType const& type)
     case ValueType::V128:
         print("v128({:x})", value.value());
         break;
+    case ValueType::I8:
+        print("{}", value.to<i8>());
+        break;
+    case ValueType::I16:
+        print("{}", value.to<i16>());
+        break;
     case ValueType::FunctionReference:
+    case ValueType::NoFunctionReference:
     case ValueType::ExternReference:
+    case ValueType::NoExternReference:
     case ValueType::ExceptionReference:
+    case ValueType::NoExceptionReference:
+    case ValueType::AnyReference:
+    case ValueType::EqReference:
+    case ValueType::I31Reference:
+    case ValueType::StructReference:
+    case ValueType::ArrayReference:
+    case ValueType::NoneReference:
         print("addr({})",
             value.to<Reference>().ref().visit(
                 [](Wasm::Reference::Null const&) { return ByteString("null"); },
                 [](Wasm::Reference::Exception const&) { return ByteString("exception"); },
+                [](Wasm::Reference::I31 const& ref) { return ByteString::formatted("i31({})", ref.value); },
+                [](Wasm::Reference::GcObject const& ref) { return ByteString::formatted("gc-object({:p})", ref.ptr); },
                 [](auto const& ref) { return ByteString::number(ref.address.value()); }));
         break;
     case ValueType::TypeUseReference:
-        print("unsupported-type-use-ref({})", type.unsafe_typeindex());
-        break;
-    case ValueType::UnsupportedHeapReference:
-        print("unsupported-heap-ref");
+        print("typed-ref({})", type.unsafe_typeindex());
         break;
     }
     TemporaryChange<size_t> change { m_indent, 0 };
@@ -840,12 +865,14 @@ void Printer::print(Wasm::Reference const& value)
         value.ref().visit(
             [](Wasm::Reference::Null const&) { return ByteString("null"); },
             [](Wasm::Reference::Exception const&) { return ByteString("exception"); },
+            [](Wasm::Reference::I31 const& ref) { return ByteString::formatted("i31({})", ref.value); },
+            [](Wasm::Reference::GcObject const& ref) { return ByteString::formatted("gc-object({:p})", ref.ptr); },
             [](auto const& ref) { return ByteString::number(ref.address.value()); }));
 }
 
 }
 
-HashMap<Wasm::OpCode, ByteString> Wasm::Names::instruction_names {
+HashMap<Wasm::OpCode, ByteString>& Wasm::Names::instruction_names = *new HashMap<Wasm::OpCode, ByteString> {
     { Instructions::unreachable, "unreachable" },
     { Instructions::nop, "nop" },
     { Instructions::block, "block" },
@@ -1034,6 +1061,10 @@ HashMap<Wasm::OpCode, ByteString> Wasm::Names::instruction_names {
     { Instructions::ref_null, "ref.null" },
     { Instructions::ref_is_null, "ref.is.null" },
     { Instructions::ref_func, "ref.func" },
+    { Instructions::ref_eq, "ref.eq" },
+    { Instructions::ref_as_non_null, "ref.as_non_null" },
+    { Instructions::br_on_null, "br_on_null" },
+    { Instructions::br_on_non_null, "br_on_non_null" },
     { Instructions::i32_trunc_sat_f32_s, "i32.trunc_sat_f32_s" },
     { Instructions::i32_trunc_sat_f32_u, "i32.trunc_sat_f32_u" },
     { Instructions::i32_trunc_sat_f64_s, "i32.trunc_sat_f64_s" },
@@ -1308,6 +1339,37 @@ HashMap<Wasm::OpCode, ByteString> Wasm::Names::instruction_names {
     { Instructions::i16x8_relaxed_q15mulr_s, "i16x8.relaxed_q15mulr_s" },
     { Instructions::i16x8_relaxed_dot_i8x16_i7x16_s, "i16x8.relaxed_dot_i8x16_i7x16_s" },
     { Instructions::i32x4_relaxed_dot_i8x16_i7x16_add_s, "i32x4.relaxed_dot_i8x16_i7x16_add_s" },
+    { Instructions::struct_new, "struct.new" },
+    { Instructions::struct_new_default, "struct.new_default" },
+    { Instructions::struct_get, "struct.get" },
+    { Instructions::struct_get_s, "struct.get_s" },
+    { Instructions::struct_get_u, "struct.get_u" },
+    { Instructions::struct_set, "struct.set" },
+    { Instructions::array_new, "array.new" },
+    { Instructions::array_new_default, "array.new_default" },
+    { Instructions::array_new_fixed, "array.new_fixed" },
+    { Instructions::array_new_data, "array.new_data" },
+    { Instructions::array_new_elem, "array.new_elem" },
+    { Instructions::array_get, "array.get" },
+    { Instructions::array_get_s, "array.get_s" },
+    { Instructions::array_get_u, "array.get_u" },
+    { Instructions::array_set, "array.set" },
+    { Instructions::array_len, "array.len" },
+    { Instructions::array_fill, "array.fill" },
+    { Instructions::array_copy, "array.copy" },
+    { Instructions::array_init_data, "array.init_data" },
+    { Instructions::array_init_elem, "array.init_elem" },
+    { Instructions::ref_test, "ref.test" },
+    { Instructions::ref_test_null, "ref.test null" },
+    { Instructions::ref_cast, "ref.cast" },
+    { Instructions::ref_cast_null, "ref.cast null" },
+    { Instructions::br_on_cast, "br_on_cast" },
+    { Instructions::br_on_cast_fail, "br_on_cast_fail" },
+    { Instructions::any_convert_extern, "any.convert_extern" },
+    { Instructions::extern_convert_any, "extern.convert_any" },
+    { Instructions::ref_i31, "ref.i31" },
+    { Instructions::i31_get_s, "i31.get_s" },
+    { Instructions::i31_get_u, "i31.get_u" },
     { Instructions::structured_else, "synthetic:else" },
     { Instructions::structured_end, "synthetic:end" },
     { Instructions::synthetic_i32_add2local, "synthetic:i32.add2local" },
@@ -1368,4 +1430,4 @@ HashMap<Wasm::OpCode, ByteString> Wasm::Names::instruction_names {
     { Instructions::synthetic_i64_shrs2local, "synthetic:i64.shrs2local" },
     { Instructions::synthetic_local_seti64_const, "synthetic:local.seti64_const" },
 };
-HashMap<ByteString, Wasm::OpCode> Wasm::Names::instructions_by_name;
+HashMap<ByteString, Wasm::OpCode>& Wasm::Names::instructions_by_name = *new HashMap<ByteString, Wasm::OpCode>;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Gregory Bertilson <zaggy1024@gmail.com>
+ * Copyright (c) 2025-present, the Ladybird developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,13 +9,14 @@
 #include <LibMedia/PlaybackStates/PlaybackStateHandler.h>
 
 #define ENUMERATE_PLAYBACK_STATE_HANDLERS(X) \
+    X(StartingStateHandler)                  \
     X(BufferingStateHandler)                 \
     X(PlaybackStateHandler)                  \
     X(PlayingStateHandler)                   \
     X(PausedStateHandler)                    \
     X(ResumingStateHandler)                  \
     X(SeekingStateHandler)                   \
-    X(SuspendedStateHandler)
+    X(EndedStateHandler)
 
 namespace Media {
 

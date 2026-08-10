@@ -5,31 +5,25 @@
  */
 
 #include <LibJS/Runtime/Realm.h>
-#include <LibWeb/Bindings/EXTBlendMinMaxPrototype.h>
+#include <LibWeb/Bindings/EXTBlendMinMax.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/WebGL/Extensions/EXTBlendMinMax.h>
-#include <LibWeb/WebGL/OpenGLContext.h>
+#include <LibWeb/WebGL/WebGLContextProxy.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
-namespace Web::WebGL::Extensions {
+namespace Web::WebGL {
 
 GC_DEFINE_ALLOCATOR(EXTBlendMinMax);
 
-JS::ThrowCompletionOr<GC::Ref<JS::Object>> EXTBlendMinMax::create(JS::Realm& realm, GC::Ref<WebGLRenderingContextBase> context)
+GC::Ref<Bindings::Wrappable> EXTBlendMinMax::create(GC::Ref<WebGLRenderingContextBase> context)
 {
+    auto& realm = context->realm();
     return realm.create<EXTBlendMinMax>(realm, context);
 }
 
-EXTBlendMinMax::EXTBlendMinMax(JS::Realm& realm, GC::Ref<WebGLRenderingContextBase> context)
-    : PlatformObject(realm)
-    , m_context(context)
+EXTBlendMinMax::EXTBlendMinMax(JS::Realm&, GC::Ref<WebGLRenderingContextBase> context)
+    : m_context(context)
 {
-}
-
-void EXTBlendMinMax::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(EXTBlendMinMax);
-    Base::initialize(realm);
 }
 
 void EXTBlendMinMax::visit_edges(Visitor& visitor)

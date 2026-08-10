@@ -1,6 +1,7 @@
 set(WEBWORKER_SOURCES
     ConnectionFromClient.cpp
     PageHost.cpp
+    WebWorkerCompositorHost.cpp
     WorkerHost.cpp
 )
 
@@ -20,15 +21,18 @@ endif()
 
 add_executable(WebWorker main.cpp)
 
-target_include_directories(WebWorker PRIVATE ${LADYBIRD_SOURCE_DIR})
-if (RINOS_LEGACY_OPENSSL)
-    target_link_libraries(WebWorker PRIVATE webworkerservice OpenSSL::Crypto OpenSSL::SSL)
+if (LINUX)
+    target_sources(WebWorker PRIVATE ../RendererSandboxLinux.cpp)
+elseif (APPLE)
+    target_sources(WebWorker PRIVATE ../RendererSandboxMacOS.cpp)
 else()
-    target_link_libraries(WebWorker PRIVATE webworkerservice)
+    target_sources(WebWorker PRIVATE ../RendererSandboxUnimplemented.cpp)
 endif()
 
+target_include_directories(WebWorker PRIVATE ${LADYBIRD_SOURCE_DIR})
+target_link_libraries(WebWorker PRIVATE webworkerservice LibSandbox OpenSSL::Crypto OpenSSL::SSL)
+
 if(WIN32)
-    find_package(pthread REQUIRED)
     target_include_directories(WebWorker PRIVATE $<BUILD_INTERFACE:${PTHREAD_INCLUDE_DIR}>)
-    lagom_windows_bin(WebWorker CONSOLE)
+    ladybird_windows_bin(WebWorker CONSOLE)
 endif()

@@ -13,12 +13,18 @@
 //! - <https://tc39.es/ecma262/#sec-parsepattern>
 use crate::ast::*;
 
+const MAX_BRACED_QUANTIFIER: u32 = i32::MAX as u32;
+
 /// Parse a regex pattern string with the given flags.
 ///
 /// Spec entry point: `ParsePattern`.
 /// <https://tc39.es/ecma262/#sec-parsepattern>
 pub fn parse(source: &str, flags: Flags) -> Result<Pattern, Error> {
     Parser::new(source, flags).parse()
+}
+
+pub fn parse_chars(source: Vec<char>, flags: Flags) -> Result<Pattern, Error> {
+    Parser::new_from_chars(source, flags).parse()
 }
 
 /// Parse a flags string like `"gimsu"` into [`Flags`].
@@ -75,10 +81,8 @@ impl std::fmt::Display for Error {
             Self::InvalidQuantifier => write!(f, "invalid quantifier"),
             Self::InvalidCharacterClass => write!(f, "invalid character class"),
             Self::InvalidCharacterRange(lo, hi) => {
-                let lo_str = char::from_u32(*lo)
-                    .map_or_else(|| format!("\\u{{{lo:04X}}}"), |c| format!("{c}"));
-                let hi_str = char::from_u32(*hi)
-                    .map_or_else(|| format!("\\u{{{hi:04X}}}"), |c| format!("{c}"));
+                let lo_str = char::from_u32(*lo).map_or_else(|| format!("\\u{{{lo:04X}}}"), |c| format!("{c}"));
+                let hi_str = char::from_u32(*hi).map_or_else(|| format!("\\u{{{hi:04X}}}"), |c| format!("{c}"));
                 write!(f, "invalid character range '{lo_str}'-'{hi_str}'")
             }
             Self::InvalidUnicodeEscape => write!(f, "invalid Unicode escape"),
@@ -127,7 +131,10 @@ struct Parser {
 
 impl Parser {
     fn new(source: &str, flags: Flags) -> Self {
-        let chars: Vec<char> = source.chars().collect();
+        Self::new_from_chars(source.chars().collect(), flags)
+    }
+
+    fn new_from_chars(chars: Vec<char>, flags: Flags) -> Self {
         let (total, has_named) = Self::prescan_captures(&chars);
         Self {
             source: chars,
@@ -169,8 +176,7 @@ impl Parser {
                     if i + 1 < source.len() && source[i + 1] == '?' {
                         if i + 2 < source.len()
                             && source[i + 2] == '<'
-                            && (i + 3 >= source.len()
-                                || (source[i + 3] != '=' && source[i + 3] != '!'))
+                            && (i + 3 >= source.len() || (source[i + 3] != '=' && source[i + 3] != '!'))
                         {
                             count += 1;
                             has_named = true;
@@ -194,8 +200,7 @@ impl Parser {
 
         // Named backreferences can point forward, so validate them only after
         // the whole pattern has been parsed and every group name is known.
-        let group_names: std::collections::HashSet<&str> =
-            self.named_groups.iter().map(|g| g.name.as_str()).collect();
+        let group_names: std::collections::HashSet<&str> = self.named_groups.iter().map(|g| g.name.as_str()).collect();
         Self::validate_backrefs(&disjunction, &group_names)?;
 
         Ok(Pattern {
@@ -209,17 +214,12 @@ impl Parser {
     /// Apply the named-backreference early error after all group names have
     /// been collected.
     /// <https://tc39.es/ecma262/#sec-patterns-static-semantics-early-errors>
-    fn validate_backrefs(
-        disj: &Disjunction,
-        group_names: &std::collections::HashSet<&str>,
-    ) -> Result<(), Error> {
+    fn validate_backrefs(disj: &Disjunction, group_names: &std::collections::HashSet<&str>) -> Result<(), Error> {
         for alt in &disj.alternatives {
             for term in &alt.terms {
                 match &term.atom {
-                    Atom::Backreference(Backreference::Named(name)) => {
-                        if !group_names.contains(name.as_str()) {
-                            return Err(Error::InvalidNamedBackreference(name.clone()));
-                        }
+                    Atom::Backreference(Backreference::Named(name)) if !group_names.contains(name.as_str()) => {
+                        return Err(Error::InvalidNamedBackreference(name.clone()));
                     }
                     Atom::Group(g) => Self::validate_backrefs(&g.body, group_names)?,
                     Atom::NonCapturingGroup(g) => Self::validate_backrefs(&g.body, group_names)?,
@@ -286,17 +286,29 @@ impl Parser {
     /// Parse `Disjunction`.
     /// <https://tc39.es/ecma262/#sec-patterns>
     fn parse_disjunction(&mut self) -> Result<Disjunction, Error> {
-        self.alternative_name_stack
-            .push(std::collections::HashSet::new());
+        let inherited = self.alternative_name_stack.last().cloned().unwrap_or_default();
+        self.alternative_name_stack.push(inherited.clone());
         let mut alternatives = vec![self.parse_alternative()?];
         while self.eat('|') {
-            // Reset the current alternative's name set for the next alternative.
-            if let Some(names) = self.alternative_name_stack.last_mut() {
-                names.clear();
+            // Merge names from the just finished alternative into the parent scope so
+            // parent knows these names exist and can reject duplicates from enclosing alternatives
+            let committed = self.alternative_name_stack.last().cloned().unwrap_or_default();
+            if let Some(outer) = self.alternative_name_stack.iter_mut().rev().nth(1) {
+                outer.extend(committed.iter().cloned());
+            }
+
+            // Reset to only the names from outer scopes so the next alternative only sees
+            // names from outer scopes and not from its siblings
+            if let Some(top) = self.alternative_name_stack.last_mut() {
+                *top = inherited.clone();
             }
             alternatives.push(self.parse_alternative()?);
         }
-        self.alternative_name_stack.pop();
+
+        let final_names = self.alternative_name_stack.pop().unwrap_or_default();
+        if let Some(outer) = self.alternative_name_stack.last_mut() {
+            outer.extend(final_names.into_iter().filter(|n| !inherited.contains(n)));
+        }
         Ok(Disjunction { alternatives })
     }
 
@@ -447,27 +459,20 @@ impl Parser {
     /// - `Ok(None)` if no digits were found
     /// - `Ok(Some(n))` if a valid u32 was parsed
     ///
-    /// On overflow, saturates to `u32::MAX` instead of erroring,
-    /// since the spec allows arbitrarily large quantifier values.
+    /// Clamp braced quantifier bounds to 2^31 - 1 to match browser behavior.
     fn try_parse_decimal(&mut self) -> Result<Option<u32>, Error> {
         let start = self.pos;
         let mut value: u32 = 0;
         while let Some(ch) = self.peek() {
             if let Some(digit) = ch.to_digit(10) {
                 self.pos += 1;
-                value = value
-                    .checked_mul(10)
-                    .and_then(|v| v.checked_add(digit))
-                    .unwrap_or(u32::MAX);
+                value = value.saturating_mul(10).saturating_add(digit);
+                value = value.min(MAX_BRACED_QUANTIFIER);
             } else {
                 break;
             }
         }
-        if self.pos == start {
-            Ok(None)
-        } else {
-            Ok(Some(value))
-        }
+        if self.pos == start { Ok(None) } else { Ok(Some(value)) }
     }
 
     // ---------------------------------------------------------------
@@ -517,9 +522,7 @@ impl Parser {
 
             '\\' => self.parse_atom_escape().map(Some),
 
-            '[' => self
-                .parse_character_class()
-                .map(|cc| Some(Atom::CharacterClass(cc))),
+            '[' => self.parse_character_class().map(|cc| Some(Atom::CharacterClass(cc))),
 
             '(' => self.parse_group().map(Some),
 
@@ -579,12 +582,8 @@ impl Parser {
             'D' => Ok(Atom::BuiltinCharacterClass(BuiltinCharacterClass::NonDigit)),
             'w' => Ok(Atom::BuiltinCharacterClass(BuiltinCharacterClass::Word)),
             'W' => Ok(Atom::BuiltinCharacterClass(BuiltinCharacterClass::NonWord)),
-            's' => Ok(Atom::BuiltinCharacterClass(
-                BuiltinCharacterClass::Whitespace,
-            )),
-            'S' => Ok(Atom::BuiltinCharacterClass(
-                BuiltinCharacterClass::NonWhitespace,
-            )),
+            's' => Ok(Atom::BuiltinCharacterClass(BuiltinCharacterClass::Whitespace)),
+            'S' => Ok(Atom::BuiltinCharacterClass(BuiltinCharacterClass::NonWhitespace)),
 
             // Assertions.
             'b' => Ok(Atom::Assertion(AssertionKind::WordBoundary)),
@@ -634,8 +633,12 @@ impl Parser {
                     // Per Annex B, if the consumed number exceeds the total
                     // capture count, reinterpret as a legacy octal escape.
                     self.pos = backref_start;
-                    let value = self.parse_legacy_octal(ch);
-                    Ok(Atom::Literal(value as u32))
+                    if ch >= '8' {
+                        Ok(Atom::Literal(ch as u32))
+                    } else {
+                        let value = self.parse_legacy_octal(ch);
+                        Ok(Atom::Literal(value as u32))
+                    }
                 } else {
                     Ok(Atom::Backreference(Backreference::Index(n)))
                 }
@@ -808,7 +811,7 @@ impl Parser {
 
         // Validate against the ECMA-262 allow-list up front so later compiler
         // and VM stages can assume the escape names already match spec.
-        if !crate::unicode_ffi::is_valid_ecma262_property(&name, value.as_deref()) {
+        if !libunicode_rust::character_types::is_valid_ecma262_property(&name, value.as_deref()) {
             return Err(Error::InvalidUnicodeProperty(name));
         }
 
@@ -817,7 +820,7 @@ impl Parser {
 
     /// Check if a property name refers to a Unicode string property (e.g. Basic_Emoji).
     fn is_string_property(name: &str) -> bool {
-        crate::unicode_ffi::is_string_property(name)
+        libunicode_rust::character_types::is_string_property(name)
     }
 
     fn parse_unicode_property_name(&mut self) -> Result<String, Error> {
@@ -963,8 +966,9 @@ impl Parser {
                             // Named capture group: (?<name>...).
                             let name = self.parse_group_name()?;
                             self.expect('>')?;
-                            // Duplicate names are allowed across alternatives,
-                            // but not within the same alternative.
+                            // Duplicate names are allowed across alternatives of
+                            // the same disjunction, but not within the same
+                            // alternative.
                             if let Some(current_alt_names) = self.alternative_name_stack.last()
                                 && current_alt_names.contains(&name)
                             {
@@ -972,12 +976,8 @@ impl Parser {
                             }
                             let index = self.next_capture_index;
                             self.next_capture_index += 1;
-                            // Propagate the name to every active disjunction
-                            // level so a duplicate later in the same enclosing
-                            // alternative is rejected even if the first use was
-                            // nested inside a child disjunction.
-                            for level in self.alternative_name_stack.iter_mut() {
-                                level.insert(name.clone());
+                            if let Some(top) = self.alternative_name_stack.last_mut() {
+                                top.insert(name.clone());
                             }
                             self.named_groups.push(NamedGroup {
                                 name: name.clone(),
@@ -1027,7 +1027,7 @@ impl Parser {
     fn parse_group_name(&mut self) -> Result<String, Error> {
         let mut name = String::new();
         let first = self.parse_group_name_char()?;
-        if !is_id_start(first) {
+        if !is_identifier_start_char(first) {
             return Err(Error::InvalidGroupName);
         }
         name.push(first);
@@ -1036,7 +1036,7 @@ impl Parser {
                 break;
             }
             let ch = self.parse_group_name_char()?;
-            if !is_id_continue(ch) {
+            if !is_identifier_continue_char(ch) {
                 return Err(Error::InvalidGroupName);
             }
             name.push(ch);
@@ -1049,9 +1049,15 @@ impl Parser {
         let ch = self.advance().ok_or(Error::InvalidGroupName)?;
         if ch == '\\' {
             if self.eat('u') {
+                let first_is_braced = self.peek() == Some('{');
                 let cp = self.parse_unicode_escape_in_name()?;
-                // Handle surrogate pairs: \uD800\uDC00
-                if (0xD800..=0xDBFF).contains(&cp) && self.eat('\\') && self.eat('u') {
+                // Handle surrogate pairs only for \uHHHH\uHHHH, not \u{...}.
+                if !first_is_braced
+                    && (0xD800..=0xDBFF).contains(&cp)
+                    && self.eat('\\')
+                    && self.eat('u')
+                    && self.peek() != Some('{')
+                {
                     let low = self.parse_unicode_escape_in_name()?;
                     if (0xDC00..=0xDFFF).contains(&low) {
                         let combined = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
@@ -1183,6 +1189,9 @@ impl Parser {
                 self.parse_class_set_expression()?
             };
             self.in_negated_class = saved_negated;
+            if negated && Self::class_set_expression_may_contain_strings(&expr) {
+                return Err(Error::InvalidCharacterClass);
+            }
             self.expect(']')?;
             Ok(CharacterClass {
                 negated,
@@ -1255,24 +1264,12 @@ impl Parser {
         self.expect('\\')?;
         let ch = self.advance().ok_or(Error::LoneTrailingBackslash)?;
         match ch {
-            'd' => Ok(CharacterClassRange::BuiltinClass(
-                BuiltinCharacterClass::Digit,
-            )),
-            'D' => Ok(CharacterClassRange::BuiltinClass(
-                BuiltinCharacterClass::NonDigit,
-            )),
-            'w' => Ok(CharacterClassRange::BuiltinClass(
-                BuiltinCharacterClass::Word,
-            )),
-            'W' => Ok(CharacterClassRange::BuiltinClass(
-                BuiltinCharacterClass::NonWord,
-            )),
-            's' => Ok(CharacterClassRange::BuiltinClass(
-                BuiltinCharacterClass::Whitespace,
-            )),
-            'S' => Ok(CharacterClassRange::BuiltinClass(
-                BuiltinCharacterClass::NonWhitespace,
-            )),
+            'd' => Ok(CharacterClassRange::BuiltinClass(BuiltinCharacterClass::Digit)),
+            'D' => Ok(CharacterClassRange::BuiltinClass(BuiltinCharacterClass::NonDigit)),
+            'w' => Ok(CharacterClassRange::BuiltinClass(BuiltinCharacterClass::Word)),
+            'W' => Ok(CharacterClassRange::BuiltinClass(BuiltinCharacterClass::NonWord)),
+            's' => Ok(CharacterClassRange::BuiltinClass(BuiltinCharacterClass::Whitespace)),
+            'S' => Ok(CharacterClassRange::BuiltinClass(BuiltinCharacterClass::NonWhitespace)),
             'p' | 'P' if self.unicode_aware() => {
                 let negated = ch == 'P';
                 let prop = self.parse_unicode_property()?;
@@ -1297,9 +1294,7 @@ impl Parser {
             't' => Ok(CharacterClassRange::Single('\t' as u32)),
             'f' => Ok(CharacterClassRange::Single('\u{0C}' as u32)),
             'v' => Ok(CharacterClassRange::Single('\u{0B}' as u32)),
-            '0' if !self.peek().is_some_and(|c| c.is_ascii_digit()) => {
-                Ok(CharacterClassRange::Single(0))
-            }
+            '0' if !self.peek().is_some_and(|c| c.is_ascii_digit()) => Ok(CharacterClassRange::Single(0)),
             'c' => {
                 if let Some(ctrl) = self.advance() {
                     if ctrl.is_ascii_alphabetic() {
@@ -1392,7 +1387,10 @@ impl Parser {
     /// Parse `/v` `ClassSetExpression`.
     /// <https://tc39.es/ecma262/#sec-compilecharacterclass>
     fn parse_class_set_expression(&mut self) -> Result<ClassSetExpression, Error> {
+        let saved_negated = self.in_negated_class;
+        self.in_negated_class = false;
         let first = self.parse_class_set_operand()?;
+        self.in_negated_class = saved_negated;
 
         // Check for set operation operators.
         match self.peek_pair() {
@@ -1401,11 +1399,16 @@ impl Parser {
                 // once we see subtraction we stay in that operator family until
                 // the surrounding class or nested operand ends.
                 // Subtraction: A--B--C
+                if saved_negated {
+                    Self::validate_no_string_operand(&first)?;
+                }
                 let mut operands = vec![first];
+                self.in_negated_class = false;
                 while self.peek_pair() == Some(('-', '-')) {
                     self.pos += 2; // consume '--'
                     operands.push(self.parse_class_set_operand()?);
                 }
+                self.in_negated_class = saved_negated;
                 Self::validate_class_set_operation_operands(&operands)?;
                 Ok(ClassSetExpression::Subtraction(operands))
             }
@@ -1414,15 +1417,23 @@ impl Parser {
                 // either an intersection chain or something else, never both.
                 // Intersection: A&&B&&C
                 let mut operands = vec![first];
+                self.in_negated_class = false;
                 while self.peek_pair() == Some(('&', '&')) {
                     self.pos += 2; // consume '&&'
+                    if self.peek() == Some('&') {
+                        return Err(Error::InvalidCharacterClass);
+                    }
                     operands.push(self.parse_class_set_operand()?);
                 }
+                self.in_negated_class = saved_negated;
                 Self::validate_class_set_operation_operands(&operands)?;
                 Ok(ClassSetExpression::Intersection(operands))
             }
             _ => {
-                // Union (default): just accumulate operands.
+                // Union (default): direct members of [^...] may not be string properties.
+                if saved_negated {
+                    Self::validate_no_string_operand(&first)?;
+                }
                 let mut operands = vec![first];
                 while self.peek() != Some(']') && !self.at_end() {
                     operands.push(self.parse_class_set_operand()?);
@@ -1430,6 +1441,16 @@ impl Parser {
                 Ok(ClassSetExpression::Union(operands))
             }
         }
+    }
+
+    fn validate_no_string_operand(operand: &ClassSetOperand) -> Result<(), Error> {
+        if let ClassSetOperand::UnicodeProperty(up) = operand
+            && !up.negated
+            && Self::is_string_property(&up.name)
+        {
+            return Err(Error::InvalidUnicodeProperty(up.name.clone()));
+        }
+        Ok(())
     }
 
     fn validate_class_set_operation_operands(operands: &[ClassSetOperand]) -> Result<(), Error> {
@@ -1441,6 +1462,41 @@ impl Parser {
         }
 
         Ok(())
+    }
+
+    /// - Union: may contain strings if ANY operand may contain strings
+    /// - Intersection: may contain strings if ALL operands may contain strings
+    ///   (i.e., no operand is "purely characters")
+    /// - Subtraction: may contain strings if the leftmost operand may contain strings
+    fn class_set_expression_may_contain_strings(expr: &ClassSetExpression) -> bool {
+        match expr {
+            ClassSetExpression::Union(operands) => operands.iter().any(Self::class_set_operand_may_contain_strings),
+            ClassSetExpression::Intersection(operands) => {
+                operands.iter().all(Self::class_set_operand_may_contain_strings)
+            }
+            ClassSetExpression::Subtraction(operands) => operands
+                .first()
+                .is_some_and(Self::class_set_operand_may_contain_strings),
+        }
+    }
+
+    fn class_set_operand_may_contain_strings(operand: &ClassSetOperand) -> bool {
+        match operand {
+            ClassSetOperand::NestedClass(class) => {
+                if class.negated {
+                    return false;
+                }
+                match &class.body {
+                    CharacterClassBody::Ranges(_) => false,
+                    CharacterClassBody::UnicodeSet(expr) => Self::class_set_expression_may_contain_strings(expr),
+                }
+            }
+            ClassSetOperand::UnicodeProperty(property) => {
+                !property.negated && property.value.is_none() && Self::is_string_property(&property.name)
+            }
+            ClassSetOperand::StringLiteral(chars) => chars.len() != 1,
+            ClassSetOperand::Char(_) | ClassSetOperand::Range(_, _) | ClassSetOperand::BuiltinClass(_) => false,
+        }
     }
 
     /// Parse one `/v` `ClassSetOperand`.
@@ -1490,30 +1546,21 @@ impl Parser {
                                         // Handle surrogate pairs: \uD800\uDC00
                                         if !is_braced && (0xD800..=0xDBFF).contains(&val) {
                                             let saved = self.pos;
-                                            if self.eat('\\')
-                                                && self.eat('u')
-                                                && self.peek() != Some('{')
-                                            {
+                                            if self.eat('\\') && self.eat('u') && self.peek() != Some('{') {
                                                 let low = self.parse_unicode_escape()?;
                                                 if (0xDC00..=0xDFFF).contains(&low) {
-                                                    let combined = 0x10000
-                                                        + ((val - 0xD800) << 10)
-                                                        + (low - 0xDC00);
-                                                    char::from_u32(combined)
-                                                        .ok_or(Error::InvalidUnicodeEscape)?
+                                                    let combined = 0x10000 + ((val - 0xD800) << 10) + (low - 0xDC00);
+                                                    char::from_u32(combined).ok_or(Error::InvalidUnicodeEscape)?
                                                 } else {
                                                     self.pos = saved;
-                                                    char::from_u32(val)
-                                                        .ok_or(Error::InvalidUnicodeEscape)?
+                                                    char::from_u32(val).ok_or(Error::InvalidUnicodeEscape)?
                                                 }
                                             } else {
                                                 self.pos = saved;
-                                                char::from_u32(val)
-                                                    .ok_or(Error::InvalidUnicodeEscape)?
+                                                char::from_u32(val).ok_or(Error::InvalidUnicodeEscape)?
                                             }
                                         } else {
-                                            char::from_u32(val)
-                                                .ok_or(Error::InvalidUnicodeEscape)?
+                                            char::from_u32(val).ok_or(Error::InvalidUnicodeEscape)?
                                         }
                                     }
                                     'c' => {
@@ -1541,22 +1588,16 @@ impl Parser {
                         }
 
                         if alternatives.len() == 1 {
-                            Ok(ClassSetOperand::StringLiteral(
-                                alternatives.into_iter().next().unwrap(),
-                            ))
+                            Ok(ClassSetOperand::StringLiteral(alternatives.into_iter().next().unwrap()))
                         } else {
                             // Multiple alternatives: wrap as a nested class with Union body.
                             // Sort longest-first so greedy matching prefers longer alternatives.
                             alternatives.sort_by_key(|b| std::cmp::Reverse(b.len()));
-                            let operands: Vec<ClassSetOperand> = alternatives
-                                .into_iter()
-                                .map(ClassSetOperand::StringLiteral)
-                                .collect();
+                            let operands: Vec<ClassSetOperand> =
+                                alternatives.into_iter().map(ClassSetOperand::StringLiteral).collect();
                             Ok(ClassSetOperand::NestedClass(CharacterClass {
                                 negated: false,
-                                body: CharacterClassBody::UnicodeSet(ClassSetExpression::Union(
-                                    operands,
-                                )),
+                                body: CharacterClassBody::UnicodeSet(ClassSetExpression::Union(operands)),
                             }))
                         }
                     }
@@ -1566,9 +1607,7 @@ impl Parser {
                     }
                     'D' => {
                         self.advance();
-                        Ok(ClassSetOperand::BuiltinClass(
-                            BuiltinCharacterClass::NonDigit,
-                        ))
+                        Ok(ClassSetOperand::BuiltinClass(BuiltinCharacterClass::NonDigit))
                     }
                     'w' => {
                         self.advance();
@@ -1576,32 +1615,23 @@ impl Parser {
                     }
                     'W' => {
                         self.advance();
-                        Ok(ClassSetOperand::BuiltinClass(
-                            BuiltinCharacterClass::NonWord,
-                        ))
+                        Ok(ClassSetOperand::BuiltinClass(BuiltinCharacterClass::NonWord))
                     }
                     's' => {
                         self.advance();
-                        Ok(ClassSetOperand::BuiltinClass(
-                            BuiltinCharacterClass::Whitespace,
-                        ))
+                        Ok(ClassSetOperand::BuiltinClass(BuiltinCharacterClass::Whitespace))
                     }
                     'S' => {
                         self.advance();
-                        Ok(ClassSetOperand::BuiltinClass(
-                            BuiltinCharacterClass::NonWhitespace,
-                        ))
+                        Ok(ClassSetOperand::BuiltinClass(BuiltinCharacterClass::NonWhitespace))
                     }
                     'p' | 'P' => {
                         let negated = esc == 'P';
                         self.advance();
                         let prop = self.parse_unicode_property()?;
-                        // In v-mode, string properties cannot be negated (\P)
-                        // or used inside a negated character class ([^...]).
-                        if prop.1.is_none()
-                            && Self::is_string_property(&prop.0)
-                            && (negated || self.in_negated_class)
-                        {
+                        // In v-mode, \P{string-property} is always forbidden.
+                        // The [^...] negation check is handled at the expression level.
+                        if prop.1.is_none() && Self::is_string_property(&prop.0) && negated {
                             return Err(Error::InvalidUnicodeProperty(prop.0));
                         }
                         Ok(ClassSetOperand::UnicodeProperty(UnicodeProperty {
@@ -1634,7 +1664,7 @@ impl Parser {
                     return Err(Error::InvalidCharacterClass);
                 }
                 self.advance();
-                self.try_parse_class_set_range(ch)
+                self.try_parse_class_set_range(ch as u32)
             }
         }
     }
@@ -1642,20 +1672,17 @@ impl Parser {
     /// Parse the restricted escape forms allowed when a `/v` class set operand
     /// expects a single character.
     /// <https://tc39.es/ecma262/#sec-patterns>
-    fn parse_class_set_char_escape(&mut self) -> Result<char, Error> {
+    fn parse_class_set_char_escape(&mut self) -> Result<u32, Error> {
         let ch = self.advance().ok_or(Error::LoneTrailingBackslash)?;
         match ch {
-            'n' => Ok('\n'),
-            'r' => Ok('\r'),
-            't' => Ok('\t'),
-            'f' => Ok('\u{0C}'),
-            'v' => Ok('\u{0B}'),
-            'b' => Ok('\u{08}'),
-            '0' if !self.peek().is_some_and(|c| c.is_ascii_digit()) => Ok('\0'),
-            'x' => {
-                let val = self.parse_hex_escape(2)?;
-                char::from_u32(val).ok_or(Error::InvalidUnicodeEscape)
-            }
+            'n' => Ok('\n' as u32),
+            'r' => Ok('\r' as u32),
+            't' => Ok('\t' as u32),
+            'f' => Ok(0x0C),
+            'v' => Ok(0x0B),
+            'b' => Ok(0x08),
+            '0' if !self.peek().is_some_and(|c| c.is_ascii_digit()) => Ok(0),
+            'x' => self.parse_hex_escape(2),
             'u' => {
                 let is_braced = self.peek() == Some('{');
                 let val = self.parse_unicode_escape()?;
@@ -1665,27 +1692,24 @@ impl Parser {
                         let low = self.parse_unicode_escape()?;
                         if (0xDC00..=0xDFFF).contains(&low) {
                             let combined = 0x10000 + ((val - 0xD800) << 10) + (low - 0xDC00);
-                            return char::from_u32(combined).ok_or(Error::InvalidUnicodeEscape);
+                            return Ok(combined);
                         }
                         self.pos = saved;
                     } else {
                         self.pos = saved;
                     }
                 }
-                char::from_u32(val).ok_or(Error::InvalidUnicodeEscape)
+                Ok(val)
             }
-            _ if is_syntax_character(ch) || ch == '/' || ch == '-' => Ok(ch),
+            _ if is_syntax_character(ch) || ch == '/' || ch == '-' => Ok(ch as u32),
             _ => Err(Error::InvalidEscape(ch)),
         }
     }
 
     /// After reading a character in a unicode-sets class, check if it's followed by `-` to form a range.
-    fn try_parse_class_set_range(&mut self, first: char) -> Result<ClassSetOperand, Error> {
+    fn try_parse_class_set_range(&mut self, first: u32) -> Result<ClassSetOperand, Error> {
         if self.eat('-') {
-            if self.peek() == Some(']')
-                || self.peek() == Some('-')
-                || self.peek_pair() == Some(('&', '&'))
-            {
+            if self.peek() == Some(']') || self.peek() == Some('-') || self.peek_pair() == Some(('&', '&')) {
                 // `-]`, `--`, and `-&&` do not start a character range here.
                 // Leave the `-` for the outer class-set parser to reinterpret.
                 self.pos -= 1;
@@ -1698,10 +1722,10 @@ impl Parser {
                 if is_class_set_syntax_character(c) {
                     return Err(Error::InvalidCharacterClass);
                 }
-                self.advance().ok_or(Error::InvalidCharacterClass)?
+                self.advance().ok_or(Error::InvalidCharacterClass)? as u32
             };
             if first > second {
-                return Err(Error::InvalidCharacterRange(first as u32, second as u32));
+                return Err(Error::InvalidCharacterRange(first, second));
             }
             Ok(ClassSetOperand::Range(first, second))
         } else {
@@ -1735,24 +1759,7 @@ fn is_class_set_syntax_character(ch: char) -> bool {
 fn is_class_set_reserved_double_punctuator_char(ch: char) -> bool {
     matches!(
         ch,
-        '&' | '!'
-            | '#'
-            | '$'
-            | '%'
-            | '*'
-            | '+'
-            | ','
-            | '.'
-            | ':'
-            | ';'
-            | '<'
-            | '='
-            | '>'
-            | '?'
-            | '@'
-            | '^'
-            | '`'
-            | '~'
+        '&' | '!' | '#' | '$' | '%' | '*' | '+' | ',' | '.' | ':' | ';' | '<' | '=' | '>' | '?' | '@' | '^' | '`' | '~'
     )
 }
 
@@ -1760,12 +1767,16 @@ fn is_modifier_flag(ch: char) -> bool {
     matches!(ch, 'i' | 'm' | 's')
 }
 
-fn is_id_start(ch: char) -> bool {
-    ch == '_' || ch == '$' || ch.is_alphabetic()
+// https://tc39.es/ecma262/#prod-IdentifierStartChar
+// IdentifierStartChar :: UnicodeIDStart | $ | _
+fn is_identifier_start_char(ch: char) -> bool {
+    ch == '$' || ch == '_' || libunicode_rust::character_types::code_point_has_identifier_start_property(ch as u32)
 }
 
-fn is_id_continue(ch: char) -> bool {
-    ch == '_' || ch == '$' || ch.is_alphanumeric() || ch == '\u{200C}' || ch == '\u{200D}'
+// https://tc39.es/ecma262/#prod-IdentifierPartChar
+// IdentifierPartChar :: UnicodeIDContinue | $
+fn is_identifier_continue_char(ch: char) -> bool {
+    ch == '$' || libunicode_rust::character_types::code_point_has_identifier_continue_property(ch as u32)
 }
 
 /// Extract a single code point from a class atom, for use in ranges.

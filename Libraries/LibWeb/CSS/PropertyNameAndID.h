@@ -6,8 +6,8 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
 #include <AK/Optional.h>
+#include <AK/Utf16FlyString.h>
 #include <LibWeb/CSS/PropertyName.h>
 #include <LibWeb/CSS/Serialize.h>
 
@@ -15,7 +15,7 @@ namespace Web::CSS {
 
 class WEB_API PropertyNameAndID {
 public:
-    static Optional<PropertyNameAndID> from_name(FlyString name)
+    static Optional<PropertyNameAndID> from_name(Utf16FlyString name)
     {
         if (is_a_custom_property_name_string(name))
             return PropertyNameAndID(move(name), PropertyID::Custom);
@@ -32,10 +32,16 @@ public:
         return PropertyNameAndID({}, property_id);
     }
 
+    PropertyNameAndID(Badge<StyleComputer>, PropertyID property_id, Utf16FlyString name)
+        : m_name(move(name))
+        , m_property_id(property_id)
+    {
+    }
+
     bool is_custom_property() const { return m_property_id == PropertyID::Custom; }
     PropertyID id() const { return m_property_id; }
 
-    FlyString const& name() const
+    Utf16FlyString const& name() const
     {
         if (!m_name.has_value())
             m_name = string_from_property_id(m_property_id);
@@ -47,14 +53,19 @@ public:
         return serialize_an_identifier(name());
     }
 
+    Utf16String to_utf16_string() const
+    {
+        return serialize_an_identifier_to_utf16(name());
+    }
+
 private:
-    PropertyNameAndID(Optional<FlyString> name, PropertyID id)
+    PropertyNameAndID(Optional<Utf16FlyString> name, PropertyID id)
         : m_name(move(name))
         , m_property_id(id)
     {
     }
 
-    mutable Optional<FlyString> m_name;
+    mutable Optional<Utf16FlyString> m_name;
     PropertyID m_property_id;
 };
 

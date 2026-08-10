@@ -7,7 +7,7 @@
 #pragma once
 
 #include <AK/Badge.h>
-#include <AK/String.h>
+#include <AK/Utf16View.h>
 #include <LibGC/RootVector.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/HTML/VideoTrack.h>
@@ -15,19 +15,22 @@
 namespace Web::HTML {
 
 class VideoTrackList final : public DOM::EventTarget {
-    WEB_PLATFORM_OBJECT(VideoTrackList, DOM::EventTarget);
+    WEB_WRAPPABLE(VideoTrackList, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(VideoTrackList);
 
 public:
-    void add_track(Badge<HTMLMediaElement>, GC::Ref<VideoTrack>);
-    void remove_all_tracks(Badge<HTMLMediaElement>);
+    static GC::Ref<VideoTrackList> create(GC::Ptr<HTMLMediaElement> = nullptr);
+
+    void add_track(GC::Ref<VideoTrack>);
+    void remove_all_tracks();
 
     Span<GC::Ref<VideoTrack>> video_tracks() { return m_video_tracks; }
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-videotracklist-length
     size_t length() const { return m_video_tracks.size(); }
 
-    GC::Ptr<VideoTrack> get_track_by_id(StringView id) const;
+    GC::Ptr<VideoTrack> item(size_t index) const;
+    GC::Ptr<VideoTrack> get_track_by_id(Utf16View id) const;
     i32 selected_index() const;
 
     template<typename Callback>
@@ -50,12 +53,11 @@ public:
     WebIDL::CallbackType* onremovetrack();
 
 private:
-    explicit VideoTrackList(JS::Realm&);
+    explicit VideoTrackList(GC::Ptr<HTMLMediaElement> = nullptr);
 
     virtual void visit_edges(Visitor&) override;
 
-    virtual void initialize(JS::Realm&) override;
-    virtual JS::ThrowCompletionOr<Optional<JS::PropertyDescriptor>> internal_get_own_property(JS::PropertyKey const& property_name) const override;
+    GC::Ptr<HTMLMediaElement> m_media_element;
 
     Vector<GC::Ref<VideoTrack>> m_video_tracks;
 };

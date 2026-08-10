@@ -1,0 +1,15 @@
+overflow-x: visible
+overflow-y: visible
+display: inline
+position: static
+parent text-align: right
+match-parent text-align: right
+inherited overflow-x: scroll
+adjusted overflow-y: auto
+inherited display: block
+inherited position: absolute
+input line-height: normal
+select line-height: normal
+svg position: static
+table text-align: start
+file selector display: inline-block

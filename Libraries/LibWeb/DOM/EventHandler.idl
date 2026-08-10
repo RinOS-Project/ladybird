@@ -1,17 +1,13 @@
-#import <CSS/AnimationEvent.idl>
-#import <DOM/Event.idl>
-#import <UIEvents/PointerEventHandlers.idl>
-
 [LegacyTreatNonObjectAsNull]
 callback EventHandlerNonNull = any (Event event);
 typedef EventHandlerNonNull? EventHandler;
 
 [LegacyTreatNonObjectAsNull]
-callback OnErrorEventHandlerNonNull = any ((Event or DOMString) event, optional DOMString source, optional unsigned long lineno, optional unsigned long colno, optional any error);
+callback OnErrorEventHandlerNonNull = any ((Event or Utf16DOMString) event, optional Utf16DOMString source, optional unsigned long lineno, optional unsigned long colno, optional any error);
 typedef OnErrorEventHandlerNonNull? OnErrorEventHandler;
 
 [LegacyTreatNonObjectAsNull]
-callback OnBeforeUnloadEventHandlerNonNull = DOMString? (Event event);
+callback OnBeforeUnloadEventHandlerNonNull = Utf16DOMString? (Event event);
 typedef OnBeforeUnloadEventHandlerNonNull? OnBeforeUnloadEventHandler;
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#globaleventhandlers

@@ -5,13 +5,15 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/VisualViewportPrototype.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/CSS/VisualViewport.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/EventDispatcher.h>
 #include <LibWeb/HTML/EventNames.h>
-#include <LibWeb/HTML/Navigable.h>
+#include <LibWeb/HTML/LocalNavigable.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
+#include <LibWeb/HTML/Window.h>
+#include <LibWeb/Painting/ViewportPaintable.h>
 
 namespace Web::CSS {
 
@@ -19,19 +21,18 @@ GC_DEFINE_ALLOCATOR(VisualViewport);
 
 GC::Ref<VisualViewport> VisualViewport::create(DOM::Document& document)
 {
-    return document.realm().create<VisualViewport>(document);
+    return GC::Heap::the().allocate<VisualViewport>(document);
 }
 
 VisualViewport::VisualViewport(DOM::Document& document)
-    : DOM::EventTarget(document.realm())
+    : DOM::EventTarget()
     , m_document(document)
 {
 }
 
-void VisualViewport::initialize(JS::Realm& realm)
+GC::Ptr<Bindings::Wrappable> VisualViewport::relevant_global_impl() const
 {
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(VisualViewport);
-    Base::initialize(realm);
+    return m_document->window();
 }
 
 void VisualViewport::visit_edges(Cell::Visitor& visitor)
@@ -146,6 +147,29 @@ WebIDL::CallbackType* VisualViewport::onscrollend()
     return event_handler_attribute(HTML::EventNames::scrollend);
 }
 
+void VisualViewport::scroll_by(CSSPixelPoint delta)
+{
+    if (delta.is_zero())
+        return;
+    m_offset += delta;
+    did_scroll();
+    update_accumulated_visual_context();
+    m_document->set_needs_repaint(Badge<CSS::VisualViewport> {}, InvalidateDisplayList::No);
+}
+
+// https://drafts.csswg.org/cssom-view-1/#scrolling-events
+void VisualViewport::did_scroll()
+{
+    // Whenever a visual viewport gets scrolled (whether in response to user interaction or by an API), the user agent
+    // must run these steps:
+
+    // 1. Let vv be the VisualViewport object that was scrolled.
+    // 2. Let doc be vv's associated document.
+    // 3. If (vv, "scroll") is already in doc's pending scroll events, abort these steps.
+    // 4. Append (vv, "scroll") to doc's pending scroll events.
+    m_document->append_pending_scroll_event({ *this, HTML::EventNames::scroll });
+}
+
 Gfx::AffineTransform VisualViewport::transform() const
 {
     Gfx::AffineTransform transform;
@@ -165,7 +189,7 @@ void VisualViewport::zoom(CSSPixelPoint position, double scale_delta)
     // For pinch zoom we want focal_point to stay put on screen:
     // scale_new * (focal_point - offset_new) = scale_old * (focal_point - offset_old)
     auto new_offset = m_offset.to_type<double>() * m_scale * applied_delta;
-    new_offset += position.to_type<int>().to_type<double>() * (applied_delta - 1.0f);
+    new_offset += position.to_type<double>() * (applied_delta - 1.0f);
 
     auto viewport_float_size = m_document->navigable()->viewport_rect().size().to_type<double>();
     auto max_x_offset = max(0.0, viewport_float_size.width() * (new_scale - 1.0f));
@@ -173,9 +197,12 @@ void VisualViewport::zoom(CSSPixelPoint position, double scale_delta)
     new_offset = { clamp(new_offset.x(), 0.0f, max_x_offset), clamp(new_offset.y(), 0.0f, max_y_offset) };
 
     m_scale = new_scale;
+    auto old_offset = m_offset;
     m_offset = (new_offset / m_scale).to_type<CSSPixels>();
-    m_document->set_needs_accumulated_visual_contexts_update(true);
-    m_document->set_needs_repaint(Badge<CSS::VisualViewport> {}, InvalidateDisplayList::Yes);
+    if (m_offset != old_offset)
+        did_scroll();
+    update_accumulated_visual_context();
+    m_document->set_needs_repaint(Badge<CSS::VisualViewport> {}, InvalidateDisplayList::No);
 }
 
 CSSPixelPoint VisualViewport::map_to_layout_viewport(CSSPixelPoint position) const
@@ -187,9 +214,25 @@ CSSPixelPoint VisualViewport::map_to_layout_viewport(CSSPixelPoint position) con
 void VisualViewport::reset()
 {
     m_scale = 1.0;
+    auto old_offset = m_offset;
     m_offset = { 0, 0 };
+    if (m_offset != old_offset) {
+        did_scroll();
+        // Resetting performs an instant scroll, so its scrollend event is queued immediately.
+        m_document->append_pending_scroll_event({ *this, HTML::EventNames::scrollend });
+    }
+    update_accumulated_visual_context();
+    m_document->set_needs_repaint(Badge<CSS::VisualViewport> {}, InvalidateDisplayList::No);
+}
+
+void VisualViewport::update_accumulated_visual_context()
+{
+    if (auto paintable = m_document->unsafe_paintable(); paintable && paintable->has_visual_context_tree()) {
+        paintable->update_visual_viewport_accumulated_visual_context();
+        return;
+    }
+
     m_document->set_needs_accumulated_visual_contexts_update(true);
-    m_document->set_needs_repaint(Badge<CSS::VisualViewport> {}, InvalidateDisplayList::Yes);
 }
 
 }

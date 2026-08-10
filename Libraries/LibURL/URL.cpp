@@ -12,10 +12,10 @@
 #include <AK/Debug.h>
 #include <AK/LexicalPath.h>
 #include <AK/StringBuilder.h>
+#include <AK/Utf16View.h>
 #include <AK/Utf8View.h>
 #include <LibURL/Parser.h>
 #include <LibURL/PublicSuffixData.h>
-#include <LibURL/URL.h>
 
 namespace URL {
 
@@ -52,8 +52,22 @@ void URL::set_username(StringView username)
     m_data->username = percent_encode(username, PercentEncodeSet::Userinfo);
 }
 
+// https://url.spec.whatwg.org/#set-the-username
+void URL::set_username(Utf16View username)
+{
+    // To set the username given a url and username, set url’s username to the result of running UTF-8 percent-encode on username using the userinfo percent-encode set.
+    m_data->username = percent_encode(username, PercentEncodeSet::Userinfo);
+}
+
 // https://url.spec.whatwg.org/#set-the-password
 void URL::set_password(StringView password)
+{
+    // To set the password given a url and password, set url’s password to the result of running UTF-8 percent-encode on password using the userinfo percent-encode set.
+    m_data->password = percent_encode(password, PercentEncodeSet::Userinfo);
+}
+
+// https://url.spec.whatwg.org/#set-the-password
+void URL::set_password(Utf16View password)
 {
     // To set the password given a url and password, set url’s password to the result of running UTF-8 percent-encode on password using the userinfo percent-encode set.
     m_data->password = percent_encode(password, PercentEncodeSet::Userinfo);
@@ -364,9 +378,13 @@ Origin URL::origin() const
         return Origin(scheme(), host().value(), port());
     }
 
+    // AD-HOC: resource:// URLs are internal browser resources; give them a shared tuple origin
+    // so that same-origin checks pass between any two resource:// documents or worker scripts.
+    if (scheme() == "resource"sv)
+        return Origin(scheme(), String {}, {});
+
     // -> "file"
-    // AD-HOC: Our resource:// is basically an alias to file://
-    if (scheme() == "file"sv || scheme() == "resource"sv) {
+    if (scheme() == "file"sv) {
         // Unfortunate as it is, this is left as an exercise to the reader. When in doubt, return a new opaque origin.
 
         // Our implementation-defined behavior is to return an opaque origin for file:// URLs,
@@ -433,13 +451,8 @@ bool code_point_is_in_percent_encode_set(u32 code_point, PercentEncodeSet set)
         return code_point_is_in_percent_encode_set(code_point, PercentEncodeSet::Userinfo) || "$%&+,"sv.contains(static_cast<char>(code_point));
     case PercentEncodeSet::ApplicationXWWWFormUrlencoded:
         return code_point_is_in_percent_encode_set(code_point, PercentEncodeSet::Component) || "!'()~"sv.contains(static_cast<char>(code_point));
-    case PercentEncodeSet::EncodeURI:
-        // NOTE: This is the same percent encode set that JS encodeURI() uses.
-        // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURI
-        return code_point > 0x7E || (!is_ascii_alphanumeric(code_point) && !";,/?:@&=+$-_.!~*'()#"sv.contains(static_cast<char>(code_point)));
-    default:
-        VERIFY_NOT_REACHED();
     }
+    VERIFY_NOT_REACHED();
 }
 
 void append_percent_encoded_if_necessary(StringBuilder& builder, u32 code_point, PercentEncodeSet set)
@@ -454,6 +467,18 @@ String percent_encode(StringView input, PercentEncodeSet set, SpaceAsPlus space_
 {
     StringBuilder builder;
     for (auto code_point : Utf8View(input)) {
+        if (space_as_plus == SpaceAsPlus::Yes && code_point == ' ')
+            builder.append('+');
+        else
+            append_percent_encoded_if_necessary(builder, code_point, set);
+    }
+    return MUST(builder.to_string());
+}
+
+String percent_encode(Utf16View input, PercentEncodeSet set, SpaceAsPlus space_as_plus)
+{
+    StringBuilder builder;
+    for (auto code_point : input) {
         if (space_as_plus == SpaceAsPlus::Yes && code_point == ' ')
             builder.append('+');
         else
@@ -504,35 +529,6 @@ ByteString percent_decode(StringView input)
         }
     }
     return builder.to_byte_string();
-}
-
-bool is_public_suffix(StringView host)
-{
-    return PublicSuffixData::the()->is_public_suffix(host);
-}
-
-// https://github.com/publicsuffix/list/wiki/Format#algorithm
-Optional<String> get_registrable_domain(StringView host)
-{
-    // The registered or registrable domain is the public suffix plus one additional label.
-    auto public_suffix = PublicSuffixData::the()->get_public_suffix(host);
-    if (!public_suffix.has_value() || !host.ends_with(*public_suffix))
-        return {};
-
-    if (host == *public_suffix)
-        return {};
-
-    auto subhost = host.substring_view(0, host.length() - public_suffix->bytes_as_string_view().length());
-    subhost = subhost.trim("."sv, TrimMode::Right);
-
-    if (subhost.is_empty())
-        return {};
-
-    size_t start_index = 0;
-    if (auto index = subhost.find_last('.'); index.has_value())
-        start_index = *index + 1;
-
-    return MUST(String::from_utf8(host.substring_view(start_index)));
 }
 
 }

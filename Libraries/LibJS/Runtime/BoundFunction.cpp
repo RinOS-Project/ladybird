@@ -7,6 +7,7 @@
 
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/BoundFunction.h>
+#include <LibJS/Runtime/ExternalMemory.h>
 #include <LibJS/Runtime/GlobalObject.h>
 
 namespace JS {
@@ -108,9 +109,14 @@ void BoundFunction::visit_edges(Visitor& visitor)
     visitor.visit(m_bound_arguments);
 }
 
-void BoundFunction::get_stack_frame_size(size_t& registers_and_locals_count, size_t& constants_count, size_t& argument_count)
+size_t BoundFunction::external_memory_size() const
 {
-    m_bound_target_function->get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    return vector_external_memory_size(m_bound_arguments);
+}
+
+void BoundFunction::get_stack_frame_info(size_t& registers_and_locals_count, ReadonlySpan<Value>& constants, size_t& argument_count)
+{
+    m_bound_target_function->get_stack_frame_info(registers_and_locals_count, constants, argument_count);
     argument_count += m_bound_arguments.size();
 }
 

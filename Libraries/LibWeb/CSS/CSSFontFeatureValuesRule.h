@@ -6,8 +6,10 @@
 
 #pragma once
 
+#include <AK/Utf16FlyString.h>
+#include <AK/Utf16String.h>
+#include <AK/Utf16View.h>
 #include <LibJS/Runtime/MapIterator.h>
-#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CSS/CSSFontFeatureValuesMap.h>
 #include <LibWeb/CSS/CSSRule.h>
 #include <LibWeb/CSS/FontFeatureData.h>
@@ -16,16 +18,16 @@
 namespace Web::CSS {
 
 class CSSFontFeatureValuesRule final : public CSSRule {
-    WEB_PLATFORM_OBJECT(CSSFontFeatureValuesRule, CSSRule);
+    WEB_WRAPPABLE(CSSFontFeatureValuesRule, CSSRule);
     GC_DECLARE_ALLOCATOR(CSSFontFeatureValuesRule);
 
 public:
-    static GC::Ref<CSSFontFeatureValuesRule> create(JS::Realm&, Vector<FlyString> font_families);
+    static GC::Ref<CSSFontFeatureValuesRule> create(Vector<Utf16FlyString> font_families);
 
-    static bool is_font_feature_value_type_at_keyword(FlyString const&);
+    static bool is_font_feature_value_type_at_keyword(Utf16View);
 
-    FlyString font_family() const;
-    void set_font_family(FlyString const&);
+    Utf16String font_family() const;
+    void set_font_family(Utf16View);
     GC::Ref<CSSFontFeatureValuesMap> annotation() const { return m_annotation; }
     GC::Ref<CSSFontFeatureValuesMap> ornaments() const { return m_ornaments; }
     GC::Ref<CSSFontFeatureValuesMap> stylistic() const { return m_stylistic; }
@@ -34,20 +36,21 @@ public:
     GC::Ref<CSSFontFeatureValuesMap> styleset() const { return m_styleset; }
     GC::Ref<CSSFontFeatureValuesMap> historical_forms() const { return m_historical_forms; }
 
-    Vector<FlyString> const& font_families() const { return m_font_families; }
+    Vector<Utf16FlyString> const& font_families() const { return m_font_families; }
     HashMap<FontFeatureValueKey, Vector<u32>> to_hash_map() const;
 
     virtual void clear_caches() override;
 
-    virtual String serialized() const override;
+    virtual Utf16String serialized() const override;
 
 private:
-    CSSFontFeatureValuesRule(JS::Realm&, Vector<FlyString> font_families);
+    Utf16String serialized_font_family() const;
 
-    virtual void initialize(JS::Realm&) override;
+    CSSFontFeatureValuesRule(Vector<Utf16FlyString> font_families);
+
     virtual void visit_edges(Cell::Visitor&) override;
 
-    Vector<FlyString> m_font_families;
+    Vector<Utf16FlyString> m_font_families;
     GC::Ref<CSSFontFeatureValuesMap> m_annotation;
     GC::Ref<CSSFontFeatureValuesMap> m_ornaments;
     GC::Ref<CSSFontFeatureValuesMap> m_stylistic;

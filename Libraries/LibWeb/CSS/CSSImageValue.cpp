@@ -5,8 +5,7 @@
  */
 
 #include "CSSImageValue.h"
-#include <LibWeb/Bindings/CSSImageValuePrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/CSS/PropertyNameAndID.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
@@ -15,24 +14,18 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSImageValue);
 
-GC::Ref<CSSImageValue> CSSImageValue::create(JS::Realm& realm, NonnullRefPtr<StyleValue const> source_value)
+GC::Ref<CSSImageValue> CSSImageValue::create(NonnullRefPtr<StyleValue const> source_value)
 {
-    return realm.create<CSSImageValue>(realm, move(source_value));
+    return GC::Heap::the().allocate<CSSImageValue>(move(source_value));
 }
 
-CSSImageValue::CSSImageValue(JS::Realm& realm, NonnullRefPtr<StyleValue const> source_value)
-    : CSSStyleValue(realm, move(source_value))
+CSSImageValue::CSSImageValue(NonnullRefPtr<StyleValue const> source_value)
+    : CSSStyleValue(move(source_value))
 {
-}
-
-void CSSImageValue::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSImageValue);
-    Base::initialize(realm);
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#stylevalue-serialization
-WebIDL::ExceptionOr<String> CSSImageValue::to_string() const
+WebIDL::ExceptionOr<Utf16String> CSSImageValue::to_string() const
 {
     // AD-HOC: The spec doesn't say how to serialize this, as it's intentionally a black box.
     //         We just rely on CSSStyleValue serializing its held StyleValue.
@@ -54,7 +47,7 @@ WebIDL::ExceptionOr<NonnullRefPtr<StyleValue const>> CSSImageValue::create_an_in
         return property_accepts_type(property.id(), ValueType::Image);
     }();
     if (perform_type_check == PerformTypeCheck::Yes && !matches_grammar) {
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, MUST(String::formatted("Property '{}' does not accept <image>", property.name())) };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, Utf16String::formatted("Property '{}' does not accept <image>", property.name()) };
     }
 
     //     FIXME: If any component of property’s CSS grammar has a limited numeric range, and the corresponding part of value

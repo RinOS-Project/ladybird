@@ -5,12 +5,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGC/Heap.h>
 #include <LibWeb/Animations/DocumentTimeline.h>
-#include <LibWeb/Bindings/CSSTransitionPrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSStyleDeclaration.h>
 #include <LibWeb/CSS/CSSTransition.h>
-#include <LibWeb/CSS/Interpolation.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
@@ -32,11 +30,17 @@ GC::Ref<CSSTransition> CSSTransition::start_a_transition(
     NonnullRefPtr<StyleValue const> reversing_adjusted_start_value,
     double reversing_shortening_factor)
 {
-    auto& realm = abstract_element.element().realm();
-    return realm.create<CSSTransition>(realm, abstract_element, property_id, transition_generation, delay, start_time, end_time, start_value, end_value, reversing_adjusted_start_value, reversing_shortening_factor);
+    auto& environment = abstract_element.document().relevant_settings_object();
+    auto keyframe_effect = Animations::KeyframeEffect::create();
+    auto transition = GC::Heap::the().allocate<CSSTransition>(environment, abstract_element, property_id, transition_generation, delay, start_time, end_time, start_value, end_value, reversing_adjusted_start_value, reversing_shortening_factor, keyframe_effect);
+
+    HTML::TemporaryExecutionContext context(environment);
+    transition->play().release_value_but_fixme_should_propagate_errors();
+
+    return transition;
 }
 
-StringView CSSTransition::transition_property() const
+Utf16FlyString const& CSSTransition::transition_property() const
 {
     return string_from_property_id(m_transition_property);
 }
@@ -85,12 +89,11 @@ int CSSTransition::class_specific_composite_order(GC::Ref<Animations::Animation>
     // 5. Otherwise, sort A and B in ascending order by the Unicode codepoints that make up the expanded transition
     //    property name of each transition (i.e. without attempting case conversion and such that ‘-moz-column-width’
     //    sorts before ‘column-width’).
-    // FIXME: This should operate on Unicode strings, not StringViews.
-    return transition_property().compare(other->transition_property());
+    return transition_property() <=> other->transition_property();
 }
 
 CSSTransition::CSSTransition(
-    JS::Realm& realm,
+    HTML::EnvironmentSettingsObject& environment,
     DOM::AbstractElement abstract_element,
     PropertyID property_id,
     size_t transition_generation,
@@ -100,8 +103,9 @@ CSSTransition::CSSTransition(
     NonnullRefPtr<StyleValue const> start_value,
     NonnullRefPtr<StyleValue const> end_value,
     NonnullRefPtr<StyleValue const> reversing_adjusted_start_value,
-    double reversing_shortening_factor)
-    : Animations::Animation(realm)
+    double reversing_shortening_factor,
+    GC::Ref<Animations::KeyframeEffect> keyframe_effect)
+    : Animations::Animation(environment)
     , m_transition_property(property_id)
     , m_transition_generation(transition_generation)
     , m_start_time(start_time + delay)
@@ -110,7 +114,7 @@ CSSTransition::CSSTransition(
     , m_end_value(move(end_value))
     , m_reversing_adjusted_start_value(move(reversing_adjusted_start_value))
     , m_reversing_shortening_factor(reversing_shortening_factor)
-    , m_keyframe_effect(Animations::KeyframeEffect::create(realm))
+    , m_keyframe_effect(keyframe_effect)
 {
     // FIXME:
     // Transitions generated using the markup defined in this specification are not added to the global animation list
@@ -119,9 +123,15 @@ CSSTransition::CSSTransition(
     // that have been disassociated from their owning element but are still idle do not have a defined composite order.
 
     // Construct a KeyframesEffect for our animation
-    m_keyframe_effect->set_target(abstract_element);
+    // NB: The current style computation collects this effect before publishing its result, so scheduling a second
+    //     animated style update here would evaluate the same transition twice.
+    m_keyframe_effect->set_target(abstract_element, Animations::KeyframeEffect::InvalidateEffect::No);
     m_keyframe_effect->set_specified_start_delay(delay);
     m_keyframe_effect->set_specified_iteration_duration(end_time - start_time);
+    // AD-HOC: CSS Transitions require the start value to apply during transition-delay. A default KeyframeEffect does
+    //         not fill in the before phase, so use backwards fill to keep the transition value in the cascade until
+    //         the active interval starts.
+    m_keyframe_effect->set_fill_mode(Animations::FillMode::Backwards);
     // https://drafts.csswg.org/web-animations-2/#updating-animationeffect-timing
     // Timing properties may also be updated due to a style change. Any change to a CSS animation property that affects
     // timing requires rerunning the procedure to normalize specified timing.
@@ -141,17 +151,11 @@ CSSTransition::CSSTransition(
     m_keyframe_effect->set_key_frame_set(key_frame_set);
     set_timeline(abstract_element.document().timeline());
     set_owning_element(abstract_element);
-    set_effect(m_keyframe_effect);
+    set_effect(m_keyframe_effect, Animations::Animation::ShouldInvalidate::No);
     abstract_element.element().set_transition(abstract_element.pseudo_element(), m_transition_property, *this);
 
-    HTML::TemporaryExecutionContext context(realm);
-    play().release_value_but_fixme_should_propagate_errors();
-}
-
-void CSSTransition::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSTransition);
-    Base::initialize(realm);
+    HTML::TemporaryExecutionContext context(environment);
+    play(Animations::Animation::ShouldInvalidate::No).release_value_but_fixme_should_propagate_errors();
 }
 
 void CSSTransition::visit_edges(Cell::Visitor& visitor)
@@ -163,11 +167,11 @@ void CSSTransition::visit_edges(Cell::Visitor& visitor)
 
 double CSSTransition::timing_function_output_at_time(double t) const
 {
-    auto progress = (t - transition_start_time()) / (transition_end_time() - transition_start_time());
     // AD-HOC: If the transition has an empty duration then we get NaN here,
     // setting progress to 1 because an instant transition may be considered "finished".
+    double progress = 1;
     if (transition_start_time() < transition_end_time())
-        progress = 1;
+        progress = (t - transition_start_time()) / (transition_end_time() - transition_start_time());
 
     // FIXME: Is this before_flag value correct?
     bool before_flag = t < transition_start_time();

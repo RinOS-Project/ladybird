@@ -6,38 +6,36 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
-#include <LibWeb/Bindings/CredentialPrototype.h>
-#include <LibWeb/Bindings/PlatformObject.h>
-#include <LibWeb/WebIDL/Promise.h>
+#include <AK/Utf16String.h>
+#include <LibWeb/Bindings/Wrappable.h>
 
 namespace Web::CredentialManagement {
 
 // https://www.w3.org/TR/credential-management-1/#credential
-class Credential : public Bindings::PlatformObject {
-    WEB_PLATFORM_OBJECT(Credential, Bindings::PlatformObject);
+class Credential : public Bindings::GCAllocatedWrappable {
+    WEB_WRAPPABLE(Credential, Bindings::GCAllocatedWrappable);
     GC_DECLARE_ALLOCATOR(Credential);
 
 public:
-    static GC::Ref<WebIDL::Promise> is_conditional_mediation_available(JS::VM&);
+    static bool is_conditional_mediation_available();
+    static GC::Ref<WebIDL::Promise> is_conditional_mediation_available_impl(JS::VM&);
 
     virtual ~Credential() override;
 
-    String const& id() const { return m_id; }
+    Utf16String const& id() const { return m_id; }
 
-    virtual String type() const = 0;
+    virtual Utf16FlyString const& type() const = 0;
 
 protected:
-    explicit Credential(JS::Realm&);
-    Credential(JS::Realm&, String id);
-    virtual void initialize(JS::Realm&) override;
+    explicit Credential();
+    Credential(Utf16String id);
 
-    String m_id;
+    Utf16String m_id;
 };
 
 // https://www.w3.org/TR/credential-management-1/#dictdef-credentialdata
 struct CredentialData {
-    String id;
+    Utf16String id;
 };
 
 }

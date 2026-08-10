@@ -27,7 +27,7 @@ public:
 
     double raw_value() const { return m_value; }
     TimeUnit unit() const { return m_unit; }
-    FlyString unit_name() const { return CSS::to_string(m_unit); }
+    Utf16FlyString unit_name() const { return CSS::to_string(m_unit); }
 
     bool operator==(Time const& other) const
     {
@@ -47,7 +47,6 @@ public:
     }
 
     static Time from_style_value(NonnullRefPtr<StyleValue const> const&, Optional<Time> percentage_basis);
-    static Time resolve_calculated(NonnullRefPtr<CalculatedStyleValue const> const&, Layout::Node const&, Time const& reference_value);
 
 private:
     TimeUnit m_unit;

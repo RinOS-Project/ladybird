@@ -10,7 +10,6 @@
 
 #include <AK/Assertions.h>
 #include <AK/BitCast.h>
-#include <AK/ByteString.h>
 #include <AK/Format.h>
 #include <AK/Forward.h>
 #include <AK/Function.h>
@@ -18,6 +17,8 @@
 #include <AK/SourceLocation.h>
 #include <AK/String.h>
 #include <AK/Types.h>
+#include <AK/Utf16String.h>
+#include <AK/Utf16View.h>
 #include <LibGC/NanBoxedValue.h>
 #include <LibGC/Ptr.h>
 #include <LibGC/Root.h>
@@ -87,6 +88,9 @@ static constexpr u64 SHIFTED_INT32_TAG = INT32_TAG << GC::TAG_SHIFT;
 // this is not needed.
 
 class JS_API Value : public GC::NanBoxedValue {
+    template<typename T>
+    static constexpr bool HasForbiddenDirectJSValueConversion = requires { typename RemoveCV<T>::JSValueConversionIsForbidden; };
+
 public:
     enum class PreferredType {
         Default,
@@ -267,6 +271,9 @@ public:
     {
     }
 
+    template<typename T>
+    requires(HasForbiddenDirectJSValueConversion<T>) Value(T*) = delete;
+
     Value(Cell const* cell)
         : Value(GC::IS_CELL_BIT << GC::TAG_SHIFT, reinterpret_cast<void const*>(cell))
     {
@@ -298,22 +305,31 @@ public:
     }
 
     template<typename T>
-    Value(GC::Ptr<T> ptr)
+    requires(!HasForbiddenDirectJSValueConversion<T>) Value(GC::Ptr<T> ptr)
         : Value(ptr.ptr())
     {
     }
 
     template<typename T>
-    Value(GC::Ref<T> ptr)
+    requires(HasForbiddenDirectJSValueConversion<T>) Value(GC::Ptr<T>) = delete;
+
+    template<typename T>
+    requires(!HasForbiddenDirectJSValueConversion<T>) Value(GC::Ref<T> ptr)
         : Value(ptr.ptr())
     {
     }
 
     template<typename T>
-    Value(GC::Root<T> const& ptr)
+    requires(HasForbiddenDirectJSValueConversion<T>) Value(GC::Ref<T>) = delete;
+
+    template<typename T>
+    requires(!HasForbiddenDirectJSValueConversion<T>) Value(GC::Root<T> const& ptr)
         : Value(ptr.ptr())
     {
     }
+
+    template<typename T>
+    requires(HasForbiddenDirectJSValueConversion<T>) Value(GC::Root<T> const&) = delete;
 
     Cell& as_cell()
     {
@@ -395,14 +411,12 @@ public:
         return *extract_pointer<BigInt>();
     }
 
-    Array& as_array();
+    Array& as_array_exotic_object();
     FunctionObject& as_function();
     FunctionObject const& as_function() const;
 
     u64 encoded() const { return m_value.encoded; }
 
-    ThrowCompletionOr<String> to_string(VM&) const;
-    ThrowCompletionOr<ByteString> to_byte_string(VM&) const;
     ThrowCompletionOr<Utf16String> to_utf16_string(VM&) const;
     ThrowCompletionOr<GC::Ref<PrimitiveString>> to_primitive_string(VM&);
     ThrowCompletionOr<Value> to_primitive(VM&, PreferredType preferred_type = PreferredType::Default) const;
@@ -433,7 +447,6 @@ public:
     ThrowCompletionOr<GC::Ptr<FunctionObject>> get_method(VM&, PropertyKey const&) const;
     ThrowCompletionOr<GC::Ptr<FunctionObject>> get_method(VM&, PropertyKey const&, Bytecode::PropertyLookupCache&) const;
 
-    [[nodiscard]] String to_string_without_side_effects() const;
     [[nodiscard]] Utf16String to_utf16_string_without_side_effects() const;
 
     [[nodiscard]] GC::Ref<PrimitiveString> typeof_(VM&) const;
@@ -594,10 +607,8 @@ enum class NumberToStringMode {
     WithoutExponent,
 };
 JS_API void number_to_string(StringBuilder&, double, NumberToStringMode = NumberToStringMode::WithExponent);
-[[nodiscard]] JS_API String number_to_string(double, NumberToStringMode = NumberToStringMode::WithExponent);
 [[nodiscard]] JS_API Utf16String number_to_utf16_string(double, NumberToStringMode = NumberToStringMode::WithExponent);
-[[nodiscard]] ByteString number_to_byte_string(double, NumberToStringMode = NumberToStringMode::WithExponent);
-double string_to_number(StringView);
+double string_to_number(Utf16View);
 
 inline bool Value::operator==(Value const& value) const { return same_value(*this, value); }
 
@@ -669,12 +680,12 @@ inline Root<JS::Value> make_root(JS::Value value, SourceLocation location = Sour
 namespace AK {
 
 template<>
-struct Formatter<JS::Value> : Formatter<StringView> {
+struct Formatter<JS::Value> : Formatter<FormatString> {
     ErrorOr<void> format(FormatBuilder& builder, JS::Value value)
     {
         if (value.is_special_empty_value())
             return Formatter<StringView>::format(builder, "<empty>"sv);
-        return Formatter<StringView>::format(builder, value.to_string_without_side_effects());
+        return Formatter<Utf16String> {}.format(builder, value.to_utf16_string_without_side_effects());
     }
 };
 

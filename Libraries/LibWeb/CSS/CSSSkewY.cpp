@@ -5,8 +5,7 @@
  */
 
 #include "CSSSkewY.h"
-#include <LibWeb/Bindings/CSSSkewYPrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/CSS/CSSNumericValue.h>
 #include <LibWeb/CSS/CSSUnitValue.h>
 #include <LibWeb/CSS/PropertyNameAndID.h>
@@ -18,39 +17,33 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSSkewY);
 
-GC::Ref<CSSSkewY> CSSSkewY::create(JS::Realm& realm, GC::Ref<CSSNumericValue> ay)
+GC::Ref<CSSSkewY> CSSSkewY::create(GC::Ref<CSSNumericValue> ay)
 {
-    return realm.create<CSSSkewY>(realm, ay);
+    return GC::Heap::the().allocate<CSSSkewY>(ay);
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-cssskewy-cssskewy
-WebIDL::ExceptionOr<GC::Ref<CSSSkewY>> CSSSkewY::construct_impl(JS::Realm& realm, GC::Ref<CSSNumericValue> ay)
+WebIDL::ExceptionOr<GC::Ref<CSSSkewY>> CSSSkewY::create_for_constructor(GC::Ref<CSSNumericValue> ay)
 {
     // The CSSSkewY(ay) constructor must, when invoked, perform the following steps:
 
     // 1. If ay does not match <angle>, throw a TypeError.
     if (!ay->type().matches_angle({}))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkewY ay component doesn't match <angle>"sv };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkewY ay component doesn't match <angle>"_utf16 };
 
     // 2. Return a new CSSSkewY object with its ay internal slot set to ay, and its is2D internal slot set to true.
-    return CSSSkewY::create(realm, ay);
+    return CSSSkewY::create(ay);
 }
 
-CSSSkewY::CSSSkewY(JS::Realm& realm, GC::Ref<CSSNumericValue> ay)
-    : CSSTransformComponent(realm, Is2D::Yes)
+CSSSkewY::CSSSkewY(GC::Ref<CSSNumericValue> ay)
+    : CSSTransformComponent(Is2D::Yes)
     , m_ay(ay)
 {
 }
 
 CSSSkewY::~CSSSkewY() = default;
 
-void CSSSkewY::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSSkewY);
-    Base::initialize(realm);
-}
-
-void CSSSkewY::visit_edges(Visitor& visitor)
+void CSSSkewY::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_ay);
@@ -60,15 +53,15 @@ void CSSSkewY::visit_edges(Visitor& visitor)
 WebIDL::ExceptionOr<Utf16String> CSSSkewY::to_string() const
 {
     // 1. Let s initially be "skewY(".
-    StringBuilder builder { StringBuilder::Mode::UTF16 };
-    builder.append("skewY("sv);
+    Utf16StringBuilder builder;
+    builder.append_ascii("skewY("sv);
 
     // 2. Serialize this’s ay internal slot, and append it to s.
     m_ay->serialize(builder, {});
 
     // 3. Append ")" to s, and return s.
-    builder.append(")"sv);
-    return builder.to_utf16_string();
+    builder.append_ascii(')');
+    return builder.to_string();
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-csstransformcomponent-tomatrix
@@ -82,10 +75,10 @@ WebIDL::ExceptionOr<GC::Ref<Geometry::DOMMatrix>> CSSSkewY::to_matrix() const
     //    As the entries of such a matrix are defined relative to the px unit, if any <length>s in this involved in
     //    generating the matrix are not compatible units with px (such as relative lengths or percentages), throw a
     //    TypeError.
-    auto matrix = Geometry::DOMMatrix::create(realm());
+    auto matrix = Geometry::DOMMatrix::create();
 
     // NB: to() throws a TypeError if the conversion can't be done.
-    auto ay_rad = TRY(m_ay->to("rad"_fly_string))->value();
+    auto ay_rad = TRY(m_ay->to("rad"_utf16_fly_string))->value();
     matrix->set_m12(tanf(ay_rad));
 
     // 2. Return matrix.
@@ -97,7 +90,7 @@ WebIDL::ExceptionOr<void> CSSSkewY::set_ay(GC::Ref<CSSNumericValue> ay)
     // AD-HOC: Not specced. https://github.com/w3c/css-houdini-drafts/issues/1153
     //         WPT expects this to throw for invalid values.
     if (!ay->type().matches_angle({}))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkewY ay component doesn't match <angle>"sv };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkewY ay component doesn't match <angle>"_utf16 };
     m_ay = ay;
     return {};
 }

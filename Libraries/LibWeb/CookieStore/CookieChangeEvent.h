@@ -6,40 +6,40 @@
 
 #pragma once
 
-#include <LibWeb/CookieStore/CookieStore.h>
+#include <AK/Utf16FlyString.h>
+#include <AK/Vector.h>
+#include <LibJS/Forward.h>
+#include <LibWeb/Bindings/CookieChangeEvent.h>
+#include <LibWeb/Bindings/CookieStore.h>
 #include <LibWeb/DOM/Event.h>
-#include <LibWeb/WebIDL/CachedAttribute.h>
+#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
+
+namespace Web::HTML {
+
+class Window;
+
+}
 
 namespace Web::CookieStore {
 
-// https://cookiestore.spec.whatwg.org/#dictdef-cookiechangeeventinit
-struct CookieChangeEventInit final : public DOM::EventInit {
-    Optional<Vector<CookieListItem>> changed;
-    Optional<Vector<CookieListItem>> deleted;
-};
+using CookieListItem = Bindings::CookieListItem;
+using CookieChangeEventInit = Bindings::CookieChangeEventInit;
 
 // https://cookiestore.spec.whatwg.org/#cookiechangeevent
 class CookieChangeEvent final : public DOM::Event {
-    WEB_PLATFORM_OBJECT(CookieChangeEvent, DOM::Event);
+    WEB_WRAPPABLE(CookieChangeEvent, DOM::Event);
     GC_DECLARE_ALLOCATOR(CookieChangeEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<CookieChangeEvent> create(JS::Realm&, FlyString const& event_name, CookieChangeEventInit const& event_init);
-    [[nodiscard]] static GC::Ref<CookieChangeEvent> construct_impl(JS::Realm&, FlyString const& event_name, CookieChangeEventInit const& event_init);
+    [[nodiscard]] static GC::Ref<CookieChangeEvent> create(Utf16FlyString const& event_name, CookieChangeEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
 
     virtual ~CookieChangeEvent() override;
 
     Vector<CookieListItem> changed() const { return m_changed; }
     Vector<CookieListItem> deleted() const { return m_deleted; }
 
-    DEFINE_CACHED_ATTRIBUTE(changed);
-    DEFINE_CACHED_ATTRIBUTE(deleted);
-
 private:
-    CookieChangeEvent(JS::Realm&, FlyString const& event_name, CookieChangeEventInit const& event_init);
-
-    virtual void initialize(JS::Realm&) override;
-    virtual void visit_edges(Cell::Visitor&) override;
+    CookieChangeEvent(Utf16FlyString const& event_name, CookieChangeEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
 
     Vector<CookieListItem> m_changed;
     Vector<CookieListItem> m_deleted;

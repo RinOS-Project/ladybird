@@ -184,79 +184,39 @@ Optional<String> Host::public_suffix() const
 {
     // 1. If host is not a domain, then return null.
     if (!is_domain())
-        return OptionalNone {};
-
-    auto const& host_string = m_value.get<String>();
+        return {};
 
     // 2. Let trailingDot be "." if host ends with "."; otherwise the empty string.
-    auto trailing_dot = host_string.ends_with('.') ? "."sv : ""sv;
-
     // 3. Let publicSuffix be the public suffix determined by running the Public Suffix List algorithm with host as domain. [PSL]
-
-    // NB: The PSL algorithm maintains trailing dots, so we strip it here since step 4 expects no trailing dot.
-    auto host_without_trailing_dot = host_string.bytes_as_string_view();
-    if (!trailing_dot.is_empty())
-        host_without_trailing_dot = host_without_trailing_dot.substring_view(0, host_without_trailing_dot.length() - 1);
-
-    // FIXME: Unify this logic with registrable domain.
-    auto public_suffix = PublicSuffixData::the()->get_public_suffix(host_without_trailing_dot);
-    if (!public_suffix.has_value()) {
-        auto last_dot = host_without_trailing_dot.find_last('.');
-        if (last_dot.has_value())
-            public_suffix = MUST(String::from_utf8(host_without_trailing_dot.substring_view(last_dot.value() + 1)));
-        else
-            public_suffix = MUST(String::from_utf8(host_without_trailing_dot));
-    }
+    auto public_suffix = PublicSuffixData::find_matching_public_suffix(*this, PublicSuffixData::IncludeStarRule::Yes);
+    if (!public_suffix.has_value())
+        return {};
 
     // 4. Assert: publicSuffix is an ASCII string that does not end with ".".
-    VERIFY(public_suffix->is_ascii());
-    VERIFY(!public_suffix->ends_with('.'));
-
     // 5. Return publicSuffix and trailingDot concatenated.
-    return MUST(String::formatted("{}{}", public_suffix, trailing_dot));
+    // NB: PublicSuffixData preserves the host's trailing dot, if any.
+    VERIFY(public_suffix->is_ascii());
+    return public_suffix;
 }
 
 // https://url.spec.whatwg.org/#host-registrable-domain
 Optional<String> Host::registrable_domain() const
 {
     // 1. If host’s public suffix is null or host’s public suffix equals host, then return null.
-    auto public_suffix = this->public_suffix();
-    if (!public_suffix.has_value() || public_suffix == m_value.get<String>())
-        return OptionalNone {};
-
-    // NOTE: If we got here, we know this Host is a String.
-    auto const& host_string = m_value.get<String>();
+    if (!is_domain())
+        return {};
 
     // 2. Let trailingDot be "." if host ends with "."; otherwise the empty string.
-    auto trailing_dot = host_string.ends_with('.') ? "."sv : ""sv;
-
     // 3. Let registrableDomain be the registrable domain determined by running the Public Suffix List algorithm with host as domain. [PSL]
-
-    // NB: The PSL algorithm maintains trailing dots, so we strip it here since step 4 expects no trailing dot.
-    auto host_without_trailing_dot = host_string.bytes_as_string_view();
-    if (!trailing_dot.is_empty())
-        host_without_trailing_dot = host_without_trailing_dot.substring_view(0, host_without_trailing_dot.length() - 1);
-
-    // NB: If we do not find a registrable domain via the PSL, use everything after the second to last dot.
-    auto registrable_domain = get_registrable_domain(host_without_trailing_dot);
-    if (!registrable_domain.has_value()) {
-        auto last_dot = host_without_trailing_dot.find_last('.');
-        if (last_dot.has_value()) {
-            auto second_last_dot = host_without_trailing_dot.substring_view(0, *last_dot).find_last('.');
-            if (second_last_dot.has_value())
-                registrable_domain = MUST(String::from_utf8(host_without_trailing_dot.substring_view(second_last_dot.value() + 1)));
-        }
-    }
-
+    auto registrable_domain = PublicSuffixData::find_matching_registrable_domain(*this, PublicSuffixData::IncludeStarRule::Yes);
     if (!registrable_domain.has_value())
-        registrable_domain = MUST(String::from_utf8(host_without_trailing_dot));
+        return {};
 
-    // 4. Assert: registrableDomain is an ASCII string that does not end with ".".
+    // 4. Assert: publicSuffix is an ASCII string that does not end with ".".
+    // 5. Return publicSuffix and trailingDot concatenated.
+    // NB: PublicSuffixData preserves the host's trailing dot, if any.
     VERIFY(registrable_domain->is_ascii());
-    VERIFY(!registrable_domain->ends_with('.'));
-
-    // 5. Return registrableDomain and trailingDot concatenated.
-    return MUST(String::formatted("{}{}", registrable_domain.value(), trailing_dot));
+    return registrable_domain;
 }
 
 }

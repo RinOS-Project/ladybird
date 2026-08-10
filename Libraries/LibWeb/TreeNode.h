@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Assertions.h>
+#include <AK/IterationDecision.h>
 #include <AK/TypeCasts.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Heap/Cell.h>
@@ -435,6 +436,23 @@ public:
         for (auto* ancestor = this; ancestor; ancestor = ancestor->parent()) {
             if (callback(static_cast<T&>(*ancestor)) == IterationDecision::Break)
                 break;
+        }
+    }
+
+    template<typename U, typename Callback>
+    void for_each_inclusive_ancestor_of_type(Callback callback) const
+    {
+        return const_cast<TreeNode*>(this)->for_each_inclusive_ancestor_of_type<U>(move(callback));
+    }
+
+    template<typename U, typename Callback>
+    void for_each_inclusive_ancestor_of_type(Callback callback)
+    {
+        for (auto* ancestor = static_cast<T*>(this); ancestor; ancestor = ancestor->parent()) {
+            if (auto* ancestor_of_type = as_if<U>(*ancestor)) {
+                if (callback(*ancestor_of_type) == IterationDecision::Break)
+                    return;
+            }
         }
     }
 

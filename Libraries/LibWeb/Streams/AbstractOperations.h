@@ -14,6 +14,8 @@
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Streams/Algorithms.h>
+#include <LibWeb/Streams/QueuingStrategy.h>
+#include <LibWeb/WebIDL/Buffers.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::Streams {
@@ -33,7 +35,7 @@ WEB_API void set_up_cross_realm_transform_writable(JS::Realm&, WritableStream&, 
 WEB_API bool can_transfer_array_buffer(JS::ArrayBuffer const& array_buffer);
 WEB_API bool is_non_negative_number(JS::Value);
 WEB_API WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> transfer_array_buffer(JS::Realm& realm, JS::ArrayBuffer& buffer);
-WEB_API WebIDL::ExceptionOr<JS::Value> clone_as_uint8_array(JS::Realm&, WebIDL::ArrayBufferView&);
+WEB_API WebIDL::ExceptionOr<JS::Value> clone_as_uint8_array(JS::Realm&, WebIDL::ArrayBufferView);
 WEB_API WebIDL::ExceptionOr<JS::Value> structured_clone(JS::Realm&, JS::Value value);
 WEB_API bool can_copy_data_block_bytes_buffer(JS::ArrayBuffer const& to_buffer, u64 to_index, JS::ArrayBuffer const& from_buffer, u64 from_index, u64 count);
 
@@ -77,11 +79,11 @@ WebIDL::ExceptionOr<void> enqueue_value_with_size(T& container, JS::Value value,
 
     // 2. If ! IsNonNegativeNumber(size) is false, throw a RangeError exception.
     if (!is_non_negative_number(size))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Chunk has non-positive size"sv };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Chunk has non-positive size"_utf16 };
 
     // 3. If size is +∞, throw a RangeError exception.
     if (size.is_positive_infinity())
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Chunk has infinite size"sv };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Chunk has infinite size"_utf16 };
 
     // 4. Append a new value-with-size with value value and size size to container.[[queue]].
     container.queue().append({ value, size.as_double() });

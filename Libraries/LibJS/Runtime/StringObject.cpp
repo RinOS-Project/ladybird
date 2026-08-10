@@ -73,7 +73,8 @@ static ThrowCompletionOr<Optional<PropertyDescriptor>> string_get_own_property(S
 
     // 6. Let str be S.[[StringData]].
     // 7. Assert: Type(str) is String.
-    auto str = string.primitive_string().utf16_string_view();
+    auto& primitive_string = string.primitive_string();
+    auto str = primitive_string.utf16_string_view();
 
     // 8. Let len be the length of str.
     auto length = str.length_in_code_units();
@@ -83,7 +84,7 @@ static ThrowCompletionOr<Optional<PropertyDescriptor>> string_get_own_property(S
         return Optional<PropertyDescriptor> {};
 
     // 10. Let resultStr be the substring of str from ℝ(index) to ℝ(index) + 1.
-    auto result_str = PrimitiveString::create(vm, str.substring_view(index.as_index(), 1));
+    auto result_str = PrimitiveString::create(vm, primitive_string, index.as_index(), 1);
 
     // 11. Return the PropertyDescriptor { [[Value]]: resultStr, [[Writable]]: false, [[Enumerable]]: true, [[Configurable]]: false }.
     return PropertyDescriptor {
@@ -133,7 +134,7 @@ ThrowCompletionOr<GC::RootVector<Value>> StringObject::internal_own_property_key
     auto& vm = this->vm();
 
     // 1. Let keys be a new empty List.
-    auto keys = GC::RootVector<Value> { heap() };
+    GC::RootVector<Value> keys;
 
     // 2. Let str be O.[[StringData]].
     // 3. Assert: str is a String.
@@ -158,20 +159,20 @@ ThrowCompletionOr<GC::RootVector<Value>> StringObject::internal_own_property_key
     }
 
     // 7. For each own property key P of O such that P is a String and P is not an array index, in ascending chronological order of property creation, do
-    for (auto& it : shape().property_table()) {
-        if (it.key.is_string()) {
+    shape().for_each_property_in_insertion_order([&](auto const& property_key, auto const&) {
+        if (property_key.is_string()) {
             // a. Add P as the last element of keys.
-            keys.append(it.key.to_value(vm));
+            keys.append(property_key.to_value(vm));
         }
-    }
+    });
 
     // 8. For each own property key P of O such that P is a Symbol, in ascending chronological order of property creation, do
-    for (auto& it : shape().property_table()) {
-        if (it.key.is_symbol()) {
+    shape().for_each_property_in_insertion_order([&](auto const& property_key, auto const&) {
+        if (property_key.is_symbol()) {
             // a. Add P as the last element of keys.
-            keys.append(it.key.to_value(vm));
+            keys.append(property_key.to_value(vm));
         }
-    }
+    });
 
     // 9. Return keys.
     return { move(keys) };

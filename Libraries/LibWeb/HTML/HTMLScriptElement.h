@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Function.h>
+#include <AK/Utf16View.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/HTML/CORSSettingAttribute.h>
 #include <LibWeb/HTML/HTMLElement.h>
@@ -19,7 +20,7 @@
 namespace Web::HTML {
 
 class HTMLScriptElement final : public HTMLElement {
-    WEB_PLATFORM_OBJECT(HTMLScriptElement, HTMLElement);
+    WEB_WRAPPABLE(HTMLScriptElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLScriptElement);
 
 public:
@@ -29,19 +30,16 @@ public:
     bool is_ready_to_be_parser_executed() const { return m_ready_to_be_parser_executed; }
     bool failed_to_load() const { return m_failed_to_load; }
 
-    template<OneOf<XMLDocumentBuilder, HTMLParser> T>
-    void set_parser_document(Badge<T>, DOM::Document& document) { m_parser_document = &document; }
+    void set_parser_document(Badge<XMLDocumentBuilder, HTMLParser>, DOM::Document& document) { m_parser_document = &document; }
 
-    template<OneOf<XMLDocumentBuilder, HTMLParser> T>
-    void set_force_async(Badge<T>, bool b) { m_force_async = b; }
+    void set_force_async(Badge<XMLDocumentBuilder, HTMLParser>, bool b) { m_force_async = b; }
 
-    template<OneOf<XMLDocumentBuilder, HTMLParser> T>
-    void set_already_started(Badge<T>, bool b) { m_already_started = b; }
+    void set_already_started(Badge<XMLDocumentBuilder, HTMLParser>, bool b) { m_already_started = b; }
 
-    template<OneOf<XMLDocumentBuilder, HTMLParser> T>
-    void prepare_script(Badge<T>) { prepare_script(); }
+    void prepare_script(Badge<XMLDocumentBuilder, HTMLParser>) { prepare_script(); }
 
     void execute_script();
+    void stop_delaying_document_load_event(Badge<DOM::Document>) { m_document_load_event_delayer.clear(); }
 
     bool is_parser_inserted() const { return !!m_parser_document; }
 
@@ -49,7 +47,7 @@ public:
     virtual void post_connection() override;
 
     // https://html.spec.whatwg.org/multipage/scripting.html#dom-script-supports
-    static bool supports(JS::VM&, StringView type)
+    static bool supports(Utf16String const& type)
     {
         return type.is_one_of("classic"sv, "module"sv, "importmap"sv);
     }
@@ -65,7 +63,7 @@ public:
     TrustedTypes::TrustedScriptURLOrString src() const;
     WebIDL::ExceptionOr<void> set_src(TrustedTypes::TrustedScriptURLOrString);
 
-    Variant<GC::Root<TrustedTypes::TrustedScript>, Utf16String, Empty> text_content() const;
+    Variant<GC::Ref<TrustedTypes::TrustedScript>, Utf16String, Empty> text_content() const;
     WebIDL::ExceptionOr<void> set_text_content(TrustedTypes::NullableTrustedScriptOrString);
 
     TrustedTypes::TrustedScriptOrString inner_text();
@@ -76,7 +74,7 @@ public:
 
     virtual WebIDL::ExceptionOr<void> cloned(Node&, bool) const override;
 
-    void set_string_text(Utf16String const& value) { m_script_text = value; }
+    void set_string_text(Utf16View value) { m_script_text = Utf16String::from_utf16(value); }
 
 protected:
     // https://html.spec.whatwg.org/multipage/urls-and-fetching.html#implicitly-potentially-render-blocking
@@ -86,11 +84,10 @@ private:
     HTMLScriptElement(DOM::Document&, DOM::QualifiedName);
 
     virtual bool is_html_script_element() const override { return true; }
-
-    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
+    virtual void adopted_from(DOM::Document&) override;
 
-    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
 
     // https://www.w3.org/TR/trusted-types/#prepare-script-text
     WebIDL::ExceptionOr<void> prepare_script_text();

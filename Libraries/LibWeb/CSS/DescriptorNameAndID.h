@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Utf16FlyString.h>
 #include <LibWeb/CSS/DescriptorID.h>
 #include <LibWeb/CSS/PropertyName.h>
 #include <LibWeb/CSS/Serialize.h>
@@ -14,7 +15,7 @@ namespace Web::CSS {
 
 class DescriptorNameAndID {
 public:
-    static Optional<DescriptorNameAndID> from_name(AtRuleID at_rule_id, FlyString name)
+    static Optional<DescriptorNameAndID> from_name(AtRuleID at_rule_id, Utf16FlyString name)
     {
         if (is_a_custom_property_name_string(name))
             return DescriptorNameAndID(move(name), DescriptorID::Custom);
@@ -36,7 +37,7 @@ public:
 
     DescriptorID id() const { return m_id; }
 
-    FlyString const& name() const
+    Utf16FlyString const& name() const
     {
         return m_name;
     }
@@ -47,13 +48,13 @@ public:
     }
 
 private:
-    DescriptorNameAndID(FlyString name, DescriptorID id)
+    DescriptorNameAndID(Utf16FlyString name, DescriptorID id)
         : m_name(move(name))
         , m_id(id)
     {
     }
 
-    FlyString m_name;
+    Utf16FlyString m_name;
     DescriptorID m_id;
 };
 

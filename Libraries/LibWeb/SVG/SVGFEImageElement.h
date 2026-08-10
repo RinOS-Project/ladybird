@@ -6,6 +6,9 @@
 
 #pragma once
 
+#include <AK/Optional.h>
+#include <LibGfx/DecodedImageFrame.h>
+#include <LibWeb/Forward.h>
 #include <LibWeb/SVG/SVGElement.h>
 #include <LibWeb/SVG/SVGFilterPrimitiveStandardAttributes.h>
 #include <LibWeb/SVG/SVGURIReference.h>
@@ -16,24 +19,23 @@ class SVGFEImageElement final
     : public SVGElement
     , public SVGFilterPrimitiveStandardAttributes<SVGFEImageElement>
     , public SVGURIReferenceMixin<SupportsXLinkHref::Yes> {
-    WEB_PLATFORM_OBJECT(SVGFEImageElement, SVGElement);
+    WEB_WRAPPABLE(SVGFEImageElement, SVGElement);
     GC_DECLARE_ALLOCATOR(SVGFEImageElement);
 
 public:
     virtual ~SVGFEImageElement() override = default;
 
-    RefPtr<Gfx::ImmutableBitmap> current_image_bitmap(Gfx::IntSize = {}) const;
+    GC::Ptr<HTML::DecodedImageData> image_data() const;
+    Optional<Gfx::DecodedImageFrame> current_image_frame(Gfx::IntSize = {}) const;
     Optional<Gfx::IntRect> content_rect() const;
 
 private:
     SVGFEImageElement(DOM::Document&, DOM::QualifiedName);
-
-    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
 
-    void process_href(Optional<String> const& href);
+    void process_href(Optional<Utf16String> const& href);
 
     Optional<URL::URL> m_href;
 

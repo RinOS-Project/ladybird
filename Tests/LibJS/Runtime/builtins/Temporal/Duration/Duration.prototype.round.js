@@ -128,6 +128,14 @@ describe("correct behavior", () => {
         const result = duration.round({ smallestUnit: "years", relativeTo });
         expect(result.toString()).toBe("P1Y");
     });
+
+    test("mixed smallest and largest unit", () => {
+        const duration = Temporal.Duration.from("P7D");
+        const relativeTo = new Temporal.ZonedDateTime(0n, "UTC");
+
+        const result = duration.round({ smallestUnit: "days", largestUnit: "weeks", relativeTo });
+        expect(result.toString()).toBe("P1W");
+    });
 });
 
 describe("errors", () => {
@@ -207,5 +215,21 @@ describe("errors", () => {
         expect(() => {
             duration.round({ largestUnit: "year" });
         }).toThrowWithMessage(RangeError, "Largest unit must not be year");
+    });
+
+    test("out of range component", () => {
+        const minDuration = new Temporal.Duration(0, 0, 0, 0, 0, 0, Number.MIN_SAFE_INTEGER);
+        const maxDuration = new Temporal.Duration(0, 0, 0, 0, 0, 0, Number.MAX_SAFE_INTEGER);
+        const relativeTo = new Temporal.PlainDate(2020, 1, 1);
+
+        ["year", "month", "week"].forEach(smallestUnit => {
+            expect(() => {
+                minDuration.round({ smallestUnit, relativeTo });
+            }).toThrowWithMessage(RangeError, "Invalid duration");
+
+            expect(() => {
+                maxDuration.round({ smallestUnit, relativeTo });
+            }).toThrowWithMessage(RangeError, "Invalid ISO date");
+        });
     });
 });

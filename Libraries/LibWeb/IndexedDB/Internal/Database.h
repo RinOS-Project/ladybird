@@ -6,36 +6,39 @@
 
 #pragma once
 
+#include <LibGC/Forward.h>
 #include <LibGC/HeapVector.h>
 #include <LibGC/Ptr.h>
 #include <LibGC/RootVector.h>
-#include <LibWeb/DOM/EventTarget.h>
+#include <LibGC/Weak.h>
+#include <LibJS/Heap/Cell.h>
 #include <LibWeb/IndexedDB/Internal/ObjectStore.h>
 #include <LibWeb/StorageAPI/StorageKey.h>
 
 namespace Web::IndexedDB {
 
 // https://www.w3.org/TR/IndexedDB/#database-construct
-class Database : public Bindings::PlatformObject {
-    WEB_NON_IDL_PLATFORM_OBJECT(Database, Bindings::PlatformObject);
+class Database : public JS::Cell {
+    GC_CELL(Database, JS::Cell);
     GC_DECLARE_ALLOCATOR(Database);
 
 public:
     void set_version(u64 version) { m_version = version; }
     u64 version() const { return m_version; }
-    String name() const { return m_name; }
+    Utf16String name() const { return m_name; }
 
     void set_upgrade_transaction(GC::Ptr<IDBTransaction> transaction) { m_upgrade_transaction = transaction; }
     [[nodiscard]] GC::Ptr<IDBTransaction> upgrade_transaction() { return m_upgrade_transaction; }
 
-    void associate(GC::Ref<IDBDatabase> connection) { m_associated_connections.append(connection); }
+    void associate(GC::Ref<IDBDatabase> connection);
+    void dissociate(IDBDatabase& connection);
     using AssociatedConnections = GC::HeapVector<GC::Ref<IDBDatabase>>;
-    GC::Ref<AssociatedConnections> associated_connections_as_heap_vector();
-    GC::Ref<AssociatedConnections> associated_connections_as_heap_vector_except(IDBDatabase& connection);
+    GC::Ref<AssociatedConnections> associated_connections_as_heap_vector(GC::Heap&);
+    GC::Ref<AssociatedConnections> associated_connections_as_heap_vector_except(GC::Heap&, IDBDatabase& connection);
     GC::RootVector<GC::Ref<IDBDatabase>> associated_connections_as_root_vector();
 
     ReadonlySpan<GC::Ref<ObjectStore>> object_stores() { return m_object_stores; }
-    GC::Ptr<ObjectStore> object_store_with_name(String const& name) const;
+    GC::Ptr<ObjectStore> object_store_with_name(Utf16String const& name) const;
     void add_object_store(GC::Ref<ObjectStore> object_store) { m_object_stores.append(object_store); }
     void remove_object_store(GC::Ref<ObjectStore> object_store)
     {
@@ -43,13 +46,13 @@ public:
     }
 
     [[nodiscard]] static Vector<GC::Weak<Database>> for_key(StorageAPI::StorageKey const&);
-    [[nodiscard]] static Optional<Database&> for_key_and_name(StorageAPI::StorageKey const&, String const&);
-    [[nodiscard]] static ErrorOr<GC::Ref<Database>> create_for_key_and_name(JS::Realm&, StorageAPI::StorageKey const&, String const&);
-    [[nodiscard]] static ErrorOr<void> delete_for_key_and_name(StorageAPI::StorageKey const&, String const&);
+    [[nodiscard]] static Optional<Database&> for_key_and_name(StorageAPI::StorageKey const&, Utf16String const&);
+    [[nodiscard]] static ErrorOr<GC::Ref<Database>> create_for_key_and_name(GC::Heap&, StorageAPI::StorageKey const&, Utf16String const&);
+    [[nodiscard]] static ErrorOr<void> delete_for_key_and_name(StorageAPI::StorageKey const&, Utf16String const&);
 
     static void for_each_database(AK::Function<void(Database&)> const& visitor);
 
-    [[nodiscard]] static GC::Ref<Database> create(JS::Realm&, String const&);
+    [[nodiscard]] static GC::Ref<Database> create(GC::Heap&, Utf16String const&);
     virtual ~Database();
 
     void wait_for_connections_to_close(ReadonlySpan<GC::Ref<IDBDatabase>> connections, GC::Ref<GC::Function<void()>> after_all);
@@ -58,9 +61,8 @@ public:
 protected:
     explicit Database(IDBDatabase& database);
 
-    explicit Database(JS::Realm& realm, String name)
-        : PlatformObject(realm)
-        , m_name(move(name))
+    explicit Database(Utf16String name)
+        : m_name(move(name))
     {
     }
 
@@ -68,15 +70,15 @@ protected:
 
 private:
     struct PendingConnectionWait {
-        Vector<GC::Ref<IDBDatabase>> connections;
+        Vector<GC::Weak<IDBDatabase>> connections;
         GC::Ref<GC::Function<void()>> callback;
     };
 
-    Vector<GC::Ref<IDBDatabase>> m_associated_connections;
+    Vector<GC::Weak<IDBDatabase>> m_associated_connections;
     Optional<PendingConnectionWait> m_pending_connection_wait;
 
     // A database has a name which identifies it within a specific storage key.
-    String m_name;
+    Utf16String m_name;
 
     // A database has a version. When a database is first created, its version is 0 (zero).
     u64 m_version { 0 };

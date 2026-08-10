@@ -63,6 +63,7 @@ public:
     Function<void(Message)> on_message;
     Function<void(Error)> on_error;
     Function<void(u16 code, ByteString reason, bool was_clean)> on_close;
+    Function<void()> on_ready_state_change;
     Function<CertificateAndKey()> on_certificate_requested;
 
     void did_open(Badge<RequestClient>);
@@ -70,6 +71,7 @@ public:
     void did_error(Badge<RequestClient>, i32);
     void did_close(Badge<RequestClient>, u16, ByteString, bool);
     void did_request_certificates(Badge<RequestClient>);
+    void detach_from_client(Badge<RequestClient>);
 
 private:
     WebSocket(RequestClient&, u64 websocket_id);

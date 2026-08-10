@@ -25,22 +25,22 @@ ErrorInformation extract_error_information(JS::VM& vm, JS::Value exception)
         if (auto object = exception.as_if<JS::Object>()) {
             if (MUST(object->has_own_property(vm.names.message))) {
                 auto message = object->get_without_side_effects(vm.names.message);
-                return message.to_string_without_side_effects();
+                return message.to_utf16_string_without_side_effects();
             }
         }
 
-        return MUST(String::formatted("Uncaught exception: {}", exception));
+        return Utf16String::formatted("Uncaught exception: {}", exception);
     }();
 
     // FIXME: This offset is relative to the javascript source. Other browsers appear to do it relative
     //        to the entire source document! Calculate that somehow.
 
     // NB: If we got an Error object, then try and extract the information from the location the object was made.
-    if (auto error = exception.as_if<JS::Error>()) {
-        for (auto const& frame : error->traceback()) {
+    if (auto object = exception.as_if<JS::Object>(); object && object->error_data()) {
+        for (auto const& frame : object->error_data()->traceback()) {
             auto source_range = frame.source_range();
             if (source_range.start.line != 0 || source_range.start.column != 0) {
-                attributes.filename = MUST(String::from_byte_string(source_range.filename()));
+                attributes.filename = source_range.filename();
                 attributes.lineno = source_range.start.line;
                 attributes.colno = source_range.start.column;
                 break;
@@ -49,11 +49,10 @@ ErrorInformation extract_error_information(JS::VM& vm, JS::Value exception)
     }
     // NB: Otherwise, we fall back to try and find the location of the invocation of the function itself.
     else {
-        for (ssize_t i = vm.execution_context_stack().size() - 1; i >= 0; --i) {
-            auto& frame = vm.execution_context_stack()[i];
-            if (frame->executable) {
-                auto source_range = frame->executable->source_range_at(frame->program_counter).realize();
-                attributes.filename = MUST(String::from_byte_string(source_range.filename()));
+        for (auto const& frame : vm.stack_trace()) {
+            if (frame.source_range.has_value()) {
+                auto const& source_range = *frame.source_range;
+                attributes.filename = source_range.filename();
                 attributes.lineno = source_range.start.line;
                 attributes.colno = source_range.start.column;
                 break;

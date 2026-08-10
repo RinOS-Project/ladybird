@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Function.h>
+#include <AK/HashMap.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
@@ -26,20 +27,41 @@ enum class ActionID {
     NavigateBack,
     NavigateForward,
     Reload,
+    ViewDownloads,
+    ViewHistory,
+    ClearBrowsingData,
 
+    Undo,
+    Redo,
     CopySelection,
+    CutSelection,
     Paste,
     SelectAll,
 
+    LookUpSelectedText,
     SearchSelectedText,
 
     TakeVisibleScreenshot,
     TakeFullScreenshot,
 
+    ToggleVerticalTabsExpanded,
+
+    ToggleMenuBar,
+
+    ManageBookmarks,
     ToggleBookmark,
     ToggleBookmarkViaToolbar,
     ToggleBookmarksBar,
     BookmarkItem,
+
+    OpenAllBookmarksInTabs,
+    AddBookmark,
+    AddBookmarkAllTabs,
+    AddBookmarkFolder,
+    DeleteBookmark,
+    DeleteBookmarkFolder,
+    EditBookmark,
+    EditBookmarkFolder,
 
     OpenAboutPage,
     OpenProcessesPage,
@@ -48,6 +70,10 @@ enum class ActionID {
     ViewSource,
 
     OpenInNewTab,
+    OpenInNewWindow,
+    OpenInNewPrivateWindow,
+    DownloadLinkedFile,
+    DownloadLinkedFileAs,
     CopyURL,
 
     OpenImage,
@@ -80,19 +106,25 @@ enum class ActionID {
     DumpLayoutTree,
     DumpPaintTree,
     DumpStackingContextTree,
+    DumpSiteIsolationProcessTree,
     DumpDisplayList,
     DumpStyleSheets,
     DumpStyles,
     DumpCSSErrors,
     DumpCookies,
     DumpLocalStorage,
+    DumpSessionStorage,
     DumpGCGraph,
+    DumpWasmStats,
     ShowLineBoxBorders,
+    ShowCaretHitTestDebugOverlay,
     CollectGarbage,
+    CrashCurrentPage,
+    CrashCompositorProcess,
     SpoofUserAgent,
     NavigatorCompatibilityMode,
     EnableScripting,
-    EnableContentFiltering,
+    EnableContentBlocking,
     BlockPopUps,
 };
 
@@ -122,6 +154,9 @@ public:
     Optional<String const&> base64_png_icon() const { return m_base64_png_icon; }
 
     ActionID id() const { return m_id; }
+
+    HashMap<StringView, String> const& properties() const { return m_properties; }
+    void add_property(StringView name, String value) { m_properties.set(name, move(value)); }
 
     bool enabled() const { return m_enabled; }
     void set_enabled(bool);
@@ -165,7 +200,9 @@ private:
     ActionText m_text;
     Optional<ActionText> m_tooltip;
     Optional<String> m_base64_png_icon;
+
     ActionID m_id;
+    HashMap<StringView, String> m_properties;
 
     bool m_enabled { true };
     bool m_visible { true };
@@ -201,8 +238,14 @@ public:
     Span<MenuItem> items() { return m_items; }
     ReadonlySpan<MenuItem> items() const { return m_items; }
 
+    HashMap<StringView, String> const& properties() const { return m_properties; }
+    void add_property(StringView name, String value) { m_properties.set(name, move(value)); }
+
     void set_render_group_icon(bool render_group_icon) { m_render_group_icon = render_group_icon; }
     bool render_group_icon() const { return m_render_group_icon; }
+
+    bool visible() const { return m_visible; }
+    void set_visible(bool);
 
     template<typename Callback>
     void for_each_action(Callback const& callback)
@@ -215,6 +258,15 @@ public:
         }
     }
 
+    struct Observer {
+        virtual ~Observer() = default;
+
+        virtual void on_visible_state_changed(Menu&) { }
+    };
+
+    void add_observer(NonnullOwnPtr<Observer>);
+    void remove_observer(Observer const& observer);
+
     Function<void(Gfx::IntPoint)> on_activation;
 
 private:
@@ -226,8 +278,12 @@ private:
     ActionText m_title;
     Vector<MenuItem> m_items;
 
+    HashMap<StringView, String> m_properties;
+    Vector<NonnullOwnPtr<Observer>, 1> m_observers;
+
     bool m_is_group { false };
     bool m_render_group_icon { false };
+    bool m_visible { true };
 };
 
 }

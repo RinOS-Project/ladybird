@@ -6,22 +6,26 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Bindings/Wrappable.h>
 
 namespace Web::StorageAPI {
 
-class StorageManager final : public Bindings::PlatformObject {
-    WEB_PLATFORM_OBJECT(StorageManager, Bindings::PlatformObject);
+class StorageManager final : public Bindings::GCAllocatedWrappable {
+    WEB_WRAPPABLE(StorageManager, Bindings::GCAllocatedWrappable);
     GC_DECLARE_ALLOCATOR(StorageManager);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<StorageManager>> create(JS::Realm&);
+    static GC::Ref<StorageManager> create(GC::Ref<HTML::EnvironmentSettingsObject>);
     virtual ~StorageManager() override = default;
 
-private:
-    StorageManager(JS::Realm&);
+    GC::Ref<WebIDL::Promise> estimate() const;
 
-    virtual void initialize(JS::Realm&) override;
+private:
+    explicit StorageManager(GC::Ref<HTML::EnvironmentSettingsObject>);
+    static void queue_a_storage_task(JS::Object&, Function<void()>);
+    virtual void visit_edges(GC::Cell::Visitor&) override;
+
+    GC::Ref<HTML::EnvironmentSettingsObject> m_environment;
 };
 
 }

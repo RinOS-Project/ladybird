@@ -1,4 +1,5 @@
 set(SOURCES
+    Bidi.cpp
     Calendar.cpp
     Calendars/AdjustedEraCalendar.cpp
     Calendars/ChineseDangiCalendar.cpp
@@ -54,25 +55,10 @@ set(GENERATED_SOURCES ${CURRENT_LIB_GENERATED})
 
 ladybird_lib(LibUnicode unicode)
 
-if (AK_OS_RINOS)
-    # RinOS: link rinicu + libunicode instead of ICU/Rust
-    target_link_libraries(LibUnicode PRIVATE rinicu libunicode)
-    target_compile_definitions(LibUnicode PRIVATE AK_OS_RINOS=1)
-    target_compile_options(LibUnicode PRIVATE -Wno-unused-const-variable -Wno-unused-function)
-    target_include_directories(LibUnicode PRIVATE
-        ${LIBUNICODE_ROOT}
-    )
-else()
-    if (RINOS_USE_ICU_BACKEND)
-        find_package(ICU 78.2 EXACT REQUIRED COMPONENTS data i18n uc)
-        target_link_libraries(LibUnicode PRIVATE ICU::i18n ICU::uc ICU::data)
-    else()
-        message(STATUS "RinOS policy: ICU package lookup is disabled for LibUnicode. using libunicode_rust only.")
-    endif()
+target_link_libraries(LibUnicode PRIVATE ICU::i18n ICU::uc ICU::data)
 
-    import_rust_crate(MANIFEST_PATH Rust/Cargo.toml CRATE_NAME libunicode_rust)
-    target_link_libraries(LibUnicode PRIVATE libunicode_rust)
-endif()
+import_rust_crate(MANIFEST_PATH Rust/Cargo.toml CRATE_NAME libunicode_rust FEATURES allocator FFI_HEADER RustFFI.h)
+target_link_libraries(LibUnicode PRIVATE libunicode_rust)
 
 # FIXME: Add support for building LibGfx in sanitize
 #   lld-link: error: /failifmismatch: mismatch detected for 'annotate_string':

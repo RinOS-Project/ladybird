@@ -7,34 +7,44 @@
  */
 
 #include <AK/AnyOf.h>
+#include <AK/Array.h>
 #include <AK/Assertions.h>
-#include <AK/Checked.h>
 #include <AK/Debug.h>
+#include <AK/HashMap.h>
 #include <AK/IterationDecision.h>
 #include <AK/JsonObjectSerializer.h>
 #include <AK/NumericLimits.h>
-#include <AK/StringBuilder.h>
+#include <AK/Utf16StringBuilder.h>
+#include <LibGC/Heap.h>
+#include <LibGC/WeakHashMap.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/ImmutableBitmap.h>
-#include <LibJS/Runtime/NativeFunction.h>
+#include <LibGfx/DecodedImageFrame.h>
+#include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibURL/Parser.h>
 #include <LibUnicode/CharacterTypes.h>
 #include <LibUnicode/Locale.h>
-#include <LibWeb/Bindings/ElementPrototype.h>
-#include <LibWeb/Bindings/ExceptionOrUtils.h>
-#include <LibWeb/Bindings/MainThreadVM.h>
+#include <LibWeb/Bindings/Element.h>
+#include <LibWeb/Bindings/Window.h>
+#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/WrapperWorld.h>
 #include <LibWeb/CSS/CSSAnimation.h>
 #include <LibWeb/CSS/CSSStyleProperties.h>
-#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/CountersSet.h>
+#include <LibWeb/CSS/CustomPropertyData.h>
+#include <LibWeb/CSS/Invalidation/AttributeInvalidator.h>
+#include <LibWeb/CSS/Invalidation/CustomElementInvalidator.h>
+#include <LibWeb/CSS/Invalidation/ElementStateInvalidator.h>
+#include <LibWeb/CSS/Invalidation/LanguageInvalidator.h>
+#include <LibWeb/CSS/Invalidation/PartInvalidator.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
-#include <LibWeb/CSS/SelectorEngine.h>
+#include <LibWeb/CSS/SelectorMatching.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/CSS/StyleInvalidation.h>
 #include <LibWeb/CSS/StylePropertyMap.h>
+#include <LibWeb/CSS/StyleSheetInvalidation.h>
 #include <LibWeb/CSS/StyleValues/AbstractImageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
@@ -42,24 +52,36 @@
 #include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RandomValueSharingStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
+#include <LibWeb/CSS/UpdateStyle.h>
+#include <LibWeb/CSS/VisualViewport.h>
+#include <LibWeb/DOM/AbstractElement.h>
 #include <LibWeb/DOM/Attr.h>
 #include <LibWeb/DOM/DOMTokenList.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/DOM/DocumentFragment.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/ElementFactory.h>
 #include <LibWeb/DOM/HTMLCollection.h>
 #include <LibWeb/DOM/NamedNodeMap.h>
+#include <LibWeb/DOM/SelectorQuery.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
+#include <LibWeb/Fetch/Fetching/Fetching.h>
+#include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
+#include <LibWeb/Fetch/Infrastructure/FetchController.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/Geometry/DOMRect.h>
 #include <LibWeb/Geometry/DOMRectList.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/CustomElements/CustomElementDefinition.h>
 #include <LibWeb/HTML/CustomElements/CustomElementName.h>
 #include <LibWeb/HTML/CustomElements/CustomElementReactionNames.h>
+#include <LibWeb/HTML/CustomElements/CustomElementReactions.h>
 #include <LibWeb/HTML/CustomElements/CustomElementRegistry.h>
 #include <LibWeb/HTML/CustomElements/CustomStateSet.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
+#include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/HTMLAnchorElement.h>
 #include <LibWeb/HTML/HTMLAreaElement.h>
 #include <LibWeb/HTML/HTMLBaseElement.h>
@@ -74,7 +96,6 @@
 #include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/HTMLLIElement.h>
 #include <LibWeb/HTML/HTMLMenuElement.h>
-#include <LibWeb/HTML/HTMLOListElement.h>
 #include <LibWeb/HTML/HTMLOptGroupElement.h>
 #include <LibWeb/HTML/HTMLOptionElement.h>
 #include <LibWeb/HTML/HTMLScriptElement.h>
@@ -85,13 +106,15 @@
 #include <LibWeb/HTML/HTMLTemplateElement.h>
 #include <LibWeb/HTML/HTMLTextAreaElement.h>
 #include <LibWeb/HTML/HTMLUListElement.h>
-#include <LibWeb/HTML/Navigable.h>
+#include <LibWeb/HTML/LocalNavigable.h>
+#include <LibWeb/HTML/LocalTraversableNavigable.h>
+#include <LibWeb/HTML/Navigation.h>
 #include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/SimilarOriginWindowAgent.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
-#include <LibWeb/HTML/TraversableNavigable.h>
+#include <LibWeb/HTML/ScrollOptions.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/XMLSerializer.h>
 #include <LibWeb/Infra/CharacterTypes.h>
@@ -102,14 +125,18 @@
 #include <LibWeb/Layout/ListItemBox.h>
 #include <LibWeb/Layout/TreeBuilder.h>
 #include <LibWeb/Layout/Viewport.h>
+#include <LibWeb/Loader/ContentBlocker.h>
 #include <LibWeb/MathML/MathMLElement.h>
 #include <LibWeb/MathML/TagNames.h>
 #include <LibWeb/Namespace.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/AccumulatedVisualContext.h>
-#include <LibWeb/Painting/PaintableBox.h>
+#include <LibWeb/Painting/InlinePaintable.h>
+#include <LibWeb/Painting/Paintable.h>
+#include <LibWeb/Painting/PaintableWithLines.h>
 #include <LibWeb/Painting/StackingContext.h>
 #include <LibWeb/Painting/ViewportPaintable.h>
+#include <LibWeb/PixelUnits.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/SVG/SVGAElement.h>
 #include <LibWeb/Selection/Selection.h>
@@ -124,6 +151,33 @@ namespace Web::DOM {
 
 GC_DEFINE_ALLOCATOR(Element);
 
+static void invalidate_content_blocker_style_if_needed(Element& element)
+{
+    if (!element.is_connected())
+        return;
+    if (!ContentBlocker::the().filtering_enabled() || !ContentBlocker::the().has_cosmetic_rules())
+        return;
+
+    auto const& id = element.id();
+    if (!element.document().content_blocker_style_sheet_may_need_refresh_for_class_or_id(id.has_value() ? &id.value() : nullptr, element.class_names()))
+        return;
+
+    element.document().page().invalidate_user_style();
+}
+
+static void for_each_ascii_whitespace_separated_token(Utf16View input, Function<IterationDecision(Utf16View)> const& callback)
+{
+    size_t start = 0;
+    for (size_t i = 0; i <= input.length_in_code_units(); ++i) {
+        if (i != input.length_in_code_units() && !Infra::is_ascii_whitespace(input.code_unit_at(i)))
+            continue;
+
+        if (i > start && callback(input.substring_view(start, i - start)) == IterationDecision::Break)
+            return;
+        start = i + 1;
+    }
+}
+
 Element::Element(Document& document, DOM::QualifiedName qualified_name)
     : ParentNode(document, NodeType::ELEMENT_NODE)
     , m_qualified_name(move(qualified_name))
@@ -132,10 +186,22 @@ Element::Element(Document& document, DOM::QualifiedName qualified_name)
 
 Element::~Element() = default;
 
-void Element::initialize(JS::Realm& realm)
+void Element::set_affected_by_last_child_pseudo_class(bool value)
 {
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(Element);
-    Base::initialize(realm);
+    m_affected_by_last_child_pseudo_class = value;
+    if (value) {
+        if (auto* parent = as_if<ParentNode>(this->parent()))
+            parent->set_has_child_affected_by_last_child_pseudo_class(true);
+    }
+}
+
+void Element::set_affected_by_backward_positional_pseudo_class(bool value)
+{
+    m_affected_by_backward_positional_pseudo_class = value;
+    if (value) {
+        if (auto* parent = as_if<ParentNode>(this->parent()))
+            parent->set_has_child_affected_by_backward_positional_pseudo_class(true);
+    }
 }
 
 void Element::visit_edges(Cell::Visitor& visitor)
@@ -152,9 +218,33 @@ void Element::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_part_list);
     visitor.visit(m_custom_element_registry);
     visitor.visit(m_custom_element_definition);
+    if (m_custom_element_reaction_queue) {
+        for (auto const& reaction : *m_custom_element_reaction_queue) {
+            reaction.visit(
+                [&](CustomElementUpgradeReaction const& upgrade_reaction) {
+                    visitor.visit(upgrade_reaction.custom_element_definition);
+                },
+                [&](CustomElementCallbackReaction const& callback_reaction) {
+                    visitor.visit(callback_reaction.callback);
+                    callback_reaction.arguments.visit(
+                        [](Empty) {},
+                        [&](CustomElementAdoptedCallbackReactionArguments const& adopted_arguments) {
+                            visitor.visit(adopted_arguments.old_document);
+                            visitor.visit(adopted_arguments.new_document);
+                        },
+                        [&](CustomElementAttributeChangedCallbackReactionArguments const&) {},
+                        [&](CustomElementFormAssociatedCallbackReactionArguments const& form_associated_arguments) {
+                            visitor.visit(form_associated_arguments.form);
+                        },
+                        [&](CustomElementFormDisabledCallbackReactionArguments const&) {});
+                },
+                [&](CustomElementConnectedMoveCallbackReaction const& connected_move_reaction) {
+                    visitor.visit(connected_move_reaction.disconnected_callback);
+                    visitor.visit(connected_move_reaction.connected_callback);
+                });
+        }
+    }
     visitor.visit(m_custom_state_set);
-    visitor.visit(m_cascaded_properties);
-    visitor.visit(m_computed_properties);
     visitor.visit(m_computed_style_map_cache);
     visitor.visit(m_attribute_style_map);
     if (m_pseudo_element_data) {
@@ -163,31 +253,58 @@ void Element::visit_edges(Cell::Visitor& visitor)
         }
     }
     if (m_registered_intersection_observers) {
-        for (auto& registered_intersection_observers : *m_registered_intersection_observers)
-            visitor.visit(registered_intersection_observers.observer);
+        for (auto& observer : *m_registered_intersection_observers)
+            visitor.visit(observer);
     }
     if (m_counters_set)
         m_counters_set->visit_edges(visitor);
 }
 
 // https://dom.spec.whatwg.org/#dom-element-getattribute
-Optional<String> Element::get_attribute(FlyString const& name) const
+Optional<Utf16String> Element::get_attribute(Utf16FlyString const& name) const
 {
-    // 1. Let attr be the result of getting an attribute given qualifiedName and this.
     if (!m_attributes)
         return {};
-    auto const* attribute = m_attributes->get_attribute(name);
 
-    // 2. If attr is null, return null.
-    if (!attribute)
+    Utf16FlyString const* effective_name = &name;
+    Utf16FlyString lowercase_name;
+    if (namespace_uri() == Namespace::HTML && document().is_html_document()) {
+        lowercase_name = name.to_ascii_lowercase();
+        effective_name = &lowercase_name;
+    }
+
+    for (size_t i = 0; i < m_attributes->length(); ++i) {
+        auto const* attribute = m_attributes->item(i);
+        if (*effective_name == attribute->name())
+            return attribute->value();
+    }
+
+    return {};
+}
+
+Optional<Utf16View> Element::get_attribute_value_view(Utf16FlyString const& name) const
+{
+    if (!m_attributes)
         return {};
 
-    // 3. Return attr’s value.
-    return attribute->value();
+    Utf16FlyString const* effective_name = &name;
+    Utf16FlyString lowercase_name;
+    if (namespace_uri() == Namespace::HTML && document().is_html_document()) {
+        lowercase_name = name.to_ascii_lowercase();
+        effective_name = &lowercase_name;
+    }
+
+    for (size_t i = 0; i < m_attributes->length(); ++i) {
+        auto const* attribute = m_attributes->item(i);
+        if (*effective_name == attribute->name())
+            return attribute->value().utf16_view();
+    }
+
+    return {};
 }
 
 // https://dom.spec.whatwg.org/#dom-element-getattributens
-Optional<String> Element::get_attribute_ns(Optional<FlyString> const& namespace_, FlyString const& name) const
+Optional<Utf16String> Element::get_attribute_ns(Optional<Utf16FlyString> const& namespace_, Utf16FlyString const& name) const
 {
     // 1. Let attr be the result of getting an attribute given namespace, localName, and this.
     if (!m_attributes)
@@ -203,7 +320,7 @@ Optional<String> Element::get_attribute_ns(Optional<FlyString> const& namespace_
 }
 
 // https://dom.spec.whatwg.org/#concept-element-attributes-get-value
-String Element::get_attribute_value(FlyString const& local_name, Optional<FlyString> const& namespace_) const
+Utf16String Element::get_attribute_value(Utf16FlyString const& local_name, Optional<Utf16FlyString> const& namespace_) const
 {
     // 1. Let attr be the result of getting an attribute given namespace, localName, and element.
     if (!m_attributes)
@@ -212,14 +329,14 @@ String Element::get_attribute_value(FlyString const& local_name, Optional<FlyStr
 
     // 2. If attr is null, then return the empty string.
     if (!attribute)
-        return String {};
+        return {};
 
     // 3. Return attr’s value.
     return attribute->value();
 }
 
 // https://html.spec.whatwg.org/multipage/semantics.html#get-an-element's-target
-String Element::get_an_elements_target(Optional<String> target) const
+Utf16String Element::get_an_elements_target(Optional<Utf16String> target) const
 {
     // To get an element's target, given an a, area, or form element element, and an optional string-or-null target (default null), run these steps:
 
@@ -237,28 +354,41 @@ String Element::get_an_elements_target(Optional<String> target) const
     }
 
     // 2. If target is not null, and contains an ASCII tab or newline and a U+003C (<), then set target to "_blank".
-    if (target.has_value() && target->bytes_as_string_view().contains("\t\n\r"sv) && target->contains('<'))
-        target = "_blank"_string;
+    if (target.has_value() && target->contains(u"\t\n\r"sv) && target->contains('<'))
+        target = "_blank"_utf16;
 
     // 3. Return target.
-    return target.value_or({});
+    if (target.has_value())
+        return target.release_value();
+    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/links.html#get-an-element's-noopener
-HTML::TokenizedFeature::NoOpener Element::get_an_elements_noopener(URL::URL const& url, StringView target) const
+HTML::TokenizedFeature::NoOpener Element::get_an_elements_noopener(URL::URL const& url, Utf16View target) const
 {
     // To get an element's noopener, given an a, area, or form element element, a URL record url, and a string target,
     // perform the following steps. They return a boolean.
-    auto rel = MUST(get_attribute_value(HTML::AttributeNames::rel).to_lowercase());
-    auto link_types = rel.bytes_as_string_view().split_view_if(Infra::is_ascii_whitespace);
+    auto link_types = get_attribute_value_view(HTML::AttributeNames::rel).value_or({});
+    auto has_link_type = [&](Utf16View link_type) {
+        size_t start = 0;
+        for (size_t i = 0; i <= link_types.length_in_code_units(); ++i) {
+            if (i != link_types.length_in_code_units() && !Infra::is_ascii_whitespace(link_types.code_unit_at(i)))
+                continue;
+
+            if (i > start && link_types.substring_view(start, i - start).equals_ignoring_ascii_case(link_type))
+                return true;
+            start = i + 1;
+        }
+        return false;
+    };
 
     // 1. If element's link types include the noopener or noreferrer keyword, then return true.
-    if (link_types.contains_slow("noopener"sv) || link_types.contains_slow("noreferrer"sv))
+    if (has_link_type(u"noopener"sv) || has_link_type(u"noreferrer"sv))
         return HTML::TokenizedFeature::NoOpener::Yes;
 
     // 2. If element's link types do not include the opener keyword and
     //    target is an ASCII case-insensitive match for "_blank", then return true.
-    if (!link_types.contains_slow("opener"sv) && target.equals_ignoring_ascii_case("_blank"sv))
+    if (!has_link_type(u"opener"sv) && target.equals_ignoring_ascii_case(u"_blank"sv))
         return HTML::TokenizedFeature::NoOpener::Yes;
 
     // 3. If url's blob URL entry is not null:
@@ -292,21 +422,21 @@ bool Element::cannot_navigate() const
 }
 
 // https://html.spec.whatwg.org/multipage/links.html#following-hyperlinks-2
-void Element::follow_the_hyperlink(Optional<String> hyperlink_suffix, HTML::UserNavigationInvolvement user_involvement)
+void Element::follow_the_hyperlink(Optional<Utf16String> hyperlink_suffix, HTML::UserNavigationInvolvement user_involvement)
 {
     // 1. If subject cannot navigate, then return.
     if (cannot_navigate())
         return;
 
     // 2. Let targetAttributeValue be the empty string.
-    String target_attribute_value;
+    Utf16String target_attribute_value;
 
     // 3. If subject is an a or area element, then set targetAttributeValue to the result of getting an element's target given subject.
     if (is_html_anchor_element() || is_html_area_element() || is_svg_a_element())
         target_attribute_value = get_an_elements_target();
 
     // 4. Let urlRecord be the result of encoding-parsing a URL given subject's href attribute value, relative to subject's node document.
-    auto url_record = document().encoding_parse_url(get_attribute_value(HTML::AttributeNames::href));
+    auto url_record = document().encoding_parse_url(get_attribute_value_view(HTML::AttributeNames::href).value_or({}));
 
     // 5. If urlRecord is failure, then return.
     if (!url_record.has_value())
@@ -327,22 +457,132 @@ void Element::follow_the_hyperlink(Optional<String> hyperlink_suffix, HTML::User
     auto url_string = url_record->serialize();
 
     // 10. If hyperlinkSuffix is non-null, then append it to urlString.
-    if (hyperlink_suffix.has_value())
-        url_string = MUST(String::formatted("{}{}", url_string, *hyperlink_suffix));
+    Optional<Utf16String> url_string_with_suffix;
+    if (hyperlink_suffix.has_value()) {
+        Utf16StringBuilder url_string_builder;
+        url_string_builder.append_ascii(url_string.bytes_as_string_view());
+        url_string_builder.append(hyperlink_suffix->utf16_view());
+        url_string_with_suffix = url_string_builder.to_string();
+    }
 
     // 11. Let referrerPolicy be the current state of subject's referrerpolicy content attribute.
-    auto referrer_policy = ReferrerPolicy::from_string(attribute(HTML::AttributeNames::referrerpolicy).value_or({})).value_or(ReferrerPolicy::ReferrerPolicy::EmptyString);
+    auto referrer_policy_attribute = attribute(HTML::AttributeNames::referrerpolicy);
+    auto referrer_policy = ReferrerPolicy::from_string(referrer_policy_attribute.has_value() ? referrer_policy_attribute->utf16_view() : u""sv).value_or(ReferrerPolicy::ReferrerPolicy::EmptyString);
 
     // FIXME: 12. If subject's link types includes the noreferrer keyword, then set referrerPolicy to "no-referrer".
 
     // 13. Navigate targetNavigable to urlString using subject's node document, with referrerPolicy set to referrerPolicy and userInvolvement set to userInvolvement.
-    auto url = URL::Parser::basic_parse(url_string);
+    auto url = url_string_with_suffix.has_value()
+        ? URL::Parser::basic_parse(url_string_with_suffix->utf16_view())
+        : URL::Parser::basic_parse(url_string);
     VERIFY(url.has_value());
     MUST(target_navigable->navigate({ .url = url.release_value(), .source_document = document(), .referrer_policy = referrer_policy, .user_involvement = user_involvement }));
 }
 
+// https://html.spec.whatwg.org/multipage/links.html#downloading-hyperlinks
+void Element::download_the_hyperlink(Optional<Utf16String> hyperlink_suffix, HTML::UserNavigationInvolvement user_involvement)
+{
+    // 1. If subject cannot navigate, then return.
+    if (cannot_navigate())
+        return;
+
+    // 2. If subject's node document's active sandboxing flag set has the sandboxed downloads browsing context flag
+    //    set, then return.
+    if (has_flag(document().active_sandboxing_flag_set(), HTML::SandboxingFlagSet::SandboxedDownloads))
+        return;
+
+    // 3. Let urlString be the result of encoding-parsing-and-serializing a URL given subject's href attribute
+    //    value, relative to subject's node document.
+    auto url_record = document().encoding_parse_url(get_attribute_value_view(HTML::AttributeNames::href).value_or({}));
+
+    // 4. If urlString is failure, then return.
+    if (!url_record.has_value())
+        return;
+
+    auto url = url_record.release_value();
+
+    // 5. If hyperlinkSuffix is non-null, then append it to urlString.
+    if (hyperlink_suffix.has_value()) {
+        auto url_string = url.serialize();
+        Utf16StringBuilder url_string_builder;
+        url_string_builder.append_ascii(url_string.bytes_as_string_view());
+        url_string_builder.append(hyperlink_suffix->utf16_view());
+        auto url_string_with_suffix = url_string_builder.to_string();
+        auto url_with_suffix = URL::Parser::basic_parse(url_string_with_suffix.utf16_view());
+        VERIFY(url_with_suffix.has_value());
+        url = url_with_suffix.release_value();
+    }
+
+    // NB: The download attribute is read once here, before any script can run, so the proposed filename used when
+    //     getting the suggested filename reflects its value at the time the download was initiated.
+    auto download_attribute = attribute(HTML::AttributeNames::download);
+
+    // 6. If userInvolvement is not "browser UI":
+    if (user_involvement != HTML::UserNavigationInvolvement::BrowserUI) {
+        // 1. Assert: subject has a download attribute.
+        VERIFY(download_attribute.has_value());
+
+        // 2. Let navigation be subject's relevant global object's navigation API.
+        VERIFY(document().window());
+        auto navigation = document().window()->navigation();
+
+        // 3. Let filename be the value of subject's download attribute.
+        auto filename = download_attribute.value();
+
+        // 4. Let continue be the result of firing a download request navigate event at navigation with
+        //    destinationURL set to urlString, userInvolvement set to userInvolvement, sourceElement set to
+        //    subject, and filename set to filename.
+        auto continue_ = navigation->fire_a_download_request_navigate_event(url, user_involvement, this, move(filename));
+
+        // 5. If continue is false, then return.
+        if (!continue_)
+            return;
+
+        // 6. Inform the navigation API about aborting navigation given subject's node navigable.
+        if (auto navigable = document().navigable())
+            navigable->inform_the_navigation_api_about_aborting_navigation();
+    }
+
+    // NB: Firing the navigate event above runs script, which may have detached this element's document from its
+    //     navigable.
+    auto navigable = document().navigable();
+    if (!navigable)
+        return;
+
+    auto proposed_filename = download_attribute.map([](auto const& filename) {
+        return filename.utf16_view().to_utf8_but_should_be_ported_to_utf16().to_byte_string();
+    });
+
+    // 7. Run these steps in parallel:
+    //    1. Optionally, the user agent may abort these steps, if it believes doing so would safeguard the user
+    //       from a potentially hostile download.
+    //    2. Let request be a new request whose URL is urlString, client is entry settings object, initiator is
+    //       "download", destination is the empty string, and whose synchronous flag and use-URL-credentials flag
+    //       are set.
+    // AD-HOC: The entry settings object may be empty when a hyperlink is activated by the user, so the node
+    //         document's relevant settings object is used as the request client instead.
+    auto request = Fetch::Infrastructure::Request::create();
+    request->set_url(url);
+    request->set_client(&document().relevant_settings_object());
+    request->set_initiator(Fetch::Infrastructure::Request::Initiator::Download);
+    request->set_use_url_credentials(true);
+    // NB: The synchronous flag is not set; the response is instead processed asynchronously on the main thread.
+
+    //    3. Let response be the result of fetching request.
+    //    4. Handle as a download response with subject's node navigable and null.
+    auto controller_holder = Fetch::Infrastructure::FetchControllerHolder::create();
+    Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
+    fetch_algorithms_input.process_response = [navigable = GC::Ref { *navigable }, url, proposed_filename = move(proposed_filename), interface_origin = document().origin(), controller_holder](GC::Ref<Fetch::Infrastructure::Response> response) {
+        if (response->is_network_error())
+            return;
+        navigable->handle_as_a_download(response->unsafe_response(), url, controller_holder->controller(), proposed_filename, interface_origin);
+    };
+    auto& relevant_realm = document().relevant_settings_object().realm();
+    controller_holder->set_controller(Fetch::Fetching::fetch(relevant_realm, request, Fetch::Infrastructure::FetchAlgorithms::create(move(fetch_algorithms_input))));
+}
+
 // https://dom.spec.whatwg.org/#dom-element-getattributenode
-GC::Ptr<Attr> Element::get_attribute_node(FlyString const& name) const
+GC::Ptr<Attr> Element::get_attribute_node(Utf16FlyString const& name) const
 {
     // The getAttributeNode(qualifiedName) method steps are to return the result of getting an attribute given qualifiedName and this.
     if (!m_attributes)
@@ -351,7 +591,7 @@ GC::Ptr<Attr> Element::get_attribute_node(FlyString const& name) const
 }
 
 // https://dom.spec.whatwg.org/#dom-element-getattributenodens
-GC::Ptr<Attr> Element::get_attribute_node_ns(Optional<FlyString> const& namespace_, FlyString const& name) const
+GC::Ptr<Attr> Element::get_attribute_node_ns(Optional<Utf16FlyString> const& namespace_, Utf16FlyString const& name) const
 {
     // The getAttributeNodeNS(namespace, localName) method steps are to return the result of getting an attribute given namespace, localName, and this.
     if (!m_attributes)
@@ -359,79 +599,54 @@ GC::Ptr<Attr> Element::get_attribute_node_ns(Optional<FlyString> const& namespac
     return m_attributes->get_attribute_ns(namespace_, name);
 }
 
-// https://dom.spec.whatwg.org/#dom-element-setattribute
-WebIDL::ExceptionOr<void> Element::set_attribute_for_bindings(FlyString qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> const& value)
+void Element::set_attribute(FlyString qualified_name, Utf16String const& verified_value)
 {
-    // 1. If qualifiedName is not a valid attribute local name, then throw an "InvalidCharacterError" DOMException.
-    if (!is_valid_attribute_local_name(qualified_name))
-        return WebIDL::InvalidCharacterError::create(realm(), "Attribute name must not be empty or contain invalid characters"_utf16);
+    auto utf16_qualified_name = Utf16FlyString::from_fly_string(qualified_name);
+    // Let attribute be the first attribute in this’s attribute list whose qualified name is qualifiedName, and null otherwise.
+    auto* attribute = attributes()->get_attribute(utf16_qualified_name);
 
-    // 2. If this is in the HTML namespace and its node document is an HTML document, then set qualifiedName to
-    //    qualifiedName in ASCII lowercase.
-    if (namespace_uri() == Namespace::HTML && document().document_type() == Document::Type::HTML)
-        qualified_name = qualified_name.to_ascii_lowercase();
-
-    // 3. Let verifiedValue be the result of calling get Trusted Types-compliant attribute value
-    //    with qualifiedName, null, this, and value.
-    auto const verified_value = TRY(TrustedTypes::get_trusted_types_compliant_attribute_value(qualified_name, {}, *this, value));
-
-    // 4. Let attribute be the first attribute in this’s attribute list whose qualified name is qualifiedName, and null otherwise.
-    auto* attribute = attributes()->get_attribute(qualified_name);
-
-    // 5. If attribute is non-null, then change attribute to verifiedValue and return.
+    // If attribute is non-null, then change attribute to verifiedValue and return.
     if (attribute) {
-        attribute->change_attribute(verified_value.to_utf8_but_should_be_ported_to_utf16());
-        return {};
+        attribute->change_attribute(verified_value);
+        return;
     }
 
-    // 6. Set attribute to a new attribute whose local name is qualifiedName, value is verifiedValue,
-    //    and node document is this’s node document.
-    attribute = Attr::create(document(), qualified_name, verified_value.to_utf8_but_should_be_ported_to_utf16());
+    // Set attribute to a new attribute whose local name is qualifiedName, value is verifiedValue,
+    // and node document is this’s node document.
+    attribute = Attr::create(document(), utf16_qualified_name, verified_value);
 
-    // 7. Append attribute to this.
+    // Append attribute to this.
     m_attributes->append_attribute(*attribute);
-
-    return {};
-}
-
-// https://dom.spec.whatwg.org/#dom-element-setattribute
-WebIDL::ExceptionOr<void> Element::set_attribute_for_bindings(FlyString qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, String> const& value)
-{
-    return set_attribute_for_bindings(move(qualified_name),
-        value.visit(
-            [](auto const& trusted_type) -> Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> { return trusted_type; },
-            [](String const& string) -> Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> { return Utf16String::from_utf8(string); }));
 }
 
 // https://dom.spec.whatwg.org/#valid-namespace-prefix
-bool is_valid_namespace_prefix(FlyString const& prefix)
+bool is_valid_namespace_prefix(Utf16View prefix)
 {
     // A string is a valid namespace prefix if its length is at least 1 and it does not contain ASCII whitespace, U+0000 NULL, U+002F (/), or U+003E (>).
     constexpr Array<u32, 8> INVALID_NAMESPACE_PREFIX_CHARACTERS { '\t', '\n', '\f', '\r', ' ', '\0', '/', '>' };
-    return !prefix.is_empty() && !prefix.code_points().contains_any_of(INVALID_NAMESPACE_PREFIX_CHARACTERS);
+    return !prefix.is_empty() && !prefix.contains_any_of(INVALID_NAMESPACE_PREFIX_CHARACTERS);
 }
 
 // https://dom.spec.whatwg.org/#valid-attribute-local-name
-bool is_valid_attribute_local_name(FlyString const& local_name)
+bool is_valid_attribute_local_name(Utf16View local_name)
 {
     // A string is a valid attribute local name if its length is at least 1 and it does not contain ASCII whitespace, U+0000 NULL, U+002F (/), U+003D (=), or U+003E (>).
     constexpr Array<u32, 9> INVALID_ATTRIBUTE_LOCAL_NAME_CHARACTERS { '\t', '\n', '\f', '\r', ' ', '\0', '/', '=', '>' };
-    return !local_name.is_empty() && !local_name.code_points().contains_any_of(INVALID_ATTRIBUTE_LOCAL_NAME_CHARACTERS);
+    return !local_name.is_empty() && !local_name.contains_any_of(INVALID_ATTRIBUTE_LOCAL_NAME_CHARACTERS);
 }
 
-// https://dom.spec.whatwg.org/#valid-element-local-name
-bool is_valid_element_local_name(FlyString const& name)
+bool is_valid_element_local_name(Utf16View const& name)
 {
     // 1. If name’s length is 0, then return false.
     if (name.is_empty())
         return false;
 
     // 2. If name’s 0th code point is an ASCII alpha, then:
-    auto first_code_point = *name.code_points().begin().peek();
+    auto first_code_point = *name.begin();
     if (is_ascii_alpha(first_code_point)) {
         // 1. If name contains ASCII whitespace, U+0000 NULL, U+002F (/), or U+003E (>), then return false.
         constexpr Array<u32, 8> INVALID_CHARACTERS { '\t', '\n', '\f', '\r', ' ', '\0', '/', '>' };
-        if (name.code_points().contains_any_of(INVALID_CHARACTERS))
+        if (name.contains_any_of(INVALID_CHARACTERS))
             return false;
 
         // 2. Return true.
@@ -443,7 +658,7 @@ bool is_valid_element_local_name(FlyString const& name)
         return false;
 
     // 4. If name’s subsequent code points, if any, are not ASCII alphas, ASCII digits, U+002D (-), U+002E (.), U+003A (:), U+005F (_), or in the range U+0080 to U+10FFFF, inclusive, then return false.
-    for (auto code_point : name.code_points().unicode_substring_view(1)) {
+    for (auto code_point : name.unicode_substring_view(1)) {
         if (!is_ascii_alpha(code_point) && !is_ascii_digit(code_point) && !first_is_one_of(code_point, 0X002Du, 0X002Eu, 0X003Au, 0X005Fu) && (code_point < 0x0080 || code_point > 0x10FFFF))
             return false;
     }
@@ -453,7 +668,7 @@ bool is_valid_element_local_name(FlyString const& name)
 }
 
 // https://dom.spec.whatwg.org/#validate-and-extract
-WebIDL::ExceptionOr<QualifiedName> validate_and_extract(JS::Realm& realm, Optional<FlyString> namespace_, FlyString const& qualified_name, ValidationContext context)
+ErrorOr<QualifiedName, ValidateAndExtractError> validate_and_extract(Optional<FlyString> namespace_, FlyString const& qualified_name, ValidationContext context)
 {
     // To validate and extract a namespace and qualifiedName, run these steps:
 
@@ -462,83 +677,92 @@ WebIDL::ExceptionOr<QualifiedName> validate_and_extract(JS::Realm& realm, Option
         namespace_ = {};
 
     // 2. Let prefix be null.
-    Optional<FlyString> prefix = {};
+    Optional<Utf16View> prefix_view = {};
 
     // 3. Let localName be qualifiedName.
-    auto local_name = qualified_name;
+    auto utf16_qualified_name = Utf16FlyString::from_fly_string(qualified_name);
+    auto utf16_qualified_name_string = utf16_qualified_name.to_utf16_string();
+    auto qualified_name_view = utf16_qualified_name_string.utf16_view();
+    auto local_name_view = qualified_name_view;
 
     // 4. If qualifiedName contains a U+003A (:):
-    auto qualified_name_view = qualified_name.bytes_as_string_view();
-    auto colon_position = qualified_name_view.find(':');
+    auto colon_position = qualified_name_view.find_code_unit_offset(':');
     if (colon_position.has_value()) {
         // 1. Set prefix to the part of qualifiedName before the first U+003A (:).
-        prefix = MUST(FlyString::from_utf8(qualified_name_view.substring_view(0, *colon_position)));
+        prefix_view = qualified_name_view.substring_view(0, *colon_position);
 
         // 2. Set localName to the part of qualifiedName after the first U+003A (:).
-        local_name = MUST(FlyString::from_utf8(qualified_name_view.substring_view(*colon_position + 1)));
+        local_name_view = qualified_name_view.substring_view(*colon_position + 1);
 
         // 3. If prefix is not a valid namespace prefix, then throw an "InvalidCharacterError" DOMException.
-        if (!is_valid_namespace_prefix(*prefix))
-            return WebIDL::InvalidCharacterError::create(realm, "Prefix not a valid namespace prefix."_utf16);
+        if (!is_valid_namespace_prefix(*prefix_view))
+            return ValidateAndExtractError::InvalidNamespacePrefix;
     }
 
     // 5. Assert: prefix is either null or a valid namespace prefix.
-    ASSERT(!prefix.has_value() || is_valid_namespace_prefix(*prefix));
+    ASSERT(!prefix_view.has_value() || is_valid_namespace_prefix(*prefix_view));
 
     // 6. If context is "attribute" and localName is not a valid attribute local name, then throw an "InvalidCharacterError" DOMException.
-    if (context == ValidationContext::Attribute && !is_valid_attribute_local_name(local_name))
-        return WebIDL::InvalidCharacterError::create(realm, "Local name not a valid attribute local name."_utf16);
+    if (context == ValidationContext::Attribute && !is_valid_attribute_local_name(local_name_view))
+        return ValidateAndExtractError::InvalidAttributeLocalName;
 
     // 7. If context is "element" and localName is not a valid element local name, then throw an "InvalidCharacterError" DOMException.
-    if (context == ValidationContext::Element && !is_valid_element_local_name(local_name))
-        return WebIDL::InvalidCharacterError::create(realm, "Local name not a valid element local name."_utf16);
+    if (context == ValidationContext::Element && !is_valid_element_local_name(local_name_view))
+        return ValidateAndExtractError::InvalidElementLocalName;
 
     // 8. If prefix is non-null and namespace is null, then throw a "NamespaceError" DOMException.
-    if (prefix.has_value() && !namespace_.has_value())
-        return WebIDL::NamespaceError::create(realm, "Prefix is non-null and namespace is null."_utf16);
+    if (prefix_view.has_value() && !namespace_.has_value())
+        return ValidateAndExtractError::PrefixWithNullNamespace;
 
     // 9. If prefix is "xml" and namespace is not the XML namespace, then throw a "NamespaceError" DOMException.
-    if (prefix == "xml"sv && namespace_ != Namespace::XML)
-        return WebIDL::NamespaceError::create(realm, "Prefix is 'xml' and namespace is not the XML namespace."_utf16);
+    auto utf16_namespace = namespace_.map([](auto const& value) { return Utf16FlyString::from_fly_string(value); });
+    if (prefix_view.has_value() && *prefix_view == u"xml"sv && utf16_namespace != Namespace::XML)
+        return ValidateAndExtractError::XMLPrefixWithNonXMLNamespace;
 
     // 10. If either qualifiedName or prefix is "xmlns" and namespace is not the XMLNS namespace, then throw a "NamespaceError" DOMException.
-    if ((qualified_name == "xmlns"sv || prefix == "xmlns"sv) && namespace_ != Namespace::XMLNS)
-        return WebIDL::NamespaceError::create(realm, "Either qualifiedName or prefix is 'xmlns' and namespace is not the XMLNS namespace."_utf16);
+    if ((qualified_name_view == u"xmlns"sv || (prefix_view.has_value() && *prefix_view == u"xmlns"sv)) && utf16_namespace != Namespace::XMLNS)
+        return ValidateAndExtractError::XMLNSPrefixWithNonXMLNSNamespace;
 
     // 11. If namespace is the XMLNS namespace and neither qualifiedName nor prefix is "xmlns", then throw a "NamespaceError" DOMException.
-    if (namespace_ == Namespace::XMLNS && !(qualified_name == "xmlns"sv || prefix == "xmlns"sv))
-        return WebIDL::NamespaceError::create(realm, "Namespace is the XMLNS namespace and neither qualifiedName nor prefix is 'xmlns'."_utf16);
+    if (utf16_namespace == Namespace::XMLNS && !(qualified_name_view == u"xmlns"sv || (prefix_view.has_value() && *prefix_view == u"xmlns"sv)))
+        return ValidateAndExtractError::XMLNSNamespaceWithoutXMLNSPrefix;
 
     // 12. Return (namespace, prefix, localName).
-    return QualifiedName { local_name, prefix, namespace_ };
+    auto local_name = colon_position.has_value() ? Utf16FlyString::from_utf16(local_name_view) : utf16_qualified_name;
+    Optional<Utf16FlyString> prefix;
+    if (prefix_view.has_value())
+        prefix = Utf16FlyString::from_utf16(*prefix_view);
+    return QualifiedName { local_name, prefix, utf16_namespace };
 }
 
-// https://dom.spec.whatwg.org/#dom-element-setattributens
-WebIDL::ExceptionOr<void> Element::set_attribute_ns_for_bindings(Optional<FlyString> const& namespace_, FlyString const& qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> const& value)
+GC::Ref<WebIDL::DOMException> validate_and_extract_error_to_dom_exception(ValidateAndExtractError error)
 {
-    // 1. Let (namespace, prefix, localName) be the result of validating and extracting namespace and qualifiedName given "attribute".
-    auto extracted_qualified_name = TRY(validate_and_extract(realm(), namespace_, qualified_name, ValidationContext::Attribute));
+    switch (error) {
+    case ValidateAndExtractError::InvalidNamespacePrefix:
+        return WebIDL::InvalidCharacterError::create("Prefix not a valid namespace prefix."_utf16);
+    case ValidateAndExtractError::InvalidAttributeLocalName:
+        return WebIDL::InvalidCharacterError::create("Local name not a valid attribute local name."_utf16);
+    case ValidateAndExtractError::InvalidElementLocalName:
+        return WebIDL::InvalidCharacterError::create("Local name not a valid element local name."_utf16);
+    case ValidateAndExtractError::PrefixWithNullNamespace:
+        return WebIDL::NamespaceError::create("Prefix is non-null and namespace is null."_utf16);
+    case ValidateAndExtractError::XMLPrefixWithNonXMLNamespace:
+        return WebIDL::NamespaceError::create("Prefix is 'xml' and namespace is not the XML namespace."_utf16);
+    case ValidateAndExtractError::XMLNSPrefixWithNonXMLNSNamespace:
+        return WebIDL::NamespaceError::create("Either qualifiedName or prefix is 'xmlns' and namespace is not the XMLNS namespace."_utf16);
+    case ValidateAndExtractError::XMLNSNamespaceWithoutXMLNSPrefix:
+        return WebIDL::NamespaceError::create("Namespace is the XMLNS namespace and neither qualifiedName nor prefix is 'xmlns'."_utf16);
+    }
+    VERIFY_NOT_REACHED();
+}
 
-    // 2. Let verifiedValue be the result of calling get Trusted Types-compliant attribute value
-    //    with localName, namespace, this, and value.
-    auto const verified_value = TRY(TrustedTypes::get_trusted_types_compliant_attribute_value(
-        extracted_qualified_name.local_name(),
-        extracted_qualified_name.namespace_().has_value() ? Utf16String::from_utf8(extracted_qualified_name.namespace_().value()) : Optional<Utf16String>(),
-        *this,
-        value));
-
-    // 3. Set an attribute value for this using localName, verifiedValue, and also prefix and namespace.
-    set_attribute_value(extracted_qualified_name.local_name(), verified_value.to_utf8_but_should_be_ported_to_utf16(), extracted_qualified_name.prefix(), extracted_qualified_name.namespace_());
-
-    return {};
+void Element::set_attribute_ns(QualifiedName const& qualified_name, Utf16String const& verified_value)
+{
+    // Set an attribute value for this using localName, verifiedValue, and also prefix and namespace.
+    set_attribute_value(qualified_name.local_name(), verified_value, qualified_name.prefix(), qualified_name.namespace_());
 }
 
 // https://dom.spec.whatwg.org/#concept-element-attributes-append
-void Element::append_attribute(FlyString const& name, String const& value)
-{
-    attributes()->append_attribute(Attr::create(document(), name, value));
-}
-
 // https://dom.spec.whatwg.org/#concept-element-attributes-append
 void Element::append_attribute(Attr& attribute)
 {
@@ -546,7 +770,12 @@ void Element::append_attribute(Attr& attribute)
 }
 
 // https://dom.spec.whatwg.org/#concept-element-attributes-set-value
-void Element::set_attribute_value(FlyString const& local_name, String const& value, Optional<FlyString> const& prefix, Optional<FlyString> const& namespace_)
+void Element::set_attribute_value(Utf16FlyString const& local_name, Utf16View value, Optional<Utf16FlyString> const& prefix, Optional<Utf16FlyString> const& namespace_)
+{
+    set_attribute_value(local_name, Utf16String::from_utf16(value), prefix, namespace_);
+}
+
+void Element::set_attribute_value(Utf16FlyString const& local_name, Utf16String value, Optional<Utf16FlyString> const& prefix, Optional<Utf16FlyString> const& namespace_)
 {
     // 1. Let attribute be the result of getting an attribute given namespace, localName, and element.
     auto* attribute = attributes()->get_attribute_ns(namespace_, local_name);
@@ -557,41 +786,49 @@ void Element::set_attribute_value(FlyString const& local_name, String const& val
     if (!attribute) {
         QualifiedName name { local_name, prefix, namespace_ };
 
-        auto new_attribute = Attr::create(document(), move(name), value);
+        auto new_attribute = Attr::create(document(), move(name), move(value));
         m_attributes->append_attribute(new_attribute);
 
         return;
     }
 
     // 3. Change attribute to value.
-    attribute->change_attribute(value);
+    attribute->change_attribute(move(value));
 }
 
 // https://dom.spec.whatwg.org/#dom-element-setattributenode
-WebIDL::ExceptionOr<GC::Ptr<Attr>> Element::set_attribute_node_for_bindings(Attr& attr)
+WebIDL::ExceptionOr<GC::Ptr<Attr>> Element::set_attribute_node(Attr& attr)
 {
     // The setAttributeNode(attr) and setAttributeNodeNS(attr) methods steps are to return the result of setting an attribute given attr and this.
     return attributes()->set_attribute(attr);
 }
 
 // https://dom.spec.whatwg.org/#dom-element-setattributenodens
-WebIDL::ExceptionOr<GC::Ptr<Attr>> Element::set_attribute_node_ns_for_bindings(Attr& attr)
+WebIDL::ExceptionOr<GC::Ptr<Attr>> Element::set_attribute_node_ns(Attr& attr)
 {
     // The setAttributeNode(attr) and setAttributeNodeNS(attr) methods steps are to return the result of setting an attribute given attr and this.
     return attributes()->set_attribute(attr);
 }
 
 // https://dom.spec.whatwg.org/#dom-element-removeattribute
-void Element::remove_attribute(FlyString const& name)
+void Element::remove_attribute(Utf16FlyString const& name)
 {
     // The removeAttribute(qualifiedName) method steps are to remove an attribute given qualifiedName and this, and then return undefined.
     if (!m_attributes)
         return;
-    m_attributes->remove_attribute(name);
+
+    Utf16FlyString const* effective_name = &name;
+    Utf16FlyString lowercase_name;
+    if (namespace_uri() == Namespace::HTML && document().is_html_document()) {
+        lowercase_name = name.to_ascii_lowercase();
+        effective_name = &lowercase_name;
+    }
+
+    m_attributes->remove_attribute(*effective_name);
 }
 
 // https://dom.spec.whatwg.org/#dom-element-removeattributens
-void Element::remove_attribute_ns(Optional<FlyString> const& namespace_, FlyString const& name)
+void Element::remove_attribute_ns(Optional<Utf16FlyString> const& namespace_, Utf16FlyString const& name)
 {
     // The removeAttributeNS(namespace, localName) method steps are to remove an attribute given namespace, localName, and this, and then return undefined.
     if (!m_attributes)
@@ -606,46 +843,46 @@ WebIDL::ExceptionOr<GC::Ref<Attr>> Element::remove_attribute_node(GC::Ref<Attr> 
 }
 
 // https://dom.spec.whatwg.org/#dom-element-hasattribute
-bool Element::has_attribute(FlyString const& name) const
+bool Element::has_attribute(Utf16FlyString const& name) const
 {
-    if (!m_attributes)
-        return false;
-    return m_attributes->get_attribute(name) != nullptr;
+    return get_attribute_value_view(name).has_value();
 }
 
 // https://dom.spec.whatwg.org/#dom-element-hasattributens
-bool Element::has_attribute_ns(Optional<FlyString> const& namespace_, FlyString const& name) const
+bool Element::has_attribute_ns(Optional<Utf16FlyString> const& namespace_, Utf16FlyString const& name) const
 {
     if (!m_attributes)
         return false;
 
     // 1. If namespace is the empty string, then set it to null.
     // 2. Return true if this has an attribute whose namespace is namespace and local name is localName; otherwise false.
-    if (namespace_ == FlyString {})
-        return m_attributes->get_attribute_ns(OptionalNone {}, name) != nullptr;
+    if (namespace_ == Utf16FlyString {})
+        return m_attributes->get_attribute_ns(Optional<Utf16FlyString> {}, name) != nullptr;
 
     return m_attributes->get_attribute_ns(namespace_, name) != nullptr;
 }
 
 // https://dom.spec.whatwg.org/#dom-element-toggleattribute
-WebIDL::ExceptionOr<bool> Element::toggle_attribute(FlyString const& name, Optional<bool> force)
+WebIDL::ExceptionOr<bool> Element::toggle_attribute(Utf16FlyString const& name, Optional<bool> force)
 {
     // 1. If qualifiedName is not a valid attribute local name, then throw an "InvalidCharacterError" DOMException.
     if (!is_valid_attribute_local_name(name))
-        return WebIDL::InvalidCharacterError::create(realm(), "Attribute name must not be empty or contain invalid characters"_utf16);
+        return WebIDL::InvalidCharacterError::create("Attribute name must not be empty or contain invalid characters"_utf16);
 
     // 2. If this is in the HTML namespace and its node document is an HTML document, then set qualifiedName to qualifiedName in ASCII lowercase.
-    bool insert_as_lowercase = namespace_uri() == Namespace::HTML && document().document_type() == Document::Type::HTML;
+    auto effective_name = name;
+    if (namespace_uri() == Namespace::HTML && document().document_type() == Document::Type::HTML)
+        effective_name = name.to_ascii_lowercase();
 
     // 3. Let attribute be the first attribute in this’s attribute list whose qualified name is qualifiedName, and null otherwise.
-    auto* attribute = attributes()->get_attribute(name);
+    auto* attribute = attributes()->get_attribute(effective_name);
 
     // 4. If attribute is null, then:
     if (!attribute) {
         // 1. If force is not given or is true, create an attribute whose local name is qualifiedName, value is the empty
         //    string, and node document is this’s node document, then append this attribute to this, and then return true.
         if (!force.has_value() || force.value()) {
-            auto new_attribute = Attr::create(document(), insert_as_lowercase ? name.to_ascii_lowercase() : name.to_string(), String {});
+            auto new_attribute = Attr::create(document(), effective_name, Utf16String {});
             m_attributes->append_attribute(new_attribute);
 
             return true;
@@ -657,7 +894,7 @@ WebIDL::ExceptionOr<bool> Element::toggle_attribute(FlyString const& name, Optio
 
     // 5. Otherwise, if force is not given or is false, remove an attribute given qualifiedName and this, and then return false.
     if (!force.has_value() || !force.value()) {
-        m_attributes->remove_attribute(name);
+        m_attributes->remove_attribute(effective_name);
         return false;
     }
 
@@ -666,21 +903,21 @@ WebIDL::ExceptionOr<bool> Element::toggle_attribute(FlyString const& name, Optio
 }
 
 // https://dom.spec.whatwg.org/#dom-element-getattributenames
-Vector<String> Element::get_attribute_names() const
+Vector<Utf16FlyString> Element::get_attribute_names() const
 {
     // The getAttributeNames() method steps are to return the qualified names of the attributes in this’s attribute list, in order; otherwise a new list.
     if (!m_attributes)
         return {};
-    Vector<String> names;
+    Vector<Utf16FlyString> names;
     for (size_t i = 0; i < m_attributes->length(); ++i) {
         auto const* attribute = m_attributes->item(i);
-        names.append(attribute->name().to_string());
+        names.append(attribute->name());
     }
     return names;
 }
 
 // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#attr-associated-element
-GC::Ptr<DOM::Element> Element::get_the_attribute_associated_element(FlyString const& content_attribute, GC::Ptr<DOM::Element> explicitly_set_attribute_element) const
+GC::Ptr<DOM::Element> Element::get_the_attribute_associated_element(Utf16FlyString const& content_attribute, GC::Ptr<DOM::Element> explicitly_set_attribute_element) const
 {
     // 1. Let element be the result of running reflectedTarget's get the element.
     auto const& element = *this;
@@ -705,7 +942,7 @@ GC::Ptr<DOM::Element> Element::get_the_attribute_associated_element(FlyString co
     //     * candidate's ID is contentAttributeValue; and
     //     * candidate implements T.
     if (content_attribute_value.has_value())
-        return element.document().get_element_by_id(*content_attribute_value);
+        return element.document().get_element_by_id(content_attribute_value->utf16_view());
 
     // 5. If no such element exists, then return null.
     // 6. Return null.
@@ -713,10 +950,10 @@ GC::Ptr<DOM::Element> Element::get_the_attribute_associated_element(FlyString co
 }
 
 // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#attr-associated-elements
-Optional<GC::RootVector<GC::Ref<DOM::Element>>> Element::get_the_attribute_associated_elements(FlyString const& content_attribute, Optional<Vector<GC::Weak<DOM::Element>> const&> explicitly_set_attribute_elements) const
+Optional<GC::RootVector<GC::Ref<DOM::Element>>> Element::get_the_attribute_associated_elements(Utf16FlyString const& content_attribute, Optional<Vector<GC::Weak<DOM::Element>> const&> explicitly_set_attribute_elements) const
 {
     // 1. Let elements be an empty list.
-    GC::RootVector<GC::Ref<DOM::Element>> elements(heap());
+    GC::RootVector<GC::Ref<DOM::Element>> elements;
 
     // 2. Let element be the result of running reflectedTarget's get the element.
     auto const& element = *this;
@@ -743,55 +980,57 @@ Optional<GC::RootVector<GC::Ref<DOM::Element>>> Element::get_the_attribute_assoc
             return {};
 
         // 3. Let tokens be contentAttributeValue, split on ASCII whitespace.
-        auto tokens = content_attribute_value->bytes_as_string_view().split_view_if(Infra::is_ascii_whitespace);
-
-        // 4. For each id of tokens:
-        for (auto id : tokens) {
+        for_each_ascii_whitespace_separated_token(content_attribute_value->utf16_view(), [&](auto id) {
+            // 4. For each id of tokens:
             // 1. Let candidate be the first element, in tree order, that meets the following criteria:
             //     * candidate's root is the same as element's root;
             //     * candidate's ID is id; and
             //     * candidate implements T.
-            auto candidate = element.document().get_element_by_id(MUST(FlyString::from_utf8(id)));
+            auto candidate = element.document().get_element_by_id(id);
 
             // 2. If no such element exists, then continue.
             if (!candidate)
-                continue;
+                return IterationDecision::Continue;
 
             // 3. Append candidate to elements.
             elements.append(*candidate);
-        }
+            return IterationDecision::Continue;
+        });
     }
 
     // 5. Return elements.
     return elements;
 }
 
-GC::Ptr<Layout::Node> Element::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+RefPtr<Layout::Node> Element::create_layout_node(NonnullRefPtr<CSS::ComputedValues const> style)
 {
-    if (local_name() == "noscript" && document().is_scripting_enabled())
+    if (local_name() == u"noscript"sv && document().is_scripting_enabled())
         return nullptr;
 
     auto display = style->display();
     return create_layout_node_for_display_type(document(), display, style, this);
 }
 
-GC::Ptr<Layout::NodeWithStyle> Element::create_layout_node_for_display_type(DOM::Document& document, CSS::Display const& display, GC::Ref<CSS::ComputedProperties> style, Element* element)
+RefPtr<Layout::NodeWithStyle> Element::create_layout_node_for_display_type(DOM::Document& document, CSS::Display const& display, NonnullRefPtr<CSS::ComputedValues const> style, Element* element)
 {
     if (display.is_none())
         return {};
 
+    if (display.is_contents())
+        return {};
+
     if (display.is_table_inside() || display.is_table_row_group() || display.is_table_header_group() || display.is_table_footer_group() || display.is_table_row())
-        return document.heap().allocate<Layout::Box>(document, element, move(style));
+        return make_ref_counted<Layout::Box>(document, element, style);
 
     if (display.is_list_item())
-        return document.heap().allocate<Layout::ListItemBox>(document, element, move(style));
+        return make_ref_counted<Layout::ListItemBox>(document, element, style);
 
     if (display.is_table_cell())
-        return document.heap().allocate<Layout::BlockContainer>(document, element, move(style));
+        return make_ref_counted<Layout::BlockContainer>(document, element, style);
 
     if (display.is_table_column() || display.is_table_column_group() || display.is_table_caption()) {
         // FIXME: This is just an incorrect placeholder until we improve table layout support.
-        return document.heap().allocate<Layout::BlockContainer>(document, element, move(style));
+        return make_ref_counted<Layout::BlockContainer>(document, element, style);
     }
 
     if (display.is_math_inside()) {
@@ -799,73 +1038,319 @@ GC::Ptr<Layout::NodeWithStyle> Element::create_layout_node_for_display_type(DOM:
         // MathML elements with a computed display value equal to block math or inline math control box generation
         // and layout according to their tag name, as described in the relevant sections.
         // FIXME: Figure out what kind of node we should make for them. For now, we'll stick with a generic Box.
-        return document.heap().allocate<Layout::BlockContainer>(document, element, move(style));
+        return make_ref_counted<Layout::BlockContainer>(document, element, style);
     }
 
     if (display.is_inline_outside()) {
         if (display.is_flow_root_inside())
-            return document.heap().allocate<Layout::BlockContainer>(document, element, move(style));
+            return make_ref_counted<Layout::BlockContainer>(document, element, style);
         if (display.is_flow_inside())
-            return document.heap().allocate<Layout::InlineNode>(document, element, move(style));
+            return make_ref_counted<Layout::InlineNode>(document, element, style);
         if (display.is_flex_inside())
-            return document.heap().allocate<Layout::Box>(document, element, move(style));
+            return make_ref_counted<Layout::Box>(document, element, style);
         if (display.is_grid_inside())
-            return document.heap().allocate<Layout::Box>(document, element, move(style));
+            return make_ref_counted<Layout::Box>(document, element, style);
         dbgln_if(LIBWEB_CSS_DEBUG, "FIXME: Support display: {}", display.to_string());
-        return document.heap().allocate<Layout::InlineNode>(document, element, move(style));
+        return make_ref_counted<Layout::InlineNode>(document, element, style);
     }
 
     if (display.is_flex_inside() || display.is_grid_inside())
-        return document.heap().allocate<Layout::Box>(document, element, move(style));
+        return make_ref_counted<Layout::Box>(document, element, style);
 
-    if (display.is_flow_inside() || display.is_flow_root_inside() || display.is_contents())
-        return document.heap().allocate<Layout::BlockContainer>(document, element, move(style));
+    if (display.is_flow_inside() || display.is_flow_root_inside())
+        return make_ref_counted<Layout::BlockContainer>(document, element, style);
 
     dbgln("FIXME: CSS display '{}' not implemented yet.", display.to_string());
 
     // FIXME: We don't actually support `display: block ruby`, this is just a hack to prevent a crash
     if (display.is_ruby_inside())
-        return document.heap().allocate<Layout::BlockContainer>(document, element, move(style));
+        return make_ref_counted<Layout::BlockContainer>(document, element, style);
 
-    return document.heap().allocate<Layout::InlineNode>(document, element, move(style));
+    return make_ref_counted<Layout::InlineNode>(document, element, style);
 }
 
-void Element::run_attribute_change_steps(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
+void Element::apply_presentational_hints(Vector<CSS::StyleProperty>& properties) const
+{
+    // https://html.spec.whatwg.org/multipage/rendering.html#the-page
+    // When a body element has a link attribute, its value is expected to be parsed using the rules for parsing a legacy
+    // color value, and if that does not return failure, the user agent is expected to treat the attribute as a
+    // presentational hint setting the 'color' property of any element in the Document matching the :link pseudo-class
+    // to the resulting color.
+    if (matches_link_pseudo_class()) {
+        if (auto const& link_color = document().normal_link_color(); link_color.has_value())
+            properties.append({ .property_id = CSS::PropertyID::Color, .value = CSS::ColorStyleValue::create_from_color(*link_color, CSS::ColorSyntax::Legacy) });
+    }
+
+    // When a body element has a vlink attribute, its value is expected to be parsed using the rules for parsing a
+    // legacy color value, and if that does not return failure, the user agent is expected to treat the attribute as a
+    // presentational hint setting the 'color' property of any element in the Document matching the :visited
+    // pseudo-class to the resulting color.
+    if (matches_visited_pseudo_class()) {
+        if (auto const& visited_link_color = document().visited_link_color(); visited_link_color.has_value())
+            properties.append({ .property_id = CSS::PropertyID::Color, .value = CSS::ColorStyleValue::create_from_color(*visited_link_color, CSS::ColorSyntax::Legacy) });
+    }
+
+    // When a body element has an alink attribute, its value is expected to be parsed using the rules for parsing a
+    // legacy color value, and if that does not return failure, the user agent is expected to treat the attribute as a
+    // presentational hint setting the 'color' property of any element in the Document matching the :active pseudo-class
+    // and either the :link pseudo-class or the :visited pseudo-class to the resulting color.
+    if (is_being_activated() && (matches_link_pseudo_class() || matches_visited_pseudo_class())) {
+        if (auto const& active_link_color = document().active_link_color(); active_link_color.has_value())
+            properties.append({ .property_id = CSS::PropertyID::Color, .value = CSS::ColorStyleValue::create_from_color(*active_link_color, CSS::ColorSyntax::Legacy) });
+    }
+}
+
+void Element::run_attribute_change_steps(Utf16FlyString const& local_name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
 {
     attribute_changed(local_name, old_value, value, namespace_);
 
     if (old_value != value) {
-        invalidate_style_after_attribute_change(local_name, old_value, value);
+        if (local_name.is_one_of(HTML::AttributeNames::colspan, HTML::AttributeNames::rowspan, HTML::AttributeNames::span)) {
+            if (auto* layout_node = unsafe_layout_node())
+                layout_node->synchronize_table_span_data();
+        }
+        if (!document().suppresses_attribute_style_invalidation()) {
+            CSS::Invalidation::invalidate_style_after_attribute_change(
+                *this,
+                local_name,
+                old_value,
+                value);
+            if (local_name == HTML::AttributeNames::id || local_name == HTML::AttributeNames::class_)
+                invalidate_content_blocker_style_if_needed(*this);
+        }
         document().bump_dom_tree_version();
     }
 }
 
-static CSS::RequiredInvalidationAfterStyleChange compute_required_invalidation(CSS::ComputedProperties const& old_style, CSS::ComputedProperties const& new_style, CSS::FontComputer const& font_computer)
+static bool style_value_changed(CSS::StyleValue const& old_value, CSS::StyleValue const& new_value)
+{
+    if (&old_value == &new_value)
+        return false;
+    return !old_value.equals(new_value);
+}
+
+static CSS::RequiredInvalidationAfterStyleChange compute_required_invalidation(CSS::ComputedValues const& old_computed_values, CSS::ComputedValues const& new_computed_values, Layout::NodeWithStyle const* old_layout_node, DOM::AbstractElement& abstract_element)
 {
     CSS::RequiredInvalidationAfterStyleChange invalidation;
 
-    if (old_style.computed_font_list(font_computer) != new_style.computed_font_list(font_computer))
-        invalidation.relayout = true;
+    // Shortcut the per-longhand diff below when every style value group payload of the new style
+    // is (or has just been made) shared with the old style: equal group payloads mean equal
+    // computed values for every longhand. Animated values live outside the groups, so the
+    // shortcut only applies when neither side has any.
+    // NB: The adoption also makes an unchanged element keep sharing group storage with its
+    //     previous style generation, which future diffs turn into pure pointer compares.
+    bool const all_group_payloads_shared = new_computed_values.adopt_identical_group_payloads(old_computed_values);
+    bool const property_diff_can_be_skipped = all_group_payloads_shared
+        && !old_computed_values.has_animated_values() && !new_computed_values.has_animated_values()
+        && !old_computed_values.animated_properties() && !new_computed_values.animated_properties();
+    static bool const verify_fast_path = getenv("LIBWEB_VERIFY_STYLE_DIFF_FAST_PATH") != nullptr;
 
-    for (auto i = to_underlying(CSS::first_longhand_property_id); i <= to_underlying(CSS::last_longhand_property_id); ++i) {
-        auto property_id = static_cast<CSS::PropertyID>(i);
+    if (!property_diff_can_be_skipped || verify_fast_path) {
+        if (!old_computed_values.font_list().equals(new_computed_values.font_list()))
+            invalidation.ensure_at_least(CSS::InvalidationLevel::Relayout);
 
-        invalidation |= CSS::compute_property_invalidation(property_id, old_style.property(property_id), new_style.property(property_id));
+        for (auto i = to_underlying(CSS::first_longhand_property_id); i <= to_underlying(CSS::last_longhand_property_id); ++i) {
+            auto property_id = static_cast<CSS::PropertyID>(i);
+            auto old_physical_property_id = property_id;
+            auto new_physical_property_id = property_id;
+            if (CSS::property_is_logical_alias(property_id)) {
+                old_physical_property_id = CSS::map_logical_alias_to_physical_property(property_id, CSS::LogicalAliasMappingContext { old_computed_values.writing_mode(), old_computed_values.direction() });
+                new_physical_property_id = CSS::map_logical_alias_to_physical_property(property_id, CSS::LogicalAliasMappingContext { new_computed_values.writing_mode(), new_computed_values.direction() });
+            }
+
+            auto old_value = old_computed_values.computed_style_value(old_physical_property_id);
+            auto new_value = new_computed_values.computed_style_value(new_physical_property_id);
+
+            if (!style_value_changed(*old_value, *new_value))
+                continue;
+            if (CSS::is_inherited_property(property_id))
+                invalidation.inherited_style_changed = true;
+            invalidation |= CSS::compute_property_invalidation(property_id, old_value.ptr(), new_value.ptr(), &old_computed_values, &new_computed_values);
+        }
+
+        // With the verification mode enabled, the full diff must agree that a skippable style
+        // change produces no invalidation at all.
+        if (verify_fast_path && property_diff_can_be_skipped)
+            VERIFY(invalidation.is_none());
     }
+
+    // NB: Even if the computed value hasn't changed the resolved counter style may have (e.g. if the relevant
+    //     @counter-style rule was modified, or a new rule with the same name took precedence over the old one).
+    if (old_layout_node) {
+        auto const& old_computed_values = old_layout_node->computed_values();
+
+        auto const& old_content = old_computed_values.content();
+
+        // NB: We only propagate content to computed values for relevant elements so if the old layout node doesn't
+        //     have a value for content we know it isn't a relevant element and invalidation isn't required.
+        if (old_content.has_value() && old_content->counter_style_dependencies != new_computed_values.resolved_content(abstract_element, 0).content_data.counter_style_dependencies)
+            invalidation.ensure_at_least(CSS::InvalidationLevel::RebuildLayoutTree);
+
+        auto const& old_list_style_type = old_computed_values.list_style_type();
+
+        if (old_list_style_type.has<RefPtr<CSS::CounterStyle const>>()) {
+            auto const& new_list_style_type = new_computed_values.list_style_type();
+
+            if (new_list_style_type.has<RefPtr<CSS::CounterStyle const>>()) {
+                ValueComparingRefPtr<CSS::CounterStyle const> old_counter_style = old_list_style_type.get<RefPtr<CSS::CounterStyle const>>();
+                ValueComparingRefPtr<CSS::CounterStyle const> new_counter_style = new_list_style_type.get<RefPtr<CSS::CounterStyle const>>();
+
+                if (old_counter_style != new_counter_style)
+                    invalidation.ensure_at_least(CSS::InvalidationLevel::RebuildLayoutTree);
+            }
+        }
+    }
+
     return invalidation;
+}
+
+CSS::RequiredInvalidationAfterStyleChange Element::recompute_pseudo_element_styles(bool& did_change_custom_properties, bool had_list_marker, CSS::ComputedValues const* old_originating_style)
+{
+    CSS::RequiredInvalidationAfterStyleChange invalidation;
+
+    auto& style_computer = document().style_computer();
+
+    auto did_push_ancestors = false;
+    auto push_ancestors_if_needed = [&] {
+        if (did_push_ancestors)
+            return;
+        for (auto const* ancestor = this; ancestor; ancestor = ancestor->parent_or_shadow_host_element())
+            style_computer.push_ancestor(*ancestor);
+        did_push_ancestors = true;
+    };
+
+    // Any document change that can cause this element's style to change, could also affect its pseudo-elements.
+    auto recompute_pseudo_element_style = [&](CSS::PseudoElement pseudo_element, bool has_implicit_style = false) {
+        auto pseudo_element_values = computed_values(pseudo_element);
+        auto should_recompute = has_implicit_style
+            || pseudo_element_values
+            || (old_originating_style && old_originating_style->has_pseudo_element_style(pseudo_element))
+            || (m_computed_values && m_computed_values->has_pseudo_element_style(pseudo_element));
+        if (!should_recompute)
+            return;
+
+        push_ancestors_if_needed();
+
+        auto new_pseudo_element_style = style_computer.compute_pseudo_element_style_if_needed({ *this, pseudo_element }, did_change_custom_properties);
+
+        // TODO: Can we be smarter about invalidation?
+        if (pseudo_element_values && new_pseudo_element_style) {
+            DOM::AbstractElement abstract_element { *this, pseudo_element };
+            invalidation |= compute_required_invalidation(*pseudo_element_values, *new_pseudo_element_style, pseudo_element_unsafe_layout_node(pseudo_element), abstract_element);
+        } else if (pseudo_element_values || new_pseudo_element_style) {
+            invalidation = CSS::RequiredInvalidationAfterStyleChange::full();
+        }
+
+        if (new_pseudo_element_style)
+            set_computed_style(pseudo_element, move(new_pseudo_element_style));
+        else
+            set_computed_style(pseudo_element, nullptr);
+    };
+
+    recompute_pseudo_element_style(CSS::PseudoElement::Before);
+    recompute_pseudo_element_style(CSS::PseudoElement::After);
+    recompute_pseudo_element_style(CSS::PseudoElement::FirstLetter);
+    recompute_pseudo_element_style(CSS::PseudoElement::Selection);
+    if (m_rendered_in_top_layer)
+        recompute_pseudo_element_style(CSS::PseudoElement::Backdrop);
+    if (had_list_marker || m_computed_values->display().is_list_item())
+        recompute_pseudo_element_style(CSS::PseudoElement::Marker, true);
+
+    if (did_push_ancestors) {
+        for (auto const* ancestor = this; ancestor; ancestor = ancestor->parent_or_shadow_host_element())
+            style_computer.pop_ancestor(*ancestor);
+    }
+
+    return invalidation;
+}
+
+CSS::RequiredInvalidationAfterStyleChange Element::recompute_pseudo_element_styles_after_animation_update(Badge<Web::Animations::AnimationUpdateContext>)
+{
+    VERIFY(m_computed_values);
+
+    bool did_change_custom_properties = false;
+    auto invalidation = recompute_pseudo_element_styles(did_change_custom_properties, m_computed_values->display().is_list_item(), nullptr);
+    apply_computed_pseudo_element_styles_to_layout_nodes_if_needed(invalidation);
+    return invalidation;
+}
+
+void Element::set_needs_layout_tree_rebuild(SetNeedsLayoutTreeUpdateReason reason)
+{
+    // NB: We normally mark the parent element for the rebuild rather than this element itself, so that a "display"
+    //     change to or from "contents" is handled correctly: an element with display:contents generates no box of its
+    //     own, so its children's boxes have to be inserted into (or removed from) the parent's subtree.
+    //     Top layer elements (open modal dialogs, popovers, fullscreen elements) are the exception. They generate
+    //     boxes as siblings of the root, and a dedicated top layer pass in the layout tree builder recreates their
+    //     boxes based on the element's own needs-layout-tree-update flag; the DOM parent's subtree rebuild skips them
+    //     entirely. Mark the element itself in that case. This still propagates child-needs-layout-tree-update up to
+    //     the document, which is what makes the top layer pass run.
+    // NB: Called outside layout tree construction.
+    auto* layout_node = unsafe_layout_node();
+    // An element that just left the top layer keeps its box as a viewport child until the
+    // pending membership change is processed, so the parent must not be rebuilt for it either.
+    bool element_box_is_placed_in_top_layer = layout_node && layout_node->topmost_layout_node_of_top_layer_placement();
+    if (rendered_in_top_layer() || element_box_is_placed_in_top_layer) {
+        // An attached box is replaced in its viewport slot, keeping top layer order; a fresh
+        // insert of a detached member appends out of order, so it needs a zone rebuild.
+        if (!layout_node || !layout_node->parent())
+            document().set_top_layer_needs_layout_zone_rebuild();
+        set_needs_layout_tree_update(true, reason);
+        return;
+    }
+    if (auto parent = parent_element())
+        parent->set_needs_layout_tree_update(true, reason);
+    else
+        set_needs_layout_tree_update(true, reason);
+}
+
+void Element::apply_computed_style_to_layout_node_if_needed(CSS::RequiredInvalidationAfterStyleChange const& invalidation)
+{
+    if (invalidation.needs_layout_tree_rebuild() || !unsafe_layout_node())
+        return;
+
+    // If we're keeping the layout tree, we can just apply the new style to the existing layout tree.
+    auto element_computed_values = m_computed_values;
+    VERIFY(element_computed_values);
+    unsafe_layout_node()->apply_style(element_computed_values.release_nonnull());
+    if (invalidation.needs_repaint())
+        set_needs_repaint();
+
+    apply_computed_pseudo_element_styles_to_layout_nodes_if_needed(invalidation);
+}
+
+void Element::apply_computed_pseudo_element_styles_to_layout_nodes_if_needed(CSS::RequiredInvalidationAfterStyleChange const& invalidation)
+{
+    if (invalidation.needs_layout_tree_rebuild())
+        return;
+
+    for_each_synthetic_pseudo_element([&](CSS::PseudoElement pseudo_element_type, SyntheticPseudoElement const& pseudo_element) {
+        auto pseudo_element_style = computed_values(pseudo_element_type);
+        if (!pseudo_element_style)
+            return;
+
+        if (auto node_with_style = pseudo_element.unsafe_layout_node()) {
+            node_with_style->apply_style(pseudo_element_style.release_nonnull());
+            if (invalidation.needs_repaint() && node_with_style->paintable())
+                node_with_style->paintable()->set_needs_repaint();
+        }
+    });
 }
 
 CSS::RequiredInvalidationAfterStyleChange Element::recompute_style(bool& did_change_custom_properties)
 {
     VERIFY(parent());
 
+    auto& counters = document().style_invalidation_counters();
+    counters.element_style_recomputations++;
+
     m_style_uses_attr_css_function = false;
     m_style_uses_var_css_function = false;
     m_style_uses_tree_counting_function = false;
     m_style_uses_if_css_function = false;
     m_style_uses_inherit_css_function = false;
+    m_style_depends_on_size_container_query = false;
+    m_style_depends_on_style_container_query = false;
     m_affected_by_has_pseudo_class_in_subject_position = false;
-    m_affected_by_has_pseudo_class_in_non_subject_position = false;
     m_affected_by_has_pseudo_class_with_relative_selector_that_has_sibling_combinator = false;
     m_affected_by_direct_sibling_combinator = false;
     m_affected_by_indirect_sibling_combinator = false;
@@ -876,32 +1361,52 @@ CSS::RequiredInvalidationAfterStyleChange Element::recompute_style(bool& did_cha
     m_sibling_invalidation_distance = 0;
 
     auto& style_computer = document().style_computer();
-    auto new_computed_properties = style_computer.compute_style({ *this }, did_change_custom_properties);
-
-    // Tables must not inherit -libweb-* values for text-align.
-    // FIXME: Find the spec for this.
-    if (is<HTML::HTMLTableElement>(*this)) {
-        auto text_align = new_computed_properties->text_align();
-        if (text_align == CSS::TextAlign::LibwebLeft || text_align == CSS::TextAlign::LibwebCenter || text_align == CSS::TextAlign::LibwebRight)
-            new_computed_properties->set_property(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::Start));
-    }
-
+    auto new_style = style_computer.compute_style({ *this }, did_change_custom_properties);
+    auto old_computed_values = m_computed_values;
     bool had_list_marker = false;
 
     CSS::RequiredInvalidationAfterStyleChange invalidation;
-    if (m_computed_properties) {
-        invalidation = compute_required_invalidation(*m_computed_properties, new_computed_properties, document().font_computer());
-        had_list_marker = m_computed_properties->display().is_list_item();
+    if (m_computed_values) {
+        DOM::AbstractElement abstract_element { *this };
+        invalidation = compute_required_invalidation(*m_computed_values, *new_style, unsafe_layout_node(), abstract_element);
+        had_list_marker = m_computed_values->display().is_list_item();
     } else {
         invalidation = CSS::RequiredInvalidationAfterStyleChange::full();
     }
 
-    auto old_display_is_none = m_computed_properties ? m_computed_properties->display().is_none() : true;
-    auto new_display_is_none = new_computed_properties->display().is_none();
+    // https://drafts.csswg.org/css-anchor-position-1/#determining
+    // Update the anchor name registry when anchor-name changes.
+    // FIXME: The tree root should be determined by the stylesheet origin, not the element's position in the tree.
+    if (is_connected()) {
+        auto& anchor_names = as_if<ShadowRoot>(root())
+            ? as<ShadowRoot>(root()).anchor_name_map()
+            : document().anchor_name_map();
+        bool element_had_registered_anchor_names = false;
+        if (old_computed_values) {
+            for (auto const& name : old_computed_values->anchor_names()) {
+                element_had_registered_anchor_names = true;
+                anchor_names.unregister_name(name, *this);
+            }
+        }
+        bool element_has_anchor_names = false;
+        for (auto const& name : new_style->anchor_names()) {
+            element_has_anchor_names = true;
+            anchor_names.register_name(name, *this);
+        }
 
-    set_computed_properties({}, move(new_computed_properties));
+        // Anchor names that vanish here become invisible to the dispatch-time check of the
+        // live anchor-name maps, while positioned boxes anywhere may hold geometry resolved
+        // against them; names still registered keep that check refusing partial relayout.
+        if (element_had_registered_anchor_names && !element_has_anchor_names)
+            document().partial_relayout_invalidation().record_escape(PartialRelayoutEscapeReason::AnchorNamesUnregisteredByStyleChange);
+    }
 
-    if (old_display_is_none != new_display_is_none) {
+    auto old_non_animated_display_is_none = m_computed_values ? m_computed_values->base_values().display().is_none() : true;
+    auto new_non_animated_display_is_none = new_style->base_values().display().is_none();
+
+    set_computed_style({}, move(new_style));
+
+    if (old_non_animated_display_is_none != new_non_animated_display_is_none) {
         for_each_shadow_including_inclusive_descendant([&](auto& node) {
             if (!node.is_element())
                 return TraversalDecision::Continue;
@@ -911,134 +1416,190 @@ CSS::RequiredInvalidationAfterStyleChange Element::recompute_style(bool& did_cha
         });
     }
 
-    // Any document change that can cause this element's style to change, could also affect its pseudo-elements.
-    auto recompute_pseudo_element_style = [&](CSS::PseudoElement pseudo_element) {
-        style_computer.push_ancestor(*this);
-
-        auto pseudo_element_style = computed_properties(pseudo_element);
-        auto new_pseudo_element_style = style_computer.compute_pseudo_element_style_if_needed({ *this, pseudo_element }, did_change_custom_properties);
-
-        // TODO: Can we be smarter about invalidation?
-        if (pseudo_element_style && new_pseudo_element_style) {
-            invalidation |= compute_required_invalidation(*pseudo_element_style, *new_pseudo_element_style, document().font_computer());
-        } else if (pseudo_element_style || new_pseudo_element_style) {
-            invalidation = CSS::RequiredInvalidationAfterStyleChange::full();
-        }
-
-        set_computed_properties(pseudo_element, move(new_pseudo_element_style));
-        style_computer.pop_ancestor(*this);
-    };
-
-    recompute_pseudo_element_style(CSS::PseudoElement::Before);
-    recompute_pseudo_element_style(CSS::PseudoElement::After);
-    recompute_pseudo_element_style(CSS::PseudoElement::Selection);
-    if (m_rendered_in_top_layer)
-        recompute_pseudo_element_style(CSS::PseudoElement::Backdrop);
-    if (had_list_marker || m_computed_properties->display().is_list_item())
-        recompute_pseudo_element_style(CSS::PseudoElement::Marker);
-
-    if (invalidation.is_none())
-        return invalidation;
-
-    if (!invalidation.rebuild_layout_tree && unsafe_layout_node()) {
-        // If we're keeping the layout tree, we can just apply the new style to the existing layout tree.
-        unsafe_layout_node()->apply_style(*m_computed_properties);
-        if (invalidation.repaint)
-            set_needs_repaint();
-
-        // Do the same for pseudo-elements.
-        for (auto i = 0; i < to_underlying(CSS::PseudoElement::KnownPseudoElementCount); i++) {
-            auto pseudo_element_type = static_cast<CSS::PseudoElement>(i);
-            auto pseudo_element = get_pseudo_element(pseudo_element_type);
-            if (!pseudo_element.has_value() || !pseudo_element->unsafe_layout_node())
-                continue;
-
-            auto pseudo_element_style = computed_properties(pseudo_element_type);
-            if (!pseudo_element_style)
-                continue;
-
-            if (auto node_with_style = pseudo_element->unsafe_layout_node()) {
-                node_with_style->apply_style(*pseudo_element_style);
-                if (invalidation.repaint && node_with_style->first_paintable())
-                    node_with_style->first_paintable()->set_needs_repaint();
-            }
-        }
+    // NB: Elements inside a display:none subtree keep their last computed style without being recomputed, so
+    //     crossing the display:none boundary must update those styles for all descendants.
+    if (old_computed_values && old_computed_values->display().is_none() != m_computed_values->display().is_none()) {
+        if (m_computed_values->display().is_none())
+            set_in_display_none_subtree_on_descendant_styles();
+        else if (!m_computed_values->in_display_none_subtree())
+            mark_descendants_with_stale_styles_for_style_update();
     }
+
+    auto const element_style_changed = !invalidation.is_none();
+    auto const element_custom_properties_changed = did_change_custom_properties;
+
+    invalidation |= recompute_pseudo_element_styles(did_change_custom_properties, had_list_marker, old_computed_values.ptr());
+
+    if (old_computed_values && (element_style_changed || element_custom_properties_changed))
+        invalidate_descendant_styles_depending_on_style_container_query();
+
+    if (invalidation.is_none()) {
+        counters.element_style_noop_recomputations++;
+        return invalidation;
+    }
+
+    apply_computed_style_to_layout_node_if_needed(invalidation);
 
     return invalidation;
 }
 
-CSS::RequiredInvalidationAfterStyleChange Element::recompute_inherited_style()
+void Element::set_in_display_none_subtree_on_descendant_styles()
 {
-    auto computed_properties = this->computed_properties();
-    // NB: We use unsafe_layout_node() because we're in the middle of style recalculation
-    //     and layout is inherently stale while recomputing inherited styles.
-    if (!m_cascaded_properties || !computed_properties || !unsafe_layout_node())
-        return {};
+    for_each_shadow_including_descendant([](auto& node) {
+        auto* element = as_if<Element>(node);
+        if (!element)
+            return TraversalDecision::Continue;
+        auto const& computed_values = element->m_computed_values;
+        if (!computed_values)
+            return TraversalDecision::SkipChildrenAndContinue;
+        if (computed_values->in_display_none_subtree())
+            return TraversalDecision::SkipChildrenAndContinue;
+        CSS::ComputedValues::Builder builder(*computed_values);
+        builder->set_in_display_none_subtree(true);
+        if (computed_values->has_animated_values()) {
+            CSS::ComputedValues::Builder base_values_builder(computed_values->base_values());
+            base_values_builder->set_in_display_none_subtree(true);
+            builder->set_base_values(move(base_values_builder).build());
+        }
+        element->m_computed_values = move(builder).build();
+        element->for_each_synthetic_pseudo_element([](CSS::PseudoElement, SyntheticPseudoElement& pseudo_element) {
+            pseudo_element.set_computed_values_in_display_none_subtree();
+        });
+        return TraversalDecision::Continue;
+    });
+}
+
+void Element::mark_descendants_with_stale_styles_for_style_update()
+{
+    for_each_shadow_including_descendant([](auto& node) {
+        auto* element = as_if<Element>(node);
+        if (!element)
+            return TraversalDecision::Continue;
+        auto const& style = element->m_computed_values;
+        if (!style)
+            return TraversalDecision::SkipChildrenAndContinue;
+        if (style->display().is_none())
+            return TraversalDecision::SkipChildrenAndContinue;
+        element->set_needs_style_update(true);
+        return TraversalDecision::Continue;
+    });
+}
+
+void Element::invalidate_descendant_styles_depending_on_style_container_query()
+{
+    // Only an element some style container query resolved against can be what a dependent under it
+    // was asking about, and most documents have no style container queries at all.
+    if (!m_is_style_query_container)
+        return;
+
+    ++document().style_invalidation_counters().style_query_container_scans;
+
+    for_each_shadow_including_descendant([](auto& node) {
+        auto* element = as_if<Element>(node);
+        if (element && element->style_depends_on_style_container_query())
+            element->set_needs_style_update(true);
+        return TraversalDecision::Continue;
+    });
+}
+
+CSS::RequiredInvalidationAfterStyleChange Element::recompute_inherited_style(ScheduleAnimationUpdate schedule_animation_update)
+{
+    auto& counters = document().style_invalidation_counters();
+    counters.element_inherited_style_recomputations++;
+
+    auto old_computed_values = this->computed_values();
+    VERIFY(old_computed_values);
+    auto old_computed_properties = document().style_computer().reconstruct_computed_properties(*old_computed_values);
+    auto computed_properties_builder = CSS::ComputedProperties::create_builder_with_base_values_from(*old_computed_properties);
+    auto& new_computed_properties = computed_properties_builder.style();
+    auto had_list_marker = old_computed_values->display().is_list_item();
 
     CSS::RequiredInvalidationAfterStyleChange invalidation;
 
     HashMap<size_t, RefPtr<CSS::StyleValue const>> property_values_affected_by_inherited_style;
+
+    for (auto const& [property_id, specified_value] : old_computed_values->inheritance_dependent_specified_values()) {
+        RefPtr old_value = old_computed_properties->property(property_id);
+        computed_properties_builder.set_property_without_modifying_flags(property_id, specified_value);
+        property_values_affected_by_inherited_style.set(to_underlying(property_id), old_value);
+    }
+
+    bool did_update_animated_properties = false;
     for (auto i = to_underlying(CSS::first_longhand_property_id); i <= to_underlying(CSS::last_longhand_property_id); ++i) {
         auto property_id = static_cast<CSS::PropertyID>(i);
-        // FIXME: We should use the specified value rather than the cascaded value as the cascaded value may include
-        //        unresolved CSS-wide keywords (e.g. 'initial' or 'inherit') rather than the resolved value.
-        auto const& preabsolutized_value = m_cascaded_properties->property(property_id);
-        RefPtr old_value = computed_properties->property(property_id);
+        RefPtr old_value = old_computed_properties->property(property_id);
 
-        if (preabsolutized_value) {
-            // A property needs updating if:
-            // - It uses relative units as it might have been affected by a change in ancestor element style.
-            //   FIXME: Consider other style values that rely on relative lengths (e.g. CalculatedStyleValue,
-            //          StyleValues which contain lengths (e.g. StyleValueList)) - maybe we can use
-            //          `is_computationally_independent()`
-            // - font-weight is `bolder` or `lighter`
-            // - font-size is `larger` or `smaller`
-            // FIXME: Consider any other properties that rely on inherited values for computation.
-            auto needs_updating = (preabsolutized_value->is_length() && preabsolutized_value->as_length().length().is_font_relative())
-                || (property_id == CSS::PropertyID::FontWeight && first_is_one_of(preabsolutized_value->to_keyword(), CSS::Keyword::Bolder, CSS::Keyword::Lighter))
-                || (property_id == CSS::PropertyID::FontSize && first_is_one_of(preabsolutized_value->to_keyword(), CSS::Keyword::Larger, CSS::Keyword::Smaller));
-            if (needs_updating) {
-                computed_properties->set_property_without_modifying_flags(property_id, *preabsolutized_value);
-                property_values_affected_by_inherited_style.set(i, old_value);
+        if (!old_computed_values->is_property_inherited(property_id))
+            continue;
+
+        auto const* old_animated_properties = old_computed_values->animated_properties();
+        bool const had_animated_property = old_animated_properties && old_animated_properties->has_property(property_id);
+        bool const animated_property_was_inherited = had_animated_property && old_animated_properties->is_property_inherited(property_id);
+        if (animated_property_was_inherited || !had_animated_property) {
+            RefPtr<CSS::StyleValue const> old_animated_value;
+            if (had_animated_property) {
+                auto animated_value = old_animated_properties->values().get(property_id);
+                VERIFY(animated_value.has_value());
+                old_animated_value = *animated_value.value();
+            }
+            if (auto new_animated_value = CSS::StyleComputer::get_animated_inherit_value(property_id, { *this }); new_animated_value.has_value()) {
+                if (!old_animated_value
+                    || style_value_changed(*old_animated_value, *new_animated_value->value)
+                    || old_animated_properties->is_property_result_of_transition(property_id) != (new_animated_value->is_result_of_transition == CSS::AnimatedPropertyResultOfTransition::Yes)
+                    || !animated_property_was_inherited)
+                    did_update_animated_properties = true;
+                new_computed_properties.set_animated_property(Badge<DOM::Element> {}, property_id, new_animated_value->value, new_animated_value->is_result_of_transition, CSS::ComputedProperties::Inherited::Yes);
+            } else if (old_animated_value) {
+                did_update_animated_properties = true;
+                new_computed_properties.remove_animated_property(Badge<DOM::Element> {}, property_id);
             }
         }
 
-        if (!computed_properties->is_property_inherited(property_id))
-            continue;
-
-        if (computed_properties->is_animated_property_inherited(property_id) || !computed_properties->animated_property_values().contains(property_id)) {
-            if (auto new_animated_value = CSS::StyleComputer::get_animated_inherit_value(property_id, { *this }); new_animated_value.has_value())
-                computed_properties->set_animated_property(property_id, new_animated_value->value, new_animated_value->is_result_of_transition, CSS::ComputedProperties::Inherited::Yes);
-            else if (computed_properties->animated_property_values().contains(property_id))
-                computed_properties->remove_animated_property(property_id);
-        }
-
         RefPtr new_value = CSS::StyleComputer::get_non_animated_inherit_value(property_id, { *this });
-        computed_properties->set_property(property_id, *new_value, CSS::ComputedProperties::Inherited::Yes);
-        invalidation |= CSS::compute_property_invalidation(property_id, old_value, computed_properties->property(property_id));
+        computed_properties_builder.set_property(property_id, *new_value, CSS::ComputedProperties::Inherited::Yes);
+        if (style_value_changed(*old_value, new_computed_properties.property(property_id)))
+            invalidation.inherited_style_changed = true;
+        invalidation |= CSS::compute_property_invalidation(property_id, old_value.ptr(), &new_computed_properties.property(property_id));
     }
 
-    if (invalidation.is_none() && property_values_affected_by_inherited_style.is_empty())
+    if (schedule_animation_update == ScheduleAnimationUpdate::Yes && has_relevant_animations())
+        document().set_needs_animated_style_update();
+
+    if (invalidation.is_none() && property_values_affected_by_inherited_style.is_empty() && !did_update_animated_properties) {
+        counters.element_inherited_style_noop_recomputations++;
         return invalidation;
+    }
 
     AbstractElement abstract_element { *this };
 
-    document().style_computer().compute_property_values(*computed_properties, abstract_element);
+    document().style_computer().compute_property_values(computed_properties_builder, abstract_element);
 
-    for (auto const& [property_id, old_value] : property_values_affected_by_inherited_style) {
-        auto const& new_value = computed_properties->property(static_cast<CSS::PropertyID>(property_id));
-        invalidation |= CSS::compute_property_invalidation(static_cast<CSS::PropertyID>(property_id), old_value, new_value);
+    for (auto const& [property_id_value, old_value] : property_values_affected_by_inherited_style) {
+        auto property_id = static_cast<CSS::PropertyID>(property_id_value);
+        auto const& new_value = new_computed_properties.property(property_id);
+        if (CSS::is_inherited_property(property_id) && style_value_changed(*old_value, new_value))
+            invalidation.inherited_style_changed = true;
+        invalidation |= CSS::compute_property_invalidation(property_id, old_value.ptr(), &new_value);
     }
 
-    if (invalidation.is_none())
-        return invalidation;
+    auto computed_properties = CSS::ComputedProperties::create(move(computed_properties_builder));
+    auto computed_values = document().style_computer().build_computed_values(*computed_properties, abstract_element, abstract_element.style_scope());
+    refresh_computed_values({}, move(computed_values));
 
-    // NB: unsafe_layout_node() because we're applying recomputed inherited styles during
-    //     style recalculation, before layout has been updated.
-    unsafe_layout_node()->apply_style(*computed_properties);
-    if (invalidation.repaint)
-        set_needs_repaint();
+    bool did_change_custom_properties = false;
+    auto const element_style_changed = !invalidation.is_none();
+
+    invalidation |= recompute_pseudo_element_styles(did_change_custom_properties, had_list_marker, old_computed_values.ptr());
+
+    if (element_style_changed)
+        invalidate_descendant_styles_depending_on_style_container_query();
+
+    if (invalidation.is_none()) {
+        counters.element_inherited_style_noop_recomputations++;
+        return invalidation;
+    }
+
+    apply_computed_style_to_layout_node_if_needed(invalidation);
     return invalidation;
 }
 
@@ -1060,28 +1621,28 @@ GC::Ref<DOMTokenList> Element::part_list()
 }
 
 // https://dom.spec.whatwg.org/#valid-shadow-host-name
-static bool is_valid_shadow_host_name(FlyString const& name)
+static bool is_valid_shadow_host_name(Utf16FlyString const& name)
 {
     // A valid shadow host name is:
     // - a valid custom element name
     // - "article", "aside", "blockquote", "body", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "main", "nav", "p", "section", or "span"
     if (!HTML::is_valid_custom_element_name(name)
-        && !name.is_one_of("article", "aside", "blockquote", "body", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "main", "nav", "p", "section", "span")) {
+        && !name.is_one_of(HTML::TagNames::article, HTML::TagNames::aside, HTML::TagNames::blockquote, HTML::TagNames::body, HTML::TagNames::div, HTML::TagNames::footer, HTML::TagNames::h1, HTML::TagNames::h2, HTML::TagNames::h3, HTML::TagNames::h4, HTML::TagNames::h5, HTML::TagNames::h6, HTML::TagNames::header, HTML::TagNames::main, HTML::TagNames::nav, HTML::TagNames::p, HTML::TagNames::section, HTML::TagNames::span)) {
         return false;
     }
     return true;
 }
 
 // https://dom.spec.whatwg.org/#concept-attach-a-shadow-root
-WebIDL::ExceptionOr<void> Element::attach_a_shadow_root(Bindings::ShadowRootMode mode, bool clonable, bool serializable, bool delegates_focus, Bindings::SlotAssignmentMode slot_assignment, GC::Ptr<HTML::CustomElementRegistry> registry)
+WebIDL::ExceptionOr<void> Element::attach_a_shadow_root(ShadowRootMode mode, bool clonable, bool serializable, bool delegates_focus, SlotAssignmentMode slot_assignment, GC::Ptr<HTML::CustomElementRegistry> registry)
 {
     // 1. If element’s namespace is not the HTML namespace, then throw a "NotSupportedError" DOMException.
     if (namespace_uri() != Namespace::HTML)
-        return WebIDL::NotSupportedError::create(realm(), "Element's namespace is not the HTML namespace"_utf16);
+        return WebIDL::NotSupportedError::create("Element's namespace is not the HTML namespace"_utf16);
 
     // 2. If element’s local name is not a valid shadow host name, then throw a "NotSupportedError" DOMException.
     if (!is_valid_shadow_host_name(local_name()))
-        return WebIDL::NotSupportedError::create(realm(), "Element's local name is not a valid shadow host name"_utf16);
+        return WebIDL::NotSupportedError::create("Element's local name is not a valid shadow host name"_utf16);
 
     // 3. If element’s local name is a valid custom element name, or element’s is value is not null:
     if (HTML::is_valid_custom_element_name(local_name()) || m_is_value.has_value()) {
@@ -1092,7 +1653,7 @@ WebIDL::ExceptionOr<void> Element::attach_a_shadow_root(Bindings::ShadowRootMode
         // 2. If definition is non-null and definition’s disable shadow is true, then throw a "NotSupportedError"
         //    DOMException.
         if (definition && definition->disable_shadow())
-            return WebIDL::NotSupportedError::create(realm(), "Cannot attach a shadow root to a custom element that has disabled shadow roots"_utf16);
+            return WebIDL::NotSupportedError::create("Cannot attach a shadow root to a custom element that has disabled shadow roots"_utf16);
     }
 
     // 4. If element is a shadow host:
@@ -1105,7 +1666,7 @@ WebIDL::ExceptionOr<void> Element::attach_a_shadow_root(Bindings::ShadowRootMode
         // - currentShadowRoot’s mode is not mode,
         // then throw a "NotSupportedError" DOMException.
         if (!current_shadow_root->declarative() || current_shadow_root->mode() != mode) {
-            return WebIDL::NotSupportedError::create(realm(), "Element already is a shadow host"_utf16);
+            return WebIDL::NotSupportedError::create("Element already is a shadow host"_utf16);
         }
 
         // 3. Otherwise:
@@ -1121,7 +1682,7 @@ WebIDL::ExceptionOr<void> Element::attach_a_shadow_root(Bindings::ShadowRootMode
 
     // 5. Let shadow be a new shadow root whose node document is element’s node document, host is this, and mode is
     //    mode.
-    auto shadow = realm().create<ShadowRoot>(document(), *this, mode);
+    auto shadow = ShadowRoot::create(document(), *this, mode);
 
     // 6. Set shadow’s delegates focus to delegatesFocus.
     shadow->set_delegates_focus(delegates_focus);
@@ -1152,7 +1713,7 @@ WebIDL::ExceptionOr<void> Element::attach_a_shadow_root(Bindings::ShadowRootMode
 }
 
 // https://dom.spec.whatwg.org/#dom-element-attachshadow
-WebIDL::ExceptionOr<GC::Ref<ShadowRoot>> Element::attach_shadow(ShadowRootInit init)
+WebIDL::ExceptionOr<GC::Ref<ShadowRoot>> Element::attach_shadow(ShadowRootOptions const& init)
 {
     // 1. Let registry be this’s node document’s custom element registry.
     auto registry = document().custom_element_registry();
@@ -1164,7 +1725,7 @@ WebIDL::ExceptionOr<GC::Ref<ShadowRoot>> Element::attach_shadow(ShadowRootInit i
     // 3. If registry is non-null, registry’s is scoped is false, and registry is not this’s node document’s custom
     //    element registry, then throw a "NotSupportedError" DOMException.
     if (registry && !registry->is_scoped() && registry != document().custom_element_registry())
-        return WebIDL::NotSupportedError::create(realm(), "'customElementRegistry' in ShadowRootInit must either be scoped or the document's custom element registry."_utf16);
+        return WebIDL::NotSupportedError::create("'customElementRegistry' in ShadowRootInit must either be scoped or the document's custom element registry."_utf16);
 
     // 4. Run attach a shadow root with this, init["mode"], init["clonable"], init["serializable"],
     //    init["delegatesFocus"], init["slotAssignment"], and registry.
@@ -1175,13 +1736,13 @@ WebIDL::ExceptionOr<GC::Ref<ShadowRoot>> Element::attach_shadow(ShadowRootInit i
 }
 
 // https://dom.spec.whatwg.org/#dom-element-shadowroot
-GC::Ptr<ShadowRoot> Element::shadow_root_for_bindings() const
+GC::Ptr<ShadowRoot> Element::open_shadow_root() const
 {
     // 1. Let shadow be this’s shadow root.
     auto shadow = m_shadow_root;
 
     // 2. If shadow is null or its mode is "closed", then return null.
-    if (shadow == nullptr || shadow->mode() == Bindings::ShadowRootMode::Closed)
+    if (shadow == nullptr || shadow->mode() == ShadowRootMode::Closed)
         return nullptr;
 
     // 3. Return shadow.
@@ -1189,46 +1750,45 @@ GC::Ptr<ShadowRoot> Element::shadow_root_for_bindings() const
 }
 
 // https://dom.spec.whatwg.org/#dom-element-matches
-WebIDL::ExceptionOr<bool> Element::matches(StringView selectors) const
+WebIDL::ExceptionOr<bool> Element::matches(Utf16View selectors) const
 {
     // 1. Let s be the result of parse a selector from selectors.
-    auto maybe_selectors = parse_selector(CSS::Parser::ParsingParams(document()), selectors);
+    auto query = document().selector_query_for(selectors);
 
     // 2. If s is failure, then throw a "SyntaxError" DOMException.
-    if (!maybe_selectors.has_value())
-        return WebIDL::SyntaxError::create(realm(), "Failed to parse selector"_utf16);
+    if (!query)
+        return WebIDL::SyntaxError::create("Failed to parse selector"_utf16);
 
     // 3. If the result of match a selector against an element, using s, this, and scoping root this, returns success, then return true; otherwise, return false.
-    auto sel = maybe_selectors.value();
-    for (auto& s : sel) {
-        SelectorEngine::MatchContext context;
-        if (SelectorEngine::matches(s, *this, nullptr, context, {}, static_cast<ParentNode const*>(this)))
+    for (auto const& s : query->selectors()) {
+        SelectorMatching::MatchContext context;
+        if (SelectorMatching::matches(s, *this, nullptr, context, static_cast<ParentNode const*>(this)))
             return true;
     }
     return false;
 }
 
 // https://dom.spec.whatwg.org/#dom-element-closest
-WebIDL::ExceptionOr<DOM::Element const*> Element::closest(StringView selectors) const
+WebIDL::ExceptionOr<DOM::Element const*> Element::closest(Utf16View selectors) const
 {
     // 1. Let s be the result of parse a selector from selectors.
-    auto maybe_selectors = parse_selector(CSS::Parser::ParsingParams(document()), selectors);
+    auto query = document().selector_query_for(selectors);
 
     // 2. If s is failure, then throw a "SyntaxError" DOMException.
-    if (!maybe_selectors.has_value())
-        return WebIDL::SyntaxError::create(realm(), "Failed to parse selector"_utf16);
+    if (!query)
+        return WebIDL::SyntaxError::create("Failed to parse selector"_utf16);
 
     auto matches_selectors = [this](CSS::SelectorList const& selector_list, Element const* element) {
         // 4. For each element in elements, if match a selector against an element, using s, element, and scoping root this, returns success, return element.
         for (auto const& selector : selector_list) {
-            SelectorEngine::MatchContext context;
-            if (SelectorEngine::matches(selector, *element, nullptr, context, {}, this))
+            SelectorMatching::MatchContext context;
+            if (SelectorMatching::matches(selector, *element, nullptr, context, this))
                 return true;
         }
         return false;
     };
 
-    auto const selector_list = maybe_selectors.release_value();
+    auto const& selector_list = query->selectors();
 
     // 3. Let elements be this’s inclusive ancestors that are elements, in reverse tree order.
     for (auto* element = this; element; element = element->parent_element()) {
@@ -1243,38 +1803,27 @@ WebIDL::ExceptionOr<DOM::Element const*> Element::closest(StringView selectors) 
 }
 
 // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-innerhtml
-WebIDL::ExceptionOr<void> Element::set_inner_html(TrustedTypes::TrustedHTMLOrString const& value)
+WebIDL::ExceptionOr<void> Element::set_inner_html(StringView html)
 {
-    // 1. Let compliantString be the result of invoking the Get Trusted Type compliant string algorithm with
-    //    TrustedHTML, this's relevant global object, the given value, "Element innerHTML", and "script".
-    auto const compliant_string = TRY(TrustedTypes::get_trusted_type_compliant_string(
-        TrustedTypes::TrustedTypeName::TrustedHTML,
-        HTML::relevant_global_object(*this),
-        value,
-        TrustedTypes::InjectionSink::Element_innerHTML,
-        TrustedTypes::Script.to_string()));
-
-    // 2. Let context be this.
-    DOM::Node* context = this;
-
-    // 3. Let fragment be the result of invoking the fragment parsing algorithm steps with context and compliantString.
-    auto fragment = TRY(as<Element>(*context).parse_fragment(compliant_string.to_utf8_but_should_be_ported_to_utf16()));
-
-    // 4. If context is a template element, then set context to the template element's template contents (a DocumentFragment).
-    auto* template_element = as_if<HTML::HTMLTemplateElement>(*context);
+    auto markup = Utf16String::from_utf8(html);
+    Variant<GC::Ref<Element>, GC::Ref<DocumentFragment>> target = GC::Ref { *this };
+    auto* template_element = as_if<HTML::HTMLTemplateElement>(*this);
     if (template_element)
-        context = template_element->content();
+        target = template_element->content();
+    auto fragment = TRY(parse_fragment(target, markup.utf16_view()));
 
-    // 5. Replace all with fragment within context.
-    context->replace_all(fragment);
+    // 5. Replace all with fragment within target.
+    target.visit([&](auto node) {
+        node->replace_all(fragment);
+    });
 
     // NOTE: We don't invalidate style & layout for <template> elements since they don't affect rendering.
     if (!template_element) {
-        context->set_needs_style_update(true);
+        set_needs_style_update(true);
 
-        if (context->is_connected()) {
+        if (is_connected()) {
             // NOTE: Since the DOM has changed, we have to rebuild the layout tree.
-            context->set_needs_layout_tree_update(true, DOM::SetNeedsLayoutTreeUpdateReason::ElementSetInnerHTML);
+            set_needs_layout_tree_update(true, DOM::SetNeedsLayoutTreeUpdateReason::ElementSetInnerHTML);
         }
     }
 
@@ -1282,7 +1831,7 @@ WebIDL::ExceptionOr<void> Element::set_inner_html(TrustedTypes::TrustedHTMLOrStr
 }
 
 // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-innerhtml
-WebIDL::ExceptionOr<TrustedTypes::TrustedHTMLOrString> Element::inner_html() const
+WebIDL::ExceptionOr<Utf16String> Element::inner_html() const
 {
     return TRY(serialize_fragment(HTML::RequireWellFormed::Yes));
 }
@@ -1307,7 +1856,7 @@ void Element::set_being_activated(bool active)
     if (m_is_being_activated == active)
         return;
     m_is_being_activated = active;
-    invalidate_style(StyleInvalidationReason::ElementSetActive);
+    CSS::Invalidation::invalidate_style_after_active_state_change(*this);
 }
 
 bool Element::is_target() const
@@ -1333,16 +1882,32 @@ void Element::set_shadow_root(GC::Ptr<ShadowRoot> shadow_root)
 {
     if (m_shadow_root == shadow_root)
         return;
-    if (m_shadow_root)
+    if (m_shadow_root) {
         m_shadow_root->set_host(nullptr);
+        m_shadow_root->set_is_connected(false);
+        // NB: We don't need to run the removed steps if the children have already been disconnected (or were never
+        //     connected in the first place)
+        if (is_connected()) {
+            m_shadow_root->for_each_shadow_including_descendant([&](DOM::Node& descendant) {
+                descendant.removed_from(IsSubtreeRoot::No, m_shadow_root, *m_shadow_root);
+                return TraversalDecision::Continue;
+            });
+        }
+    }
     m_shadow_root = move(shadow_root);
-    if (m_shadow_root)
+    if (m_shadow_root) {
+        // NB: Children shouldn't be set on shadow roots until the shadow root is attached to a host so that they
+        //     correctly inherit connectedness.
+        VERIFY(!m_shadow_root->has_children());
+
         m_shadow_root->set_host(this);
-    invalidate_style(StyleInvalidationReason::ElementSetShadowRoot);
+        m_shadow_root->set_is_connected(is_connected());
+    }
+    CSS::Invalidation::invalidate_style_after_shadow_root_change(*this);
     set_needs_layout_tree_update(true, SetNeedsLayoutTreeUpdateReason::ElementSetShadowRoot);
 }
 
-GC::Ref<CSS::CSSStyleProperties> Element::style_for_bindings()
+GC::Ref<CSS::CSSStyleProperties> Element::style()
 {
     if (!m_inline_style)
         m_inline_style = CSS::CSSStyleProperties::create_element_inline_style({ *this }, {}, {});
@@ -1352,12 +1917,14 @@ GC::Ref<CSS::CSSStyleProperties> Element::style_for_bindings()
 GC::Ref<CSS::StylePropertyMap> Element::attribute_style_map()
 {
     if (!m_attribute_style_map)
-        m_attribute_style_map = CSS::StylePropertyMap::create(realm(), style_for_bindings());
+        m_attribute_style_map = CSS::StylePropertyMap::create(style());
     return *m_attribute_style_map;
 }
 
 void Element::set_inline_style(GC::Ptr<CSS::CSSStyleProperties> style)
 {
+    if (m_inline_style == style)
+        return;
     m_inline_style = style;
     if (m_attribute_style_map)
         m_attribute_style_map = nullptr;
@@ -1365,7 +1932,7 @@ void Element::set_inline_style(GC::Ptr<CSS::CSSStyleProperties> style)
 }
 
 // https://dom.spec.whatwg.org/#element-html-uppercased-qualified-name
-FlyString Element::make_html_uppercased_qualified_name() const
+Utf16FlyString Element::make_html_uppercased_qualified_name() const
 {
     // This is allowed by the spec: "User agents could optimize qualified name and HTML-uppercased qualified name by storing them in internal slots."
     if (namespace_uri() == Namespace::HTML && document().document_type() == Document::Type::HTML)
@@ -1376,7 +1943,7 @@ FlyString Element::make_html_uppercased_qualified_name() const
 // https://html.spec.whatwg.org/multipage/webappapis.html#queue-an-element-task
 HTML::TaskID Element::queue_an_element_task(HTML::Task::Source source, Function<void()> steps)
 {
-    return queue_a_task(source, HTML::main_thread_event_loop(), document(), GC::create_function(heap(), move(steps)));
+    return queue_a_task(source, HTML::main_thread_event_loop(), document(), GC::create_function(GC::Heap::the(), move(steps)));
 }
 
 // https://html.spec.whatwg.org/multipage/syntax.html#void-elements
@@ -1391,19 +1958,8 @@ bool Element::serializes_as_void() const
     return is_void_element() || local_name().is_one_of(HTML::TagNames::basefont, HTML::TagNames::bgsound, HTML::TagNames::frame, HTML::TagNames::keygen);
 }
 
-// https://drafts.csswg.org/cssom-view/#dom-element-getboundingclientrect
-GC::Ref<Geometry::DOMRect> Element::get_bounding_client_rect_for_bindings() const
+static CSSPixelRect bounding_rect_from_client_rects(Vector<CSSPixelRect> const& list)
 {
-    auto rect = get_bounding_client_rect();
-    return MUST(Geometry::DOMRect::construct_impl(realm(), static_cast<double>(rect.x()), static_cast<double>(rect.y()), static_cast<double>(rect.width()), static_cast<double>(rect.height())));
-}
-
-// https://drafts.csswg.org/cssom-view/#dom-element-getboundingclientrect
-CSSPixelRect Element::get_bounding_client_rect() const
-{
-    // 1. Let list be the result of invoking getClientRects() on element.
-    auto list = get_client_rects();
-
     // 2. If the list is empty return a DOMRect object whose x, y, width and height members are zero.
     if (list.size() == 0)
         return { 0, 0, 0, 0 };
@@ -1432,29 +1988,24 @@ CSSPixelRect Element::get_bounding_client_rect() const
     return bounding_rect;
 }
 
-// https://drafts.csswg.org/cssom-view/#dom-element-getclientrects
-GC::Ref<Geometry::DOMRectList> Element::get_client_rects_for_bindings() const
+// https://drafts.csswg.org/cssom-view/#dom-element-getboundingclientrect
+CSSPixelRect Element::get_bounding_client_rect() const
 {
-    Vector<GC::Root<Geometry::DOMRect>> rects;
-    for (auto const& rect : get_client_rects()) {
-        rects.append(MUST(Geometry::DOMRect::construct_impl(realm(), static_cast<double>(rect.x()), static_cast<double>(rect.y()), static_cast<double>(rect.width()), static_cast<double>(rect.height()))));
-    }
-    return Geometry::DOMRectList::create(realm(), move(rects));
+    // 1. Let list be the result of invoking getClientRects() on element.
+    return bounding_rect_from_client_rects(get_client_rects());
 }
 
-// https://drafts.csswg.org/cssom-view/#dom-element-getclientrects
-Vector<CSSPixelRect> Element::get_client_rects() const
+static void append_transformed_border_box_rect(Vector<CSSPixelRect>& rects, Painting::Paintable const& paintable_box)
 {
-    auto navigable = document().navigable();
-    if (!navigable)
-        return {};
+    auto absolute_rect = paintable_box.absolute_border_box_rect();
+    rects.append(paintable_box.transform_rect_to_viewport(absolute_rect, Painting::AccumulatedVisualContextTree::IncludeVisualViewportTransform::No));
+}
 
-    // NOTE: Ensure that layout is up-to-date before looking at metrics.
-    const_cast<Document&>(document()).update_layout_if_needed_for_node(*this, UpdateLayoutReason::ElementGetClientRects);
-
+static Vector<CSSPixelRect> compute_client_rects_assuming_layout_clean(Element const& element)
+{
     // 1. If the element on which it was invoked does not have an associated layout box return an empty DOMRectList
     //    object and stop this algorithm.
-    if (!layout_node())
+    if (!element.layout_node())
         return {};
 
     // FIXME: 2. If the element has an associated SVG layout box return a DOMRectList object containing a single
@@ -1469,18 +2020,59 @@ Vector<CSSPixelRect> Element::get_client_rects() const
     // FIXME: - Replace each anonymous block box with its child box(es) and repeat this until no anonymous block boxes
     //          are left in the final list.
 
-    // NOTE: Make sure CSS transforms are resolved before it is used to calculate the rect position.
-    const_cast<Document&>(document()).update_paint_and_hit_testing_properties_if_needed();
-
     Vector<CSSPixelRect> rects;
-    if (auto const* paintable_box = this->paintable_box()) {
-        auto absolute_rect = paintable_box->absolute_border_box_rect();
-        rects.append(paintable_box->transform_rect_to_viewport(absolute_rect));
-    } else if (paintable()) {
-        dbgln("FIXME: Failed to get client rects for element ({})", debug_description());
+    if (auto const* inline_paintable = as_if<Painting::InlinePaintable>(element.layout_node()->paintable().ptr())) {
+        inline_paintable->for_each_piece([&](Painting::InlineBoxPiece const& piece) {
+            if (piece.is_geometry_only_placeholder)
+                return;
+            auto absolute_rect = inline_paintable->absolute_piece_border_box_rect(piece);
+            rects.append(inline_paintable->transform_rect_to_viewport(absolute_rect, Painting::AccumulatedVisualContextTree::IncludeVisualViewportTransform::No));
+        });
+        // An inline element whose content is only interrupting blocks generates no line fragments, but per CSSOM
+        // we still report its (zero-sized) border area instead of an empty list.
+        if (rects.is_empty())
+            append_transformed_border_box_rect(rects, *inline_paintable);
+        return rects;
+    }
+
+    if (auto paintable_box = element.paintable_box()) {
+        append_transformed_border_box_rect(rects, *paintable_box);
+    } else if (element.paintable()) {
+        dbgln("FIXME: Failed to get client rects for element ({})", element.debug_description());
     }
 
     return rects;
+}
+
+// https://drafts.csswg.org/cssom-view/#dom-element-getclientrects
+Vector<CSSPixelRect> Element::get_client_rects() const
+{
+    auto navigable = document().navigable();
+    if (!navigable)
+        return {};
+
+    // NOTE: Ensure that layout is up-to-date before looking at metrics.
+    const_cast<Document&>(document()).update_layout_if_needed_for_node(*this, UpdateLayoutReason::ElementGetClientRects);
+
+    if (!layout_node())
+        return {};
+
+    // NOTE: Make sure CSS transforms are resolved before they are used to calculate the rect position.
+    const_cast<Document&>(document()).update_paint_and_hit_testing_properties_if_needed();
+
+    return compute_client_rects_assuming_layout_clean(*this);
+}
+
+Vector<CSSPixelRect> Element::client_rects_assuming_layout_clean() const
+{
+    if (!document().navigable())
+        return {};
+    return compute_client_rects_assuming_layout_clean(*this);
+}
+
+CSSPixelRect Element::bounding_client_rect_assuming_layout_clean() const
+{
+    return bounding_rect_from_client_rects(client_rects_assuming_layout_clean());
 }
 
 int Element::client_top() const
@@ -1489,9 +2081,10 @@ int Element::client_top() const
     const_cast<Document&>(document()).update_style_if_needed_for_element(AbstractElement { const_cast<Element&>(*this) });
 
     // 1. If the element has no associated CSS layout box or if the CSS layout box is inline, return zero.
-    if (!computed_properties())
+    auto computed_values = this->computed_values();
+    if (!computed_values)
         return 0;
-    auto display = computed_properties()->display();
+    auto display = computed_values->display();
     if (display.is_none() || display.is_contents())
         return 0;
     if (display.is_inline_outside() && display.is_flow_inside())
@@ -1500,10 +2093,10 @@ int Element::client_top() const
     // 2. Return the computed value of the border-top-width property
     //    plus the height of any scrollbar rendered between the top padding edge and the top border edge,
     //    ignoring any transforms that apply to the element and its ancestors.
-    auto border_top_style = computed_properties()->line_style(CSS::PropertyID::BorderTopStyle);
-    if (border_top_style == CSS::LineStyle::None || border_top_style == CSS::LineStyle::Hidden)
+    auto const& border_top = computed_values->border_top();
+    if (border_top.line_style == CSS::LineStyle::None || border_top.line_style == CSS::LineStyle::Hidden)
         return 0;
-    return max(CSSPixels { 0 }, computed_properties()->length(CSS::PropertyID::BorderTopWidth).absolute_length_to_px()).to_int();
+    return border_top.width.to_int();
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-clientleft
@@ -1513,9 +2106,10 @@ int Element::client_left() const
     const_cast<Document&>(document()).update_style_if_needed_for_element(AbstractElement { const_cast<Element&>(*this) });
 
     // 1. If the element has no associated CSS layout box or if the CSS layout box is inline, return zero.
-    if (!computed_properties())
+    auto computed_values = this->computed_values();
+    if (!computed_values)
         return 0;
-    auto display = computed_properties()->display();
+    auto display = computed_values->display();
     if (display.is_none() || display.is_contents())
         return 0;
     if (display.is_inline_outside() && display.is_flow_inside())
@@ -1524,10 +2118,10 @@ int Element::client_left() const
     // 2. Return the computed value of the border-left-width property
     //    plus the width of any scrollbar rendered between the left padding edge and the left border edge,
     //    ignoring any transforms that apply to the element and its ancestors.
-    auto border_left_style = computed_properties()->line_style(CSS::PropertyID::BorderLeftStyle);
-    if (border_left_style == CSS::LineStyle::None || border_left_style == CSS::LineStyle::Hidden)
+    auto const& border_left = computed_values->border_left();
+    if (border_left.line_style == CSS::LineStyle::None || border_left.line_style == CSS::LineStyle::Hidden)
         return 0;
-    return max(CSSPixels { 0 }, computed_properties()->length(CSS::PropertyID::BorderLeftWidth).absolute_length_to_px()).to_int();
+    return border_left.width.to_int();
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-clientwidth
@@ -1596,14 +2190,21 @@ void Element::inserted()
             document().element_with_id_was_added({}, *this);
         if (m_name.has_value())
             document().element_with_name_was_added({}, *this);
+        if (m_id.has_value() || !m_classes.is_empty())
+            invalidate_content_blocker_style_if_needed(*this);
     }
 
     play_or_cancel_animations_after_display_property_change();
 }
 
-void Element::removed_from(Node* old_parent, Node& old_root)
+void Element::removed_from(IsSubtreeRoot is_subtree_root, Node* old_ancestor, Node& old_root)
 {
-    Base::removed_from(old_parent, old_root);
+    Base::removed_from(is_subtree_root, old_ancestor, old_root);
+
+    // https://html.spec.whatwg.org/multipage/dom.html#render-blocking-mechanism
+    // Whenever a render-blocking element el becomes browsing-context disconnected, unblock rendering on el.
+    if (old_root.is_connected() && document().is_render_blocking_element(*this))
+        unblock_rendering();
 
     if (m_id.has_value() && is<ShadowRoot>(old_root))
         static_cast<ShadowRoot&>(old_root).element_by_id().remove(*m_id, *this);
@@ -1613,15 +2214,34 @@ void Element::removed_from(Node* old_parent, Node& old_root)
             document().element_with_id_was_removed({}, *this);
         if (m_name.has_value())
             document().element_with_name_was_removed({}, *this);
+        if (m_computed_values) {
+            auto& anchor_names = is<ShadowRoot>(old_root)
+                ? as<ShadowRoot>(old_root).anchor_name_map()
+                : document().anchor_name_map();
+            bool element_had_registered_anchor_names = false;
+            for (auto const& name : m_computed_values->anchor_names()) {
+                element_had_registered_anchor_names = true;
+                anchor_names.unregister_name(name, *this);
+            }
+            // Positioned boxes anywhere may hold geometry resolved against these names, which
+            // the dispatch-time check of the live anchor-name maps can no longer see.
+            if (element_had_registered_anchor_names)
+                document().partial_relayout_invalidation().record_escape(PartialRelayoutEscapeReason::AnchorNamesUnregisteredByElementRemoval);
+        }
     }
 
     play_or_cancel_animations_after_display_property_change();
     exit_fullscreen_on_element_removal();
+
+    m_computed_values = nullptr;
+    for_each_synthetic_pseudo_element([&](CSS::PseudoElement pseudo_element_type, SyntheticPseudoElement&) {
+        set_computed_style(pseudo_element_type, nullptr);
+    });
 }
 
-void Element::moved_from(GC::Ptr<Node> old_parent)
+void Element::moved_from(IsSubtreeRoot is_subtree_root, GC::Ptr<Node> old_ancestor)
 {
-    Base::moved_from(old_parent);
+    Base::moved_from(is_subtree_root, old_ancestor);
 }
 
 void Element::children_changed(ChildrenChangedMetadata const& metadata)
@@ -1639,9 +2259,9 @@ void Element::children_changed(ChildrenChangedMetadata const& metadata)
     }
 }
 
-void Element::set_pseudo_element_node(Badge<Layout::TreeBuilder>, CSS::PseudoElement pseudo_element, GC::Ptr<Layout::NodeWithStyle> pseudo_element_node)
+void Element::set_synthetic_pseudo_element_node(Badge<Layout::LayoutTreeBuilderAccess>, CSS::PseudoElement pseudo_element, Layout::NodeWithStyle* pseudo_element_node)
 {
-    auto existing_pseudo_element = get_pseudo_element(pseudo_element);
+    auto existing_pseudo_element = get_synthetic_pseudo_element(pseudo_element);
     if (!existing_pseudo_element.has_value() && !pseudo_element_node)
         return;
 
@@ -1649,30 +2269,21 @@ void Element::set_pseudo_element_node(Badge<Layout::TreeBuilder>, CSS::PseudoEle
         return;
     }
 
-    ensure_pseudo_element(pseudo_element).set_layout_node(move(pseudo_element_node));
+    ensure_synthetic_pseudo_element(pseudo_element).set_layout_node(move(pseudo_element_node));
 }
 
-GC::Ptr<Layout::NodeWithStyle> Element::get_pseudo_element_node(CSS::PseudoElement pseudo_element) const
+Layout::NodeWithStyle* Element::pseudo_element_layout_node(CSS::PseudoElement pseudo_element) const
 {
     if (auto element_data = get_pseudo_element(pseudo_element); element_data.has_value())
         return element_data->layout_node();
     return nullptr;
 }
 
-bool Element::affected_by_pseudo_class(CSS::PseudoClass pseudo_class) const
+Layout::NodeWithStyle* Element::pseudo_element_unsafe_layout_node(CSS::PseudoElement pseudo_element) const
 {
-    if (m_computed_properties && m_computed_properties->has_attempted_match_against_pseudo_class(pseudo_class)) {
-        return true;
-    }
-    if (m_pseudo_element_data) {
-        for (auto& pseudo_element : *m_pseudo_element_data) {
-            if (!pseudo_element.value->computed_properties())
-                continue;
-            if (pseudo_element.value->computed_properties()->has_attempted_match_against_pseudo_class(pseudo_class))
-                return true;
-        }
-    }
-    return false;
+    if (auto element_data = get_pseudo_element(pseudo_element); element_data.has_value())
+        return element_data->unsafe_layout_node();
+    return nullptr;
 }
 
 // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-enabled
@@ -1759,6 +2370,30 @@ bool Element::matches_link_pseudo_class() const
     return has_attribute(HTML::AttributeNames::href);
 }
 
+// https://drafts.csswg.org/selectors/#visited-pseudo
+bool Element::matches_visited_pseudo_class() const
+{
+    // The :visited pseudo-class comes with obvious privacy implications—​letting random websites know what other
+    // websites you’ve visited can be problematic for a number of reasons—​and so user agents must preserve user
+    // privacy in their implementation of :visited.
+
+    // NOTE: This specification intentionally does not specify exactly how to preserve user privacy in this regard, to
+    //       allow for user agents to innovate in this space. The following methods are suggested, however:
+    //       - Have :visited never match, so all links match :link instead.
+    //       - Carefully track what history entries could have been observed by a given origin on their own, and only
+    //         have links match :visited if that visit would have been observable from the site’s origin. A possible
+    //         specific approach for this is described in Appendix C: Example Privacy-Preserving :visited Restrictions.
+    //       - Allow links to match :visited on any origin, but carefully restrict what styles they can apply and what
+    //         information is returned by style-querying APIs like getComputedStyle(), to prevent sites from observing
+    //         whether a link is styled with :link or :visited. (This is documented at MDN, and was the historical
+    //         approach browsers took, but is not perfect; there are several ways for a hostile page to still extract
+    //         history information.)
+
+    // FIXME: For simplicity we currently take the first approach and have :visited never match. We may want to rethink
+    //        this in the future.
+    return false;
+}
+
 bool Element::matches_local_link_pseudo_class() const
 {
     // The :local-link pseudo-class allows authors to style hyperlinks based on the users current location
@@ -1769,7 +2404,7 @@ bool Element::matches_local_link_pseudo_class() const
     if (!matches_link_pseudo_class())
         return false;
     auto document_url = document().url();
-    auto maybe_href = attribute(HTML::AttributeNames::href);
+    auto maybe_href = get_attribute_value_view(HTML::AttributeNames::href);
     if (!maybe_href.has_value())
         return false;
     auto target_url = document().encoding_parse_url(*maybe_href);
@@ -1780,121 +2415,69 @@ bool Element::matches_local_link_pseudo_class() const
     return document_url.equals(*target_url, URL::ExcludeFragment::Yes);
 }
 
-bool Element::includes_properties_from_invalidation_set(CSS::InvalidationSet const& set) const
+bool Element::matches_focus_within_pseudo_class() const
 {
-    auto includes_property = [&](CSS::InvalidationSet::Property const& property) {
-        switch (property.type) {
-        case CSS::InvalidationSet::Property::Type::Class:
-            return m_classes.contains_slow(property.name());
-        case CSS::InvalidationSet::Property::Type::Id:
-            return m_id == property.name();
-        case CSS::InvalidationSet::Property::Type::TagName:
-            return local_name() == property.name();
-        case CSS::InvalidationSet::Property::Type::Attribute: {
-            if (property.name() == HTML::AttributeNames::id || property.name() == HTML::AttributeNames::class_)
-                return true;
-            return has_attribute(property.name());
-        }
-        case CSS::InvalidationSet::Property::Type::PseudoClass: {
-            switch (property.value.get<CSS::PseudoClass>()) {
-            case CSS::PseudoClass::Has:
-                return true;
-            case CSS::PseudoClass::Enabled: {
-                return matches_enabled_pseudo_class();
-            }
-            case CSS::PseudoClass::Disabled: {
-                return matches_disabled_pseudo_class();
-            }
-            case CSS::PseudoClass::Defined: {
-                return is_defined();
-            }
-            case CSS::PseudoClass::Checked: {
-                return matches_checked_pseudo_class();
-            }
-            case CSS::PseudoClass::PlaceholderShown: {
-                return matches_placeholder_shown_pseudo_class();
-            }
-            case CSS::PseudoClass::AnyLink:
-            case CSS::PseudoClass::Link:
-                return matches_link_pseudo_class();
-            case CSS::PseudoClass::LocalLink: {
-                return matches_local_link_pseudo_class();
-            }
-            case CSS::PseudoClass::Root:
-                return is<HTML::HTMLHtmlElement>(*this);
-            case CSS::PseudoClass::Host:
-                return is_shadow_host();
-            case CSS::PseudoClass::Required:
-            case CSS::PseudoClass::Optional:
-                return is<HTML::HTMLInputElement>(*this) || is<HTML::HTMLSelectElement>(*this) || is<HTML::HTMLTextAreaElement>(*this);
-            default:
-                VERIFY_NOT_REACHED();
-            }
-        }
-        case CSS::InvalidationSet::Property::Type::InvalidateSelf:
-            return false;
-        case CSS::InvalidationSet::Property::Type::InvalidateWholeSubtree:
+    auto focused_area = document().focused_area();
+    if (!focused_area)
+        return false;
+
+    for (auto const* node = focused_area.ptr(); node; node = node->flat_tree_parent()) {
+        if (node == this)
             return true;
-        default:
-            VERIFY_NOT_REACHED();
-        }
-    };
-
-    bool includes_any = false;
-    set.for_each_property([&](auto const& property) {
-        if (includes_property(property)) {
-            includes_any = true;
-            return IterationDecision::Break;
-        }
-        return IterationDecision::Continue;
-    });
-    return includes_any;
-}
-
-void Element::invalidate_style_if_affected_by_has()
-{
-    if (affected_by_has_pseudo_class_in_subject_position()) {
-        set_needs_style_update(true);
-    }
-    if (affected_by_has_pseudo_class_in_non_subject_position()) {
-        invalidate_style(StyleInvalidationReason::Other, { { CSS::InvalidationSet::Property::Type::PseudoClass, CSS::PseudoClass::Has } }, {});
-    }
-}
-
-bool Element::has_pseudo_elements() const
-{
-    if (m_pseudo_element_data) {
-        for (auto& pseudo_element : *m_pseudo_element_data) {
-            if (pseudo_element.value->layout_node())
-                return true;
-        }
     }
     return false;
 }
 
-void Element::clear_pseudo_element_nodes(Badge<Layout::TreeBuilder>)
+bool Element::has_synthetic_pseudo_elements() const
 {
     if (m_pseudo_element_data) {
-        for (auto& pseudo_element : *m_pseudo_element_data) {
-            pseudo_element.value->set_layout_node(nullptr);
-        }
+        bool has_any_synthetic_pseudo_elements = false;
+
+        for_each_synthetic_pseudo_element([&](CSS::PseudoElement, SyntheticPseudoElement const& pseudo_element) {
+            if (pseudo_element.layout_node()) {
+                has_any_synthetic_pseudo_elements = true;
+                return IterationDecision::Break;
+            }
+
+            return IterationDecision::Continue;
+        });
+
+        return has_any_synthetic_pseudo_elements;
     }
+    return false;
 }
 
-void Element::serialize_children_as_json(JsonObjectSerializer<StringBuilder>& element_object) const
+void Element::clear_synthetic_pseudo_element_layout_nodes()
 {
-    bool has_pseudo_elements = this->has_pseudo_elements();
+    for_each_synthetic_pseudo_element([&](CSS::PseudoElement, SyntheticPseudoElement& pseudo_element) {
+        if (auto layout_node = pseudo_element.layout_node()) {
+            layout_node->for_each_in_inclusive_subtree([](Layout::Node& node) {
+                node.clear_paintable();
+                return TraversalDecision::Continue;
+            });
+            layout_node->prepare_subtree_for_detach_from_layout_tree();
+            if (layout_node->parent())
+                layout_node->remove();
+        }
+        pseudo_element.set_layout_node(nullptr);
+    });
+}
+
+void Element::serialize_children_as_json(JsonObjectSerializer<Utf16StringBuilder>& element_object) const
+{
+    bool has_pseudo_elements = this->has_synthetic_pseudo_elements();
     if (!is_shadow_host() && !has_child_nodes() && !has_pseudo_elements)
         return;
 
     auto children = MUST(element_object.add_array("children"sv));
 
-    auto serialize_pseudo_element = [&](CSS::PseudoElement pseudo_element_type, auto const& pseudo_element) {
+    auto serialize_pseudo_element = [&](CSS::PseudoElement pseudo_element_type, PseudoElement const& pseudo_element) {
         // FIXME: Find a way to make these still inspectable? (eg, `::before { display: none }`)
-        if (!pseudo_element->layout_node())
+        if (!pseudo_element.layout_node())
             return;
         auto object = MUST(children.add_object());
-        MUST(object.add("name"sv, MUST(String::formatted("::{}", CSS::pseudo_element_name(pseudo_element_type)))));
+        auto pseudo_element_name = Utf16String::formatted("::{}", CSS::pseudo_element_name(pseudo_element_type));
+        MUST(object.add("name"sv, pseudo_element_name.utf16_view()));
         MUST(object.add("type"sv, "pseudo-element"));
         MUST(object.add("parent-id"sv, unique_id().value()));
         MUST(object.add("pseudo-element"sv, to_underlying(pseudo_element_type)));
@@ -1927,11 +2510,12 @@ void Element::serialize_children_as_json(JsonObjectSerializer<StringBuilder>& el
         }
 
         // Any other pseudo-elements, as a catch-all.
-        for (auto const& [type, pseudo_element] : *m_pseudo_element_data) {
+        for_each_synthetic_pseudo_element([&](CSS::PseudoElement type, PseudoElement const& pseudo_element) {
             if (first_is_one_of(type, CSS::PseudoElement::After, CSS::PseudoElement::Backdrop, CSS::PseudoElement::Before, CSS::PseudoElement::Marker))
-                continue;
+                return;
+
             serialize_pseudo_element(type, pseudo_element);
-        }
+        });
     }
 
     MUST(children.finish());
@@ -1940,26 +2524,37 @@ void Element::serialize_children_as_json(JsonObjectSerializer<StringBuilder>& el
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-tabindex
 i32 Element::default_tab_index_value() const
 {
-    // The default value is 0 if the element is an a, area, button, frame, iframe, input, object, select, textarea, or SVG a element, or is a summary element that is a summary for its parent details.
-    // The default value is −1 otherwise.
-    // Note: The varying default value based on element type is a historical artifact.
+    // NB: See tab_index() for spec.
     return -1;
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-tabindex
 i32 Element::tab_index() const
 {
-    auto maybe_table_index = Web::HTML::parse_integer(get_attribute_value(HTML::AttributeNames::tabindex));
+    // The tabIndex getter steps are:
+    // 1. Let attribute be this's tabindex attribute.
+    auto attribute = get_attribute(HTML::AttributeNames::tabindex);
 
-    if (!maybe_table_index.has_value())
-        return default_tab_index_value();
-    return maybe_table_index.value();
+    // 2. If attribute is not null:
+    if (attribute.has_value()) {
+        // 1. Let parsedValue be the result of integer parsing attribute's value.
+        auto parsed_value = HTML::parse_integer(attribute.value());
+
+        // 2. If parsedValue is not an error and is within the long range, then return parsedValue.
+        if (parsed_value.has_value())
+            return parsed_value.release_value();
+    }
+
+    // 3. Return 0 if this is an a, area, button, frame, iframe, input, object, select, textarea, or SVG a element, or
+    //    MathML a element, or is a summary element that is a summary for its parent details; otherwise −1.
+    // NB: We implement this by overriding default_tab_index_value().
+    return default_tab_index_value();
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-tabindex
 void Element::set_tab_index(i32 tab_index)
 {
-    set_attribute_value(HTML::AttributeNames::tabindex, String::number(tab_index));
+    set_attribute_value(HTML::AttributeNames::tabindex, Utf16String::number(tab_index));
 }
 
 // https://drafts.csswg.org/cssom-view/#potentially-scrollable
@@ -1979,14 +2574,14 @@ bool Element::is_potentially_scrollable(TreatOverflowClipOnBodyParentAsOverflowH
         return false;
 
     // - body’s parent element’s computed value of the overflow-x or overflow-y properties is neither visible nor clip.
-    if (parent_element()->computed_properties()->overflow_x() == CSS::Overflow::Visible || parent_element()->computed_properties()->overflow_y() == CSS::Overflow::Visible)
+    if (parent_element()->computed_values()->overflow_x() == CSS::Overflow::Visible || parent_element()->computed_values()->overflow_y() == CSS::Overflow::Visible)
         return false;
     // NOTE: When treating 'overflow:clip' as 'overflow:hidden', we can never fail this condition
-    if (treat_overflow_clip_on_body_parent_as_overflow_hidden == TreatOverflowClipOnBodyParentAsOverflowHidden::No && (parent_element()->computed_properties()->overflow_x() == CSS::Overflow::Clip || parent_element()->computed_properties()->overflow_y() == CSS::Overflow::Clip))
+    if (treat_overflow_clip_on_body_parent_as_overflow_hidden == TreatOverflowClipOnBodyParentAsOverflowHidden::No && (parent_element()->computed_values()->overflow_x() == CSS::Overflow::Clip || parent_element()->computed_values()->overflow_y() == CSS::Overflow::Clip))
         return false;
 
     // - body’s computed value of the overflow-x or overflow-y properties is neither visible nor clip.
-    if (first_is_one_of(computed_properties()->overflow_x(), CSS::Overflow::Visible, CSS::Overflow::Clip) || first_is_one_of(computed_properties()->overflow_y(), CSS::Overflow::Visible, CSS::Overflow::Clip))
+    if (first_is_one_of(computed_values()->overflow_x(), CSS::Overflow::Visible, CSS::Overflow::Clip) || first_is_one_of(computed_values()->overflow_y(), CSS::Overflow::Visible, CSS::Overflow::Clip))
         return false;
 
     return true;
@@ -1995,13 +2590,13 @@ bool Element::is_potentially_scrollable(TreatOverflowClipOnBodyParentAsOverflowH
 bool Element::is_scroll_container() const
 {
     // NB: We should only call this if we know that computed_properties has already been computed
-    VERIFY(computed_properties());
+    VERIFY(computed_values());
 
     if (is_document_element())
         return true;
 
-    return Layout::overflow_value_makes_box_a_scroll_container(computed_properties()->overflow_x())
-        || Layout::overflow_value_makes_box_a_scroll_container(computed_properties()->overflow_y());
+    return Layout::overflow_value_makes_box_a_scroll_container(computed_values()->overflow_x())
+        || Layout::overflow_value_makes_box_a_scroll_container(computed_values()->overflow_y());
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scrolltop
@@ -2038,12 +2633,15 @@ double Element::scroll_top() const
         return window->scroll_y();
 
     // 8. If the element does not have any associated box, return zero and terminate these steps.
-    if (!paintable_box())
+    // NB: A box that is not a scroll container is never scrolled away from its default alignment, even if it keeps a
+    //     stored scroll offset from when it was one for restoration when it becomes one again.
+    auto paintable_box = this->paintable_box();
+    if (!paintable_box || !paintable_box->layout_node().is_scroll_container())
         return 0.0;
 
     // 9. Return the y-coordinate of the scrolling area at the alignment point with the top of the padding edge of the element.
     // FIXME: Is this correct?
-    return paintable_box()->scroll_offset().y().to_double();
+    return paintable_box->scroll_offset().y().to_double();
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scrollleft
@@ -2080,12 +2678,15 @@ double Element::scroll_left() const
         return window->scroll_x();
 
     // 8. If the element does not have any associated box, return zero and terminate these steps.
-    if (!paintable_box())
+    // NB: A box that is not a scroll container is never scrolled away from its default alignment, even if it keeps a
+    //     stored scroll offset from when it was one for restoration when it becomes one again.
+    auto paintable_box = this->paintable_box();
+    if (!paintable_box || !paintable_box->layout_node().is_scroll_container())
         return 0.0;
 
     // 9. Return the x-coordinate of the scrolling area at the alignment point with the left of the padding edge of the element.
     // FIXME: Is this correct?
-    return paintable_box()->scroll_offset().x().to_double();
+    return paintable_box->scroll_offset().x().to_double();
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scrollleft
@@ -2117,7 +2718,7 @@ void Element::set_scroll_left(double x)
 
     // 8. If the element is the root element invoke scroll() on window with x as first argument and scrollY on window as second argument, and terminate these steps.
     if (document.document_element() == this) {
-        window->scroll(x, window->scroll_y());
+        window->scroll(x, window->scroll_y(), nullptr);
         return;
     }
 
@@ -2126,7 +2727,7 @@ void Element::set_scroll_left(double x)
 
     // 9. If the element is the body element, document is in quirks mode, and the element is not potentially scrollable, invoke scroll() on window with x as first argument and scrollY on window as second argument, and terminate these steps.
     if (document.body() == this && document.in_quirks_mode() && !is_potentially_scrollable()) {
-        window->scroll(x, window->scroll_y());
+        window->scroll(x, window->scroll_y(), nullptr);
         return;
     }
 
@@ -2134,16 +2735,16 @@ void Element::set_scroll_left(double x)
     if (!paintable_box())
         return;
 
-    if (!paintable_box()->layout_node_with_style_and_box_metrics().is_scroll_container())
+    if (!paintable_box()->layout_node().is_scroll_container())
         return;
 
     // FIXME: or the element has no overflow.
 
     // 11. Scroll the element to x,scrollTop, with the scroll behavior being "auto".
-    // FIXME: Implement this in terms of calling "scroll the element".
     auto scroll_offset = paintable_box()->scroll_offset();
     scroll_offset.set_x(CSSPixels::nearest_value_for(x));
-    paintable_box()->set_scroll_offset(scroll_offset);
+    if (auto navigable = document.navigable())
+        navigable->perform_a_scroll_of_an_element(*this, scroll_offset, Bindings::ScrollBehavior::Auto);
 }
 
 void Element::set_scroll_top(double y)
@@ -2174,7 +2775,7 @@ void Element::set_scroll_top(double y)
 
     // 8. If the element is the root element invoke scroll() on window with scrollX on window as first argument and y as second argument, and terminate these steps.
     if (document.document_element() == this) {
-        window->scroll(window->scroll_x(), y);
+        window->scroll(window->scroll_x(), y, nullptr);
         return;
     }
 
@@ -2183,7 +2784,7 @@ void Element::set_scroll_top(double y)
 
     // 9. If the element is the body element, document is in quirks mode, and the element is not potentially scrollable, invoke scroll() on window with scrollX as first argument and y as second argument, and terminate these steps.
     if (document.body() == this && document.in_quirks_mode() && !is_potentially_scrollable()) {
-        window->scroll(window->scroll_x(), y);
+        window->scroll(window->scroll_x(), y, nullptr);
         return;
     }
 
@@ -2191,16 +2792,16 @@ void Element::set_scroll_top(double y)
     if (!paintable_box())
         return;
 
-    if (!paintable_box()->layout_node_with_style_and_box_metrics().is_scroll_container())
+    if (!paintable_box()->layout_node().is_scroll_container())
         return;
 
     // FIXME: or the element has no overflow.
 
     // 11. Scroll the element to scrollLeft,y, with the scroll behavior being "auto".
-    // FIXME: Implement this in terms of calling "scroll the element".
     auto scroll_offset = paintable_box()->scroll_offset();
     scroll_offset.set_y(CSSPixels::nearest_value_for(y));
-    paintable_box()->set_scroll_offset(scroll_offset);
+    if (auto navigable = document.navigable())
+        navigable->perform_a_scroll_of_an_element(*this, scroll_offset, Bindings::ScrollBehavior::Auto);
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scrollwidth
@@ -2296,13 +2897,19 @@ bool Element::is_actually_disabled() const
         return !form_associated_element.enabled();
     }
 
-    // - an optgroup element that has a disabled attribute
-    if (is<HTML::HTMLOptGroupElement>(this))
-        return has_attribute(HTML::AttributeNames::disabled);
+    auto nearest_ancestor_select_is_disabled = [this] {
+        if (auto select = HTML::get_nearest_ancestor_select(*this))
+            return select->has_attribute(HTML::AttributeNames::disabled);
+        return false;
+    };
 
-    // - an option element that is disabled
-    if (is<HTML::HTMLOptionElement>(this))
-        return static_cast<HTML::HTMLOptionElement const&>(*this).disabled();
+    // - an optgroup element that has a disabled attribute or whose nearest ancestor select is disabled
+    if (is<HTML::HTMLOptGroupElement>(this))
+        return has_attribute(HTML::AttributeNames::disabled) || nearest_ancestor_select_is_disabled();
+
+    // - an option element that is disabled or whose nearest ancestor select is disabled
+    if (auto* option = as_if<HTML::HTMLOptionElement>(this))
+        return option->disabled() || nearest_ancestor_select_is_disabled();
 
     // - a fieldset element that is a disabled fieldset
     if (is<HTML::HTMLFieldSetElement>(this))
@@ -2316,48 +2923,29 @@ bool Element::is_actually_disabled() const
 }
 
 // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#fragment-parsing-algorithm-steps
-WebIDL::ExceptionOr<GC::Ref<DOM::DocumentFragment>> Element::parse_fragment(StringView markup)
+WebIDL::ExceptionOr<GC::Ref<DOM::DocumentFragment>> Element::parse_fragment(Variant<GC::Ref<Element>, GC::Ref<DocumentFragment>> target, Utf16View markup, HTML::ParserScriptingMode scripting_mode)
 {
-    // 1. Let algorithm be the HTML fragment parsing algorithm.
-    auto algorithm = HTML::HTMLParser::parse_html_fragment;
+    // 1. Assert: scriptingMode is either Inert or Fragment.
+    VERIFY(scripting_mode == HTML::ParserScriptingMode::Inert || scripting_mode == HTML::ParserScriptingMode::Fragment);
 
-    // 2. If context's node document is an XML document, then set algorithm to the XML fragment parsing algorithm.
-    if (document().is_xml_document()) {
-        algorithm = XMLFragmentParser::parse_xml_fragment;
-    }
+    // 2. If target's node document is an XML document, then return the result of invoking the XML fragment parsing
+    //    algorithm given target and markup.
+    if (target.visit([](auto node) { return node->document().is_xml_document(); }))
+        return XMLFragmentParser::parse_xml_fragment(target, markup);
 
-    // 3. Let newChildren be the result of invoking algorithm given context and markup.
-    auto new_children = TRY(algorithm(*this, markup, HTML::HTMLParser::AllowDeclarativeShadowRoots::No));
-
-    // 4. Let fragment be a new DocumentFragment whose node document is context's node document.
-    auto fragment = realm().create<DOM::DocumentFragment>(document());
-
-    // 5. For each node of newChildren, in tree order: append node to fragment.
-    for (auto& child : new_children)
-        TRY(fragment->append_child(*child));
-
-    // 6. Return fragment.
-    return fragment;
+    // 3. If context's node document is an XML document, then set newChildren to the result of invoking the XML fragment parsing algorithm given context and markup.
+    return HTML::HTMLParser::parse_html_fragment(target, markup, HTML::HTMLParser::AllowDeclarativeShadowRoots::No, scripting_mode);
 }
 
 // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-outerhtml
-WebIDL::ExceptionOr<TrustedTypes::TrustedHTMLOrString> Element::outer_html() const
+WebIDL::ExceptionOr<Utf16String> Element::outer_html() const
 {
     return TRY(serialize_fragment(HTML::RequireWellFormed::Yes, FragmentSerializationMode::Outer));
 }
 
 // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-outerhtml
-WebIDL::ExceptionOr<void> Element::set_outer_html(TrustedTypes::TrustedHTMLOrString const& value)
+WebIDL::ExceptionOr<void> Element::set_outer_html(StringView html)
 {
-    // 1. Let compliantString be the result of invoking the Get Trusted Type compliant string algorithm with
-    //    TrustedHTML, this's relevant global object, the given value, "Element outerHTML", and "script".
-    auto const compliant_string = TRY(TrustedTypes::get_trusted_type_compliant_string(
-        TrustedTypes::TrustedTypeName::TrustedHTML,
-        HTML::relevant_global_object(*this),
-        value,
-        TrustedTypes::InjectionSink::Element_outerHTML,
-        TrustedTypes::Script.to_string()));
-
     // 2. Let parent be this's parent.
     auto* parent = this->parent();
 
@@ -2367,33 +2955,25 @@ WebIDL::ExceptionOr<void> Element::set_outer_html(TrustedTypes::TrustedHTMLOrStr
 
     // 4. If parent is a Document, throw a "NoModificationAllowedError" DOMException.
     if (parent->is_document())
-        return WebIDL::NoModificationAllowedError::create(realm(), "Cannot set outer HTML on document"_utf16);
+        return WebIDL::NoModificationAllowedError::create("Cannot set outer HTML on document"_utf16);
 
     // 5. If parent is a DocumentFragment, set parent to the result of creating an element given this's node document, "body", and the HTML namespace.
     if (parent->is_document_fragment())
         parent = TRY(create_element(document(), HTML::TagNames::body, Namespace::HTML));
 
     // 6. Let fragment be the result of invoking the fragment parsing algorithm steps given parent and compliantString.
-    auto fragment = TRY(as<Element>(*parent).parse_fragment(compliant_string.to_utf8_but_should_be_ported_to_utf16()));
+    auto markup = Utf16String::from_utf8(html);
+    auto fragment = TRY(parse_fragment(Variant<GC::Ref<Element>, GC::Ref<DocumentFragment>> { GC::Ref { as<Element>(*parent) } }, markup.utf16_view()));
 
     // 6. Replace this with fragment within this's parent.
-    TRY(parent->replace_child(fragment, *this));
+    TRY(this->parent()->replace_child(fragment, *this));
 
     return {};
 }
 
 // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#the-insertadjacenthtml()-method
-WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, TrustedTypes::TrustedHTMLOrString const& string)
+WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, StringView html)
 {
-    // 1. Let compliantString be the result of invoking the Get Trusted Type compliant string algorithm with
-    //    TrustedHTML, this's relevant global object, string, "Element insertAdjacentHTML", and "script".
-    auto const compliant_string = TRY(TrustedTypes::get_trusted_type_compliant_string(
-        TrustedTypes::TrustedTypeName::TrustedHTML,
-        HTML::relevant_global_object(*this),
-        string,
-        TrustedTypes::InjectionSink::Element_insertAdjacentHTML,
-        TrustedTypes::Script.to_string()));
-
     // 2. Let context be null.
     GC::Ptr<Node> context;
 
@@ -2407,7 +2987,7 @@ WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, 
 
         // 2. If context is null or a Document, throw a "NoModificationAllowedError" DOMException.
         if (!context || context->is_document())
-            return WebIDL::NoModificationAllowedError::create(realm(), "insertAdjacentHTML: context is null or a Document"_utf16);
+            return WebIDL::NoModificationAllowedError::create("insertAdjacentHTML: context is null or a Document"_utf16);
     }
     // - If position is an ASCII case-insensitive match for the string "afterbegin"
     // - If position is an ASCII case-insensitive match for the string "beforeend"
@@ -2419,7 +2999,7 @@ WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, 
     // Otherwise
     else {
         // Throw a "SyntaxError" DOMException.
-        return WebIDL::SyntaxError::create(realm(), "insertAdjacentHTML: invalid position argument"_utf16);
+        return WebIDL::SyntaxError::create("insertAdjacentHTML: invalid position argument"_utf16);
     }
 
     // 4. If context is not an Element or the following are all true:
@@ -2428,14 +3008,15 @@ WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, 
     //    - context's namespace is the HTML namespace;
     if (!is<Element>(*context)
         || (context->document().document_type() == Document::Type::HTML
-            && static_cast<Element const&>(*context).local_name() == "html"sv
+            && static_cast<Element const&>(*context).local_name() == "html"_utf16_fly_string
             && static_cast<Element const&>(*context).namespace_uri() == Namespace::HTML)) {
         // then set context to the result of creating an element given this's node document, "body", and the HTML namespace.
         context = TRY(create_element(document(), HTML::TagNames::body, Namespace::HTML));
     }
 
     // 5. Let fragment be the result of invoking the fragment parsing algorithm steps with context and compliantString.
-    auto fragment = TRY(as<Element>(*context).parse_fragment(compliant_string.to_utf8_but_should_be_ported_to_utf16()));
+    auto markup = Utf16String::from_utf8(html);
+    auto fragment = TRY(parse_fragment(Variant<GC::Ref<Element>, GC::Ref<DocumentFragment>> { GC::Ref { as<Element>(*context) } }, markup.utf16_view()));
 
     // 6. Use the first matching item from this list:
 
@@ -2466,20 +3047,18 @@ WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, 
 }
 
 // https://fullscreen.spec.whatwg.org/#dom-element-requestfullscreen
-GC::Ref<WebIDL::Promise> Element::request_fullscreen(FullscreenRequester fullscreen_requester)
+void Element::request_fullscreen(GC::Ptr<WebIDL::Promise> promise, FullscreenRequester fullscreen_requester)
 {
-    auto& realm = this->realm();
-
     // 1. Let pendingDoc be this’s node document.
     auto pending_doc = m_document;
 
-    // 2. Let promise be a new promise.
-    auto promise = WebIDL::create_promise(realm);
-
     // 3. If pendingDoc is not fully active, then reject promise with a TypeError exception and return promise.
     if (!pending_doc->is_fully_active()) {
-        WebIDL::reject_promise(realm, promise, JS::TypeError::create(realm, "Document not fully active."_string));
-        return promise;
+        if (promise) {
+            auto& realm = WebIDL::promise_realm(*promise);
+            WebIDL::reject_promise(*promise, JS::TypeError::create(realm, "Document not fully active."_utf16));
+        }
+        return;
     }
 
     // 4. Let error be false.
@@ -2488,14 +3067,12 @@ GC::Ref<WebIDL::Promise> Element::request_fullscreen(FullscreenRequester fullscr
 
     // 6. If error is false, then consume user activation given pendingDoc’s relevant global object.
     if (error == RequestFullscreenError::False) {
-        auto& relevant_global = as<HTML::Window>(relevant_global_object(*pending_doc));
+        auto& relevant_global = HTML::relevant_window(*pending_doc);
         relevant_global.consume_user_activation();
     }
 
     // 7. Return promise, and run the remaining steps in parallel.
     pending_doc->page().enqueue_fullscreen_enter(*this, *pending_doc, error, promise);
-
-    return promise;
 }
 
 // https://fullscreen.spec.whatwg.org/#removing-steps
@@ -2517,7 +3094,7 @@ void Element::exit_fullscreen_on_element_removal()
 
         // 1. If node is document’s fullscreen element, exit fullscreen document.
         if (document.fullscreen_element() == element)
-            document.exit_fullscreen();
+            document.exit_fullscreen(nullptr);
         // 2. Otherwise, unfullscreen node.
         else
             document.unfullscreen_element(*element);
@@ -2555,8 +3132,8 @@ RequestFullscreenError Element::is_element_allowed_to_enter_fullscreen(Fullscree
     // FIXME: Spec issue: We don't require transient activations for WebDriver.
     //        https://github.com/w3c/webdriver/issues/1888
     if (fullscreen_requester != FullscreenRequester::WebDriver) {
-        auto* window = as<HTML::Window>(&HTML::relevant_global_object(*this));
-        if (!window->has_transient_activation())
+        auto& window = HTML::relevant_window(*this);
+        if (!window.has_transient_activation())
             return RequestFullscreenError::NoTransientUserActivation;
     }
 
@@ -2605,10 +3182,10 @@ void Element::set_onfullscreenerror(GC::Ptr<WebIDL::CallbackType> event_handler)
 }
 
 // https://dom.spec.whatwg.org/#insert-adjacent
-WebIDL::ExceptionOr<GC::Ptr<Node>> Element::insert_adjacent(StringView where, GC::Ref<Node> node)
+WebIDL::ExceptionOr<GC::Ptr<Node>> Element::insert_adjacent(Utf16View where, GC::Ref<Node> node)
 {
     // To insert adjacent, given an element element, string where, and a node node, run the steps associated with the first ASCII case-insensitive match for where:
-    if (where.equals_ignoring_ascii_case("beforebegin"sv)) {
+    if (where.equals_ignoring_ascii_case(u"beforebegin"sv)) {
         // -> "beforebegin"
         // If element’s parent is null, return null.
         if (!parent())
@@ -2618,19 +3195,19 @@ WebIDL::ExceptionOr<GC::Ptr<Node>> Element::insert_adjacent(StringView where, GC
         return GC::Ptr<Node> { TRY(parent()->pre_insert(move(node), this)) };
     }
 
-    if (where.equals_ignoring_ascii_case("afterbegin"sv)) {
+    if (where.equals_ignoring_ascii_case(u"afterbegin"sv)) {
         // -> "afterbegin"
         // Return the result of pre-inserting node into element before element’s first child.
         return GC::Ptr<Node> { TRY(pre_insert(move(node), first_child())) };
     }
 
-    if (where.equals_ignoring_ascii_case("beforeend"sv)) {
+    if (where.equals_ignoring_ascii_case(u"beforeend"sv)) {
         // -> "beforeend"
         // Return the result of pre-inserting node into element before null.
         return GC::Ptr<Node> { TRY(pre_insert(move(node), nullptr)) };
     }
 
-    if (where.equals_ignoring_ascii_case("afterend"sv)) {
+    if (where.equals_ignoring_ascii_case(u"afterend"sv)) {
         // -> "afterend"
         // If element’s parent is null, return null.
         if (!parent())
@@ -2642,11 +3219,11 @@ WebIDL::ExceptionOr<GC::Ptr<Node>> Element::insert_adjacent(StringView where, GC
 
     // -> Otherwise
     // Throw a "SyntaxError" DOMException.
-    return WebIDL::SyntaxError::create(realm(), Utf16String::formatted("Unknown position '{}'. Must be one of 'beforebegin', 'afterbegin', 'beforeend' or 'afterend'", where));
+    return WebIDL::SyntaxError::create(Utf16String::formatted("Unknown position '{}'. Must be one of 'beforebegin', 'afterbegin', 'beforeend' or 'afterend'", where));
 }
 
 // https://dom.spec.whatwg.org/#dom-element-insertadjacentelement
-WebIDL::ExceptionOr<GC::Ptr<Element>> Element::insert_adjacent_element(String const& where, GC::Ref<Element> element)
+WebIDL::ExceptionOr<GC::Ptr<Element>> Element::insert_adjacent_element(Utf16View where, GC::Ref<Element> element)
 {
     // The insertAdjacentElement(where, element) method steps are to return the result of running insert adjacent, give this, where, and element.
     auto returned_node = TRY(insert_adjacent(where, element));
@@ -2656,10 +3233,11 @@ WebIDL::ExceptionOr<GC::Ptr<Element>> Element::insert_adjacent_element(String co
 }
 
 // https://dom.spec.whatwg.org/#dom-element-insertadjacenttext
-WebIDL::ExceptionOr<void> Element::insert_adjacent_text(String const& where, Utf16String const& data)
+WebIDL::ExceptionOr<void> Element::insert_adjacent_text(Utf16View where, Utf16View data)
 {
     // 1. Let text be a new Text node whose data is data and node document is this’s node document.
-    auto text = realm().create<DOM::Text>(document(), data);
+    auto text_data = Utf16String::from_utf16(data);
+    auto text = DOM::Text::create(document(), move(text_data));
 
     // 2. Run insert adjacent, given this, where, and text.
     // Spec Note: This method returns nothing because it existed before we had a chance to design it.
@@ -2668,25 +3246,54 @@ WebIDL::ExceptionOr<void> Element::insert_adjacent_text(String const& where, Utf
 }
 
 // https://drafts.csswg.org/cssom-view-1/#determine-the-scroll-into-view-position
-static CSSPixelPoint determine_the_scroll_into_view_position(Element& target, Bindings::ScrollLogicalPosition block, Bindings::ScrollLogicalPosition inline_, Node& scrolling_box)
+static CSSPixelPoint determine_the_scroll_into_view_position(Element& target, CSSPixelRect target_bounding_border_box, Element::ScrollLogicalPosition block, Element::ScrollLogicalPosition inline_, Node& scrolling_box)
 {
     // To determine the scroll-into-view position of a target, which is an Element, pseudo-element, or Range, with a
     // block flow direction position block, an inline base direction position inline, and a scrolling box scrolling box,
     // run the following steps:
 
-    if (!scrolling_box.is_document()) {
-        // FIXME: Add support for scrolling boxes other than the viewport.
+    CSSPixelRect scrolling_box_rect;
+    CSSPixelPoint current_scroll_position;
+    if (scrolling_box.is_document()) {
+        auto& document = scrolling_box.document();
+        auto& visual_viewport = *document.visual_viewport();
+        // NB: Use the visual viewport as the scrolling box, this ensures that the target is scrolled into the visible
+        //     region on screen when the page is pinch-zoomed.
+        CSSPixelSize visible_size {
+            CSSPixels::nearest_value_for(visual_viewport.width()),
+            CSSPixels::nearest_value_for(visual_viewport.height()),
+        };
+        scrolling_box_rect = { visual_viewport.offset(), visible_size };
+        if (auto paintable_box = document.paintable_box())
+            scrolling_box_rect = paintable_box->scroll_snapport_rect(scrolling_box_rect);
+        current_scroll_position = document.navigable()->viewport_scroll_offset() + visual_viewport.offset();
+    } else if (auto paintable_box = scrolling_box.paintable_box()) {
+        current_scroll_position = paintable_box->scroll_offset();
+        scrolling_box_rect = paintable_box->transform_rect_to_viewport(paintable_box->scroll_snapport_rect(), Painting::AccumulatedVisualContextTree::IncludeVisualViewportTransform::No);
+    } else {
         return {};
     }
-    // NOTE: For a viewport scrolling box is initial containing block
-    CSSPixelRect scrolling_box_rect = scrolling_box.document().viewport_rect();
 
     // FIXME: All of this needs to support different block/inline directions.
 
     // 1. Let target bounding border box be the box represented by the return value of invoking Element’s
     //    getBoundingClientRect(), if target is an Element, or Range’s getBoundingClientRect(),
     //    if target is a Range.
-    auto target_bounding_border_box = target.get_bounding_client_rect();
+    // AD-HOC: The caller performs this step once and passes the result in, moving it outward as each scrolling box is
+    //         scrolled, so that an outer scrolling box sees where the target is going to be.
+
+    // AD-HOC: The spec doesn't specify when to do this, but we need to apply scroll-margin and scroll-margin to target
+    //         bounding border box (https://drafts.csswg.org/cssom-view-1/#example-51af1565).
+    auto const& scroll_margin = target.computed_values()->scroll_margin();
+    auto scroll_margin_top = scroll_margin.top().to_px_or_zero(CSSPixels { 0 });
+    auto scroll_margin_right = scroll_margin.right().to_px_or_zero(CSSPixels { 0 });
+    auto scroll_margin_bottom = scroll_margin.bottom().to_px_or_zero(CSSPixels { 0 });
+    auto scroll_margin_left = scroll_margin.left().to_px_or_zero(CSSPixels { 0 });
+
+    target_bounding_border_box.set_top(target_bounding_border_box.top() - scroll_margin_top);
+    target_bounding_border_box.set_right(target_bounding_border_box.right() + scroll_margin_left + scroll_margin_right);
+    target_bounding_border_box.set_bottom(target_bounding_border_box.bottom() + scroll_margin_top + scroll_margin_bottom);
+    target_bounding_border_box.set_left(target_bounding_border_box.left() - scroll_margin_left);
 
     // 2. Let scrolling box edge A be the beginning edge in the block flow direction of scrolling box, and
     //    let element edge A be target bounding border box’s edge on the same physical side as that of
@@ -2725,74 +3332,79 @@ static CSSPixelPoint determine_the_scroll_into_view_position(Element& target, Bi
 
     // 10. Let position be the scroll position scrolling box would have by following these steps:
     auto position = [&]() -> CSSPixelPoint {
-        CSSPixels x = 0;
-        CSSPixels y = 0;
+        auto x = current_scroll_position.x();
+        auto y = current_scroll_position.y();
 
         // 1. If block is "start", then align element edge A with scrolling box edge A.
-        if (block == Bindings::ScrollLogicalPosition::Start) {
-            y = element_edge_a;
+        if (block == Element::ScrollLogicalPosition::Start) {
+            y += element_edge_a - scrolling_box_edge_a;
         }
         // 2. Otherwise, if block is "end", then align element edge B with scrolling box edge B.
-        else if (block == Bindings::ScrollLogicalPosition::End) {
-            y = element_edge_a + element_height - scrolling_box_height;
+        else if (block == Element::ScrollLogicalPosition::End) {
+            y += element_edge_b - scrolling_box_edge_b;
         }
         // 3. Otherwise, if block is "center", then align the center of target bounding border box with the center of
         //    scrolling box in scrolling box’s block flow direction.
-        else if (block == Bindings::ScrollLogicalPosition::Center) {
-            y = element_edge_a + (element_height / 2) - (scrolling_box_height / 2);
+        else if (block == Element::ScrollLogicalPosition::Center) {
+            y += (element_edge_a + element_height / 2) - (scrolling_box_edge_a + scrolling_box_height / 2);
         }
         // 4. Otherwise, block is "nearest":
         else {
             // If element edge A and element edge B are both outside scrolling box edge A and scrolling box edge B
-            if (element_edge_a <= 0 && element_edge_b >= scrolling_box_height) {
+            if (element_edge_a <= scrolling_box_edge_a && element_edge_b >= scrolling_box_edge_b) {
                 // Do nothing.
             }
             // If element edge A is outside scrolling box edge A and element height is less than scrolling box height
             // If element edge B is outside scrolling box edge B and element height is greater than scrolling box height
-            else if ((element_edge_a <= 0 && element_height < scrolling_box_height) || (element_edge_b >= scrolling_box_height && element_height > scrolling_box_height)) {
+            else if ((element_edge_a <= scrolling_box_edge_a && element_height < scrolling_box_height) || (element_edge_b >= scrolling_box_edge_b && element_height > scrolling_box_height)) {
                 // Align element edge A with scrolling box edge A.
-                y = element_edge_a;
+                y += element_edge_a - scrolling_box_edge_a;
             }
             // If element edge A is outside scrolling box edge A and element height is greater than scrolling box height
             // If element edge B is outside scrolling box edge B and element height is less than scrolling box height
-            else if ((element_edge_b >= scrolling_box_height && element_height < scrolling_box_height) || (element_edge_a <= 0 && element_height > scrolling_box_height)) {
+            else if ((element_edge_b >= scrolling_box_edge_b && element_height < scrolling_box_height) || (element_edge_a <= scrolling_box_edge_a && element_height > scrolling_box_height)) {
                 // Align element edge B with scrolling box edge B.
-                y = element_edge_a + element_height - scrolling_box_height;
+                y += element_edge_b - scrolling_box_edge_b;
             }
         }
 
         // 5. If inline is "start", then align element edge C with scrolling box edge C.
-        if (inline_ == Bindings::ScrollLogicalPosition::Start) {
-            x = element_edge_c;
+        if (inline_ == Element::ScrollLogicalPosition::Start) {
+            x += element_edge_c - scrolling_box_edge_c;
         }
         // 6. Otherwise, if inline is "end", then align element edge D with scrolling box edge D.
-        else if (inline_ == Bindings::ScrollLogicalPosition::End) {
-            x = element_edge_d + element_width - scrolling_box_width;
+        else if (inline_ == Element::ScrollLogicalPosition::End) {
+            x += element_edge_d - scrolling_box_edge_d;
         }
         // 7. Otherwise, if inline is "center", then align the center of target bounding border box with the center of
         //    scrolling box in scrolling box’s inline base direction.
-        else if (inline_ == Bindings::ScrollLogicalPosition::Center) {
-            x = element_edge_c + (element_width / 2) - (scrolling_box_width / 2);
+        else if (inline_ == Element::ScrollLogicalPosition::Center) {
+            x += (element_edge_c + element_width / 2) - (scrolling_box_edge_c + scrolling_box_width / 2);
         }
         // 8. Otherwise, inline is "nearest":
         else {
             // If element edge C and element edge D are both outside scrolling box edge C and scrolling box edge D
-            if (element_edge_c <= 0 && element_edge_d >= scrolling_box_width) {
+            if (element_edge_c <= scrolling_box_edge_c && element_edge_d >= scrolling_box_edge_d) {
                 // Do nothing.
             }
             // If element edge C is outside scrolling box edge C and element width is less than scrolling box width
             // If element edge D is outside scrolling box edge D and element width is greater than scrolling box width
-            else if ((element_edge_c <= 0 && element_width < scrolling_box_width) || (element_edge_d >= scrolling_box_width && element_width > scrolling_box_width)) {
+            else if ((element_edge_c <= scrolling_box_edge_c && element_width < scrolling_box_width) || (element_edge_d >= scrolling_box_edge_d && element_width > scrolling_box_width)) {
                 // Align element edge C with scrolling box edge C.
-                x = element_edge_c;
+                x += element_edge_c - scrolling_box_edge_c;
             }
             // If element edge C is outside scrolling box edge C and element width is greater than scrolling box width
             // If element edge D is outside scrolling box edge D and element width is less than scrolling box width
-            else if ((element_edge_d >= scrolling_box_width && element_width < scrolling_box_width) || (element_edge_c <= 0 && element_width > scrolling_box_width)) {
+            else if ((element_edge_d >= scrolling_box_edge_d && element_width < scrolling_box_width) || (element_edge_c <= scrolling_box_edge_c && element_width > scrolling_box_width)) {
                 // Align element edge D with scrolling box edge D.
-                x = element_edge_d + element_width - scrolling_box_width;
+                x += element_edge_d - scrolling_box_edge_d;
             }
         }
+
+        // FIXME: 9. If target is an Element, and the target element defines some scroll snap positions, then the user
+        //           agent must scroll snap the resulting position to one of that element’s scroll snap positions if its
+        //           nearest scroll container is a scroll snap container. The user agent may also do this even when the
+        //           scroll container has scroll-snap-type: none.
 
         return CSSPixelPoint { x, y };
     }();
@@ -2802,9 +3414,10 @@ static CSSPixelPoint determine_the_scroll_into_view_position(Element& target, Bi
 }
 
 // https://drafts.csswg.org/cssom-view-1/#scroll-a-target-into-view
-static GC::Ref<WebIDL::Promise> scroll_an_element_into_view(Element& target, Bindings::ScrollBehavior behavior, Bindings::ScrollLogicalPosition block, Bindings::ScrollLogicalPosition inline_, GC::Ptr<Element> container)
+static void scroll_an_element_into_view(Element& target, Element::ScrollBehavior behavior, Element::ScrollLogicalPosition block, Element::ScrollLogicalPosition inline_, GC::Ptr<Element> container, GC::Ptr<WebIDL::Promise> promise)
 {
-    // FIXME: 1. Let ancestorPromises be an empty set of Promises.
+    // 1. Let ancestorPromises be an empty set of Promises.
+    GC::RootVector<GC::Ref<WebIDL::Promise>> ancestor_promises;
 
     // 2. For each ancestor element or viewport that establishes a scrolling box scrolling box, in order of innermost
     //    to outermost scrolling box, run these substeps:
@@ -2816,6 +3429,8 @@ static GC::Ref<WebIDL::Promise> scroll_an_element_into_view(Element& target, Bin
         ancestor = ancestor->parent();
     }
 
+    auto target_bounding_border_box = target.get_bounding_client_rect();
+
     for (auto& scrolling_box : scrolling_boxes) {
         // 1. If the Document associated with target is not same origin with the Document associated with the element
         //    or viewport associated with scrolling box, abort any remaining iteration of this loop.
@@ -2825,16 +3440,30 @@ static GC::Ref<WebIDL::Promise> scroll_an_element_into_view(Element& target, Bin
         // 2. Let position be the scroll position resulting from running the steps to determine the scroll-into-view
         //    position of target with behavior as the scroll behavior, block as the block flow position, inline as the
         //    inline base direction position and scrolling box as the scrolling box.
-        // FIXME: Pass in behavior.
-        auto position = determine_the_scroll_into_view_position(target, block, inline_, scrolling_box);
+        auto position = determine_the_scroll_into_view_position(target, target_bounding_border_box, block, inline_, scrolling_box);
+
+        // AD-HOC: A smooth scroll leaves the scrolling box at its old scroll position while the outer scrolling boxes
+        //         are considered, so move the target to where this scroll is going to leave it. The viewport is always
+        //         the outermost scrolling box, so its own scroll cannot affect a later iteration.
+        if (!scrolling_box.is_document()) {
+            if (auto paintable_box = scrolling_box.paintable_box()) {
+                target_bounding_border_box.translate_by(paintable_box->scroll_offset() - paintable_box->clamp_scroll_offset(position));
+
+                auto scrollport_rect = paintable_box->transform_rect_to_viewport(paintable_box->absolute_padding_box_rect(), Painting::AccumulatedVisualContextTree::IncludeVisualViewportTransform::No);
+                auto visible_rect = target_bounding_border_box.intersected(scrollport_rect);
+                if (!visible_rect.is_empty())
+                    target_bounding_border_box = visible_rect;
+            }
+        }
 
         // 3. If position is not the same as scrolling box’s current scroll position, or scrolling box has an ongoing
         //    smooth scroll,
         // FIXME: Actually check this condition.
         if (true) {
             // -> If scrolling box is associated with an element
-            if (scrolling_box.is_element()) {
-                // FIXME: Perform a scroll of the element’s scrolling box to position, with the element as the associated element and behavior as the scroll behavior.
+            if (auto* element = as_if<Element>(scrolling_box)) {
+                if (auto navigable = element->document().navigable())
+                    ancestor_promises.append(navigable->perform_a_scroll_of_an_element(*element, position, behavior));
             }
             // -> If scrolling box is associated with a viewport
             else if (scrolling_box.is_document()) {
@@ -2844,13 +3473,7 @@ static GC::Ref<WebIDL::Promise> scroll_an_element_into_view(Element& target, Bin
                 // FIXME: 2. Let root element be document’s root element, if there is one, or null otherwise.
                 // FIXME: 3. Perform a scroll of the viewport to position, with root element as the associated element and behavior as the scroll behavior.
                 //           Add the Promise returned from this step in the set ancestorPromises.
-                (void)behavior;
-
-                // AD-HOC:
-                // NOTE: Since calculated position is relative to the viewport, we need to add the viewport's position to it
-                //       before passing to perform_a_scroll_of_the_viewport() that expects a position relative to the page.
-                position.set_y(position.y() + document.viewport_rect().y());
-                document.navigable()->perform_a_scroll_of_the_viewport(position);
+                ancestor_promises.append(document.navigable()->perform_a_scroll_of_the_viewport(position, behavior));
             }
         }
 
@@ -2862,78 +3485,76 @@ static GC::Ref<WebIDL::Promise> scroll_an_element_into_view(Element& target, Bin
             break;
     }
 
-    // 3. Let scrollPromise be a new Promise.
-    auto scroll_promise = WebIDL::create_promise(target.realm());
-
     // 4. Return scrollPromise, and run the remaining steps in parallel.
     // 5. Resolve scrollPromise when all Promises in ancestorPromises have settled.
-    // FIXME: Actually wait for those promises.
-    WebIDL::resolve_promise(target.realm(), scroll_promise);
-
-    return scroll_promise;
+    if (promise) {
+        auto& realm = WebIDL::promise_realm(*promise);
+        auto all_promises = WebIDL::get_promise_for_wait_for_all(realm, ancestor_promises.span());
+        auto completion_promise = WebIDL::react_to_promise(*all_promises,
+            GC::create_function(GC::Heap::the(), [](JS::Value) -> WebIDL::ExceptionOr<JS::Value> {
+                return JS::js_undefined();
+            }),
+            nullptr);
+        WebIDL::resolve_promise(*promise, completion_promise->promise());
+    }
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scrollintoview
-GC::Ref<WebIDL::Promise> Element::scroll_into_view(Optional<Variant<bool, ScrollIntoViewOptions>> arg)
+void Element::scroll_into_view(Element::ScrollIntoViewOptions const& options, GC::Ptr<WebIDL::Promise> promise)
 {
     // 1. Let behavior be "auto".
-    auto behavior = Bindings::ScrollBehavior::Auto;
+    auto behavior = options.behavior;
 
     // 2. Let block be "start".
-    auto block = Bindings::ScrollLogicalPosition::Start;
+    auto block = options.block;
 
     // 3. Let inline be "nearest".
-    auto inline_ = Bindings::ScrollLogicalPosition::Nearest;
+    auto inline_ = options.inline_;
 
     // 4. Let container be null.
     GC::Ptr<Element> container = nullptr;
 
-    // 5. If arg is a ScrollIntoViewOptions dictionary, then:
-    if (arg.has_value() && arg->has<ScrollIntoViewOptions>()) {
-        auto options = arg->get<ScrollIntoViewOptions>();
-
-        // 1. Set behavior to the behavior dictionary member of options.
-        behavior = options.behavior;
-
-        // 2. Set block to the block dictionary member of options.
-        block = options.block;
-
-        // 3. Set inline to the inline dictionary member of options.
-        inline_ = options.inline_;
-
-        // 4. If the container dictionary member of options is "nearest", set container to the element.
-        if (options.container == Bindings::ScrollIntoViewContainer::Nearest)
-            container = this;
-    }
-    // 6. Otherwise, if arg is false, then set block to "end".
-    else if (arg.has_value() && arg->has<bool>() && arg->get<bool>() == false) {
-        block = Bindings::ScrollLogicalPosition::End;
-    }
+    // 5. If the container dictionary member of options is "nearest", set container to the element.
+    if (options.container == Element::ScrollIntoViewContainer::Nearest)
+        container = this;
 
     // 7. If the element does not have any associated box, or is not available to user-agent features, then return a
     //    resolved Promise and abort the remaining steps.
     document().update_layout(UpdateLayoutReason::ElementScrollIntoView);
-    HTML::TemporaryExecutionContext temporary_execution_context { realm() };
-    if (!layout_node())
-        return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
+    HTML::TemporaryExecutionContext temporary_execution_context { document().relevant_settings_object() };
+    if (!layout_node()) {
+        if (promise)
+            WebIDL::resolve_promise(*promise);
+        return;
+    }
 
     // 8. Scroll the element into view with behavior, block, inline, and container. Let scrollPromise be the Promise
     //    returned from this step.
-    auto scroll_promise = scroll_an_element_into_view(*this, behavior, block, inline_, container);
+    scroll_an_element_into_view(*this, behavior, block, inline_, container, promise);
 
     // FIXME: 9. Optionally perform some other action that brings the element to the user’s attention.
+}
 
-    // 10. Return scrollPromise.
-    return scroll_promise;
+void Element::scroll_into_view(Variant<bool, ScrollIntoViewOptions> const& arg, GC::Ptr<WebIDL::Promise> promise)
+{
+    if (arg.has<bool>()) {
+        ScrollIntoViewOptions options;
+        if (!arg.get<bool>())
+            options.block = ScrollLogicalPosition::End;
+        scroll_into_view(options, promise);
+        return;
+    }
+
+    scroll_into_view(arg.get<ScrollIntoViewOptions>(), promise);
 }
 
 #define __ENUMERATE_ARIA_ATTRIBUTE(name, attribute)                  \
-    Optional<String> Element::name() const                           \
+    Optional<Utf16String> Element::name() const                      \
     {                                                                \
         return get_attribute(ARIA::AttributeNames::name);            \
     }                                                                \
                                                                      \
-    void Element::set_##name(Optional<String> const& value)          \
+    void Element::set_##name(Optional<Utf16String> const& value)     \
     {                                                                \
         if (value.has_value())                                       \
             set_attribute_value(ARIA::AttributeNames::name, *value); \
@@ -2943,54 +3564,6 @@ GC::Ref<WebIDL::Promise> Element::scroll_into_view(Optional<Variant<bool, Scroll
 ENUMERATE_ARIA_ATTRIBUTES
 #undef __ENUMERATE_ARIA_ATTRIBUTE
 
-void Element::invalidate_style_after_attribute_change(FlyString const& attribute_name, Optional<String> const& old_value, Optional<String> const& new_value)
-{
-    Vector<CSS::InvalidationSet::Property, 1> changed_properties;
-    StyleInvalidationOptions style_invalidation_options;
-    if (is_presentational_hint(attribute_name) || style_uses_attr_css_function()) {
-        style_invalidation_options.invalidate_self = true;
-    }
-
-    if (attribute_name == HTML::AttributeNames::style) {
-        style_invalidation_options.invalidate_self = true;
-    } else if (attribute_name == HTML::AttributeNames::class_) {
-        Vector<StringView> old_classes;
-        Vector<StringView> new_classes;
-        if (old_value.has_value())
-            old_classes = old_value->bytes_as_string_view().split_view_if(Infra::is_ascii_whitespace);
-        if (new_value.has_value())
-            new_classes = new_value->bytes_as_string_view().split_view_if(Infra::is_ascii_whitespace);
-        for (auto& old_class : old_classes) {
-            if (!new_classes.contains_slow(old_class)) {
-                changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::Class, .value = FlyString::from_utf8_without_validation(old_class.bytes()) });
-            }
-        }
-        for (auto& new_class : new_classes) {
-            if (!old_classes.contains_slow(new_class)) {
-                changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::Class, .value = FlyString::from_utf8_without_validation(new_class.bytes()) });
-            }
-        }
-    } else if (attribute_name == HTML::AttributeNames::id) {
-        if (old_value.has_value())
-            changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::Id, .value = FlyString(old_value.value()) });
-        if (new_value.has_value())
-            changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::Id, .value = FlyString(new_value.value()) });
-    } else if (attribute_name == HTML::AttributeNames::disabled) {
-        changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::PseudoClass, .value = CSS::PseudoClass::Disabled });
-        changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::PseudoClass, .value = CSS::PseudoClass::Enabled });
-    } else if (attribute_name == HTML::AttributeNames::placeholder) {
-        changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::PseudoClass, .value = CSS::PseudoClass::PlaceholderShown });
-    } else if (attribute_name == HTML::AttributeNames::value) {
-        changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::PseudoClass, .value = CSS::PseudoClass::Checked });
-    } else if (attribute_name == HTML::AttributeNames::required) {
-        changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::PseudoClass, .value = CSS::PseudoClass::Required });
-        changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::PseudoClass, .value = CSS::PseudoClass::Optional });
-    }
-
-    changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::Attribute, .value = attribute_name });
-    invalidate_style(StyleInvalidationReason::ElementAttributeChange, changed_properties, style_invalidation_options);
-}
-
 bool Element::is_hidden() const
 {
     if (layout_node() == nullptr)
@@ -2998,8 +3571,11 @@ bool Element::is_hidden() const
     if (layout_node()->computed_values().visibility() == CSS::Visibility::Hidden || layout_node()->computed_values().visibility() == CSS::Visibility::Collapse || layout_node()->computed_values().content_visibility() == CSS::ContentVisibility::Hidden)
         return true;
     for (ParentNode const* self_or_ancestor = this; self_or_ancestor; self_or_ancestor = self_or_ancestor->parent_or_shadow_host()) {
-        if (self_or_ancestor->is_element() && static_cast<DOM::Element const*>(self_or_ancestor)->aria_hidden() == "true")
-            return true;
+        if (self_or_ancestor->is_element()) {
+            auto aria_hidden = static_cast<DOM::Element const*>(self_or_ancestor)->aria_hidden();
+            if (aria_hidden.has_value() && aria_hidden->utf16_view() == u"true"sv)
+                return true;
+        }
     }
     return false;
 }
@@ -3017,9 +3593,13 @@ bool Element::is_referenced() const
 {
     bool is_referenced = false;
     if (id().has_value()) {
+        auto id_view = id()->view();
         root().for_each_in_subtree_of_type<HTML::HTMLElement>([&](auto& element) {
             auto aria_data = MUST(Web::ARIA::AriaData::build_data(element));
-            if (aria_data->aria_labelled_by_or_default().contains_slow(id().value())) {
+            for (auto const& id_reference : aria_data->aria_labelled_by_or_default()) {
+                if (id_reference.utf16_view() != id_view)
+                    continue;
+
                 is_referenced = true;
                 return TraversalDecision::Break;
             }
@@ -3090,7 +3670,8 @@ bool Element::include_in_accessibility_tree() const
     // Elements that have an explicit role or a global WAI-ARIA attribute and do not have aria-hidden set to true. (See Excluding Elements in the Accessibility Tree for additional guidance on aria-hidden.)
     // NOTE: The spec says only explicit roles count, but playing around in other browsers, this does not seem to be true in practice (for example button elements are always exposed with their implicit role if none is set)
     //       This issue https://github.com/w3c/aria/issues/1851 seeks clarification on this point
-    if ((role_or_default().has_value() || has_global_aria_attribute()) && aria_hidden() != "true")
+    auto aria_hidden = this->aria_hidden();
+    if ((role_or_default().has_value() || has_global_aria_attribute()) && (!aria_hidden.has_value() || aria_hidden->utf16_view() != u"true"sv))
         return true;
 
     // TODO: Elements that are not hidden and have an ID that is referenced by another element via a WAI-ARIA property.
@@ -3119,11 +3700,11 @@ void Element::enqueue_an_element_on_the_appropriate_element_queue()
 
         // 4. Queue a microtask to perform the following steps:
         // NOTE: `this` is protected by GC::Function
-        HTML::queue_a_microtask(&document(), GC::create_function(heap(), [this]() {
+        HTML::queue_a_microtask(&document(), GC::create_function(GC::Heap::the(), [this]() {
             auto& reactions_stack = HTML::relevant_similar_origin_window_agent(*this).custom_element_reactions_stack;
 
             // 1. Invoke custom element reactions in reactionsStack's backup element queue.
-            Bindings::invoke_custom_element_reactions(reactions_stack.backup_element_queue);
+            HTML::invoke_custom_element_reactions(reactions_stack.backup_element_queue);
 
             // 2. Unset reactionsStack's processing the backup element queue flag.
             reactions_stack.processing_the_backup_element_queue = false;
@@ -3147,7 +3728,44 @@ void Element::enqueue_a_custom_element_upgrade_reaction(HTML::CustomElementDefin
 }
 
 // https://html.spec.whatwg.org/multipage/custom-elements.html#enqueue-a-custom-element-callback-reaction
-void Element::enqueue_a_custom_element_callback_reaction(FlyString const& callback_name, GC::RootVector<JS::Value> arguments)
+void Element::enqueue_a_custom_element_callback_reaction(Utf16FlyString const& callback_name)
+{
+    enqueue_a_custom_element_callback_reaction(callback_name, Empty {});
+}
+
+void Element::enqueue_an_adopted_callback_reaction(Document& old_document, Document& new_document)
+{
+    enqueue_a_custom_element_callback_reaction(HTML::CustomElementReactionNames::adoptedCallback, CustomElementAdoptedCallbackReactionArguments {
+                                                                                                      .old_document = old_document,
+                                                                                                      .new_document = new_document,
+                                                                                                  });
+}
+
+void Element::enqueue_an_attribute_changed_callback_reaction(Utf16FlyString const& attribute_name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& new_value, Optional<Utf16FlyString> const& namespace_uri)
+{
+    enqueue_a_custom_element_callback_reaction(HTML::CustomElementReactionNames::attributeChangedCallback, CustomElementAttributeChangedCallbackReactionArguments {
+                                                                                                               .attribute_name = attribute_name,
+                                                                                                               .old_value = old_value,
+                                                                                                               .new_value = new_value,
+                                                                                                               .namespace_uri = namespace_uri,
+                                                                                                           });
+}
+
+void Element::enqueue_a_form_associated_callback_reaction(GC::Ptr<HTML::HTMLFormElement> form)
+{
+    enqueue_a_custom_element_callback_reaction(HTML::CustomElementReactionNames::formAssociatedCallback, CustomElementFormAssociatedCallbackReactionArguments {
+                                                                                                             .form = form,
+                                                                                                         });
+}
+
+void Element::enqueue_a_form_disabled_callback_reaction(bool is_disabled)
+{
+    enqueue_a_custom_element_callback_reaction(HTML::CustomElementReactionNames::formDisabledCallback, CustomElementFormDisabledCallbackReactionArguments {
+                                                                                                           .is_disabled = is_disabled,
+                                                                                                       });
+}
+
+void Element::enqueue_a_custom_element_callback_reaction(Utf16FlyString const& callback_name, CustomElementCallbackReactionArguments arguments)
 {
     // 1. Let definition be element's custom element definition.
     auto& definition = m_custom_element_definition;
@@ -3173,20 +3791,13 @@ void Element::enqueue_a_custom_element_callback_reaction(FlyString const& callba
         if (!connected_callback && !disconnected_callback)
             return;
 
-        // 4. Set callback to the following steps:
-        auto steps = JS::NativeFunction::create(realm(), [this, disconnected_callback, connected_callback](JS::VM&) {
-            GC::RootVector<JS::Value> no_arguments { heap() };
-
-            // 1. If disconnectedCallback is not null, then call disconnectedCallback with no arguments.
-            if (disconnected_callback)
-                (void)WebIDL::invoke_callback(*disconnected_callback, this, WebIDL::ExceptionBehavior::Report, no_arguments);
-
-            // 2. If connectedCallback is not null, then call connectedCallback with no arguments.
-            if (connected_callback)
-                (void)WebIDL::invoke_callback(*connected_callback, this, WebIDL::ExceptionBehavior::Report, no_arguments);
-
-            return JS::js_undefined(); }, 0, Utf16FlyString {}, &realm());
-        callback = realm().heap().allocate<WebIDL::CallbackType>(steps, realm());
+        // 4. Set callback to the following steps.
+        ensure_custom_element_reaction_queue().append(CustomElementConnectedMoveCallbackReaction {
+            .disconnected_callback = disconnected_callback,
+            .connected_callback = connected_callback,
+        });
+        enqueue_an_element_on_the_appropriate_element_queue();
+        return;
     }
 
     // 3. If callback is null, then return.
@@ -3196,10 +3807,8 @@ void Element::enqueue_a_custom_element_callback_reaction(FlyString const& callba
     // 5. If callbackName is "attributeChangedCallback":
     if (callback_name == HTML::CustomElementReactionNames::attributeChangedCallback) {
         // 1. Let attributeName be the first element of args.
-        VERIFY(!arguments.is_empty());
-        auto& attribute_name_value = arguments.first();
-        VERIFY(attribute_name_value.is_string());
-        auto attribute_name = attribute_name_value.as_string().utf8_string();
+        VERIFY(arguments.has<CustomElementAttributeChangedCallbackReactionArguments>());
+        auto const& attribute_name = arguments.get<CustomElementAttributeChangedCallbackReactionArguments>().attribute_name;
 
         // 2. If definition's observed attributes does not contain attributeName, then return.
         if (!definition->observed_attributes().contains_slow(attribute_name))
@@ -3207,120 +3816,10 @@ void Element::enqueue_a_custom_element_callback_reaction(FlyString const& callba
     }
 
     // 6. Add a new callback reaction to element's custom element reaction queue, with callback function callback and arguments args.
-    ensure_custom_element_reaction_queue().append(CustomElementCallbackReaction { .callback = callback, .arguments = move(arguments) });
+    ensure_custom_element_reaction_queue().append(CustomElementCallbackReaction { .callback = *callback, .arguments = move(arguments) });
 
     // 7. Enqueue an element on the appropriate element queue given element.
     enqueue_an_element_on_the_appropriate_element_queue();
-}
-
-// https://html.spec.whatwg.org/multipage/custom-elements.html#concept-upgrade-an-element
-JS::ThrowCompletionOr<void> Element::upgrade_element(GC::Ref<HTML::CustomElementDefinition> custom_element_definition)
-{
-    auto& realm = this->realm();
-    auto& vm = this->vm();
-
-    // 1. If element's custom element state is not "undefined" or "uncustomized", then return.
-    if (m_custom_element_state != CustomElementState::Undefined && m_custom_element_state != CustomElementState::Uncustomized)
-        return {};
-
-    // 2. Set element's custom element definition to definition.
-    m_custom_element_definition = custom_element_definition;
-
-    // 3. Set element's custom element state to "failed".
-    set_custom_element_state(CustomElementState::Failed);
-
-    // 4. For each attribute in element's attribute list, in order, enqueue a custom element callback reaction with
-    //    element, callback name "attributeChangedCallback", and « attribute's local name, null, attribute's value,
-    //    attribute's namespace ».
-    size_t attribute_count = m_attributes ? m_attributes->length() : 0;
-    for (size_t attribute_index = 0; attribute_index < attribute_count; ++attribute_index) {
-        auto const* attribute = m_attributes->item(attribute_index);
-        VERIFY(attribute);
-
-        GC::RootVector<JS::Value> arguments { vm.heap() };
-
-        arguments.append(JS::PrimitiveString::create(vm, attribute->local_name()));
-        arguments.append(JS::js_null());
-        arguments.append(JS::PrimitiveString::create(vm, attribute->value()));
-        arguments.append(attribute->namespace_uri().has_value() ? JS::PrimitiveString::create(vm, attribute->namespace_uri().value()) : JS::js_null());
-
-        enqueue_a_custom_element_callback_reaction(HTML::CustomElementReactionNames::attributeChangedCallback, move(arguments));
-    }
-
-    // 5. If element is connected, then enqueue a custom element callback reaction with element, callback name
-    //    "connectedCallback", and « ».
-    if (is_connected()) {
-        GC::RootVector<JS::Value> empty_arguments { vm.heap() };
-        enqueue_a_custom_element_callback_reaction(HTML::CustomElementReactionNames::connectedCallback, move(empty_arguments));
-    }
-
-    // 6. Add element to the end of definition's construction stack.
-    custom_element_definition->construction_stack().append(GC::Ref { *this });
-
-    // 7. Let C be definition's constructor.
-    auto& constructor = custom_element_definition->constructor();
-
-    // 8. Set the surrounding agent's active custom element constructor map[C] to element's custom element registry.
-    auto& surrounding_agent = HTML::relevant_similar_origin_window_agent(*this);
-    surrounding_agent.active_custom_element_constructor_map.set(static_cast<JS::FunctionObject&>(*constructor.callback), custom_element_registry());
-
-    // 9. Run the following steps while catching any exceptions:
-    auto attempt_to_construct_custom_element = [&]() -> JS::ThrowCompletionOr<void> {
-        // 1. If definition's disable shadow is true and element's shadow root is non-null, then throw a
-        //    "NotSupportedError" DOMException.
-        if (custom_element_definition->disable_shadow() && shadow_root())
-            return JS::throw_completion(WebIDL::NotSupportedError::create(realm, "Custom element definition disables shadow DOM and the custom element has a shadow root"_utf16));
-
-        // 2. Set element's custom element state to "precustomized".
-        set_custom_element_state(CustomElementState::Precustomized);
-
-        // 3. Let constructResult be the result of constructing C, with no arguments.
-        auto construct_result = TRY(WebIDL::construct(constructor, {}));
-
-        // 4. If SameValue(constructResult, element) is false, then throw a TypeError.
-        if (!JS::same_value(construct_result, this))
-            return vm.throw_completion<JS::TypeError>("Constructing the custom element returned a different element from the custom element"sv);
-
-        return {};
-    };
-
-    auto maybe_exception = attempt_to_construct_custom_element();
-
-    // Then, perform the following steps, regardless of whether the above steps threw an exception or not:
-    // 1. Remove the surrounding agent's active custom element constructor map[C].
-    surrounding_agent.active_custom_element_constructor_map.remove(static_cast<JS::FunctionObject&>(*constructor.callback));
-
-    // 2. Remove the last entry from the end of definition's construction stack.
-    (void)custom_element_definition->construction_stack().take_last();
-
-    // Finally, if the above steps threw an exception, then:
-    if (maybe_exception.is_throw_completion()) {
-        // 1. Set element's custom element definition to null.
-        m_custom_element_definition = nullptr;
-
-        // 2. Empty element's custom element reaction queue.
-        if (m_custom_element_reaction_queue)
-            m_custom_element_reaction_queue->clear();
-
-        // 3. Rethrow the exception (thus terminating this algorithm).
-        return maybe_exception.release_error();
-    }
-
-    // 10. If element is a form-associated custom element, then:
-    if (auto* html_element = as_if<HTML::HTMLElement>(this); html_element && html_element->is_form_associated_custom_element()) {
-        // 1. Reset the form owner of element.
-        // FIXME: If element is associated with a form element, then enqueue a custom element callback reaction with element, callback name "formAssociatedCallback", and « the associated form ».
-        // AD-HOC: We don't do the second part of this step here, because it's inside reset_form_owner.
-        html_element->reset_form_owner();
-
-        // 2. If element is disabled, then enqueue a custom element callback reaction with element, callback name "formDisabledCallback", and « true ».
-        html_element->update_face_disabled_state();
-    }
-
-    // 11. Set element's custom element state to "custom".
-    set_custom_element_state(CustomElementState::Custom);
-
-    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/custom-elements.html#concept-try-upgrade
@@ -3355,13 +3854,17 @@ void Element::set_custom_element_state(CustomElementState state)
         return;
     m_custom_element_state = state;
 
-    Vector<CSS::InvalidationSet::Property, 1> changed_properties;
-    changed_properties.append({ .type = CSS::InvalidationSet::Property::Type::PseudoClass, .value = CSS::PseudoClass::Defined });
-    invalidate_style(StyleInvalidationReason::CustomElementStateChange, changed_properties, {});
+    CSS::Invalidation::invalidate_style_after_custom_element_state_change(*this);
+}
+
+void Element::clear_custom_element_reaction_queue()
+{
+    if (m_custom_element_reaction_queue)
+        m_custom_element_reaction_queue->clear();
 }
 
 // https://html.spec.whatwg.org/multipage/dom.html#html-element-constructors
-void Element::setup_custom_element_from_constructor(HTML::CustomElementDefinition& custom_element_definition, Optional<String> const& is_value)
+void Element::setup_custom_element_from_constructor(HTML::CustomElementDefinition& custom_element_definition, Optional<Utf16FlyString> const& is_value)
 {
     // 7.6. Set element's custom element state to "custom".
     set_custom_element_state(CustomElementState::Custom);
@@ -3373,24 +3876,25 @@ void Element::setup_custom_element_from_constructor(HTML::CustomElementDefinitio
     m_is_value = is_value;
 }
 
-void Element::set_prefix(Optional<FlyString> value)
+void Element::set_prefix(Optional<Utf16FlyString> value)
 {
     m_qualified_name.set_prefix(move(value));
+    m_html_uppercased_qualified_name.clear();
 }
 
 // https://dom.spec.whatwg.org/#locate-a-namespace-prefix
-Optional<String> Element::locate_a_namespace_prefix(Optional<String> const& namespace_) const
+Optional<Utf16String> Element::locate_a_namespace_prefix(Optional<Utf16View> namespace_) const
 {
     // 1. If element’s namespace is namespace and its namespace prefix is non-null, then return its namespace prefix.
-    if (this->namespace_uri() == namespace_ && this->prefix().has_value())
-        return this->prefix()->to_string();
+    if (this->namespace_uri().has_value() && namespace_.has_value() && this->namespace_uri()->view() == *namespace_ && this->prefix().has_value())
+        return this->prefix()->to_utf16_string();
 
     // 2. If element has an attribute whose namespace prefix is "xmlns" and value is namespace, then return element’s first such attribute’s local name.
-    if (auto attributes = this->attributes()) {
+    if (auto attributes = this->attributes(); attributes && namespace_.has_value()) {
         for (size_t i = 0; i < attributes->length(); ++i) {
             auto& attr = *attributes->item(i);
-            if (attr.prefix() == "xmlns" && attr.value() == namespace_)
-                return attr.local_name().to_string();
+            if (attr.prefix() == u"xmlns"sv && attr.value().utf16_view() == *namespace_)
+                return attr.local_name().to_utf16_string();
         }
     }
 
@@ -3402,6 +3906,14 @@ Optional<String> Element::locate_a_namespace_prefix(Optional<String> const& name
     return {};
 }
 
+void Element::for_each_attribute(Function<void(Attr&)> callback)
+{
+    if (!m_attributes)
+        return;
+    for (size_t i = 0; i < m_attributes->length(); ++i)
+        callback(*m_attributes->item(i));
+}
+
 void Element::for_each_attribute(Function<void(Attr const&)> callback) const
 {
     if (!m_attributes)
@@ -3410,29 +3922,29 @@ void Element::for_each_attribute(Function<void(Attr const&)> callback) const
         callback(*m_attributes->item(i));
 }
 
-void Element::for_each_attribute(Function<void(FlyString const&, String const&)> callback) const
+void Element::for_each_attribute(Function<void(Utf16FlyString const&, Utf16View)> callback) const
 {
     for_each_attribute([&callback](Attr const& attr) {
-        callback(attr.name(), attr.value());
+        callback(attr.name(), attr.value().utf16_view());
     });
 }
 
-GC::Ptr<Layout::NodeWithStyle> Element::layout_node()
+Layout::NodeWithStyle* Element::layout_node()
 {
     return static_cast<Layout::NodeWithStyle*>(Node::layout_node());
 }
 
-GC::Ptr<Layout::NodeWithStyle const> Element::layout_node() const
+Layout::NodeWithStyle const* Element::layout_node() const
 {
     return static_cast<Layout::NodeWithStyle const*>(Node::layout_node());
 }
 
-GC::Ptr<Layout::NodeWithStyle> Element::unsafe_layout_node()
+Layout::NodeWithStyle* Element::unsafe_layout_node()
 {
     return static_cast<Layout::NodeWithStyle*>(Node::unsafe_layout_node());
 }
 
-GC::Ptr<Layout::NodeWithStyle const> Element::unsafe_layout_node() const
+Layout::NodeWithStyle const* Element::unsafe_layout_node() const
 {
     return static_cast<Layout::NodeWithStyle const*>(Node::unsafe_layout_node());
 }
@@ -3447,64 +3959,94 @@ size_t Element::attribute_list_size() const
     return m_attributes ? m_attributes->length() : 0;
 }
 
-GC::Ptr<CSS::CascadedProperties> Element::cascaded_properties(Optional<CSS::PseudoElement> pseudo_element) const
-{
-    if (pseudo_element.has_value()) {
-        auto pseudo_element_data = get_pseudo_element(pseudo_element.value());
-        if (pseudo_element_data.has_value())
-            return pseudo_element_data->cascaded_properties();
-        return nullptr;
-    }
-    return m_cascaded_properties;
-}
-
-void Element::set_cascaded_properties(Optional<CSS::PseudoElement> pseudo_element, GC::Ptr<CSS::CascadedProperties> cascaded_properties)
-{
-    if (pseudo_element.has_value()) {
-        if (pseudo_element.value() >= CSS::PseudoElement::KnownPseudoElementCount)
-            return;
-        if (cascaded_properties)
-            ensure_pseudo_element(pseudo_element.value()).set_cascaded_properties(cascaded_properties);
-        else if (auto existing_pseudo_element = get_pseudo_element(pseudo_element.value()); existing_pseudo_element.has_value())
-            existing_pseudo_element->set_cascaded_properties({});
-        return;
-    }
-    m_cascaded_properties = cascaded_properties;
-}
-
-GC::Ptr<CSS::ComputedProperties> Element::computed_properties(Optional<CSS::PseudoElement> pseudo_element_type)
+RefPtr<CSS::ComputedValues const> Element::computed_values(Optional<CSS::PseudoElement> pseudo_element_type) const
 {
     if (pseudo_element_type.has_value()) {
         if (auto pseudo_element = get_pseudo_element(*pseudo_element_type); pseudo_element.has_value())
-            return pseudo_element->computed_properties();
+            return pseudo_element->computed_values();
         return {};
     }
-    return m_computed_properties;
+    return m_computed_values;
 }
 
-GC::Ptr<CSS::ComputedProperties const> Element::computed_properties(Optional<CSS::PseudoElement> pseudo_element_type) const
+void Element::update_animated_properties(Badge<Web::Animations::KeyframeEffect> const& badge, Optional<CSS::PseudoElement> pseudo_element_type, Web::Animations::KeyframeEffect& effect, Web::Animations::AnimationUpdateContext& context)
 {
+    DOM::AbstractElement abstract_element { *this, pseudo_element_type };
     if (pseudo_element_type.has_value()) {
         if (auto pseudo_element = get_pseudo_element(*pseudo_element_type); pseudo_element.has_value())
-            return pseudo_element->computed_properties();
-        return {};
-    }
-    return m_computed_properties;
-}
-
-void Element::set_computed_properties(Optional<CSS::PseudoElement> pseudo_element_type, GC::Ptr<CSS::ComputedProperties> style)
-{
-    if (pseudo_element_type.has_value()) {
-        if (!CSS::Selector::PseudoElementSelector::is_known_pseudo_element_type(*pseudo_element_type))
-            return;
-        if (style)
-            ensure_pseudo_element(*pseudo_element_type).set_computed_properties(style);
-        else if (auto existing_pseudo_element = get_pseudo_element(*pseudo_element_type); existing_pseudo_element.has_value())
-            existing_pseudo_element->set_computed_properties({});
+            pseudo_element->update_animated_properties(badge, abstract_element, effect, context);
         return;
     }
-    m_computed_properties = style;
+
+    update_animated_properties_for_abstract_element(badge, abstract_element, effect, context);
+}
+
+void Element::update_animated_properties_for_abstract_element(Badge<Web::Animations::KeyframeEffect> const&, DOM::AbstractElement abstract_element, Web::Animations::KeyframeEffect& effect, Web::Animations::AnimationUpdateContext& context)
+{
+    if (!m_computed_values)
+        return;
+    effect.update_computed_properties_for_style(context, abstract_element);
+}
+
+void Element::set_computed_style(Optional<CSS::PseudoElement> pseudo_element_type, RefPtr<CSS::ComputedValues const> values)
+{
+    if (pseudo_element_type.has_value()) {
+        VERIFY(is_synthetic_pseudo_element(*pseudo_element_type));
+        if (values)
+            ensure_synthetic_pseudo_element(*pseudo_element_type).set_computed_style(move(values));
+        else if (auto existing_pseudo_element = get_synthetic_pseudo_element(*pseudo_element_type); existing_pseudo_element.has_value())
+            existing_pseudo_element->set_computed_style(nullptr);
+        return;
+    }
+    m_computed_values = move(values);
     computed_properties_changed();
+}
+
+void Element::refresh_computed_values(Optional<CSS::PseudoElement> pseudo_element_type, NonnullRefPtr<CSS::ComputedValues const> values)
+{
+    if (pseudo_element_type.has_value()) {
+        if (CSS::is_element_reference_pseudo_element(*pseudo_element_type)) {
+            auto pseudo_element = get_pseudo_element(*pseudo_element_type);
+            VERIFY(pseudo_element.has_value());
+            auto& referenced_element = as<ElementReferencePseudoElement>(*pseudo_element).referenced_element();
+            referenced_element->refresh_computed_values({}, move(values));
+            return;
+        }
+        auto pseudo_element = get_synthetic_pseudo_element(*pseudo_element_type);
+        VERIFY(pseudo_element.has_value());
+        pseudo_element->refresh_computed_values(move(values));
+        return;
+    }
+
+    VERIFY(m_computed_values);
+    m_computed_values = move(values);
+}
+
+void Element::set_associated_shadow_host_pseudo_element(CSS::PseudoElement type)
+{
+    VERIFY(CSS::is_element_reference_pseudo_element(type));
+
+    auto& root = this->root();
+    VERIFY(is<ShadowRoot>(root));
+
+    auto& shadow_root = as<ShadowRoot>(root);
+    VERIFY(shadow_root.host());
+
+    shadow_root.host()->register_element_reference_pseudo_element(type, *this);
+
+    m_associated_shadow_host_pseudo_element = type;
+}
+
+Optional<SyntheticPseudoElement&> Element::get_synthetic_pseudo_element(CSS::PseudoElement type) const
+{
+    VERIFY(is_synthetic_pseudo_element(type));
+
+    auto pseudo_element = get_pseudo_element(type);
+
+    if (!pseudo_element.has_value())
+        return {};
+
+    return as<SyntheticPseudoElement>(pseudo_element.value());
 }
 
 Optional<PseudoElement&> Element::get_pseudo_element(CSS::PseudoElement type) const
@@ -3523,21 +4065,40 @@ Optional<PseudoElement&> Element::get_pseudo_element(CSS::PseudoElement type) co
     return *(pseudo_element.value());
 }
 
-PseudoElement& Element::ensure_pseudo_element(CSS::PseudoElement type) const
+void Element::register_element_reference_pseudo_element(CSS::PseudoElement type, GC::Ref<Element> element)
+{
+    VERIFY(CSS::is_element_reference_pseudo_element(type));
+
+    if (!m_pseudo_element_data)
+        m_pseudo_element_data = make<PseudoElementData>();
+
+    m_pseudo_element_data->set(type, GC::Heap::the().allocate<ElementReferencePseudoElement>(element));
+}
+
+void Element::clear_element_reference_pseudo_elements()
+{
+    if (!m_pseudo_element_data)
+        return;
+
+    for (auto i = to_underlying(CSS::first_element_reference_pseudo_element); i <= to_underlying(CSS::last_element_reference_pseudo_element); ++i)
+        m_pseudo_element_data->remove(static_cast<CSS::PseudoElement>(i));
+}
+
+SyntheticPseudoElement& Element::ensure_synthetic_pseudo_element(CSS::PseudoElement type) const
 {
     if (!m_pseudo_element_data)
         m_pseudo_element_data = make<PseudoElementData>();
 
-    VERIFY(CSS::Selector::PseudoElementSelector::is_known_pseudo_element_type(type));
+    VERIFY(CSS::is_synthetic_pseudo_element(type));
 
     if (!m_pseudo_element_data->get(type).has_value()) {
         if (is_pseudo_element_root(type))
-            m_pseudo_element_data->set(type, heap().allocate<PseudoElementTreeNode>());
+            m_pseudo_element_data->set(type, GC::Heap::the().allocate<SyntheticPseudoElementTreeNode>());
         else
-            m_pseudo_element_data->set(type, heap().allocate<PseudoElement>());
+            m_pseudo_element_data->set(type, GC::Heap::the().allocate<SyntheticPseudoElement>());
     }
 
-    return *(m_pseudo_element_data->get(type).value());
+    return as<SyntheticPseudoElement>(*m_pseudo_element_data->get(type).value());
 }
 
 void Element::set_custom_property_data(Optional<CSS::PseudoElement> pseudo_element, RefPtr<CSS::CustomPropertyData const> data)
@@ -3550,9 +4111,24 @@ void Element::set_custom_property_data(Optional<CSS::PseudoElement> pseudo_eleme
     if (!CSS::Selector::PseudoElementSelector::is_known_pseudo_element_type(pseudo_element.value()))
         return;
 
-    if (data)
-        ensure_pseudo_element(pseudo_element.value()).set_custom_property_data(move(data));
-    else if (auto existing_pseudo_element = get_pseudo_element(pseudo_element.value()); existing_pseudo_element.has_value())
+    if (data) {
+        if (is_synthetic_pseudo_element(pseudo_element.value())) {
+            ensure_synthetic_pseudo_element(pseudo_element.value()).set_custom_property_data(move(data));
+        } else {
+            if (auto existing_pseudo_element = get_pseudo_element(pseudo_element.value()); existing_pseudo_element.has_value())
+                existing_pseudo_element->set_custom_property_data(move(data));
+
+            // FIXME: In the case that an originating element doesn't support a given element-reference pseudo-element
+            //        we will end up here, we can't create an element-reference pseudo-element on demand to store the
+            //        custom property data so we just ignore it.
+            //
+            //        The issue with this is it means the relevant custom properties aren't included in
+            //        getComputedStyle, which would be fixed if we stored CustomPropertyData on ComputedProperties
+            //        instead of on the Element/PseudoElement directly. Chrome displays this same (presumably broken)
+            //        behavior whereas Firefox includes the properties in getComputedStyle.
+        }
+
+    } else if (auto existing_pseudo_element = get_pseudo_element(pseudo_element.value()); existing_pseudo_element.has_value())
         existing_pseudo_element->set_custom_property_data({});
 }
 
@@ -3564,11 +4140,28 @@ RefPtr<CSS::CustomPropertyData const> Element::custom_property_data(Optional<CSS
     if (!CSS::Selector::PseudoElementSelector::is_known_pseudo_element_type(pseudo_element.value()))
         return nullptr;
 
-    return ensure_pseudo_element(pseudo_element.value()).custom_property_data();
+    if (auto existing_pseudo_element = get_pseudo_element(pseudo_element.value()); existing_pseudo_element.has_value())
+        return existing_pseudo_element->custom_property_data();
+
+    return nullptr;
+}
+
+bool Element::refresh_inherited_custom_property_data()
+{
+    RefPtr<CSS::CustomPropertyData const> parent_data;
+    if (auto inherit_from = element_to_inherit_style_from({})) {
+        if (auto data = inherit_from->custom_property_data({}))
+            parent_data = data->inheritable(document());
+    }
+
+    if (m_custom_property_data == parent_data)
+        return false;
+    m_custom_property_data = move(parent_data);
+    return true;
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scroll
-GC::Ref<WebIDL::Promise> Element::scroll(double x, double y)
+void Element::scroll(double x, double y, GC::Ptr<WebIDL::Promise> promise)
 {
     // 1. If invoked with one argument, follow these substeps:
     //    NOTE: Not relevant here.
@@ -3578,28 +4171,51 @@ GC::Ref<WebIDL::Promise> Element::scroll(double x, double y)
     //     3. Normalize non-finite values for x and y.
     //     4. Let the left dictionary member of options have the value x.
     //     5. Let the top dictionary member of options have the value y.
-    x = HTML::normalize_non_finite_values(x);
-    y = HTML::normalize_non_finite_values(y);
+    Bindings::ScrollToOptions options;
+    options.left = HTML::normalize_non_finite_values(x);
+    options.top = HTML::normalize_non_finite_values(y);
+    scroll(options, promise);
+}
+
+// https://drafts.csswg.org/cssom-view/#dom-element-scroll
+void Element::scroll(Bindings::ScrollToOptions options, GC::Ptr<WebIDL::Promise> promise)
+{
+    // 1. If invoked with one argument, follow these substeps:
+    //     1. Let options be the argument.
+    //     2. Normalize non-finite values for left and top dictionary members of options, if present.
+    //     3. Let x be the value of the left dictionary member of options, if present, or the element’s current scroll position on the x axis otherwise.
+    //     4. Let y be the value of the top dictionary member of options, if present, or the element’s current scroll position on the y axis otherwise.
+    auto x = options.left.has_value() ? HTML::normalize_non_finite_values(options.left.value()) : scroll_left();
+    auto y = options.top.has_value() ? HTML::normalize_non_finite_values(options.top.value()) : scroll_top();
 
     // 3. Let document be the element’s node document.
     auto& document = this->document();
 
     // 4. If document is not the active document, return a resolved Promise and abort the remaining steps.
-    if (!document.is_active())
-        return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
+    if (!document.is_active()) {
+        if (promise)
+            WebIDL::resolve_promise(*promise);
+        return;
+    }
 
     // 5. Let window be the value of document’s defaultView attribute.
     // FIXME: The specification expects defaultView to be a Window object, but defaultView actually returns a WindowProxy object.
     auto window = document.window();
 
     // 6. If window is null, return a resolved Promise and abort the remaining steps.
-    if (!window)
-        return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
+    if (!window) {
+        if (promise)
+            WebIDL::resolve_promise(*promise);
+        return;
+    }
 
     // 7. If the element is the root element and document is in quirks mode, return a resolved Promise and abort the
     //    remaining steps.
-    if (document.document_element() == this && document.in_quirks_mode())
-        return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
+    if (document.document_element() == this && document.in_quirks_mode()) {
+        if (promise)
+            WebIDL::resolve_promise(*promise);
+        return;
+    }
 
     // OPTIMIZATION: Scrolling an unscrolled element to (0, 0) is a no-op as long
     //               as the element is not eligible to be the Document.scrollingElement.
@@ -3608,7 +4224,9 @@ GC::Ref<WebIDL::Promise> Element::scroll(double x, double y)
         && scroll_offset({}).is_zero()
         && this != document.body()
         && this != document.document_element()) {
-        return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
+        if (promise)
+            WebIDL::resolve_promise(*promise);
+        return;
     }
 
     // NB: Ensure that layout is up-to-date before looking at metrics.
@@ -3616,67 +4234,60 @@ GC::Ref<WebIDL::Promise> Element::scroll(double x, double y)
 
     // 8. If the element is the root element, return the Promise returned by scroll() on window after the method is
     //    invoked with scrollX on window as first argument and y as second argument, and abort the remaining steps.
-    if (document.document_element() == this)
-        return window->scroll(window->scroll_x(), y);
+    if (document.document_element() == this) {
+        window->scroll(x, y, promise);
+        return;
+    }
 
     // 9. If the element is the body element, document is in quirks mode, and the element is not potentially
     //    scrollable, return the Promise returned by scroll() on window after the method is invoked with options as the
     //    only argument, and abort the remaining steps.
-    if (document.body() == this && document.in_quirks_mode() && !is_potentially_scrollable())
-        return window->scroll(x, y);
+    if (document.body() == this && document.in_quirks_mode() && !is_potentially_scrollable()) {
+        window->scroll(x, y, promise);
+        return;
+    }
 
     // 10. If the element does not have any associated box, the element has no associated scrolling box, or the element
     //     has no overflow, return a resolved Promise and abort the remaining steps.
     // FIXME: or the element has no overflow
-    if (!paintable_box())
-        return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
+    if (!paintable_box() || !paintable_box()->layout_node().is_scroll_container()) {
+        if (promise)
+            WebIDL::resolve_promise(*promise);
+        return;
+    }
 
     // 11. Scroll the element to x,y, with the scroll behavior being the value of the behavior dictionary member of
     //     options. Let scrollPromise be the Promise returned from this step.
-    // FIXME: Implement this in terms of calling "scroll the element".
-    auto scroll_offset = paintable_box()->scroll_offset();
-    scroll_offset.set_x(CSSPixels::nearest_value_for(x));
-    scroll_offset.set_y(CSSPixels::nearest_value_for(y));
-    paintable_box()->set_scroll_offset(scroll_offset);
-    auto scroll_promise = WebIDL::create_resolved_promise(realm(), JS::js_undefined());
-
-    // 12. Return scrollPromise.
-    return scroll_promise;
-}
-
-// https://drafts.csswg.org/cssom-view/#dom-element-scroll
-GC::Ref<WebIDL::Promise> Element::scroll(HTML::ScrollToOptions options)
-{
-    // 1. If invoked with one argument, follow these substeps:
-    //     1. Let options be the argument.
-    //     2. Normalize non-finite values for left and top dictionary members of options, if present.
-    //     3. Let x be the value of the left dictionary member of options, if present, or the element’s current scroll position on the x axis otherwise.
-    //     4. Let y be the value of the top dictionary member of options, if present, or the element’s current scroll position on the y axis otherwise.
-    // NOTE: remaining steps performed by Element::scroll(double x, double y)
-    auto x = options.left.has_value() ? HTML::normalize_non_finite_values(options.left.value()) : scroll_left();
-    auto y = options.top.has_value() ? HTML::normalize_non_finite_values(options.top.value()) : scroll_top();
-    return scroll(x, y);
+    auto scroll_offset = CSSPixelPoint { CSSPixels::nearest_value_for(x), CSSPixels::nearest_value_for(y) };
+    if (auto navigable = document.navigable()) {
+        auto scroll_promise = navigable->perform_a_scroll_of_an_element(*this, scroll_offset, options.behavior);
+        if (promise)
+            WebIDL::resolve_promise(*promise, scroll_promise->promise());
+        (void)scroll_promise;
+    } else if (promise) {
+        WebIDL::resolve_promise(*promise);
+    }
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scrollby
-GC::Ref<WebIDL::Promise> Element::scroll_by(double x, double y)
+void Element::scroll_by(double x, double y, GC::Ptr<WebIDL::Promise> promise)
 {
     // 2. If invoked with two arguments, follow these substeps:
     //    1. Let options be null converted to a ScrollToOptions dictionary. [WEBIDL]
-    HTML::ScrollToOptions options;
+    ScrollToOptions options;
 
     //    2. Let x and y be the arguments, respectively.
     //    3. Normalize non-finite values for x and y.
     //    4. Let the left dictionary member of options have the value x.
     //    5. Let the top dictionary member of options have the value y.
-    // NOTE: Element::scroll_by(HTML::ScrollToOptions) performs the normalization and following steps.
+    // NOTE: Element::scroll_by(ScrollToOptions) performs the normalization and following steps.
     options.left = x;
     options.top = y;
-    return scroll_by(options);
+    scroll_by(options, promise);
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scrollby
-GC::Ref<WebIDL::Promise> Element::scroll_by(HTML::ScrollToOptions options)
+void Element::scroll_by(ScrollToOptions options, GC::Ptr<WebIDL::Promise> promise)
 {
     // 1. If invoked with one argument, follow these substeps:
     //    1. Let options be the argument.
@@ -3693,11 +4304,11 @@ GC::Ref<WebIDL::Promise> Element::scroll_by(HTML::ScrollToOptions options)
     options.top = scroll_top() + top;
 
     // 5. Return the Promise returned by scroll() after the method is invoked with options as the only argument.
-    return scroll(options);
+    scroll(options, promise);
 }
 
 // https://drafts.csswg.org/cssom-view-1/#dom-element-checkvisibility
-bool Element::check_visibility(Optional<CheckVisibilityOptions> options)
+bool Element::check_visibility(CheckVisibilityOptions const& options)
 {
     // NOTE: Ensure that layout is up-to-date before looking at metrics.
     document().update_layout_if_needed_for_node(*this, UpdateLayoutReason::ElementCheckVisibility);
@@ -3708,27 +4319,23 @@ bool Element::check_visibility(Optional<CheckVisibilityOptions> options)
 
     // 2. If an ancestor of this in the flat tree has content-visibility: hidden, return false.
     for (auto* element = flat_tree_parent_element(); element; element = element->flat_tree_parent_element()) {
-        if (element->computed_properties()->content_visibility() == CSS::ContentVisibility::Hidden)
+        if (element->computed_values()->content_visibility() == CSS::ContentVisibility::Hidden)
             return false;
     }
 
-    // AD-HOC: Since the rest of the steps use the options, we can return early if we haven't been given any options.
-    if (!options.has_value())
-        return true;
-
     // 3. If either the opacityProperty or the checkOpacity dictionary members of options are true, and this, or an
     //    ancestor of this in the flat tree, has a computed opacity value of 0, return false.
-    if (options->opacity_property || options->check_opacity) {
+    if (options.opacity_property || options.check_opacity) {
         for (auto* element = this; element; element = element->flat_tree_parent_element()) {
-            if (element->computed_properties()->opacity() == 0.0f)
+            if (element->computed_values()->opacity() == 0.0f)
                 return false;
         }
     }
 
     // 4. If either the visibilityProperty or the checkVisibilityCSS dictionary members of options are true, and this
     //    is invisible, return false.
-    if (options->visibility_property || options->check_visibility_css) {
-        if (computed_properties()->visibility() == CSS::Visibility::Hidden)
+    if (options.visibility_property || options.check_visibility_css) {
+        if (computed_values()->visibility() == CSS::Visibility::Hidden)
             return false;
     }
 
@@ -3736,9 +4343,9 @@ bool Element::check_visibility(Optional<CheckVisibilityOptions> options)
     //    skips its contents due to content-visibility: auto, return false.
     // FIXME: Currently we do not skip any content if content-visibility is auto: https://drafts.csswg.org/css-contain-2/#proximity-to-the-viewport
     auto const skipped_contents_due_to_content_visibility_auto = false;
-    if (options->content_visibility_auto && skipped_contents_due_to_content_visibility_auto) {
+    if (options.content_visibility_auto && skipped_contents_due_to_content_visibility_auto) {
         for (auto* element = flat_tree_parent_element(); element; element = element->flat_tree_parent_element()) {
-            if (element->computed_properties()->content_visibility() == CSS::ContentVisibility::Auto)
+            if (element->computed_values()->content_visibility() == CSS::ContentVisibility::Auto)
                 return false;
         }
     }
@@ -3824,176 +4431,54 @@ bool Element::skips_its_contents()
 {
     // https://drafts.csswg.org/css-contain-2/#valdef-content-visibility-hidden
     // The element skips its contents.
-    if (computed_properties()->content_visibility() == CSS::ContentVisibility::Hidden)
+    if (computed_values()->content_visibility() == CSS::ContentVisibility::Hidden)
         return true;
 
     // https://drafts.csswg.org/css-contain-2/#valdef-content-visibility-auto
     // If the element is not relevant to the user, it also skips its contents.
-    if (computed_properties()->content_visibility() == CSS::ContentVisibility::Auto && !this->is_relevant_to_the_user()) {
+    if (computed_values()->content_visibility() == CSS::ContentVisibility::Auto && !this->is_relevant_to_the_user()) {
         return true;
     }
 
     return false;
 }
 
-i32 Element::number_of_owned_list_items() const
+void Element::invalidate_list_item_counters_for_list_owner()
 {
-    AK::Checked<i32> number_of_owned_li_elements = 0;
-    for_each_numbered_item_owned_by_list_owner([&number_of_owned_li_elements]([[maybe_unused]] Element* item) {
-        number_of_owned_li_elements++;
-        return IterationDecision::Continue;
-    });
-
-    return number_of_owned_li_elements.value();
-}
-
-// https://html.spec.whatwg.org/multipage/grouping-content.html#list-owner
-GC::Ptr<Element> Element::list_owner() const
-{
-    // Any element whose computed value of 'display' is 'list-item' has a list owner, which is determined as follows:
-    if (!m_is_contained_in_list_subtree && (!computed_properties() || !computed_properties()->display().is_list_item()))
-        return nullptr;
-
-    // 1. If the element is not being rendered, return null; the element has no list owner.
-    // NB: unsafe_layout_node() because list ordinal computation happens during style recalculation
-    //     when layout is inherently stale.
-    if (!unsafe_layout_node())
-        return nullptr;
-
-    // 2. Let ancestor be the element's parent.
-    auto ancestor = parent_element();
-
-    // AC-HOC: There may not be any parent element in a shadow tree.
-    if (!ancestor)
-        return nullptr;
-
-    // 3. If the element has an ol, ul, or menu ancestor, set ancestor to the closest such ancestor element.
-    for_each_ancestor([&ancestor](GC::Ref<Node> node) {
+    for_each_ancestor([](GC::Ref<Node> node) {
         if (node->is_html_ol_ul_menu_element()) {
-            ancestor = static_cast<Element*>(node.ptr());
+            static_cast<Element&>(*node).set_needs_layout_tree_update(true, SetNeedsLayoutTreeUpdateReason::ListItemCounters);
             return IterationDecision::Break;
         }
         return IterationDecision::Continue;
     });
-
-    // 4. Return the closest inclusive ancestor of ancestor that produces a CSS box.
-    ancestor->for_each_inclusive_ancestor([&ancestor](GC::Ref<Node> node) {
-        // NB: unsafe_paintable_box() because this runs during list ordinal computation as part of
-        //     style recalculation, when layout is inherently stale.
-        if (is<Element>(*node) && node->unsafe_paintable_box()) {
-            ancestor = static_cast<Element*>(node.ptr());
-            return IterationDecision::Break;
-        }
-        return IterationDecision::Continue;
-    });
-    return const_cast<Element*>(ancestor.ptr());
 }
 
-void Element::maybe_invalidate_ordinals_for_list_owner(Optional<Element*> skip_node)
-{
-    if (auto owner = list_owner())
-        owner->for_each_numbered_item_owned_by_list_owner([&](Element* item) {
-            if (skip_node.has_value() && item == skip_node.value())
-                return IterationDecision::Continue;
-
-            item->m_ordinal_value = {};
-
-            // Invalidate just the first ordinal in the list of numbered items.
-            // NOTE: This works since this item is the first accessed (preorder) when rendering the list.
-            //       It will trigger a recalculation of all ordinals on the [first] call to ordinal_value().
-            return IterationDecision::Break;
-        });
-}
-
-// https://html.spec.whatwg.org/multipage/grouping-content.html#ordinal-value
-i32 Element::ordinal_value()
-{
-    if (m_ordinal_value.has_value())
-        return m_ordinal_value.value();
-
-    auto owner = list_owner();
-    if (!owner)
-        return 1;
-
-    // 1. Let i be 1. [Not necessary]
-    // 2. If owner is an ol element, let numbering be owner's starting value. Otherwise, let numbering be 1.
-    AK::Checked<i32> numbering = 1;
-    auto reversed = false;
-
-    if (auto* ol_element = as_if<HTML::HTMLOListElement>(owner.ptr())) {
-        numbering = ol_element->starting_value().value();
-        reversed = ol_element->has_attribute(HTML::AttributeNames::reversed);
-    }
-
-    // 3. Loop : If i is greater than the number of list items that owner owns, then return; all of owner's owned list items have been assigned ordinal values.
-    // NOTE: We use `owner->for_each_numbered_item_in_list` to iterate through the owner's list of owned elements.
-    //       As a result, we don't need `i` as counter (spec) in the list of children, with no material consequences.
-    owner->for_each_numbered_item_owned_by_list_owner([&](Element* item) {
-        // 4. Let item be the ith of owner's owned list items, in tree order. [Not necessary]
-        // 5. If item is an li element that has a value attribute, then:
-        auto value_attribute = item->get_attribute(HTML::AttributeNames::value);
-        if (item->is_html_li_element() && value_attribute.has_value()) {
-            // 1. Let parsed be the result of parsing the value of the attribute as an integer.
-            auto parsed = HTML::parse_integer(value_attribute.value());
-
-            // 2. If parsed is not an error, then set numbering to parsed.
-            if (parsed.has_value())
-                numbering = parsed.value();
-        }
-
-        // 6. The ordinal value of item is numbering.
-        item->m_ordinal_value = numbering.value();
-
-        // 7. If owner is an ol element, and owner has a reversed attribute, decrement numbering by 1; otherwise, increment numbering by 1.
-        if (reversed) {
-            numbering--;
-        } else {
-            numbering++;
-        }
-
-        // 8. Increment i by 1. [Not necessary]
-        // 9. Go to the step labeled loop.
-        return IterationDecision::Continue;
-    });
-
-    return m_ordinal_value.value_or(1);
-}
-
-bool Element::id_reference_exists(String const& id_reference) const
+bool Element::id_reference_exists(Utf16View id_reference) const
 {
     return document().get_element_by_id(id_reference);
 }
 
-void Element::register_intersection_observer(Badge<IntersectionObserver::IntersectionObserver>, IntersectionObserver::IntersectionObserverRegistration registration)
+void Element::register_intersection_observer(Badge<IntersectionObserver::IntersectionObserver>, GC::Ref<IntersectionObserver::IntersectionObserver> observer)
 {
     if (!m_registered_intersection_observers)
-        m_registered_intersection_observers = make<Vector<IntersectionObserver::IntersectionObserverRegistration>>();
-    m_registered_intersection_observers->append(move(registration));
+        m_registered_intersection_observers = make<Vector<GC::Ref<IntersectionObserver::IntersectionObserver>>>();
+    m_registered_intersection_observers->append(observer);
 }
 
 void Element::unregister_intersection_observer(Badge<IntersectionObserver::IntersectionObserver>, GC::Ref<IntersectionObserver::IntersectionObserver> observer)
 {
     if (!m_registered_intersection_observers)
         return;
-    m_registered_intersection_observers->remove_first_matching([&observer](IntersectionObserver::IntersectionObserverRegistration const& entry) {
-        return entry.observer == observer;
+    m_registered_intersection_observers->remove_first_matching([&observer](GC::Ref<IntersectionObserver::IntersectionObserver> const& entry) {
+        return entry == observer;
     });
-}
-
-IntersectionObserver::IntersectionObserverRegistration& Element::get_intersection_observer_registration(Badge<DOM::Document>, IntersectionObserver::IntersectionObserver const& observer)
-{
-    VERIFY(m_registered_intersection_observers);
-    auto registration_iterator = m_registered_intersection_observers->find_if([&observer](IntersectionObserver::IntersectionObserverRegistration const& entry) {
-        return entry.observer.ptr() == &observer;
-    });
-    VERIFY(!registration_iterator.is_end());
-    return *registration_iterator;
 }
 
 CSSPixelPoint Element::scroll_offset(Optional<CSS::PseudoElement> pseudo_element_type) const
 {
     if (pseudo_element_type.has_value()) {
-        if (auto pseudo_element = get_pseudo_element(*pseudo_element_type); pseudo_element.has_value())
+        if (auto pseudo_element = get_synthetic_pseudo_element(*pseudo_element_type); pseudo_element.has_value())
             return pseudo_element->scroll_offset();
         return {};
     }
@@ -4003,7 +4488,7 @@ CSSPixelPoint Element::scroll_offset(Optional<CSS::PseudoElement> pseudo_element
 void Element::set_scroll_offset(Optional<CSS::PseudoElement> pseudo_element_type, CSSPixelPoint offset)
 {
     if (pseudo_element_type.has_value()) {
-        if (auto pseudo_element = get_pseudo_element(*pseudo_element_type); pseudo_element.has_value())
+        if (auto pseudo_element = get_synthetic_pseudo_element(*pseudo_element_type); pseudo_element.has_value())
             pseudo_element->set_scroll_offset(offset);
     } else {
         m_scroll_offset = offset;
@@ -4020,13 +4505,13 @@ Element::TranslationMode Element::translation_mode() const
     // translate-enabled state;
     // NOTE: The attribute is in the Yes state if the attribute is present and its value is the empty string or is a
     //       ASCII-case-insensitive match for "yes".
-    auto maybe_translate_attribute = attribute(HTML::AttributeNames::translate);
-    if (maybe_translate_attribute.has_value() && (maybe_translate_attribute.value().is_empty() || maybe_translate_attribute.value().equals_ignoring_ascii_case("yes"sv)))
+    auto maybe_translate_attribute = get_attribute_value_view(HTML::AttributeNames::translate);
+    if (maybe_translate_attribute.has_value() && (maybe_translate_attribute.value().is_empty() || maybe_translate_attribute.value().equals_ignoring_ascii_case(u"yes"sv)))
         return TranslationMode::TranslateEnabled;
 
     // otherwise, if the element's translate attribute is in the No state, then the element's translation mode is in
     // the no-translate state.
-    if (maybe_translate_attribute.has_value() && maybe_translate_attribute.value().equals_ignoring_ascii_case("no"sv)) {
+    if (maybe_translate_attribute.has_value() && maybe_translate_attribute.value().equals_ignoring_ascii_case(u"no"sv)) {
         return TranslationMode::NoTranslate;
     }
 
@@ -4270,7 +4755,7 @@ static void prefetch_inline_style_image_resources(CSS::CSSStyleProperties const&
 }
 
 // https://dom.spec.whatwg.org/#concept-element-attributes-change-ext
-void Element::attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
+void Element::attribute_changed(Utf16FlyString const& local_name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
 {
     // AD-HOC: Everything below requires that there is no namespace, so return early if there is one.
     if (namespace_.has_value())
@@ -4284,11 +4769,11 @@ void Element::attribute_changed(FlyString const& local_name, Optional<String> co
             return;
 
         // 2. If value is null and oldValue is the empty string, then return.
-        if (!value.has_value() && old_value == String {})
+        if (!value.has_value() && old_value == Utf16String {})
             return;
 
         // 3. If value is the empty string and oldValue is null, then return.
-        if (value == String {} && !old_value.has_value())
+        if (value == Utf16String {} && !old_value.has_value())
             return;
 
         // 4. If value is null or the empty string, then set element’s name to the empty string.
@@ -4307,25 +4792,25 @@ void Element::attribute_changed(FlyString const& local_name, Optional<String> co
         return;
     }
 
-    auto value_or_empty = value.value_or(String {});
+    auto value_or_empty = value.has_value() ? value->utf16_view() : u""sv;
 
     if (local_name == HTML::AttributeNames::id) {
         if (value_or_empty.is_empty())
             m_id = {};
         else
-            m_id = value_or_empty;
+            m_id = Utf16FlyString::from_utf16(value_or_empty);
 
         if (is_connected()) {
-            Optional<FlyString> old_value_fly_string;
+            Optional<Utf16FlyString> old_id;
             if (old_value.has_value())
-                old_value_fly_string = *old_value;
-            document().element_id_changed({}, *this, old_value_fly_string);
+                old_id = Utf16FlyString::from_utf16(old_value->utf16_view());
+            document().element_id_changed({}, *this, old_id);
         }
     } else if (local_name == HTML::AttributeNames::name) {
         if (value_or_empty.is_empty())
             m_name = {};
         else
-            m_name = value_or_empty;
+            m_name = Utf16FlyString::from_utf16(value_or_empty);
 
         if (is_connected())
             document().element_name_changed({}, *this);
@@ -4333,12 +4818,11 @@ void Element::attribute_changed(FlyString const& local_name, Optional<String> co
         if (value_or_empty.is_empty()) {
             m_classes.clear();
         } else {
-            auto new_classes = value_or_empty.bytes_as_string_view().split_view_if(Infra::is_ascii_whitespace);
             m_classes.clear();
-            m_classes.ensure_capacity(new_classes.size());
-            for (auto& new_class : new_classes) {
-                m_classes.unchecked_append(FlyString::from_utf8(new_class).release_value_but_fixme_should_propagate_errors());
-            }
+            for_each_ascii_whitespace_separated_token(value_or_empty, [&](auto new_class) {
+                m_classes.append(Utf16FlyString::from_utf16(new_class));
+                return IterationDecision::Continue;
+            });
         }
         if (m_class_list)
             m_class_list->associated_attribute_changed(value_or_empty);
@@ -4348,35 +4832,48 @@ void Element::attribute_changed(FlyString const& local_name, Optional<String> co
             return;
         if (!m_inline_style)
             m_inline_style = CSS::CSSStyleProperties::create_element_inline_style({ *this }, {}, {});
-        m_inline_style->set_declarations_from_text(value.value_or(""_string));
+        m_inline_style->set_declarations_from_text(value_or_empty);
         prefetch_inline_style_image_resources(*m_inline_style, document());
         set_needs_style_update(true);
-    } else if (local_name == HTML::AttributeNames::dir) {
-        // https://html.spec.whatwg.org/multipage/dom.html#attr-dir
-        if (value_or_empty.equals_ignoring_ascii_case("ltr"sv))
-            m_dir = Dir::Ltr;
-        else if (value_or_empty.equals_ignoring_ascii_case("rtl"sv))
-            m_dir = Dir::Rtl;
-        else if (value_or_empty.equals_ignoring_ascii_case("auto"sv))
-            m_dir = Dir::Auto;
+    } else if (local_name == HTML::AttributeNames::dir || local_name == HTML::AttributeNames::lang) {
+        bool const is_dir = local_name == HTML::AttributeNames::dir;
+        if (is_dir) {
+            // https://html.spec.whatwg.org/multipage/dom.html#attr-dir
+            if (value_or_empty.equals_ignoring_ascii_case(u"ltr"sv))
+                m_dir = Dir::Ltr;
+            else if (value_or_empty.equals_ignoring_ascii_case(u"rtl"sv))
+                m_dir = Dir::Rtl;
+            else if (value_or_empty.equals_ignoring_ascii_case(u"auto"sv))
+                m_dir = Dir::Auto;
+            else
+                m_dir = {};
+        }
+        if (is_dir)
+            CSS::Invalidation::invalidate_style_after_directionality_change(*this);
         else
-            m_dir = {};
-    } else if (local_name == HTML::AttributeNames::lang) {
-        for_each_in_inclusive_subtree_of_type<Element>([](auto& element) {
-            element.invalidate_lang_value();
-            return TraversalDecision::Continue;
-        });
+            CSS::Invalidation::invalidate_style_after_language_change(*this);
     } else if (local_name == HTML::AttributeNames::part) {
         m_parts.clear();
         if (!value_or_empty.is_empty()) {
-            auto new_parts = value_or_empty.bytes_as_string_view().split_view_if(Infra::is_ascii_whitespace);
-            m_parts.clear();
-            m_parts.ensure_capacity(new_parts.size());
-            for (auto& new_part : new_parts)
-                m_parts.unchecked_append(MUST(FlyString::from_utf8(new_part)));
+            auto new_parts = value_or_empty;
+            auto append_part = [&](Utf16View new_part) {
+                if (!m_parts.contains_slow(new_part))
+                    m_parts.append(Utf16FlyString::from_utf16(new_part));
+            };
+            size_t start = 0;
+            for (size_t i = 0; i <= new_parts.length_in_code_units(); ++i) {
+                if (i != new_parts.length_in_code_units() && !Infra::is_ascii_whitespace(new_parts.code_unit_at(i)))
+                    continue;
+                if (i > start)
+                    append_part(new_parts.substring_view(start, i - start));
+                start = i + 1;
+            }
         }
         if (m_part_list)
             m_part_list->associated_attribute_changed(value_or_empty);
+        CSS::Invalidation::invalidate_style_after_part_attribute_change(*this);
+    } else if (local_name == HTML::AttributeNames::exportparts) {
+        CSS::Invalidation::invalidate_style_after_exportparts_attribute_change(*this);
     }
 
     // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#reflecting-content-attributes-in-idl-attributes:concept-element-attributes-change-ext
@@ -4412,7 +4909,7 @@ auto Element::ensure_custom_element_reaction_queue() -> CustomElementReactionQue
 HTML::CustomStateSet& Element::ensure_custom_state_set()
 {
     if (!m_custom_state_set)
-        m_custom_state_set = HTML::CustomStateSet::create(realm(), *this);
+        m_custom_state_set = HTML::CustomStateSet::create(*this);
     return *m_custom_state_set;
 }
 
@@ -4434,7 +4931,7 @@ ElementByIdMap& Element::document_or_shadow_root_element_by_id_map()
 }
 
 // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-gethtml
-WebIDL::ExceptionOr<String> Element::get_html(GetHTMLOptions const& options) const
+WebIDL::ExceptionOr<Utf16String> Element::get_html(HTMLSerializationOptions const& options) const
 {
     // Element's getHTML(options) method steps are to return the result
     // of HTML fragment serialization algorithm with this,
@@ -4446,24 +4943,16 @@ WebIDL::ExceptionOr<String> Element::get_html(GetHTMLOptions const& options) con
 }
 
 // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-sethtmlunsafe
-WebIDL::ExceptionOr<void> Element::set_html_unsafe(TrustedTypes::TrustedHTMLOrString const& html)
+WebIDL::ExceptionOr<void> Element::set_html_unsafe(StringView html)
 {
-    // 1. Let compliantHTML be the result of invoking the Get Trusted Type compliant string algorithm with
-    //    TrustedHTML, this's relevant global object, html, "Element setHTMLUnsafe", and "script".
-    auto const compliant_html = TRY(TrustedTypes::get_trusted_type_compliant_string(
-        TrustedTypes::TrustedTypeName::TrustedHTML,
-        HTML::relevant_global_object(*this),
-        html,
-        TrustedTypes::InjectionSink::Element_setHTMLUnsafe,
-        TrustedTypes::Script.to_string()));
-
     // 2. Let target be this's template contents if this is a template element; otherwise this.
-    DOM::Node* target = this;
+    Variant<GC::Ref<DOM::Element>, GC::Ref<DOM::DocumentFragment>> target = GC::Ref { *this };
     if (is<HTML::HTMLTemplateElement>(*this))
-        target = as<HTML::HTMLTemplateElement>(*this).content().ptr();
+        target = as<HTML::HTMLTemplateElement>(*this).content();
 
     // 3. Unsafe set HTML given target, this, and compliantHTML.
-    TRY(target->unsafely_set_html(*this, compliant_html.to_utf8_but_should_be_ported_to_utf16()));
+    auto markup = Utf16String::from_utf8(html);
+    TRY(unsafely_set_html(move(target), markup.utf16_view()));
 
     return {};
 }
@@ -4488,9 +4977,9 @@ void Element::set_counters_set(OwnPtr<CSS::CountersSet>&& counters_set)
 }
 
 // https://html.spec.whatwg.org/multipage/dom.html#the-lang-and-xml:lang-attributes
-Optional<String> Element::lang() const
+Optional<Utf16String> Element::lang() const
 {
-    auto determine_lang_attribute = [&]() -> String {
+    auto determine_lang_attribute = [&]() -> Utf16String {
         // 1. If the node is an element that has a lang attribute in the XML namespace set
         //      Use the value of that attribute.
         auto maybe_xml_lang = get_attribute_ns(Namespace::XML, HTML::AttributeNames::lang);
@@ -4507,26 +4996,28 @@ Optional<String> Element::lang() const
 
         // 3. If the node's parent is a shadow root
         //      Use the language of that shadow root's host.
-        if (auto parent = parent_element()) {
-            if (parent->is_shadow_root())
-                return parent->shadow_root()->host()->lang().value_or({});
+        if (auto* parent = this->parent(); parent && parent->is_shadow_root()) {
+            if (auto language = static_cast<ShadowRoot const&>(*parent).host()->lang(); language.has_value())
+                return language.release_value();
+            return {};
         }
 
         // 4. If the node's parent element is not null
         //      Use the language of that parent element.
-        if (auto parent = parent_element())
-            return parent->lang().value_or({});
+        if (auto parent = parent_element()) {
+            if (auto language = parent->lang(); language.has_value())
+                return language.release_value();
+            return {};
+        }
 
         // 5. Otherwise
         //      - If there is a pragma-set default language set, then that is the language of the node.
-        if (document().pragma_set_default_language().has_value()) {
-            return document().pragma_set_default_language().value_or({});
-        }
+        if (auto language = document().pragma_set_default_language(); language.has_value())
+            return language.release_value();
 
         //      - If there is no pragma-set default language set, then language information from a higher-level protocol (such as HTTP),
-        if (document().http_content_language().has_value()) {
-            return document().http_content_language().value_or({});
-        }
+        if (auto language = document().http_content_language(); language.has_value())
+            return language.release_value();
 
         //        if any, must be used as the final fallback language instead.
         //      - In the absence of any such language information, and in cases where the higher-level protocol reports multiple languages,
@@ -4545,42 +5036,20 @@ Optional<String> Element::lang() const
     return m_lang_value;
 }
 
+Optional<Utf16View> Element::lang_view() const
+{
+    if (!m_lang_value.has_value())
+        (void)lang();
+    if (m_lang_value->is_empty())
+        return {};
+    return m_lang_value->utf16_view();
+}
+
 void Element::invalidate_lang_value()
 {
     if (m_lang_value.has_value()) {
         m_lang_value.clear();
         set_needs_style_update(true);
-    }
-}
-
-template<typename Callback>
-void Element::for_each_numbered_item_owned_by_list_owner(Callback callback)
-{
-    for (auto* node = this->first_child(); node != nullptr; node = node->next_in_pre_order(this)) {
-        auto* element = as_if<Element>(node);
-        if (!element)
-            continue;
-
-        element->m_is_contained_in_list_subtree = true;
-
-        if (node->is_html_ol_ul_menu_element()) {
-            // Skip list nodes and their descendents. They have their own, unrelated ordinals.
-            while (node->last_child() != nullptr) // Find the last node (preorder) in the subtree headed by node. O(1).
-                node = node->last_child();
-
-            continue;
-        }
-
-        // NB: unsafe_layout_node() because list ordinal computation happens during style
-        //     recalculation when layout is inherently stale.
-        if (!node->unsafe_layout_node())
-            continue; // Skip nodes that do not participate in the layout.
-
-        if (!element->computed_properties()->display().is_list_item())
-            continue; // Skip nodes that are not list items.
-
-        if (callback(element) == IterationDecision::Break)
-            return;
     }
 }
 
@@ -4594,13 +5063,27 @@ bool Element::not_rendered() const
     return false;
 }
 
+bool Element::meets_focusable_area_rendering_requirements() const
+{
+    // https://html.spec.whatwg.org/multipage/interaction.html#focusable-area
+    // Elements can only be focusable areas if they are being rendered, delegating their rendering to
+    // their children, or being used as relevant canvas fallback content. Reject display: none
+    // subtrees without forcing layout; display: contents is intentionally allowed by this check.
+    if (!is_connected())
+        return false;
+
+    return const_cast<Element&>(*this).document().update_style_for_element(AbstractElement { *this }, Document::StyleUpdateMode::StopAtDisplayNone) != nullptr;
+}
+
 // https://drafts.csswg.org/css-view-transitions-1/#document-scoped-view-transition-name
-Optional<FlyString> Element::document_scoped_view_transition_name()
+Optional<Utf16FlyString> Element::document_scoped_view_transition_name()
 {
     // To get the document-scoped view transition name for an Element element:
 
     // 1. Let scopedViewTransitionName be the computed value of view-transition-name for element.
-    auto scoped_view_transition_name = computed_properties()->view_transition_name();
+    auto computed_values = this->computed_values();
+    VERIFY(computed_values);
+    auto scoped_view_transition_name = computed_values->view_transition_name();
 
     // 2. If scopedViewTransitionName is associated with element’s node document, then return
     //    scopedViewTransitionName.
@@ -4616,10 +5099,11 @@ Optional<FlyString> Element::document_scoped_view_transition_name()
 
 // https://drafts.csswg.org/css-view-transitions-1/#capture-the-image
 // To capture the image given an element element, perform the following steps. They return an image.
-RefPtr<Gfx::ImmutableBitmap> Element::capture_the_image()
+Optional<Gfx::DecodedImageFrame> Element::capture_the_image()
 {
     // FIXME: Actually implement this.
-    return Gfx::ImmutableBitmap::create(MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, Gfx::IntSize(1, 1))));
+    auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, Gfx::IntSize(1, 1)));
+    return Gfx::DecodedImageFrame { *bitmap };
 }
 
 void Element::set_pointer_capture(WebIDL::Long pointer_id)
@@ -4653,7 +5137,7 @@ GC::Ptr<NamedNodeMap const> Element::attributes() const
     return const_cast<Element&>(*this).attributes();
 }
 
-FlyString const& Element::html_uppercased_qualified_name() const
+Utf16FlyString const& Element::html_uppercased_qualified_name() const
 {
     return m_html_uppercased_qualified_name.ensure([&] { return make_html_uppercased_qualified_name(); });
 }
@@ -4668,27 +5152,35 @@ void Element::play_or_cancel_animations_after_display_property_change()
     if (!is_connected())
         return;
 
-    // https://www.w3.org/TR/css-animations-1/#animations
-    // Setting the display property to none will terminate any running animation applied to the element and its descendants.
-    // If an element has a display of none, updating display to a value other than none will start all animations applied to
-    // the element by the animation-name property, as well as all animations applied to descendants with display other than none.
+    // https://drafts.csswg.org/css-animations-2/#owning-element-section
+    // If the display property of an element is set to none and its display value would compute to none when ignoring
+    // the Transitions and Animations cascade origins, then terminate running animations with this owning element. If
+    // an element has a display of none and its display value had computed to none when ignoring the Transitions and
+    // Animations cascade origins, updating display to a value other than none will start all animations applied to
+    // the element by the animation-name property.
 
-    auto has_display_none_inclusive_ancestor = this->has_inclusive_ancestor_with_display_none();
+    // FIXME: What does it mean that "is set to none" is separate from "would compute to none...", do we need to check
+    //        the cascaded value as well?
 
-    auto play_or_cancel_depending_on_display = [&](HashMap<FlyString, GC::Ref<CSS::CSSAnimation>>& animations) {
-        for (auto& [_, animation] : animations) {
-            if (has_display_none_inclusive_ancestor) {
+    // AD-HOC: Other browsers also check for ancestors which meet the above criteria, so we do that as well.
+    // FIXME: Do we need to open a spec issue for this?
+
+    auto has_inclusive_ancestor_with_display_none_ignoring_animations = this->has_inclusive_ancestor_with_display_none_ignoring_animations();
+
+    auto play_or_cancel_depending_on_display = [&](Vector<GC::Ref<CSS::CSSAnimation>> const& animations) {
+        for (auto& animation : animations) {
+            if (has_inclusive_ancestor_with_display_none_ignoring_animations) {
                 animation->cancel();
             } else {
                 // NOTE: It is safe to assume this has a value as it is set when creating a CSS defined animation
                 auto play_state = animation->last_css_animation_play_state().value();
 
                 if (play_state == CSS::AnimationPlayState::Running) {
-                    HTML::TemporaryExecutionContext context(realm());
-                    animation->play().release_value_but_fixme_should_propagate_errors();
+                    HTML::TemporaryExecutionContext context(document().relevant_settings_object());
+                    animation->play_from_css();
                 } else if (play_state == CSS::AnimationPlayState::Paused) {
-                    HTML::TemporaryExecutionContext context(realm());
-                    animation->pause().release_value_but_fixme_should_propagate_errors();
+                    HTML::TemporaryExecutionContext context(document().relevant_settings_object());
+                    animation->pause_from_css();
                 }
             }
         }
@@ -4742,7 +5234,8 @@ bool Element::should_indicate_focus() const
 // https://html.spec.whatwg.org/multipage/interaction.html#tabindex-value
 bool Element::is_focusable() const
 {
-    return HTML::parse_integer(get_attribute_value(HTML::AttributeNames::tabindex)).has_value();
+    return HTML::parse_integer(get_attribute_value_view(HTML::AttributeNames::tabindex).value_or({})).has_value()
+        && meets_focusable_area_rendering_requirements();
 }
 
 void Element::set_had_duplicate_attribute_during_tokenization(Badge<HTML::HTMLParser>)
@@ -4766,7 +5259,7 @@ GC::Ref<CSS::StylePropertyMapReadOnly> Element::computed_style_map()
     // NOTE: In practice, since the values are "hidden" behind a .get() method call, UAs can delay computing anything
     //    until a given property is actually requested.
     if (m_computed_style_map_cache == nullptr) {
-        m_computed_style_map_cache = CSS::StylePropertyMapReadOnly::create_computed_style(realm(), AbstractElement { *this });
+        m_computed_style_map_cache = CSS::StylePropertyMapReadOnly::create_computed_style(AbstractElement { *this });
     }
 
     // 2. Return this’s [[computedStyleMapCache]] internal slot.
@@ -4786,19 +5279,21 @@ double Element::ensure_css_random_base_value(CSS::RandomCachingKey const& random
     });
 }
 
-GC::Ref<WebIDL::Promise> Element::request_pointer_lock(Optional<PointerLockOptions>)
+WebIDL::ExceptionOr<void> Element::request_pointer_lock(PointerLockOptions const&)
 {
     dbgln("FIXME: request_pointer_lock()");
-    auto promise = WebIDL::create_promise(realm());
-    auto error = WebIDL::NotSupportedError::create(realm(), "request_pointer_lock() is not implemented"_utf16);
-    WebIDL::reject_promise(realm(), promise, error);
-    return promise;
+    return WebIDL::NotSupportedError::create("request_pointer_lock() is not implemented"_utf16);
 }
 
 // The element to inherit style from.
 // If a pseudo-element is specified, this will return the element itself.
 // Otherwise, if this element is slotted somewhere, it will return the slot.
 // Otherwise, it will return the parent or shadow host element of this element.
+//
+// The slot case is specified in https://drafts.csswg.org/css-shadow-1/#slots-in-shadow-tree:
+// NOTE: A non-obvious result of assigning elements to slots is that they inherit from the slot they're assigned to.
+//       Their original light tree parent, and any deeper slots that their slot gets assigned to, don't affect
+//       inheritance.
 GC::Ptr<Element const> Element::element_to_inherit_style_from(Optional<CSS::PseudoElement> pseudo_element) const
 {
     if (pseudo_element.has_value())
@@ -4837,6 +5332,214 @@ bool Element::is_potentially_render_blocking()
     // FIXME: its blocking tokens set contains "render",
     // or if it is implicitly potentially render-blocking, which will be defined at the individual elements.
     return is_implicitly_potentially_render_blocking();
+}
+
+}
+
+namespace Web::Bindings {
+
+struct PerElementReflectedArrayCache {
+    HashMap<FlyString, WrapperWorldWeakValueCache<JS::Array>> arrays_by_attribute;
+};
+
+static GC::WeakHashMap<DOM::Element, PerElementReflectedArrayCache>& reflected_element_array_caches()
+{
+    static NeverDestroyed<GC::WeakHashMap<DOM::Element, PerElementReflectedArrayCache>> caches;
+    return *caches;
+}
+
+static WrapperWorldWeakValueCache<JS::Array>& reflected_element_array_cache_for(DOM::Element& element, FlyString const& reflected_attribute)
+{
+    auto& per_element = reflected_element_array_caches().ensure(element);
+    return per_element.arrays_by_attribute.ensure(reflected_attribute);
+}
+
+GC::Ptr<JS::Array> cached_reflected_element_array(DOM::Element& element, WrapperWorld const& wrapper_world, FlyString const& reflected_attribute)
+{
+    return reflected_element_array_cache_for(element, reflected_attribute).get(wrapper_world);
+}
+
+GC::Ptr<JS::Array> cached_reflected_element_array(DOM::Element& element, WrapperWorld const& wrapper_world, Utf16FlyString const& reflected_attribute)
+{
+    return cached_reflected_element_array(element, wrapper_world, FlyString { reflected_attribute.to_utf16_string().to_utf8() });
+}
+
+void set_cached_reflected_element_array(DOM::Element& element, WrapperWorld const& wrapper_world, FlyString const& reflected_attribute, GC::Ptr<JS::Array> array)
+{
+    reflected_element_array_cache_for(element, reflected_attribute).set(wrapper_world, array);
+}
+
+void set_cached_reflected_element_array(DOM::Element& element, WrapperWorld const& wrapper_world, Utf16FlyString const& reflected_attribute, GC::Ptr<JS::Array> array)
+{
+    set_cached_reflected_element_array(element, wrapper_world, FlyString { reflected_attribute.to_utf16_string().to_utf8() }, array);
+}
+
+// Used by generated [SameObject] cache checks for reflected element arrays.
+bool cached_reflected_element_array_contains_same_elements(GC::Ptr<JS::Array> array, Optional<GC::RootVector<GC::Ref<DOM::Element>>> const& elements)
+{
+    if (!array || !elements.has_value())
+        return !array && !elements.has_value();
+
+    bool is_equivalent = array->indexed_array_like_size() == elements->size();
+
+    for (size_t i = 0; is_equivalent && i < elements->size(); ++i) {
+        auto cached_value = array->get_without_side_effects(JS::PropertyKey { i });
+        auto const* cached_element = element_from_value(cached_value);
+        VERIFY(cached_element);
+
+        auto it = elements->find_if([&](auto const& element) { return element.ptr() == cached_element; });
+        if (it == elements->end())
+            is_equivalent = false;
+    }
+
+    return is_equivalent;
+}
+
+JS::Value element(JS::Realm& realm, GC::Ref<DOM::Element> element)
+{
+    return wrap(host_defined_wrapper_world(realm), realm, element);
+}
+
+DOM::Element* element_from_value(JS::Value value)
+{
+    if (!value.is_object())
+        return nullptr;
+    return Bindings::impl_from<DOM::Element>(&value.as_object());
+}
+
+static GC::Ref<Geometry::DOMRect> create_dom_rect(CSSPixelRect const& rect)
+{
+    return Geometry::DOMRect::create(static_cast<double>(rect.x()), static_cast<double>(rect.y()), static_cast<double>(rect.width()), static_cast<double>(rect.height()));
+}
+
+GC::Ref<Geometry::DOMRect> get_bounding_client_rect(DOM::Element const& element)
+{
+    return create_dom_rect(element.get_bounding_client_rect());
+}
+
+GC::Ref<Geometry::DOMRectList> get_client_rects(DOM::Element const& element)
+{
+    Vector<GC::Root<Geometry::DOMRect>> rects;
+    for (auto const& rect : element.get_client_rects())
+        rects.append(create_dom_rect(rect));
+
+    return Geometry::DOMRectList::create(move(rects));
+}
+
+GC::Ref<WebIDL::Promise> request_pointer_lock(DOM::Element& element, Optional<PointerLockOptions> const& options)
+{
+    DOM::Element::PointerLockOptions dom_options;
+    if (options.has_value()) {
+        dom_options = DOM::Element::PointerLockOptions {
+            .unadjusted_movement = options->unadjusted_movement,
+        };
+    }
+    auto promise = WebIDL::create_promise_for(element);
+    auto result = element.request_pointer_lock(dom_options);
+    if (result.is_error())
+        WebIDL::reject_promise_with_exception(promise, result.release_error());
+    else
+        WebIDL::resolve_promise(promise);
+    return promise;
+}
+
+WebIDL::ExceptionOr<TrustedTypes::TrustedHTMLOrString> inner_html(DOM::Element& element)
+{
+    return TRY(element.inner_html());
+}
+
+WebIDL::ExceptionOr<void> set_inner_html(DOM::Element& element, TrustedTypes::TrustedHTMLOrString const& value)
+{
+    // 1. Let compliantString be the result of invoking the Get Trusted Type compliant string algorithm with
+    //    TrustedHTML, this's relevant global object, the given value, "Element innerHTML", and "script".
+    auto const compliant_string = TRY(TrustedTypes::get_trusted_type_compliant_string(
+        TrustedTypes::TrustedTypeName::TrustedHTML,
+        HTML::relevant_global_object(element),
+        value,
+        TrustedTypes::InjectionSink::Element_innerHTML,
+        "script"sv));
+
+    return element.set_inner_html(compliant_string.to_utf8_but_should_be_ported_to_utf16());
+}
+
+WebIDL::ExceptionOr<TrustedTypes::TrustedHTMLOrString> outer_html(DOM::Element& element)
+{
+    return TRY(element.outer_html());
+}
+
+WebIDL::ExceptionOr<void> set_outer_html(DOM::Element& element, TrustedTypes::TrustedHTMLOrString const& value)
+{
+    // 1. Let compliantString be the result of invoking the Get Trusted Type compliant string algorithm with
+    //    TrustedHTML, this's relevant global object, the given value, "Element outerHTML", and "script".
+    auto const compliant_string = TRY(TrustedTypes::get_trusted_type_compliant_string(
+        TrustedTypes::TrustedTypeName::TrustedHTML,
+        HTML::relevant_global_object(element),
+        value,
+        TrustedTypes::InjectionSink::Element_outerHTML,
+        "script"sv));
+
+    return element.set_outer_html(compliant_string.to_utf8_but_should_be_ported_to_utf16());
+}
+
+WebIDL::ExceptionOr<void> set_html_unsafe(DOM::Element& element, Variant<GC::Ref<TrustedTypes::TrustedHTML>, Utf16String> const& html)
+{
+    // 1. Let compliantHTML be the result of invoking the Get Trusted Type compliant string algorithm with
+    //    TrustedHTML, this's relevant global object, html, "Element setHTMLUnsafe", and "script".
+    auto const compliant_html = TRY(TrustedTypes::get_trusted_type_compliant_string(
+        TrustedTypes::TrustedTypeName::TrustedHTML,
+        HTML::relevant_global_object(element),
+        html,
+        TrustedTypes::InjectionSink::Element_setHTMLUnsafe,
+        "script"sv));
+
+    return element.set_html_unsafe(compliant_html.to_utf8_but_should_be_ported_to_utf16());
+}
+
+WebIDL::ExceptionOr<void> insert_adjacent_html(DOM::Element& element, Utf16String const& position, Variant<GC::Ref<TrustedTypes::TrustedHTML>, Utf16String> const& text)
+{
+    // 1. Let compliantString be the result of invoking the Get Trusted Type compliant string algorithm with
+    //    TrustedHTML, this's relevant global object, string, "Element insertAdjacentHTML", and "script".
+    auto const compliant_string = TRY(TrustedTypes::get_trusted_type_compliant_string(
+        TrustedTypes::TrustedTypeName::TrustedHTML,
+        HTML::relevant_global_object(element),
+        text,
+        TrustedTypes::InjectionSink::Element_insertAdjacentHTML,
+        "script"sv));
+
+    return element.insert_adjacent_html(position.to_utf8(), compliant_string.to_utf8_but_should_be_ported_to_utf16());
+}
+
+WebIDL::ExceptionOr<void> set_attribute(DOM::Element& element, Utf16String const& qualified_name, Variant<GC::Ref<TrustedTypes::TrustedHTML>, GC::Ref<TrustedTypes::TrustedScript>, GC::Ref<TrustedTypes::TrustedScriptURL>, Utf16String> const& value)
+{
+    auto utf16_qualified_name = Utf16FlyString::from_utf16(qualified_name.utf16_view());
+    auto qualified_name_string = qualified_name;
+    if (!DOM::is_valid_attribute_local_name(qualified_name_string.utf16_view()))
+        return WebIDL::InvalidCharacterError::create("Attribute name must not be empty or contain invalid characters"_utf16);
+
+    if (element.namespace_uri() == Namespace::HTML && element.document().document_type() == DOM::Document::Type::HTML)
+        utf16_qualified_name = utf16_qualified_name.to_ascii_lowercase();
+
+    auto const verified_value = TRY(TrustedTypes::get_trusted_types_compliant_attribute_value(utf16_qualified_name, {}, element, value));
+    element.set_attribute(FlyString { utf16_qualified_name.to_utf16_string().to_utf8() }, verified_value);
+    return {};
+}
+
+WebIDL::ExceptionOr<void> set_attribute_ns(DOM::Element& element, Optional<Utf16FlyString> const& namespace_, Utf16FlyString const& qualified_name, Variant<GC::Ref<TrustedTypes::TrustedHTML>, GC::Ref<TrustedTypes::TrustedScript>, GC::Ref<TrustedTypes::TrustedScriptURL>, Utf16String> const& value)
+{
+    auto namespace_utf8 = namespace_.map([](auto const& value) { return FlyString { value.to_utf16_string().to_utf8() }; });
+    auto qualified_name_utf8 = FlyString { qualified_name.to_utf16_string().to_utf8() };
+    auto extracted_qualified_name_or_error = DOM::validate_and_extract(namespace_utf8, qualified_name_utf8, DOM::ValidationContext::Attribute);
+    if (extracted_qualified_name_or_error.is_error())
+        return DOM::validate_and_extract_error_to_dom_exception(extracted_qualified_name_or_error.release_error());
+    auto extracted_qualified_name = extracted_qualified_name_or_error.release_value();
+
+    auto const verified_value = TRY(TrustedTypes::get_trusted_types_compliant_attribute_value(
+        extracted_qualified_name.local_name(),
+        extracted_qualified_name.namespace_().has_value() ? Optional<Utf16FlyString> { extracted_qualified_name.namespace_().value() } : Optional<Utf16FlyString> {},
+        element,
+        value));
+    element.set_attribute_ns(extracted_qualified_name, verified_value);
+    return {};
 }
 
 }

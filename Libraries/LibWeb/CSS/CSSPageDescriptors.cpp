@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/CSSPageDescriptorsPrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/CSS/CSSPageDescriptors.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
@@ -13,112 +12,111 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSPageDescriptors);
 
-GC::Ref<CSSPageDescriptors> CSSPageDescriptors::create(JS::Realm& realm, Vector<Descriptor> descriptors)
+GC::Ref<CSSPageDescriptors> CSSPageDescriptors::create(Vector<Descriptor> descriptors)
 {
-    return realm.create<CSSPageDescriptors>(realm, move(descriptors));
+    return GC::Heap::the().allocate<CSSPageDescriptors>(move(descriptors));
 }
 
-CSSPageDescriptors::CSSPageDescriptors(JS::Realm& realm, Vector<Descriptor> descriptors)
-    : CSSDescriptors(realm, AtRuleID::Page, move(descriptors))
+CSSPageDescriptors::CSSPageDescriptors(Vector<Descriptor> descriptors)
+    : CSSDescriptors(AtRuleID::Page, move(descriptors))
 {
 }
 
 CSSPageDescriptors::~CSSPageDescriptors() = default;
 
-void CSSPageDescriptors::initialize(JS::Realm& realm)
+static Utf16String get_property_value_as_utf16(CSSPageDescriptors const& descriptors, Utf16FlyString const& property)
 {
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSPageDescriptors);
-    Base::initialize(realm);
+    return descriptors.get_property_value(property);
 }
 
-WebIDL::ExceptionOr<void> CSSPageDescriptors::set_margin(StringView value)
+WebIDL::ExceptionOr<void> CSSPageDescriptors::set_margin(Utf16View value)
 {
-    return set_property("margin"_fly_string, value, ""sv);
+    return set_property("margin"_utf16_fly_string, value, u""sv);
 }
 
-String CSSPageDescriptors::margin() const
+Utf16String CSSPageDescriptors::margin() const
 {
-    return get_property_value("margin"_fly_string);
+    return get_property_value_as_utf16(*this, "margin"_utf16_fly_string);
 }
 
-WebIDL::ExceptionOr<void> CSSPageDescriptors::set_margin_top(StringView value)
+WebIDL::ExceptionOr<void> CSSPageDescriptors::set_margin_top(Utf16View value)
 {
-    return set_property("margin-top"_fly_string, value, ""sv);
+    return set_property("margin-top"_utf16_fly_string, value, u""sv);
 }
 
-String CSSPageDescriptors::margin_top() const
+Utf16String CSSPageDescriptors::margin_top() const
 {
-    return get_property_value("margin-top"_fly_string);
+    return get_property_value_as_utf16(*this, "margin-top"_utf16_fly_string);
 }
 
-WebIDL::ExceptionOr<void> CSSPageDescriptors::set_margin_right(StringView value)
+WebIDL::ExceptionOr<void> CSSPageDescriptors::set_margin_right(Utf16View value)
 {
-    return set_property("margin-right"_fly_string, value, ""sv);
+    return set_property("margin-right"_utf16_fly_string, value, u""sv);
 }
 
-String CSSPageDescriptors::margin_right() const
+Utf16String CSSPageDescriptors::margin_right() const
 {
-    return get_property_value("margin-right"_fly_string);
+    return get_property_value_as_utf16(*this, "margin-right"_utf16_fly_string);
 }
 
-WebIDL::ExceptionOr<void> CSSPageDescriptors::set_margin_bottom(StringView value)
+WebIDL::ExceptionOr<void> CSSPageDescriptors::set_margin_bottom(Utf16View value)
 {
-    return set_property("margin-bottom"_fly_string, value, ""sv);
+    return set_property("margin-bottom"_utf16_fly_string, value, u""sv);
 }
 
-String CSSPageDescriptors::margin_bottom() const
+Utf16String CSSPageDescriptors::margin_bottom() const
 {
-    return get_property_value("margin-bottom"_fly_string);
+    return get_property_value_as_utf16(*this, "margin-bottom"_utf16_fly_string);
 }
 
-WebIDL::ExceptionOr<void> CSSPageDescriptors::set_margin_left(StringView value)
+WebIDL::ExceptionOr<void> CSSPageDescriptors::set_margin_left(Utf16View value)
 {
-    return set_property("margin-left"_fly_string, value, ""sv);
+    return set_property("margin-left"_utf16_fly_string, value, u""sv);
 }
 
-String CSSPageDescriptors::margin_left() const
+Utf16String CSSPageDescriptors::margin_left() const
 {
-    return get_property_value("margin-left"_fly_string);
+    return get_property_value_as_utf16(*this, "margin-left"_utf16_fly_string);
 }
 
-WebIDL::ExceptionOr<void> CSSPageDescriptors::set_size(StringView value)
+WebIDL::ExceptionOr<void> CSSPageDescriptors::set_size(Utf16View value)
 {
-    return set_property("size"_fly_string, value, ""sv);
+    return set_property("size"_utf16_fly_string, value, u""sv);
 }
 
-String CSSPageDescriptors::size() const
+Utf16String CSSPageDescriptors::size() const
 {
-    return get_property_value("size"_fly_string);
+    return get_property_value_as_utf16(*this, "size"_utf16_fly_string);
 }
 
-WebIDL::ExceptionOr<void> CSSPageDescriptors::set_page_orientation(StringView value)
+WebIDL::ExceptionOr<void> CSSPageDescriptors::set_page_orientation(Utf16View value)
 {
-    return set_property("page-orientation"_fly_string, value, ""sv);
+    return set_property("page-orientation"_utf16_fly_string, value, u""sv);
 }
 
-String CSSPageDescriptors::page_orientation() const
+Utf16String CSSPageDescriptors::page_orientation() const
 {
-    return get_property_value("page-orientation"_fly_string);
+    return get_property_value_as_utf16(*this, "page-orientation"_utf16_fly_string);
 }
 
-WebIDL::ExceptionOr<void> CSSPageDescriptors::set_marks(StringView value)
+WebIDL::ExceptionOr<void> CSSPageDescriptors::set_marks(Utf16View value)
 {
-    return set_property("marks"_fly_string, value, ""sv);
+    return set_property("marks"_utf16_fly_string, value, u""sv);
 }
 
-String CSSPageDescriptors::marks() const
+Utf16String CSSPageDescriptors::marks() const
 {
-    return get_property_value("marks"_fly_string);
+    return get_property_value_as_utf16(*this, "marks"_utf16_fly_string);
 }
 
-WebIDL::ExceptionOr<void> CSSPageDescriptors::set_bleed(StringView value)
+WebIDL::ExceptionOr<void> CSSPageDescriptors::set_bleed(Utf16View value)
 {
-    return set_property("bleed"_fly_string, value, ""sv);
+    return set_property("bleed"_utf16_fly_string, value, u""sv);
 }
 
-String CSSPageDescriptors::bleed() const
+Utf16String CSSPageDescriptors::bleed() const
 {
-    return get_property_value("bleed"_fly_string);
+    return get_property_value_as_utf16(*this, "bleed"_utf16_fly_string);
 }
 
 }

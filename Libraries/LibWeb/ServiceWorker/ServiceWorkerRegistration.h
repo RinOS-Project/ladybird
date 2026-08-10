@@ -6,17 +6,18 @@
 
 #pragma once
 
+#include <LibWeb/Bindings/ServiceWorkerRegistration.h>
 #include <LibWeb/DOM/EventTarget.h>
 
 namespace Web::ServiceWorker {
 
 // https://w3c.github.io/ServiceWorker/#serviceworkerregistration-interface
 class ServiceWorkerRegistration : public DOM::EventTarget {
-    WEB_PLATFORM_OBJECT(ServiceWorkerRegistration, DOM::EventTarget);
+    WEB_WRAPPABLE(ServiceWorkerRegistration, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(ServiceWorkerRegistration);
 
 public:
-    [[nodiscard]] static GC::Ref<ServiceWorkerRegistration> create(JS::Realm& realm, Registration const& registration);
+    [[nodiscard]] static GC::Ref<ServiceWorkerRegistration> create(Registration const& registration);
 
     Registration const& registration() { return m_registration; }
 
@@ -30,16 +31,19 @@ public:
     void set_active(GC::Ptr<ServiceWorker> active) { m_active = active; }
 
     // https://w3c.github.io/ServiceWorker/#dom-serviceworkerregistration-scope
-    String scope() const { return m_registration.scope_url().serialize(); }
+    Utf16String scope() const
+    {
+        auto serialized_url = m_registration.scope_url().serialize();
+        return Utf16String::from_ascii_without_validation(serialized_url.bytes());
+    }
 
     // https://w3c.github.io/ServiceWorker/#dom-serviceworkerregistration-updateviacache
-    Bindings::ServiceWorkerUpdateViaCache update_via_cache() const { return m_registration.update_via_cache(); }
+    ServiceWorkerUpdateViaCache update_via_cache() const { return m_registration.update_via_cache(); }
 
-    explicit ServiceWorkerRegistration(JS::Realm&, Registration const&);
+    explicit ServiceWorkerRegistration(Registration const&);
     virtual ~ServiceWorkerRegistration() override = default;
 
 private:
-    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
     Registration const& m_registration;

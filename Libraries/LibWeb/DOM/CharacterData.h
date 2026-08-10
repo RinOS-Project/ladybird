@@ -21,14 +21,14 @@ class WEB_API CharacterData
     : public Node
     , public ChildNode<CharacterData>
     , public NonDocumentTypeChildNode<CharacterData> {
-    WEB_PLATFORM_OBJECT(CharacterData, Node);
+    WEB_WRAPPABLE(CharacterData, Node);
     GC_DECLARE_ALLOCATOR(CharacterData);
 
 public:
     virtual ~CharacterData() override;
 
     Utf16String const& data() const { return m_data; }
-    void set_data(Utf16String const&);
+    void set_data(Utf16View const&);
 
     unsigned length_in_utf16_code_units() const { return m_data.length_in_code_units(); }
 
@@ -45,9 +45,9 @@ public:
 protected:
     CharacterData(Document&, NodeType, Utf16String);
 
-    virtual void initialize(JS::Realm&) override;
-
 private:
+    virtual size_t external_memory_size() const override;
+
     Utf16String m_data;
 
     mutable OwnPtr<Unicode::Segmenter> m_grapheme_segmenter;

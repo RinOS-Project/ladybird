@@ -170,7 +170,7 @@ GC_DEFINE_ALLOCATOR(ConcatIterator);
 // 27.1.3.2.1 Iterator.concat ( ...items ), https://tc39.es/ecma262/#sec-iterator.concat
 JS_DEFINE_NATIVE_FUNCTION(IteratorConstructor::concat)
 {
-    static Bytecode::StaticPropertyLookupCache cache;
+    static auto& cache = *new Bytecode::StaticPropertyLookupCache;
     auto& realm = *vm.current_realm();
 
     // 1. Let iterables be a new empty List.
@@ -261,7 +261,7 @@ public:
         // b. Repeat,
 
         // i. Let results be a new empty List.
-        GC::RootVector<Value> results { vm.heap() };
+        GC::RootVector<Value> results;
 
         // ii. Assert: openIters is not empty.
         VERIFY(!m_open_iterators.is_empty());
@@ -488,7 +488,7 @@ static ThrowCompletionOr<ZipMode> get_zip_mode(VM& vm, Object const& options)
 
     // 5. If mode is not one of "shortest", "longest", or "strict", throw a TypeError exception.
     if (mode.is_string()) {
-        auto mode_string = mode.as_string().utf8_string_view();
+        auto mode_string = mode.as_string().utf16_string_view();
 
         if (mode_string == "shortest"sv)
             return ZipMode::Shortest;

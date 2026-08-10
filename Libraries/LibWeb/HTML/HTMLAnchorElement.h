@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Utf16View.h>
 #include <LibWeb/HTML/HTMLElement.h>
 #include <LibWeb/HTML/HTMLHyperlinkElementUtils.h>
 
@@ -14,7 +15,7 @@ namespace Web::HTML {
 class HTMLAnchorElement final
     : public HTMLElement
     , public HTMLHyperlinkElementUtils {
-    WEB_PLATFORM_OBJECT(HTMLAnchorElement, HTMLElement);
+    WEB_WRAPPABLE(HTMLAnchorElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLAnchorElement);
 
 public:
@@ -22,18 +23,24 @@ public:
 
     virtual Optional<URL::Origin> extract_an_origin() const override { return hyperlink_element_utils_extract_an_origin(); }
 
-    String rel() const { return get_attribute_value(HTML::AttributeNames::rel); }
-    String target() const { return get_attribute_value(HTML::AttributeNames::target); }
-    String download() const { return get_attribute_value(HTML::AttributeNames::download); }
+    Utf16String rel() const { return get_attribute_value(HTML::AttributeNames::rel); }
+    void set_rel(Utf16View rel) { set_attribute_value(HTML::AttributeNames::rel, rel); }
+
+    Utf16String download() const { return get_attribute_value(HTML::AttributeNames::download); }
+    void set_download(Utf16View download) { set_attribute_value(HTML::AttributeNames::download, download); }
 
     GC::Ref<DOM::DOMTokenList> rel_list();
 
     Utf16String text() const;
-    void set_text(Utf16String const&);
+    void set_text(Utf16View);
 
     // ^EventTarget
     // https://html.spec.whatwg.org/multipage/interaction.html#the-tabindex-attribute:the-a-element
-    virtual bool is_focusable() const override { return Base::is_focusable() || has_attribute(HTML::AttributeNames::href); }
+    virtual bool is_focusable() const override
+    {
+        return (Base::is_focusable() || has_attribute(HTML::AttributeNames::href))
+            && meets_focusable_area_rendering_requirements();
+    }
 
     virtual bool is_html_anchor_element() const override { return true; }
 
@@ -41,8 +48,6 @@ private:
     HTMLAnchorElement(DOM::Document&, DOM::QualifiedName);
 
     bool has_download_preference() const;
-
-    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     // ^DOM::EventTarget
@@ -50,10 +55,10 @@ private:
     virtual void activation_behavior(Web::DOM::Event const&) override;
 
     // ^DOM::Element
-    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
     virtual i32 default_tab_index_value() const override;
 
-    // ^HTML::HTMLHyperlinkElementUtils
+    // ^HTML::HyperlinkElementUtils
     virtual DOM::Element& hyperlink_element_utils_element() override { return *this; }
     virtual DOM::Element const& hyperlink_element_utils_element() const override { return *this; }
 

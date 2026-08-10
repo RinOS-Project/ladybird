@@ -1,14 +1,10 @@
-#import <DOM/EventHandler.idl>
-#import <DOM/EventTarget.idl>
-#import <Speech/SpeechGrammarList.idl>
-
 // https://wicg.github.io/speech-api/#speechrecognition
 [Exposed=Window]
 interface SpeechRecognition : EventTarget {
     constructor();
 
     attribute SpeechGrammarList grammars;
-    attribute DOMString lang;
+    attribute Utf16DOMString lang;
     attribute boolean continuous;
     attribute boolean interimResults;
     attribute unsigned long maxAlternatives;

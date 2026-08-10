@@ -4,10 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/Runtime/Realm.h>
-#include <LibJS/Runtime/VM.h>
-#include <LibWeb/Bindings/AudioTrackListPrototype.h>
-#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibGC/Heap.h>
 #include <LibWeb/HTML/AudioTrackList.h>
 #include <LibWeb/HTML/EventNames.h>
 
@@ -15,50 +12,44 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(AudioTrackList);
 
-AudioTrackList::AudioTrackList(JS::Realm& realm)
-    : DOM::EventTarget(realm, MayInterfereWithIndexedPropertyAccess::Yes)
+AudioTrackList::AudioTrackList()
+    : DOM::EventTarget()
 {
 }
 
-void AudioTrackList::initialize(JS::Realm& realm)
+GC::Ref<AudioTrackList> AudioTrackList::create()
 {
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(AudioTrackList);
-    Base::initialize(realm);
+    return GC::Heap::the().allocate<AudioTrackList>();
 }
 
-// https://html.spec.whatwg.org/multipage/media.html#dom-tracklist-item
-JS::ThrowCompletionOr<Optional<JS::PropertyDescriptor>> AudioTrackList::internal_get_own_property(JS::PropertyKey const& property_name) const
+GC::Ptr<AudioTrack> AudioTrackList::item(size_t index) const
 {
     // To determine the value of an indexed property for a given index index in an AudioTrackList or VideoTrackList
     // object list, the user agent must return the AudioTrack or VideoTrack object that represents the indexth track
     // in list.
-    if (property_name.is_number()) {
-        if (auto index = property_name.as_number(); index < m_audio_tracks.size()) {
-            JS::PropertyDescriptor descriptor;
-            descriptor.value = m_audio_tracks.at(index);
+    if (index >= m_audio_tracks.size())
+        return nullptr;
 
-            return descriptor;
-        }
-    }
-
-    return Base::internal_get_own_property(property_name);
+    return m_audio_tracks.at(index);
 }
 
-void AudioTrackList::add_track(Badge<HTMLMediaElement>, GC::Ref<AudioTrack> audio_track)
+void AudioTrackList::add_track(GC::Ref<AudioTrack> audio_track)
 {
     m_audio_tracks.append(audio_track);
     audio_track->set_audio_track_list({}, this);
 }
 
-void AudioTrackList::remove_all_tracks(Badge<HTMLMediaElement>)
+void AudioTrackList::remove_all_tracks()
 {
-    for (auto& audio_track : m_audio_tracks)
+    for (auto& audio_track : m_audio_tracks) {
         audio_track->set_enabled(false);
+        audio_track->set_audio_track_list({}, nullptr);
+    }
     m_audio_tracks.clear();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-audiotracklist-gettrackbyid
-GC::Ptr<AudioTrack> AudioTrackList::get_track_by_id(StringView id) const
+GC::Ptr<AudioTrack> AudioTrackList::get_track_by_id(Utf16View id) const
 {
     // The AudioTrackList getTrackById(id) and VideoTrackList getTrackById(id) methods must return the first AudioTrack
     // or VideoTrack object (respectively) in the AudioTrackList or VideoTrackList object (respectively) whose identifier

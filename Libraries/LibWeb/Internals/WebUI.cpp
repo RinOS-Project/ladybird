@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/WebUIPrototype.h>
+#include <LibGC/Heap.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Internals/WebUI.h>
 #include <LibWeb/Page/Page.h>
 
@@ -13,20 +13,19 @@ namespace Web::Internals {
 
 GC_DEFINE_ALLOCATOR(WebUI);
 
-WebUI::WebUI(JS::Realm& realm)
-    : InternalsBase(realm)
+GC::Ref<WebUI> WebUI::create(HTML::Window& window)
+{
+    return GC::Heap::the().allocate<WebUI>(window);
+}
+
+WebUI::WebUI(HTML::Window& window)
+    : InternalsBase(window)
 {
 }
 
 WebUI::~WebUI() = default;
 
-void WebUI::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(WebUI);
-    Base::initialize(realm);
-}
-
-void WebUI::send_message(String const& name, JS::Value data)
+void WebUI::send_message(Utf16String const& name, JS::Value data)
 {
     page().client().received_message_from_web_ui(name, data);
 }

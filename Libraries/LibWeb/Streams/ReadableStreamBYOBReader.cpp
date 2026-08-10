@@ -5,10 +5,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGC/Heap.h>
 #include <LibJS/Runtime/PromiseCapability.h>
 #include <LibJS/Runtime/TypedArray.h>
-#include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/ReadableStreamBYOBReaderPrototype.h>
 #include <LibWeb/Streams/ReadableStream.h>
 #include <LibWeb/Streams/ReadableStreamBYOBReader.h>
 #include <LibWeb/Streams/ReadableStreamOperations.h>
@@ -19,25 +18,17 @@ namespace Web::Streams {
 
 GC_DEFINE_ALLOCATOR(ReadableStreamBYOBReader);
 
-ReadableStreamBYOBReader::ReadableStreamBYOBReader(JS::Realm& realm)
-    : Bindings::PlatformObject(realm)
-    , ReadableStreamGenericReaderMixin(realm)
+ReadableStreamBYOBReader::ReadableStreamBYOBReader()
 {
-}
-
-void ReadableStreamBYOBReader::initialize(JS::Realm& realm)
-{
-    WEB_SET_PROTOTYPE_FOR_INTERFACE(ReadableStreamBYOBReader);
-    Base::initialize(realm);
 }
 
 // https://streams.spec.whatwg.org/#byob-reader-constructor
-WebIDL::ExceptionOr<GC::Ref<ReadableStreamBYOBReader>> ReadableStreamBYOBReader::construct_impl(JS::Realm& realm, GC::Ref<ReadableStream> stream)
+WebIDL::ExceptionOr<GC::Ref<ReadableStreamBYOBReader>> ReadableStreamBYOBReader::create(JS::Realm& realm, GC::Ref<ReadableStream> stream)
 {
-    auto reader = realm.create<ReadableStreamBYOBReader>(realm);
+    auto reader = GC::Heap::the().allocate<ReadableStreamBYOBReader>();
 
     // 1. Perform ? SetUpReadableStreamBYOBReader(this, stream).
-    TRY(set_up_readable_stream_byob_reader(reader, *stream));
+    TRY(set_up_readable_stream_byob_reader(realm, reader, *stream));
 
     return reader;
 }
@@ -53,7 +44,7 @@ void ReadableStreamBYOBReader::release_lock()
     readable_stream_byob_reader_release(*this);
 }
 
-void ReadableStreamBYOBReader::visit_edges(Cell::Visitor& visitor)
+void ReadableStreamBYOBReader::visit_edges(GC::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     ReadableStreamGenericReaderMixin::visit_edges(visitor);
@@ -65,99 +56,98 @@ class BYOBReaderReadIntoRequest : public ReadIntoRequest {
     GC_DECLARE_ALLOCATOR(BYOBReaderReadIntoRequest);
 
 public:
-    BYOBReaderReadIntoRequest(JS::Realm& realm, WebIDL::Promise& promise)
-        : m_realm(realm)
-        , m_promise(promise)
+    explicit BYOBReaderReadIntoRequest(WebIDL::Promise& promise)
+        : m_promise(promise)
     {
     }
 
     // chunk steps, given chunk
     virtual void on_chunk(JS::Value chunk) override
     {
+        auto& realm = WebIDL::promise_realm(m_promise);
+
         // 1. Resolve promise with «[ "value" → chunk, "done" → false ]».
-        WebIDL::resolve_promise(m_realm, m_promise, JS::create_iterator_result_object(m_realm->vm(), chunk, false));
+        WebIDL::resolve_promise(m_promise, JS::create_iterator_result_object(realm.vm(), chunk, false));
     }
 
     // close steps, given chunk
     virtual void on_close(JS::Value chunk) override
     {
+        auto& realm = WebIDL::promise_realm(m_promise);
+
         // 1. Resolve promise with «[ "value" → chunk, "done" → true ]».
-        WebIDL::resolve_promise(m_realm, m_promise, JS::create_iterator_result_object(m_realm->vm(), chunk, true));
+        WebIDL::resolve_promise(m_promise, JS::create_iterator_result_object(realm.vm(), chunk, true));
     }
 
     // error steps, given e
     virtual void on_error(JS::Value error) override
     {
         // 1. Reject promise with e.
-        WebIDL::reject_promise(m_realm, m_promise, error);
+        WebIDL::reject_promise(m_promise, error);
     }
 
 private:
     virtual void visit_edges(Visitor& visitor) override
     {
         Base::visit_edges(visitor);
-        visitor.visit(m_realm);
         visitor.visit(m_promise);
     }
 
-    GC::Ref<JS::Realm> m_realm;
     GC::Ref<WebIDL::Promise> m_promise;
 };
 
 GC_DEFINE_ALLOCATOR(BYOBReaderReadIntoRequest);
 
 // https://streams.spec.whatwg.org/#byob-reader-read
-GC::Ref<WebIDL::Promise> ReadableStreamBYOBReader::read(GC::Root<WebIDL::ArrayBufferView>& view, ReadableStreamBYOBReaderReadOptions options)
+GC::Ref<WebIDL::Promise> ReadableStreamBYOBReader::read(WebIDL::ArrayBufferView view, ReadableStreamBYOBReaderReadOptions options)
 {
-    auto& realm = this->realm();
+    auto& realm = closed_promise_realm();
 
     // 1. If view.[[ByteLength]] is 0, return a promise rejected with a TypeError exception.
-    if (view->byte_length() == 0) {
-        WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::TypeError, "Cannot read in an empty buffer"sv };
+    if (view.byte_length() == 0) {
+        WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::TypeError, "Cannot read in an empty buffer"_utf16 };
         return WebIDL::create_rejected_promise_from_exception(realm, move(exception));
     }
 
     // 2. If view.[[ViewedArrayBuffer]].[[ArrayBufferByteLength]] is 0, return a promise rejected with a TypeError exception.
-    if (view->viewed_array_buffer()->byte_length() == 0) {
-        WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::TypeError, "Cannot read in an empty buffer"sv };
+    if (view.viewed_array_buffer()->byte_length() == 0) {
+        WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::TypeError, "Cannot read in an empty buffer"_utf16 };
         return WebIDL::create_rejected_promise_from_exception(realm, move(exception));
     }
 
     // 3. If ! IsDetachedBuffer(view.[[ViewedArrayBuffer]]) is true, return a promise rejected with a TypeError exception.
-    if (view->viewed_array_buffer()->is_detached()) {
-        WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::TypeError, "Cannot read in a detached buffer"sv };
+    if (view.viewed_array_buffer()->is_detached()) {
+        WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::TypeError, "Cannot read in a detached buffer"_utf16 };
         return WebIDL::create_rejected_promise_from_exception(realm, move(exception));
     }
 
     // 4. If options["min"] is 0, return a promise rejected with a TypeError exception.
     if (options.min == 0) {
-        WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::TypeError, "options[\"min\'] cannot have a value of 0."sv };
+        WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::TypeError, "options[\"min\'] cannot have a value of 0."_utf16 };
         return WebIDL::create_rejected_promise_from_exception(realm, move(exception));
     }
 
     // 5. If view has a [[TypedArrayName]] internal slot,
-    if (view->is_typed_array_base()) {
-        auto const& typed_array = *view->bufferable_object().get<GC::Ref<JS::TypedArrayBase>>();
-
+    if (auto typed_array = view.typed_array_base()) {
         // 1. If options["min"] > view.[[ArrayLength]], return a promise rejected with a RangeError exception.
-        if (options.min > typed_array.array_length().length()) {
-            WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::RangeError, "options[\"min\"] cannot be larger than the length of the view."sv };
+        if (options.min > typed_array->array_length().length()) {
+            WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::RangeError, "options[\"min\"] cannot be larger than the length of the view."_utf16 };
             return WebIDL::create_rejected_promise_from_exception(realm, move(exception));
         }
     }
-
     // 6. Otherwise (i.e., it is a DataView),
-    if (view->is_data_view()) {
+    else {
+        VERIFY(view.array_buffer_view().has<GC::Ref<JS::DataView>>());
         // 1. If options["min"] > view.[[ByteLength]], return a promise rejected with a RangeError exception.
-        if (options.min > view->byte_length()) {
-            WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::RangeError, "options[\"min\"] cannot be larger than the length of the view."sv };
+        if (options.min > view.byte_length()) {
+            WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::RangeError, "options[\"min\"] cannot be larger than the length of the view."_utf16 };
             return WebIDL::create_rejected_promise_from_exception(realm, move(exception));
         }
     }
 
     // 7. If this.[[stream]] is undefined, return a promise rejected with a TypeError exception.
     if (!m_stream) {
-        WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::TypeError, "Cannot read from an empty stream"sv };
+        WebIDL::SimpleException exception { WebIDL::SimpleExceptionType::TypeError, "Cannot read from an empty stream"_utf16 };
         return WebIDL::create_rejected_promise_from_exception(realm, move(exception));
     }
 
@@ -171,10 +161,10 @@ GC::Ref<WebIDL::Promise> ReadableStreamBYOBReader::read(GC::Root<WebIDL::ArrayBu
     //        Resolve promise with «[ "value" → chunk, "done" → true ]».
     //    error steps, given e
     //        Reject promise with e.
-    auto read_into_request = heap().allocate<BYOBReaderReadIntoRequest>(realm, promise_capability);
+    auto read_into_request = GC::Heap::the().allocate<BYOBReaderReadIntoRequest>(promise_capability);
 
     // 10. Perform ! ReadableStreamBYOBReaderRead(this, view, options["min"], readIntoRequest).
-    readable_stream_byob_reader_read(*this, *view, options.min, *read_into_request);
+    readable_stream_byob_reader_read(*this, view, options.min, *read_into_request);
 
     // 11. Return promise.
     return promise_capability;

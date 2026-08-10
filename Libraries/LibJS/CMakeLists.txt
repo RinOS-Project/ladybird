@@ -1,22 +1,30 @@
 include(libjs_generators)
 
+build_rust_binary(
+    MANIFEST_PATH Flap/Cargo.toml
+    CRATE_NAME flapc
+    BINARY_NAME generate-libjs-bytecode
+    OUTPUT_PATH_VAR BYTECODE_GENERATOR_BIN
+)
+
 set(SOURCES
-    Bytecode/AsmInterpreter/AsmInterpreter.cpp
-    Bytecode/BasicBlock.cpp
+    Interpreter/SlowPaths.cpp
     Bytecode/Executable.cpp
     Bytecode/IdentifierTable.cpp
     Bytecode/Instruction.cpp
-    Bytecode/Interpreter.cpp
-    Bytecode/Label.cpp
+    Interpreter/Interpreter.cpp
+    Bytecode/PropertyNameIterator.cpp
     Bytecode/PropertyKeyTable.cpp
     Bytecode/RegexTable.cpp
     Bytecode/StringTable.cpp
+    Bytecode/Validator.cpp
     Console.cpp
     Contrib/Test262/262Object.cpp
     Contrib/Test262/AgentObject.cpp
     Contrib/Test262/GlobalObject.cpp
     Contrib/Test262/IsHTMLDDA.cpp
     CyclicModule.cpp
+    Debugger.cpp
     Heap/Cell.cpp
     Module.cpp
     ParserError.cpp
@@ -62,12 +70,12 @@ set(SOURCES
     Runtime/ClassConstruction.cpp
     Runtime/ClassFieldDefinition.cpp
     Runtime/Completion.cpp
-    Runtime/CompletionCell.cpp
     Runtime/ConsoleObjectPrototype.cpp
     Runtime/ConsoleObject.cpp
     Runtime/DataView.cpp
     Runtime/DataViewConstructor.cpp
     Runtime/DataViewPrototype.cpp
+    Runtime/DescriptorArray.cpp
     Runtime/Date.cpp
     Runtime/DateConstructor.cpp
     Runtime/DatePrototype.cpp
@@ -77,8 +85,10 @@ set(SOURCES
     Runtime/DisposableStackPrototype.cpp
     Runtime/ECMAScriptFunctionObject.cpp
     Runtime/Environment.cpp
+    Runtime/EnvironmentShape.cpp
     Runtime/Error.cpp
     Runtime/ErrorConstructor.cpp
+    Runtime/ErrorData.cpp
     Runtime/ErrorPrototype.cpp
     Runtime/ErrorTypes.cpp
     Runtime/ExecutionContext.cpp
@@ -191,9 +201,6 @@ set(SOURCES
     Runtime/SetIterator.cpp
     Runtime/SetIteratorPrototype.cpp
     Runtime/SetPrototype.cpp
-    Runtime/ShadowRealm.cpp
-    Runtime/ShadowRealmConstructor.cpp
-    Runtime/ShadowRealmPrototype.cpp
     Runtime/Shape.cpp
     Runtime/SharedArrayBufferConstructor.cpp
     Runtime/SharedArrayBufferPrototype.cpp
@@ -257,7 +264,6 @@ set(SOURCES
     Runtime/WeakSetConstructor.cpp
     Runtime/WeakSetPrototype.cpp
     Runtime/WrapForValidIteratorPrototype.cpp
-    Runtime/WrappedFunction.cpp
     Script.cpp
     SourceCode.cpp
     SourceTextModule.cpp
@@ -265,40 +271,13 @@ set(SOURCES
     SyntheticModule.cpp
 )
 
-if (AK_OS_RINOS)
-    list(REMOVE_ITEM SOURCES
-        Bytecode/AsmInterpreter/AsmInterpreter.cpp
-        RustIntegration.cpp
-    )
-    list(APPEND SOURCES
-        AST.cpp
-        ASTDump.cpp
-        Bytecode/ASTCodegen.cpp
-        Bytecode/Builtins.cpp
-        Bytecode/Generator.cpp
-        Bytecode/ScopedOperand.cpp
-        Lexer.cpp
-        Parser.cpp
-        ScopeCollector.cpp
-        Token.cpp
-    )
-endif()
+generate_libjs_bytecode()
 
-generate_bytecode_def_derived()
-
-set(GENERATED_SOURCES Bytecode/Op.cpp)
+set(GENERATED_SOURCES Bytecode/Op.h)
 
 ladybird_lib(LibJS js EXPLICIT_SYMBOL_EXPORT)
 
-if (NOT AK_OS_RINOS)
-    find_package(simdjson CONFIG REQUIRED)
-    target_link_libraries(LibJS PRIVATE simdjson::simdjson)
-else()
-    # RinOS: simdjson is not available; LibJS uses its built-in JSON parser fallback
-    message(STATUS "RinOS policy: simdjson excluded; built-in JSON parser used.")
-endif()
-
-target_link_libraries(LibJS PRIVATE LibCore LibCrypto LibFileSystem LibRegex LibSyntax LibGC)
+target_link_libraries(LibJS PRIVATE LibCore LibCrypto LibFileSystem LibRegex LibSyntax LibTextCodec LibGC simdjson::simdjson)
 
 # Link LibUnicode publicly to ensure ICU data (which is in libicudata.a) is available in any process using LibJS.
 target_link_libraries(LibJS PUBLIC LibUnicode)
@@ -318,113 +297,126 @@ endif()
 
 target_link_libraries(LibJS PUBLIC JSClangPlugin)
 
-if (ENABLE_RUST AND NOT AK_OS_RINOS)
-    import_rust_crate(MANIFEST_PATH Rust/Cargo.toml CRATE_NAME libjs_rust)
-    target_link_libraries(LibJS PRIVATE libjs_rust)
-    target_compile_definitions(LibJS PRIVATE ENABLE_RUST)
-
-    # The Rust library and LibJS have a circular dependency (C++ calls Rust
-    # entry points, Rust calls C++ callbacks). For static builds, merge the
-    # Rust archive into the LibJS archive so all symbols are in one place.
-    if(NOT BUILD_SHARED_LIBS AND NOT AK_OS_RINOS)
-        add_custom_command(TARGET LibJS POST_BUILD
-            COMMAND ${CMAKE_AR} -x $<TARGET_FILE:libjs_rust>
-            COMMAND ${CMAKE_AR} -qS $<TARGET_FILE:LibJS> *.o
-            COMMAND ${CMAKE_RANLIB} $<TARGET_FILE:LibJS>
-            COMMAND ${CMAKE_COMMAND} -E remove -f *.o
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rust_merge_tmp
-            COMMENT "Merging Rust archive into LibJS"
-        )
-        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rust_merge_tmp)
-    endif()
-elseif (AK_OS_RINOS)
-    message(STATUS "RinOS policy: LibJS uses the restored C++ parser/bytecode pipeline and does not import Rust crates.")
+import_rust_crate(MANIFEST_PATH Rust/Cargo.toml CRATE_NAME libjs_rust FFI_HEADER RustFFI.h)
+target_link_libraries(LibJS PRIVATE libjs_rust)
+if ((LINUX OR BSD) AND NOT BUILD_SHARED_LIBS)
+    # Rust staticlibs each carry the same allocator shim symbols. LibJS can
+    # pull in multiple crates' copies in static ELF links, but they all
+    # forward to the same ladybird_rust_* entry points in AK/kmalloc.cpp.
+    target_link_options(LibJS INTERFACE LINKER:--allow-multiple-definition)
 endif()
 
-# AsmInterpreter: generate platform-specific assembly from DSL
-# NB: RinOS cross builds use the C++ bytecode interpreter only.
-# NB: Win64 uses a different ABI (shadow space, different arg registers)
-#     from SysV AMD64, and the x86_64 backend only supports SysV for now.
-if (AK_OS_RINOS)
-    unset(ASMINT_ARCH)
-elseif (NOT WIN32 AND ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64"))
-    set(ASMINT_ARCH "x86_64")
-elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "aarch64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "arm64")
-    set(ASMINT_ARCH "aarch64")
+# The Rust library and LibJS have a circular dependency (C++ calls Rust
+# entry points, Rust calls C++ callbacks). For static builds, merge the
+# Rust archive into the LibJS archive so all symbols are in one place.
+if(NOT BUILD_SHARED_LIBS)
+    add_custom_command(TARGET LibJS POST_BUILD
+        COMMAND ${CMAKE_AR} -x $<TARGET_FILE:libjs_rust>
+        COMMAND ${CMAKE_AR} -qS $<TARGET_FILE:LibJS> *.o
+        COMMAND ${CMAKE_RANLIB} $<TARGET_FILE:LibJS>
+        COMMAND ${CMAKE_COMMAND} -E remove -f *.o
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rust_merge_tmp
+        COMMENT "Merging Rust archive into LibJS"
+    )
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rust_merge_tmp)
+
+    # POST_BUILD steps don't track inputs, so when libjs_rust.a changes ninja
+    # leaves liblagom-js.a alone and the merged archive ends up with stale
+    # Rust objects. Force the C++ FFI bridge file to depend on the Rust
+    # archive: when it changes, RustIntegration.cpp recompiles, LibJS gets
+    # re-archived, and POST_BUILD re-merges the fresh Rust objects.
+    get_target_property(_libjs_rust_lib libjs_rust IMPORTED_LOCATION)
+    set_property(SOURCE RustIntegration.cpp APPEND PROPERTY OBJECT_DEPENDS ${_libjs_rust_lib})
 endif()
 
-if (DEFINED ASMINT_ARCH)
+# Generate the JS interpreter's platform-specific assembly.
+if ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^(x86_64|amd64|AMD64)$")
+    set(FLAP_ARCH "x86_64")
+elseif ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^(aarch64|arm64|ARM64)$")
+    set(FLAP_ARCH "aarch64")
+else()
+    message(FATAL_ERROR "LibJS requires JS interpreter support for ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+
+if (DEFINED FLAP_ARCH)
     enable_language(ASM)
-    set(ASMINTGEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/AsmIntGen")
-    set(ASMINTGEN_BIN "${ASMINTGEN_DIR}/target/release/asmintgen")
-    set(ASMINT_DSL "${CMAKE_CURRENT_SOURCE_DIR}/Bytecode/AsmInterpreter/asmint.asm")
-    set(ASMINT_GENERATED_S "${CMAKE_CURRENT_BINARY_DIR}/Bytecode/AsmInterpreter/asmint_${ASMINT_ARCH}.S")
-    set(ASM_OFFSETS_FILE "${CMAKE_CURRENT_BINARY_DIR}/Bytecode/AsmInterpreter/asm_offsets.conf")
+    if (WIN32 AND CMAKE_ASM_COMPILER_ID MATCHES "Clang")
+        set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_DEBUG_INFORMATION_FORMAT_ProgramDatabase "")
+        set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_DEBUG_INFORMATION_FORMAT_EditAndContinue "")
+    endif()
+    set(FLAP_DSL
+        "${CMAKE_CURRENT_SOURCE_DIR}/Interpreter/interpreter.flap")
+    set(FLAP_GENERATED_S "${CMAKE_CURRENT_BINARY_DIR}/Interpreter/interpreter_${FLAP_ARCH}.S")
+    set(INTERPRETER_LAYOUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/Interpreter/layout.conf")
 
     # Build-time offset generator: compiles a small C++ program that uses
     # offsetof() to emit struct field offsets as DSL constants.
-    add_executable(gen_asm_offsets "${CMAKE_CURRENT_SOURCE_DIR}/Bytecode/AsmInterpreter/gen_asm_offsets.cpp")
-    target_link_libraries(gen_asm_offsets PRIVATE AK)
-    target_compile_definitions(gen_asm_offsets PRIVATE private=public protected=public)
-    # NB: Strip fuzzer sanitizer flags so gen_asm_offsets can define its own main().
+    add_executable(generate_interpreter_layout "${CMAKE_CURRENT_SOURCE_DIR}/Interpreter/GenerateLayout.cpp")
+    target_link_libraries(generate_interpreter_layout PRIVATE AK)
+    if (MSVC)
+        target_compile_definitions(generate_interpreter_layout PRIVATE _ALLOW_KEYWORD_MACROS)
+    endif()
+    target_compile_definitions(generate_interpreter_layout PRIVATE private=public protected=public)
+    # NB: Strip fuzzer sanitizer flags so generate_interpreter_layout can define its own main().
     if (ENABLE_FUZZERS_LIBFUZZER)
-        target_compile_options(gen_asm_offsets PRIVATE -fno-sanitize=fuzzer)
-        target_link_options(gen_asm_offsets PRIVATE -fno-sanitize=fuzzer)
+        target_compile_options(generate_interpreter_layout PRIVATE -fno-sanitize=fuzzer)
+        target_link_options(generate_interpreter_layout PRIVATE -fno-sanitize=fuzzer)
     endif()
-    # NB: gen_asm_offsets no longer depends on Op.h since opcode field
-    # offsets are now computed from Bytecode.def by asmintgen directly.
+    # NB: GenerateLayout.cpp does not depend on Op.h since opcode field
+    # offsets are computed from interpreter.flap by flapc directly.
 
     add_custom_command(
-        OUTPUT "${ASM_OFFSETS_FILE}"
-        COMMAND "$<TARGET_FILE:gen_asm_offsets>" > "${ASM_OFFSETS_FILE}"
-        DEPENDS gen_asm_offsets
-        COMMENT "Generating asm struct offsets"
+        OUTPUT "${INTERPRETER_LAYOUT_FILE}"
+        COMMAND "$<TARGET_FILE:generate_interpreter_layout>" > "${INTERPRETER_LAYOUT_FILE}"
+        DEPENDS generate_interpreter_layout
+        COMMENT "Generating JS interpreter layout"
     )
 
-    file(GLOB ASMINTGEN_SOURCES "${ASMINTGEN_DIR}/src/*.rs" "${ASMINTGEN_DIR}/Cargo.toml")
-    # NB: Clear linker-related env vars so cargo uses the default host
-    # linker. The CI may set CC/CXX or CARGO_TARGET_*_LINKER to a
-    # compiler that isn't available in all build configurations (e.g.
-    # clang-21 in GNU builds). asmintgen is a pure Rust host tool.
-    add_custom_command(
-        OUTPUT "${ASMINTGEN_BIN}"
-        COMMAND ${CMAKE_COMMAND} -E env
-            --unset=CC
-            --unset=CXX
-            --unset=CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
-            --unset=CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
-            cargo build --release
-        WORKING_DIRECTORY "${ASMINTGEN_DIR}"
-        DEPENDS ${ASMINTGEN_SOURCES}
-        COMMENT "Building asmintgen"
+    build_rust_binary(
+        MANIFEST_PATH Flap/Cargo.toml
+        CRATE_NAME flapc
+        BINARY_NAME flapc
+        OUTPUT_PATH_VAR FLAPC_BIN
     )
 
-    set(BYTECODE_DEF "${CMAKE_CURRENT_SOURCE_DIR}/Bytecode/Bytecode.def")
-
-    if (APPLE)
-        set(ASMINT_OBJ_FORMAT "macho")
+    if (WIN32)
+        set(FLAP_OBJECT_FORMAT "coff")
+    elseif (APPLE)
+        set(FLAP_OBJECT_FORMAT "macho")
     else()
-        set(ASMINT_OBJ_FORMAT "elf")
+        set(FLAP_OBJECT_FORMAT "elf")
     endif()
 
-    set(ASMINT_EXTRA_FLAGS "")
+    set(FLAP_EXTRA_FLAGS "")
+    if (CMAKE_BUILD_TYPE STREQUAL "Debug"
+        OR ENABLE_ADDRESS_SANITIZER
+        OR ENABLE_MEMORY_SANITIZER
+        OR ENABLE_UNDEFINED_SANITIZER)
+        list(APPEND FLAP_EXTRA_FLAGS "--enable-assertions")
+    endif()
     # All Apple Silicon chips are ARMv8.5+ which includes FEAT_JSCVT.
-    if ("${ASMINT_ARCH}" STREQUAL "aarch64" AND APPLE)
-        list(APPEND ASMINT_EXTRA_FLAGS "--has-jscvt")
+    if ("${FLAP_ARCH}" STREQUAL "aarch64" AND APPLE)
+        list(APPEND FLAP_EXTRA_FLAGS "--has-jscvt")
     endif()
 
     add_custom_command(
-        OUTPUT "${ASMINT_GENERATED_S}"
-        COMMAND "${ASMINTGEN_BIN}" --arch ${ASMINT_ARCH}
-            --object-format ${ASMINT_OBJ_FORMAT}
-            --constants "${ASM_OFFSETS_FILE}"
-            --bytecode-def "${BYTECODE_DEF}"
-            --input "${ASMINT_DSL}"
-            --output "${ASMINT_GENERATED_S}"
-            ${ASMINT_EXTRA_FLAGS}
-        DEPENDS "${ASMINTGEN_BIN}" "${ASMINT_DSL}" "${ASM_OFFSETS_FILE}" "${BYTECODE_DEF}"
-        COMMENT "Generating asmint_${ASMINT_ARCH}.S from DSL"
+        OUTPUT "${FLAP_GENERATED_S}"
+        COMMAND "${FLAPC_BIN}" --arch ${FLAP_ARCH}
+            --object-format ${FLAP_OBJECT_FORMAT}
+            --constants "${INTERPRETER_LAYOUT_FILE}"
+            --input "${FLAP_DSL}"
+            --output "${FLAP_GENERATED_S}"
+            ${FLAP_EXTRA_FLAGS}
+        DEPENDS "${FLAPC_BIN}" "${FLAP_DSL}"
+            "${INTERPRETER_LAYOUT_FILE}"
+        COMMENT "Generating interpreter_${FLAP_ARCH}.S from Flap"
     )
 
-    target_sources(LibJS PRIVATE "${ASMINT_GENERATED_S}")
+    target_sources(LibJS PRIVATE "${FLAP_GENERATED_S}")
+    if ("${FLAP_ARCH}" STREQUAL "x86_64" AND CMAKE_ASM_COMPILER_ID MATCHES "Clang")
+        # Keep conditional branches within 32-byte boundaries so Intel's
+        # microcode mitigation does not prevent their blocks from using the DSB.
+        set_property(SOURCE "${FLAP_GENERATED_S}" APPEND PROPERTY COMPILE_OPTIONS
+            "-malign-branch-boundary=32;-malign-branch=fused,jcc")
+    endif()
 endif()

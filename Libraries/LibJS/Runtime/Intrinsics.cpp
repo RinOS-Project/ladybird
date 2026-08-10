@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/NeverDestroyed.h>
 #include <LibGC/Root.h>
 #include <LibJS/Lexer.h>
 #include <LibJS/Parser.h>
@@ -96,8 +97,6 @@
 #include <LibJS/Runtime/SetConstructor.h>
 #include <LibJS/Runtime/SetIteratorPrototype.h>
 #include <LibJS/Runtime/SetPrototype.h>
-#include <LibJS/Runtime/ShadowRealmConstructor.h>
-#include <LibJS/Runtime/ShadowRealmPrototype.h>
 #include <LibJS/Runtime/Shape.h>
 #include <LibJS/Runtime/SharedArrayBufferConstructor.h>
 #include <LibJS/Runtime/SharedArrayBufferPrototype.h>
@@ -143,10 +142,11 @@
         ".incbin " #file_path "\n"                  \
         ".global " #name "_END\n" #name "_END:\n"   \
         ".byte 0\n");                               \
-    extern unsigned char const name[];
+    extern unsigned char const name[];              \
+    extern unsigned char const name##_END[];
 
-#if (defined(AK_COMPILER_CLANG) && (__clang_major__ >= 19)) || (defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
-static constexpr unsigned char ABSTRACT_OPERATIONS[] = {
+#if defined(AK_COMPILER_CLANG) || (defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
+static constexpr char16_t ABSTRACT_OPERATIONS[] = {
 #    embed "JavaScriptImplementations/AbstractOperations.js" suffix(, )
     0 // null terminator
 };
@@ -154,8 +154,8 @@ static constexpr unsigned char ABSTRACT_OPERATIONS[] = {
 INCLUDE_FILE_WITH_ASSEMBLY(ABSTRACT_OPERATIONS, "LibJS/Runtime/JavaScriptImplementations/AbstractOperations.js")
 #endif
 
-#if (defined(AK_COMPILER_CLANG) && (__clang_major__ >= 19)) || (defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
-static constexpr unsigned char ARRAY_CONSTRUCTOR[] = {
+#if defined(AK_COMPILER_CLANG) || (defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
+static constexpr char16_t ARRAY_CONSTRUCTOR[] = {
 #    embed "JavaScriptImplementations/ArrayConstructor.js" suffix(, )
     0 // null terminator
 };
@@ -166,6 +166,40 @@ INCLUDE_FILE_WITH_ASSEMBLY(ARRAY_CONSTRUCTOR, "LibJS/Runtime/JavaScriptImplement
 namespace JS {
 
 GC_DEFINE_ALLOCATOR(Intrinsics);
+
+#if !defined(AK_COMPILER_CLANG) && !(defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
+static Utf16String utf16_source_from_ascii_bytes(ReadonlyBytes source)
+{
+    Vector<char16_t> code_units;
+    code_units.ensure_capacity(source.size());
+    for (auto byte : source) {
+        VERIFY(byte <= 0x7f);
+        code_units.unchecked_append(byte);
+    }
+
+    return Utf16String::from_utf16({ code_units.data(), code_units.size() });
+}
+#endif
+
+static Utf16View abstract_operations_source()
+{
+#if defined(AK_COMPILER_CLANG) || (defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
+    return { ABSTRACT_OPERATIONS, AK::array_size(ABSTRACT_OPERATIONS) - 1 };
+#else
+    static NeverDestroyed<Utf16String> source = utf16_source_from_ascii_bytes({ ABSTRACT_OPERATIONS, static_cast<size_t>(ABSTRACT_OPERATIONS_END - ABSTRACT_OPERATIONS) });
+    return source->utf16_view();
+#endif
+}
+
+static Utf16View array_constructor_source()
+{
+#if defined(AK_COMPILER_CLANG) || (defined(AK_COMPILER_GCC) && (__GNUC__ > 14))
+    return { ARRAY_CONSTRUCTOR, AK::array_size(ARRAY_CONSTRUCTOR) - 1 };
+#else
+    static NeverDestroyed<Utf16String> source = utf16_source_from_ascii_bytes({ ARRAY_CONSTRUCTOR, static_cast<size_t>(ARRAY_CONSTRUCTOR_END - ARRAY_CONSTRUCTOR) });
+    return source->utf16_view();
+#endif
+}
 
 static void initialize_constructor(VM& vm, PropertyKey const& property_key, Object& constructor, Object* prototype, PropertyAttributes constructor_property_attributes = Attribute::Writable | Attribute::Configurable)
 {
@@ -206,7 +240,7 @@ GC::Ref<Intrinsics> Intrinsics::create(Realm& realm)
     return *intrinsics;
 }
 
-static Vector<GC::Root<SharedFunctionInstanceData>> parse_builtin_file(unsigned char const* script_text, VM& vm)
+static Vector<GC::Root<SharedFunctionInstanceData>> parse_builtin_file(Utf16View script_text, VM& vm)
 {
     auto script_text_as_utf16 = Utf16String::from_utf8_without_validation({ script_text, strlen(reinterpret_cast<char const*>(script_text)) });
     auto code = SourceCode::create("BuiltinFile"_string, move(script_text_as_utf16));
@@ -269,6 +303,7 @@ void Intrinsics::initialize_intrinsics(Realm& realm)
 
     m_unmapped_arguments_object_shape = heap().allocate<Shape>(realm);
     m_unmapped_arguments_object_shape->set_prototype_without_transition(m_object_prototype);
+    m_unmapped_arguments_object_shape->set_has_parameter_map();
     m_unmapped_arguments_object_shape->add_property_without_transition(vm.names.length, Attribute::Writable | Attribute::Configurable);
     m_unmapped_arguments_object_shape->add_property_without_transition(vm.well_known_symbol_iterator(), Attribute::Writable | Attribute::Configurable);
     m_unmapped_arguments_object_shape->add_property_without_transition(vm.names.callee, 0);
@@ -278,6 +313,7 @@ void Intrinsics::initialize_intrinsics(Realm& realm)
 
     m_mapped_arguments_object_shape = heap().allocate<Shape>(realm);
     m_mapped_arguments_object_shape->set_prototype_without_transition(m_object_prototype);
+    m_mapped_arguments_object_shape->set_has_parameter_map();
     m_mapped_arguments_object_shape->add_property_without_transition(vm.names.length, Attribute::Writable | Attribute::Configurable);
     m_mapped_arguments_object_shape->add_property_without_transition(vm.well_known_symbol_iterator(), Attribute::Writable | Attribute::Configurable);
     m_mapped_arguments_object_shape->add_property_without_transition(vm.names.callee, Attribute::Writable | Attribute::Configurable);
@@ -335,7 +371,7 @@ void Intrinsics::initialize_intrinsics(Realm& realm)
         },
         0, Utf16FlyString {}, &realm);
     m_throw_type_error_function->define_direct_property(vm.names.length, Value(0), 0);
-    m_throw_type_error_function->define_direct_property(vm.names.name, PrimitiveString::create(vm, String {}), 0);
+    m_throw_type_error_function->define_direct_property(vm.names.name, PrimitiveString::create(vm, Utf16String {}), 0);
     MUST(m_throw_type_error_function->internal_prevent_extensions());
 
     m_throw_type_error_accessor = Accessor::create(
@@ -561,7 +597,7 @@ GC::Ref<Intl::Collator> Intrinsics::default_collator()
     GC::Ref<NativeJavaScriptBackedFunction> Intrinsics::snake_name##_abstract_operation_function()                                                                                                              \
     {                                                                                                                                                                                                           \
         if (!m_##snake_name##_abstract_operation_function) {                                                                                                                                                    \
-            auto shared_data_list = parse_builtin_file(ABSTRACT_OPERATIONS, m_realm->vm());                                                                                                                     \
+            auto shared_data_list = parse_builtin_file(abstract_operations_source(), m_realm->vm());                                                                                                            \
             auto it = shared_data_list.find_if([](auto const& shared_data) {                                                                                                                                    \
                 return shared_data->m_name == #functionName##sv;                                                                                                                                                \
             });                                                                                                                                                                                                 \
@@ -577,7 +613,7 @@ JS_ENUMERATE_NATIVE_JAVASCRIPT_BACKED_ABSTRACT_OPERATIONS
     GC::Ref<NativeJavaScriptBackedFunction> Intrinsics::snake_name##_array_constructor_function()                                                                                                              \
     {                                                                                                                                                                                                          \
         if (!m_##snake_name##_array_constructor_function) {                                                                                                                                                    \
-            auto shared_data_list = parse_builtin_file(ARRAY_CONSTRUCTOR, m_realm->vm());                                                                                                                      \
+            auto shared_data_list = parse_builtin_file(array_constructor_source(), m_realm->vm());                                                                                                             \
             auto it = shared_data_list.find_if([](auto const& shared_data) {                                                                                                                                   \
                 return shared_data->m_name == #functionName##sv;                                                                                                                                               \
             });                                                                                                                                                                                                \

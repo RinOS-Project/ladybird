@@ -7,25 +7,30 @@
  */
 
 #include <AK/SourceLocation.h>
+#include <LibGC/Heap.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
-#include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/Clipboard/SystemClipboard.h>
+#include <LibWeb/Compositor/CompositorHost.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/Range.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Bodies.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
+#include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/HTMLIFrameElement.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/HTMLMediaElement.h>
 #include <LibWeb/HTML/HTMLSelectElement.h>
+#include <LibWeb/HTML/LocalTraversableNavigable.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/SelectedFile.h>
-#include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/Loader/ContentBlocker.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/Selection/Selection.h>
@@ -34,9 +39,9 @@ namespace Web {
 
 GC_DEFINE_ALLOCATOR(Page);
 
-GC::Ref<Page> Page::create(JS::VM& vm, GC::Ref<PageClient> page_client)
+GC::Ref<Page> Page::create(GC::Ref<PageClient> page_client)
 {
-    return vm.heap().allocate<Page>(page_client);
+    return GC::Heap::the().allocate<Page>(page_client);
 }
 
 Page::Page(GC::Ref<PageClient> client)
@@ -46,6 +51,46 @@ Page::Page(GC::Ref<PageClient> client)
 
 Page::~Page() = default;
 
+void Page::acquire_screen_wake_lock()
+{
+    if (m_active_screen_wake_lock_count++ == 0)
+        client().page_did_change_screen_wake_lock_state(ScreenWakeLockState::Acquired);
+}
+
+void Page::release_screen_wake_lock()
+{
+    VERIFY(m_active_screen_wake_lock_count > 0);
+    if (--m_active_screen_wake_lock_count == 0)
+        client().page_did_change_screen_wake_lock_state(ScreenWakeLockState::Released);
+}
+
+bool Page::has_compositor_host() const
+{
+    return m_client->compositor_host();
+}
+
+void Page::ensure_compositor_host()
+{
+    if (!m_client->supports_compositor())
+        return;
+
+    m_client->ensure_compositor_host();
+}
+
+Compositor::CompositorHost& Page::compositor_host()
+{
+    auto* compositor_host = m_client->compositor_host();
+    VERIFY(compositor_host);
+    return *compositor_host;
+}
+
+Compositor::CompositorHost const& Page::compositor_host() const
+{
+    auto const* compositor_host = m_client->compositor_host();
+    VERIFY(compositor_host);
+    return *compositor_host;
+}
+
 void Page::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
@@ -54,6 +99,8 @@ void Page::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_window_rect_observer);
     visitor.visit(m_on_pending_dialog_closed);
     visitor.visit(m_pending_clipboard_requests);
+    for (auto const& request : m_pending_geolocation_requests)
+        visitor.visit(request.value.callback);
     m_pending_fullscreen_operations.for_each([&](auto const& operation) {
         operation.visit([&](PendingFullscreenEnter const& enter_operation) {
                 visitor.visit(enter_operation.element);
@@ -66,27 +113,42 @@ void Page::visit_edges(JS::Cell::Visitor& visitor)
     });
 }
 
-HTML::Navigable& Page::focused_navigable()
+HTML::LocalNavigable& Page::focused_navigable()
 {
     if (m_focused_navigable)
         return *m_focused_navigable;
     return top_level_traversable();
 }
 
-void Page::set_focused_navigable(Badge<EventHandler>, HTML::Navigable& navigable)
+void Page::set_focused_navigable(HTML::LocalNavigable& navigable)
 {
     m_focused_navigable = navigable;
 }
 
-void Page::navigable_document_destroyed(Badge<DOM::Document>, HTML::Navigable& navigable)
+void Page::navigable_document_destroyed(Badge<DOM::Document>, HTML::LocalNavigable& navigable)
 {
     if (&navigable == m_focused_navigable.ptr())
         m_focused_navigable = nullptr;
+    if (&navigable == m_mouse_event_tracking_navigable.ptr())
+        m_mouse_event_tracking_navigable = nullptr;
 }
 
-void Page::load(URL::URL const& url)
+void Page::load(URL::URL const& url, Bindings::NavigationHistoryBehavior history_handling)
 {
-    (void)top_level_traversable()->navigate({ .url = url, .source_document = *top_level_traversable()->active_document(), .user_involvement = HTML::UserNavigationInvolvement::BrowserUI });
+    (void)top_level_traversable()->navigate({ .url = url, .source_document = *top_level_traversable()->active_document(), .history_handling = history_handling, .user_involvement = HTML::UserNavigationInvolvement::BrowserUI });
+}
+
+void Page::load(URL::URL const& url, HTML::DocumentResource document_resource,
+    Bindings::NavigationHistoryBehavior history_handling, Optional<HTML::NavigationSourceSnapshot> source_snapshot)
+{
+    (void)top_level_traversable()->navigate({
+        .url = url,
+        .source_document = *top_level_traversable()->active_document(),
+        .document_resource = move(document_resource),
+        .history_handling = history_handling,
+        .user_involvement = HTML::UserNavigationInvolvement::BrowserUI,
+        .cross_process_source_snapshot = move(source_snapshot),
+    });
 }
 
 void Page::load_html(StringView html)
@@ -96,8 +158,33 @@ void Page::load_html(StringView html)
 
     (void)top_level_traversable()->navigate({ .url = URL::about_srcdoc(),
         .source_document = *top_level_traversable()->active_document(),
-        .document_resource = String::from_utf8(html).release_value_but_fixme_should_propagate_errors(),
+        .document_resource = Utf16String::from_utf8(html),
         .user_involvement = HTML::UserNavigationInvolvement::BrowserUI });
+}
+
+void Page::load_html(StringView html, URL::URL const& url)
+{
+    // FIXME: #23909 Figure out why GC threshold does not stay low when repeatedly loading html from the WebView
+    heap().collect_garbage();
+
+    auto document = top_level_traversable()->active_document();
+    auto& realm = document->relevant_settings_object().realm();
+    auto html_string = String::from_utf8(html).release_value_but_fixme_should_propagate_errors();
+
+    auto response = Fetch::Infrastructure::Response::create();
+    response->url_list().append(url);
+    response->header_list()->append({ "Content-Type"sv, "text/html"sv });
+    response->set_body(Fetch::Infrastructure::byte_sequence_as_body(realm, html_string.bytes()));
+
+    HTML::LocalNavigable::NavigateParams params { .url = url,
+        .source_document = *document,
+        .response = response,
+        .user_involvement = HTML::UserNavigationInvolvement::BrowserUI };
+
+    if (url == URL::about_srcdoc())
+        params.document_resource = Utf16String::from_utf8(html);
+
+    (void)top_level_traversable()->navigate(move(params));
 }
 
 void Page::reload()
@@ -107,7 +194,7 @@ void Page::reload()
 
 void Page::traverse_the_history_by_delta(int delta)
 {
-    top_level_traversable()->traverse_the_history_by_delta(delta);
+    m_client->page_did_request_traverse_the_history_by_delta(delta, HistoryTraversalPrecheck::Needed);
 }
 
 Gfx::Palette Page::palette() const
@@ -159,6 +246,9 @@ CSSPixelRect Page::web_exposed_available_screen_area() const
 
 CSS::PreferredColorScheme Page::preferred_color_scheme() const
 {
+    if (m_preferred_color_scheme_override_for_testing.has_value())
+        return *m_preferred_color_scheme_override_for_testing;
+
     auto preferred_color_scheme = m_client->preferred_color_scheme();
 
     if (preferred_color_scheme == CSS::PreferredColorScheme::Auto)
@@ -249,12 +339,30 @@ ChromeMetrics Page::chrome_metrics() const
 
 EventResult Page::handle_mouseup(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers)
 {
+    // INTEROP: Releasing outside an iframe still ends selection and drag tracking in the child document where the
+    //          interaction began, while the mouseup event itself remains targeted at the document under the pointer.
+    ScopeGuard reset_mouse_input_tracking = [&] {
+        if (auto navigable = m_mouse_event_tracking_navigable) {
+            m_mouse_event_tracking_navigable = nullptr;
+            navigable->event_handler().reset_mouse_input_tracking({});
+        }
+    };
     return top_level_traversable()->event_handler().handle_mouseup(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers);
 }
 
 EventResult Page::handle_mousedown(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, int click_count)
 {
+    if (button == UIEvents::MouseButton::Primary) {
+        if (auto navigable = m_mouse_event_tracking_navigable)
+            navigable->event_handler().reset_mouse_input_tracking({});
+        m_mouse_event_tracking_navigable = nullptr;
+    }
     return top_level_traversable()->event_handler().handle_mousedown(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers, click_count);
+}
+
+void Page::set_mouse_event_tracking_navigable(Badge<EventHandler>, HTML::LocalNavigable& navigable)
+{
+    m_mouse_event_tracking_navigable = navigable;
 }
 
 EventResult Page::handle_mousemove(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned buttons, unsigned modifiers)
@@ -267,9 +375,25 @@ EventResult Page::handle_mouseleave()
     return top_level_traversable()->event_handler().handle_mouseleave();
 }
 
-EventResult Page::handle_mousewheel(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, DevicePixels wheel_delta_x, DevicePixels wheel_delta_y)
+#if defined(AK_OS_MACOS)
+bool Page::select_word_for_dictionary_lookup(DevicePixelPoint position)
 {
-    return top_level_traversable()->event_handler().handle_mousewheel(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers, wheel_delta_x.value(), wheel_delta_y.value());
+    return top_level_traversable()->event_handler().select_word_for_dictionary_lookup(device_to_css_point(position));
+}
+#endif
+
+UniqueNodeID Page::node_id_at_position(DevicePixelPoint position)
+{
+    auto node = top_level_traversable()->event_handler().target_node_for_mouse_position(device_to_css_point(position));
+    if (!node)
+        return 0;
+
+    return node->unique_id();
+}
+
+EventResult Page::handle_mousewheel(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, double wheel_delta_x, double wheel_delta_y, bool async_scroll_performed_default_action, Optional<AsyncScrollOperation>* async_scroll_operation)
+{
+    return top_level_traversable()->event_handler().handle_mousewheel(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers, wheel_delta_x, wheel_delta_y, async_scroll_performed_default_action, async_scroll_operation);
 }
 
 EventResult Page::handle_drag_and_drop_event(DragEvent::Type type, DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, Vector<HTML::SelectedFile> files)
@@ -277,14 +401,14 @@ EventResult Page::handle_drag_and_drop_event(DragEvent::Type type, DevicePixelPo
     return top_level_traversable()->event_handler().handle_drag_and_drop_event(type, device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers, move(files));
 }
 
-EventResult Page::handle_pinch_event(DevicePixelPoint position, double scale)
+EventResult Page::handle_pinch_event(DevicePixelPoint position, unsigned modifiers, double scale)
 {
-    return top_level_traversable()->event_handler().handle_pinch_event(device_to_css_point(position), scale);
+    return top_level_traversable()->event_handler().handle_pinch_event(device_to_css_point(position), modifiers, scale);
 }
 
-EventResult Page::handle_keydown(UIEvents::KeyCode key, unsigned modifiers, u32 code_point, bool repeat)
+EventResult Page::handle_keydown(UIEvents::KeyCode key, unsigned modifiers, u32 code_point, bool repeat, bool should_insert_text)
 {
-    return focused_navigable().event_handler().handle_keydown(key, modifiers, code_point, repeat);
+    return focused_navigable().event_handler().handle_keydown(key, modifiers, code_point, repeat, should_insert_text);
 }
 
 EventResult Page::handle_keyup(UIEvents::KeyCode key, unsigned modifiers, u32 code_point, bool repeat)
@@ -297,11 +421,51 @@ void Page::handle_sdl_input_events()
     top_level_traversable()->event_handler().handle_sdl_input_events();
 }
 
-void Page::set_top_level_traversable(GC::Ref<HTML::TraversableNavigable> navigable)
+void Page::invalidate_compositor_wheel_event_listener_state()
+{
+    ++m_wheel_event_listener_state_generation;
+
+    if (!m_async_scrolling_enabled || !top_level_traversable_is_initialized() || !top_level_traversable()->has_compositor_context())
+        return;
+
+    top_level_traversable()->compositor_context().invalidate_wheel_event_listener_state(m_wheel_event_listener_state_generation);
+}
+
+void Page::update_needs_beforeunload_check()
+{
+    auto needs_beforeunload_check = [&] {
+        if (!top_level_traversable_is_initialized())
+            return true;
+
+        auto top_level_traversable = this->top_level_traversable();
+        auto active_document = top_level_traversable->active_document();
+        if (!active_document)
+            return true;
+        if (active_document->navigable() != top_level_traversable.ptr())
+            return true;
+
+        for (auto const& navigable : active_document->inclusive_descendant_navigables()) {
+            auto window = navigable->active_window();
+            if (window && window->has_event_listener(HTML::EventNames::beforeunload))
+                return true;
+        }
+
+        return false;
+    }();
+
+    if (m_needs_beforeunload_check == needs_beforeunload_check)
+        return;
+
+    m_needs_beforeunload_check = needs_beforeunload_check;
+    client().page_did_change_needs_beforeunload_check(m_needs_beforeunload_check);
+}
+
+void Page::set_top_level_traversable(GC::Ref<HTML::LocalTraversableNavigable> navigable)
 {
     VERIFY(!m_top_level_traversable); // Replacement is not allowed!
     VERIFY(&navigable->page() == this);
     m_top_level_traversable = navigable;
+    update_needs_beforeunload_check();
 }
 
 bool Page::top_level_traversable_is_initialized() const
@@ -319,7 +483,7 @@ HTML::BrowsingContext const& Page::top_level_browsing_context() const
     return *m_top_level_traversable->active_browsing_context();
 }
 
-GC::Ref<HTML::TraversableNavigable> Page::top_level_traversable() const
+GC::Ref<HTML::LocalTraversableNavigable> Page::top_level_traversable() const
 {
     return *m_top_level_traversable;
 }
@@ -333,10 +497,10 @@ void Page::did_update_window_rect()
 template<typename ResponseType>
 static ResponseType spin_event_loop_until_dialog_closed(PageClient& client, Optional<ResponseType>& response, SourceLocation location = SourceLocation::current())
 {
-    auto& event_loop = Web::HTML::current_principal_settings_object().responsible_event_loop();
+    auto& event_loop = Web::HTML::current_settings_object().responsible_event_loop();
     auto pause_handle = event_loop.pause();
 
-    Web::Platform::EventLoopPlugin::the().spin_until(GC::create_function(event_loop.heap(), [&]() {
+    Web::Platform::EventLoopPlugin::the().spin_until(GC::create_function(GC::Heap::the(), [&]() {
         return response.has_value() || !client.is_connection_open();
     }));
 
@@ -348,7 +512,7 @@ static ResponseType spin_event_loop_until_dialog_closed(PageClient& client, Opti
     return response.release_value();
 }
 
-void Page::did_request_alert(String const& message)
+void Page::did_request_alert(Utf16String const& message)
 {
     m_pending_dialog = PendingDialog::Alert;
     m_client->page_did_request_alert(message);
@@ -367,7 +531,7 @@ void Page::alert_closed()
     }
 }
 
-bool Page::did_request_confirm(String const& message)
+bool Page::did_request_confirm(Utf16String const& message)
 {
     m_pending_dialog = PendingDialog::Confirm;
     m_client->page_did_request_confirm(message);
@@ -386,7 +550,7 @@ void Page::confirm_closed(bool accepted)
     }
 }
 
-Optional<String> Page::did_request_prompt(String const& message, String const& default_)
+Optional<Utf16String> Page::did_request_prompt(Utf16String const& message, Utf16String const& default_)
 {
     m_pending_dialog = PendingDialog::Prompt;
     m_client->page_did_request_prompt(message, default_);
@@ -397,7 +561,7 @@ Optional<String> Page::did_request_prompt(String const& message, String const& d
     return spin_event_loop_until_dialog_closed(*m_client, m_pending_prompt_response);
 }
 
-void Page::prompt_closed(Optional<String> response)
+void Page::prompt_closed(Optional<Utf16String> response)
 {
     if (m_pending_dialog == PendingDialog::Prompt) {
         m_pending_prompt_response = move(response);
@@ -533,6 +697,86 @@ void Page::retrieved_clipboard_entries(u64 request_id, Vector<Clipboard::SystemC
         (*request)->function()(move(items));
 }
 
+u64 Page::request_geolocation_position(GeolocationPositionCallback callback, GeolocationRequestType type)
+{
+    // This is the browser-process bridge for the Geolocation spec's "try to acquire position data from the underlying system" step.
+    auto request_id = m_next_geolocation_request_id++;
+    m_pending_geolocation_requests.set(request_id, { callback, type });
+
+    if (type == GeolocationRequestType::Watch) {
+        client().page_did_start_geolocation_position_watch(request_id);
+        return request_id;
+    }
+
+    if (!m_active_geolocation_request_id.has_value()) {
+        m_active_geolocation_request_id = request_id;
+        client().page_did_request_geolocation_position(request_id);
+    }
+
+    return request_id;
+}
+
+void Page::cancel_geolocation_position_request(u64 request_id)
+{
+    auto request = m_pending_geolocation_requests.take(request_id);
+    if (!request.has_value())
+        return;
+
+    if (request->type == GeolocationRequestType::Watch) {
+        client().page_did_stop_geolocation_position_watch(request_id);
+        return;
+    }
+
+    if (m_active_geolocation_request_id != request_id)
+        return;
+
+    client().page_did_cancel_geolocation_position_request(request_id);
+    m_active_geolocation_request_id = {};
+    for (auto const& entry : m_pending_geolocation_requests) {
+        if (entry.value.type == GeolocationRequestType::OneShot) {
+            m_active_geolocation_request_id = entry.key;
+            client().page_did_request_geolocation_position(entry.key);
+            return;
+        }
+    }
+}
+
+void Page::receive_geolocation_position(u64 request_id, GeolocationPositionResult result)
+{
+    auto request = m_pending_geolocation_requests.get(request_id);
+    if (!request.has_value())
+        return;
+
+    if (request->type == GeolocationRequestType::Watch) {
+        auto callback = request->callback;
+        if (result.has<Geolocation::GeolocationPositionError::ErrorCode>()
+            && result.get<Geolocation::GeolocationPositionError::ErrorCode>() == Geolocation::GeolocationPositionError::ErrorCode::PermissionDenied)
+            m_pending_geolocation_requests.remove(request_id);
+        callback->function()(result);
+        return;
+    }
+
+    if (m_active_geolocation_request_id != request_id)
+        return;
+
+    m_active_geolocation_request_id = {};
+
+    Vector<GeolocationPositionCallback> callbacks;
+    Vector<u64> completed_request_ids;
+    for (auto const& entry : m_pending_geolocation_requests) {
+        if (entry.value.type != GeolocationRequestType::OneShot)
+            continue;
+        callbacks.append(entry.value.callback);
+        completed_request_ids.append(entry.key);
+    }
+
+    for (auto completed_request_id : completed_request_ids)
+        m_pending_geolocation_requests.remove(completed_request_id);
+
+    for (auto const& callback : callbacks)
+        callback->function()(result);
+}
+
 void Page::register_media_element(Badge<HTML::HTMLMediaElement>, UniqueNodeID media_id)
 {
     m_media_elements.append(media_id);
@@ -554,10 +798,17 @@ void Page::for_each_media_element(Callback&& callback)
     }
 }
 
-void Page::update_all_media_element_video_sinks()
+void Page::restore_all_media_element_video_sinks()
 {
-    for_each_media_element([](auto& media_element) {
-        media_element.update_video_frame_and_timeline();
+    for_each_media_element([&](auto& media_element) {
+        media_element.add_current_video_sink();
+    });
+}
+
+void Page::detach_all_media_element_video_sinks_after_compositor_lost()
+{
+    for_each_media_element([&](auto& media_element) {
+        media_element.detach_video_sink_after_compositor_lost();
     });
 }
 
@@ -582,10 +833,30 @@ void Page::for_each_canvas_element(Callback&& callback)
     }
 }
 
-void Page::present_all_canvas_element_surfaces()
+void Page::prepare_canvas_contexts_for_compositing()
 {
     for_each_canvas_element([](auto& canvas_element) {
-        canvas_element.present();
+        canvas_element.prepare_for_compositing();
+    });
+
+    // Preparing only records commands and present markers into the shared
+    // canvas command stream; flush it here so canvases reach the Compositor
+    // even when nothing else repaints this rendering update.
+    if (has_compositor_host())
+        compositor_host().flush_canvas_2d_stream();
+}
+
+void Page::notify_all_canvas_elements_of_lost_backing_storage()
+{
+    for_each_canvas_element([](auto& canvas_element) {
+        canvas_element.notify_compositor_backing_storage_lost();
+    });
+}
+
+void Page::notify_all_webgl_contexts_lost()
+{
+    for_each_canvas_element([](auto& canvas_element) {
+        canvas_element.notify_compositor_connection_lost();
     });
 }
 
@@ -601,13 +872,10 @@ void Page::toggle_media_play_state()
     if (!media_element)
         return;
 
-    // AD-HOC: An execution context is required for Promise creation hooks.
-    HTML::TemporaryExecutionContext execution_context { media_element->realm() };
-
     if (media_element->potentially_playing())
         media_element->pause();
     else
-        media_element->play();
+        media_element->play_from_user_interaction();
 }
 
 void Page::toggle_media_mute_state()
@@ -617,7 +885,7 @@ void Page::toggle_media_mute_state()
         return;
 
     // AD-HOC: An execution context is required for Promise creation hooks.
-    HTML::TemporaryExecutionContext execution_context { media_element->realm() };
+    HTML::TemporaryExecutionContext execution_context { media_element->document().relevant_settings_object() };
 
     media_element->set_muted(!media_element->muted());
 }
@@ -629,12 +897,12 @@ void Page::toggle_media_loop_state()
         return;
 
     // AD-HOC: An execution context is required for Promise creation hooks.
-    HTML::TemporaryExecutionContext execution_context { media_element->realm() };
+    HTML::TemporaryExecutionContext execution_context { media_element->document().relevant_settings_object() };
 
     if (media_element->has_attribute(HTML::AttributeNames::loop))
         media_element->remove_attribute(HTML::AttributeNames::loop);
     else
-        media_element->set_attribute_value(HTML::AttributeNames::loop, String {});
+        media_element->set_attribute_value(HTML::AttributeNames::loop, Utf16String {});
 }
 
 void Page::toggle_media_fullscreen_state()
@@ -643,7 +911,7 @@ void Page::toggle_media_fullscreen_state()
     if (!media_element)
         return;
 
-    HTML::TemporaryExecutionContext execution_context { media_element->realm() };
+    HTML::TemporaryExecutionContext execution_context { media_element->document().relevant_settings_object() };
     media_element->toggle_fullscreen();
 }
 
@@ -653,17 +921,20 @@ void Page::toggle_media_controls_state()
     if (!media_element)
         return;
 
-    HTML::TemporaryExecutionContext execution_context { media_element->realm() };
+    HTML::TemporaryExecutionContext execution_context { media_element->document().relevant_settings_object() };
 
     if (media_element->has_attribute(HTML::AttributeNames::controls))
         media_element->remove_attribute(HTML::AttributeNames::controls);
     else
-        media_element->set_attribute_value(HTML::AttributeNames::controls, String {});
+        media_element->set_attribute_value(HTML::AttributeNames::controls, Utf16String {});
 }
 
-void Page::toggle_page_mute_state()
+void Page::set_page_mute_state(HTML::MuteState mute_state)
 {
-    m_mute_state = HTML::invert_mute_state(m_mute_state);
+    if (m_mute_state == mute_state)
+        return;
+
+    m_mute_state = mute_state;
 
     for_each_media_element([&](auto& media_element) {
         media_element.page_mute_state_changed({});
@@ -685,15 +956,44 @@ GC::Ptr<HTML::HTMLMediaElement> Page::media_context_menu_element()
     return static_cast<HTML::HTMLMediaElement*>(dom_node);
 }
 
-void Page::set_user_style(String source)
+void Page::set_user_style(Utf16String source)
 {
-    m_user_style_sheet_source = source;
-    if (top_level_traversable_is_initialized() && top_level_traversable()->active_document()) {
-        auto& document = *top_level_traversable()->active_document();
-        document.style_scope().invalidate_rule_cache();
+    m_user_style_sheet_source = move(source);
+    invalidate_user_style();
+}
+
+void Page::set_content_blocking_enabled(bool enabled)
+{
+    auto& blocker = ContentBlocker::the();
+    if (blocker.filtering_enabled() == enabled)
+        return;
+
+    auto has_cosmetic_rules = blocker.has_cosmetic_rules();
+    blocker.set_filtering_enabled(enabled);
+    if (has_cosmetic_rules)
+        invalidate_user_style();
+}
+
+void Page::invalidate_user_style()
+{
+    if (!top_level_traversable_is_initialized() || !top_level_traversable()->active_document())
+        return;
+
+    auto invalidate_document = [](DOM::Document& document) {
+        document.invalidate_content_blocker_style_sheet();
+        document.style_scope().invalidate_user_style_sheet();
         document.for_each_shadow_root([](auto& shadow_root) {
-            shadow_root.style_scope().invalidate_rule_cache();
+            shadow_root.invalidate_style(DOM::StyleInvalidationReason::StyleSheetReplace);
         });
+        document.invalidate_style(DOM::StyleInvalidationReason::StyleSheetReplace);
+    };
+
+    auto& active_document = *top_level_traversable()->active_document();
+    invalidate_document(active_document);
+
+    for (auto& navigable : active_document.descendant_navigables()) {
+        if (auto document = navigable->active_document())
+            invalidate_document(*document);
     }
 }
 
@@ -791,7 +1091,7 @@ Page::FindInPageResult Page::perform_find_in_page_query(FindInPageQuery const& q
         }
     }
 
-    update_find_in_page_selection(all_matches);
+    update_find_in_page_selection(all_matches, query.clear_selection_on_no_match);
 
     return Page::FindInPageResult {
         .current_match_index = m_find_in_page_match_index,
@@ -836,10 +1136,13 @@ Page::FindInPageResult Page::find_in_page_previous_match()
     return result;
 }
 
-void Page::update_find_in_page_selection(Vector<GC::Root<DOM::Range>> matches)
+void Page::update_find_in_page_selection(Vector<GC::Root<DOM::Range>> matches, ClearSelectionOnNoMatch clear_selection_on_no_match)
 {
-    if (matches.is_empty())
+    if (matches.is_empty()) {
+        if (clear_selection_on_no_match == ClearSelectionOnNoMatch::Yes)
+            clear_selection();
         return;
+    }
 
     clear_selection();
 
@@ -856,30 +1159,30 @@ void Page::update_find_in_page_selection(Vector<GC::Root<DOM::Range>> matches)
     selection->add_range(*current_range);
 
     if (auto element = common_ancestor_container->parent_element()) {
-        DOM::ScrollIntoViewOptions scroll_options;
-        scroll_options.block = Bindings::ScrollLogicalPosition::Nearest;
-        scroll_options.inline_ = Bindings::ScrollLogicalPosition::Nearest;
-        scroll_options.behavior = Bindings::ScrollBehavior::Instant;
-        (void)element->scroll_into_view(scroll_options);
+        DOM::Element::ScrollIntoViewOptions scroll_options;
+        scroll_options.block = DOM::Element::ScrollLogicalPosition::Nearest;
+        scroll_options.inline_ = DOM::Element::ScrollLogicalPosition::Nearest;
+        scroll_options.behavior = DOM::Element::ScrollBehavior::Instant;
+        element->scroll_into_view(scroll_options, nullptr);
     }
 }
 
-void Page::enqueue_fullscreen_enter(GC::Ref<DOM::Element> element, GC::Ref<DOM::Document> pending_doc, DOM::RequestFullscreenError error, GC::Ref<WebIDL::Promise> promise)
+void Page::enqueue_fullscreen_enter(GC::Ref<DOM::Element> element, GC::Ref<DOM::Document> pending_doc, DOM::RequestFullscreenError error, GC::Ptr<WebIDL::Promise> promise)
 {
     m_pending_fullscreen_operations.enqueue(PendingFullscreenEnter { element, pending_doc, error, promise });
     // NOTE: Processing is deferred because the spec says "run the remaining steps in parallel",
     //       meaning the caller's synchronous JS should complete before we process the operation.
-    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(heap(), [this]() {
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(GC::Heap::the(), [this]() {
         process_pending_fullscreen_operations();
     }));
 }
 
-void Page::enqueue_fullscreen_exit(GC::Ref<DOM::Document> doc, bool resize, GC::Ref<WebIDL::Promise> promise)
+void Page::enqueue_fullscreen_exit(GC::Ref<DOM::Document> doc, bool resize, GC::Ptr<WebIDL::Promise> promise)
 {
     m_pending_fullscreen_operations.enqueue(PendingFullscreenExit { doc, resize, promise });
     // NOTE: Processing is deferred because the spec says "run the remaining steps in parallel",
     //       meaning the caller's synchronous JS should complete before we process the operation.
-    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(heap(), [this]() {
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(GC::Heap::the(), [this]() {
         process_pending_fullscreen_operations();
     }));
 }
@@ -928,7 +1231,7 @@ void Page::process_pending_fullscreen_operations()
                         enter.error = DOM::RequestFullscreenError::ElementReadyCheckFailed;
                 }
 
-                auto& realm = enter.element->realm();
+                auto& realm = HTML::relevant_realm(*enter.pending_doc);
                 HTML::TemporaryExecutionContext context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
 
                 // 10. If error is true:
@@ -937,12 +1240,13 @@ void Page::process_pending_fullscreen_operations()
                     enter.pending_doc->append_pending_fullscreen_change(DOM::PendingFullscreenEvent::Type::Error, enter.element);
 
                     // 2. Reject promise with a TypeError exception and terminate these steps.
-                    WebIDL::reject_promise(realm, enter.promise, JS::TypeError::create(realm, DOM::request_fullscreen_error_to_string(enter.error)));
+                    if (enter.promise)
+                        WebIDL::reject_promise(*enter.promise, JS::TypeError::create(realm, DOM::request_fullscreen_error_to_string(enter.error)));
                     return true;
                 }
 
                 // 11. Let fullscreenElements be an ordered set initially consisting of this.
-                auto fullscreen_elements = realm.heap().allocate<GC::HeapVector<GC::Ref<DOM::Element>>>();
+                auto fullscreen_elements = GC::Heap::the().allocate<GC::HeapVector<GC::Ref<DOM::Element>>>();
                 fullscreen_elements->elements().append(enter.element);
 
                 // 12. While true:
@@ -982,11 +1286,12 @@ void Page::process_pending_fullscreen_operations()
                 }
 
                 // 14. Resolve promise with undefined
-                WebIDL::resolve_promise(realm, enter.promise, JS::js_undefined());
+                if (enter.promise)
+                    WebIDL::resolve_promise(*enter.promise);
                 return true;
             },
             [&](PendingFullscreenExit& exit) -> bool {
-                auto& realm = exit.doc->realm();
+                auto& realm = HTML::relevant_realm(*exit.doc);
                 HTML::TemporaryExecutionContext context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
 
                 // https://fullscreen.spec.whatwg.org/#exit-fullscreen
@@ -1007,7 +1312,8 @@ void Page::process_pending_fullscreen_operations()
                 // 11. If doc's fullscreen element is null, then resolve promise with undefined and terminate these
                 //     steps.
                 if (!exit.doc->fullscreen_element()) {
-                    WebIDL::resolve_promise(realm, exit.promise, JS::js_undefined());
+                    if (exit.promise)
+                        WebIDL::resolve_promise(*exit.promise);
                     return true;
                 }
 
@@ -1016,7 +1322,7 @@ void Page::process_pending_fullscreen_operations()
 
                 // 13. Let descendantDocs be an ordered set consisting of doc's descendant navigables' active documents
                 //     whose fullscreen element is non-null, if any, in tree order.
-                auto descendant_docs = realm.heap().allocate<GC::HeapVector<GC::Ref<DOM::Document>>>();
+                auto descendant_docs = GC::Heap::the().allocate<GC::HeapVector<GC::Ref<DOM::Document>>>();
                 for (auto& descendant : exit.doc->descendant_navigables()) {
                     if (descendant->active_document()->fullscreen_element())
                         descendant_docs->elements().append(*descendant->active_document());
@@ -1047,7 +1353,8 @@ void Page::process_pending_fullscreen_operations()
                 }
 
                 // 16. Resolve promise with undefined.
-                WebIDL::resolve_promise(realm, exit.promise, JS::js_undefined());
+                if (exit.promise)
+                    WebIDL::resolve_promise(*exit.promise);
                 return true;
             });
 

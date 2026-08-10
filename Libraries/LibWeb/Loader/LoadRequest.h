@@ -17,6 +17,7 @@
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Page/Page.h>
+#include <LibWeb/ReferrerPolicy/ReferrerPolicy.h>
 
 namespace Web {
 
@@ -45,6 +46,24 @@ public:
     Optional<Fetch::Infrastructure::Request::InitiatorType> const& initiator_type() const { return m_initiator_type; }
     void set_initiator_type(Optional<Fetch::Infrastructure::Request::InitiatorType> initiator_type) { m_initiator_type = move(initiator_type); }
 
+    Optional<Fetch::Infrastructure::Request::Destination> const& destination() const { return m_destination; }
+    void set_destination(Optional<Fetch::Infrastructure::Request::Destination> destination) { m_destination = move(destination); }
+
+    Fetch::Infrastructure::Request::Mode request_mode() const { return m_request_mode; }
+    void set_request_mode(Fetch::Infrastructure::Request::Mode request_mode) { m_request_mode = request_mode; }
+
+    ReferrerPolicy::ReferrerPolicy referrer_policy() const { return m_referrer_policy; }
+    void set_referrer_policy(ReferrerPolicy::ReferrerPolicy referrer_policy) { m_referrer_policy = referrer_policy; }
+
+    bool is_navigation_request() const { return m_is_navigation_request; }
+    void set_is_navigation_request(bool is_navigation_request) { m_is_navigation_request = is_navigation_request; }
+
+    Fetch::Infrastructure::Request::Priority priority() const { return m_priority; }
+    void set_priority(Fetch::Infrastructure::Request::Priority priority) { m_priority = priority; }
+
+    Optional<URL::URL> const& source_url() const { return m_source_url; }
+    void set_source_url(URL::URL source_url) { m_source_url = move(source_url); }
+
     void start_timer() { m_load_timer.start(); }
     AK::Duration load_time() const { return m_load_timer.elapsed_time(); }
 
@@ -63,6 +82,12 @@ private:
     HTTP::CacheMode m_cache_mode { HTTP::CacheMode::Default };
     HTTP::Cookie::IncludeCredentials m_include_credentials { HTTP::Cookie::IncludeCredentials::Yes };
     Optional<Fetch::Infrastructure::Request::InitiatorType> m_initiator_type;
+    Optional<Fetch::Infrastructure::Request::Destination> m_destination;
+    Fetch::Infrastructure::Request::Mode m_request_mode { Fetch::Infrastructure::Request::Mode::NoCORS };
+    ReferrerPolicy::ReferrerPolicy m_referrer_policy { ReferrerPolicy::DEFAULT_REFERRER_POLICY };
+    bool m_is_navigation_request { false };
+    Fetch::Infrastructure::Request::Priority m_priority { Fetch::Infrastructure::Request::Priority::Auto };
+    Optional<URL::URL> m_source_url;
 };
 
 }

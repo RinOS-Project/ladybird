@@ -11,6 +11,7 @@
 #include <LibCore/Environment.h>
 #include <LibCore/System.h>
 #include <LibFileSystem/FileSystem.h>
+#include <LibJS/Bytecode/Debug.h>
 #include <LibTest/JavaScriptTestRunner.h>
 #include <signal.h>
 #include <stdio.h>
@@ -101,6 +102,7 @@ int main(int argc, char** argv)
     bool print_progress = false;
     bool print_json = false;
     bool per_file = false;
+    bool print_each_test = false;
     StringView specified_test_root;
     ByteString common_path;
     Vector<ByteString> test_globs;
@@ -125,6 +127,7 @@ int main(int argc, char** argv)
 
     args_parser.add_option(print_json, "Show results as JSON", "json", 'j');
     args_parser.add_option(per_file, "Show detailed per-file results as JSON (implies -j)", "per-file");
+    args_parser.add_option(print_each_test, "Print each test file before running it", "verbose", 'v');
     args_parser.add_option(g_collect_on_every_allocation, "Collect garbage after every allocation", "collect-often", 'g');
     args_parser.add_option(JS::Bytecode::g_dump_bytecode, "Dump the bytecode", "dump-bytecode", 'd');
     args_parser.add_option(test_globs, "Only run tests matching the given glob", "filter", 'f', "glob");
@@ -212,7 +215,7 @@ int main(int argc, char** argv)
         };
     }
 
-    Test::JS::TestRunner test_runner(test_root, common_path, print_times, print_progress, print_json, per_file);
+    Test::JS::TestRunner test_runner(test_root, common_path, print_times, print_progress, print_json, per_file, print_each_test);
     test_runner.run(test_globs);
 
     g_vm = nullptr;
