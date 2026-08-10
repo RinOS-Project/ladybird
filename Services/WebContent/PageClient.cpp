@@ -411,7 +411,12 @@ void PageClient::page_did_finish_loading(URL::URL const& url)
                     }
                 }
             }
-            auto* layout_root = doc->layout_node();
+            // Loading completion may be delivered after DOM mutation has
+            // invalidated layout but before the next rendering update. This
+            // block is diagnostics only, so inspect the existing tree without
+            // asserting that it is current; normal layout consumers retain the
+            // checked layout_node() contract.
+            auto* layout_root = doc->unsafe_layout_node();
             size_t layout_root_children = 0;
             if (layout_root) {
                 for (auto* child = layout_root->first_child(); child; child = child->next_sibling())
