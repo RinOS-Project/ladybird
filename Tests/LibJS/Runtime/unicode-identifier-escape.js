@@ -21,6 +21,14 @@ test("non-ascii escapes", () => {
     expect("foo.𝓑𝓻\\ud835\\udcf8𝔀𝓷").not.toEval();
 });
 
+test("escaped IPA identifier in a member expression", () => {
+    // This is emitted by current YouTube bundles as `id.\u0275prov.token`.
+    const object = { "ɵprov": { token: 42 } };
+
+    expect(object.\u0275prov.token).toBe(42);
+    expect(object.\u{275}prov.token).toBe(42);
+});
+
 describe("escaped keywords", () => {
     // We must double escape the slashes here else the strings already convert
     // the escaped characters (and string is more lenient).
