@@ -13,7 +13,7 @@ namespace Web::ContentSecurityPolicy::Directives {
 
 GC_DEFINE_ALLOCATOR(ImageSourceDirective);
 
-ImageSourceDirective::ImageSourceDirective(Utf16FlyString name, Vector<Utf16String> value)
+ImageSourceDirective::ImageSourceDirective(String name, Vector<String> value)
     : Directive(move(name), move(value))
 {
 }

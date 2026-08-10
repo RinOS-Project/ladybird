@@ -8,10 +8,7 @@
 
 #pragma once
 
-#include <AK/Badge.h>
 #include <AK/Function.h>
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16View.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CSS/CSSRule.h>
 #include <LibWeb/CSS/Parser/RuleContext.h>
@@ -23,12 +20,12 @@
 namespace Web::CSS {
 
 // https://www.w3.org/TR/cssom/#the-cssrulelist-interface
-class WEB_API CSSRuleList : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(CSSRuleList, Bindings::GCAllocatedWrappable);
+class WEB_API CSSRuleList : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(CSSRuleList, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(CSSRuleList);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSRuleList> create(ReadonlySpan<GC::Ref<CSSRule>> = {});
+    [[nodiscard]] static GC::Ref<CSSRuleList> create(JS::Realm&, ReadonlySpan<GC::Ref<CSSRule>> = {});
 
     ~CSSRuleList() = default;
 
@@ -54,18 +51,18 @@ public:
     auto end() const { return m_rules.end(); }
     auto end() { return m_rules.end(); }
 
+    virtual Optional<JS::Value> item_value(size_t index) const override;
+
     WebIDL::ExceptionOr<void> remove_a_css_rule(u32 index);
-    void remove_a_css_rule_without_validation(Badge<CSSStyleSheet>, u32 index);
     enum class Nested {
         No,
         Yes,
     };
-    WebIDL::ExceptionOr<unsigned> insert_a_css_rule(Variant<Utf16View, CSSRule*>, u32 index, Nested, HashTable<Utf16FlyString> const& declared_namespaces);
+    WebIDL::ExceptionOr<unsigned> insert_a_css_rule(Variant<StringView, CSSRule*>, u32 index, Nested, HashTable<FlyString> const& declared_namespaces);
 
     void for_each_effective_rule(TraversalOrder, Function<void(CSSRule const&)> const& callback) const;
     // Returns whether the match state of any media queries changed after evaluation.
     bool evaluate_media_queries(DOM::Document const&);
-    bool evaluate_media_queries(DOM::Document const&, Function<void(CSSRule const&)> const& changed_rule_callback);
 
     void set_owner_rule(GC::Ref<CSSRule> owner_rule) { m_owner_rule = owner_rule; }
     void set_rules(Badge<CSSStyleSheet>, Vector<GC::Ref<CSSRule>> rules) { m_rules = move(rules); }
@@ -73,12 +70,11 @@ public:
     Function<void()> on_change;
 
 private:
-    explicit CSSRuleList();
+    explicit CSSRuleList(JS::Realm&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
-    virtual size_t external_memory_size() const override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    void remove_a_css_rule_without_validation(u32 index);
     Vector<Parser::RuleContext> rule_context() const;
 
     Vector<GC::Ref<CSSRule>> m_rules;

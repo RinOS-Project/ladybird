@@ -6,17 +6,18 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGfx/SkiaBackendContext.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/WebGL2RenderingContext.h>
+#include <LibWeb/Bindings/WebGL2RenderingContextPrototype.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
 #include <LibWeb/Infra/Strings.h>
 #include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/WebGL/EventNames.h>
+#include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGL2RenderingContext.h>
 #include <LibWeb/WebGL/WebGLContextEvent.h>
-#include <LibWeb/WebGL/WebGLContextProxy.h>
 #include <LibWeb/WebGL/WebGLRenderingContext.h>
 #include <LibWeb/WebGL/WebGLShader.h>
 #include <LibWeb/WebIDL/Buffers.h>
@@ -35,16 +36,28 @@ JS::ThrowCompletionOr<GC::Ptr<WebGL2RenderingContext>> WebGL2RenderingContext::c
     // We should be coming here from getContext being called on a wrapped <canvas> element.
     auto context_attributes = TRY(convert_value_to_context_attributes_dictionary(canvas_element.vm(), options));
 
-    auto context = create_webgl_context_proxy(canvas_element, WebGLVersion::WebGL2, context_attributes);
+    auto skia_backend_context = Gfx::SkiaBackendContext::the();
+    if (!skia_backend_context) {
+        fire_webgl_context_creation_error(canvas_element);
+        return GC::Ptr<WebGL2RenderingContext> { nullptr };
+    }
+    OpenGLContext::DrawingBufferOptions context_options {
+        .depth = context_attributes.depth,
+        .stencil = context_attributes.stencil,
+        .antialias = context_attributes.antialias,
+    };
+    auto context = OpenGLContext::create(*skia_backend_context, OpenGLContext::WebGLVersion::WebGL2, context_options);
     if (!context) {
         fire_webgl_context_creation_error(canvas_element);
         return GC::Ptr<WebGL2RenderingContext> { nullptr };
     }
 
+    context->set_size(canvas_element.bitmap_size_for_canvas(1, 1));
+
     return realm.create<WebGL2RenderingContext>(realm, canvas_element, context.release_nonnull(), context_attributes, context_attributes);
 }
 
-WebGL2RenderingContext::WebGL2RenderingContext(JS::Realm& realm, HTML::HTMLCanvasElement& canvas_element, NonnullOwnPtr<WebGLContextProxy> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters)
+WebGL2RenderingContext::WebGL2RenderingContext(JS::Realm& realm, HTML::HTMLCanvasElement& canvas_element, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters)
     : WebGL2RenderingContextOverloads(realm, move(context))
     , m_canvas_element(canvas_element)
     , m_context_creation_parameters(context_creation_parameters)
@@ -54,6 +67,12 @@ WebGL2RenderingContext::WebGL2RenderingContext(JS::Realm& realm, HTML::HTMLCanva
 
 WebGL2RenderingContext::~WebGL2RenderingContext() = default;
 
+void WebGL2RenderingContext::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(WebGL2RenderingContext);
+    Base::initialize(realm);
+}
+
 void WebGL2RenderingContext::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
@@ -61,14 +80,9 @@ void WebGL2RenderingContext::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_canvas_element);
 }
 
-void WebGL2RenderingContext::prepare_for_compositing()
+void WebGL2RenderingContext::present()
 {
-    context().present_canvas_for_compositing(m_context_creation_parameters.preserve_drawing_buffer);
-}
-
-bool WebGL2RenderingContext::reestablish_remote_context()
-{
-    return restore_webgl_context_proxy(context(), *m_canvas_element, WebGLVersion::WebGL2, m_actual_context_parameters);
+    context().present(m_context_creation_parameters.preserve_drawing_buffer);
 }
 
 GC::Ref<HTML::HTMLCanvasElement> WebGL2RenderingContext::canvas_for_binding() const
@@ -76,17 +90,17 @@ GC::Ref<HTML::HTMLCanvasElement> WebGL2RenderingContext::canvas_for_binding() co
     return *m_canvas_element;
 }
 
-void WebGL2RenderingContext::did_update_canvas_content()
+void WebGL2RenderingContext::needs_to_present()
 {
     m_canvas_element->set_canvas_content_dirty();
 
-    // NB: Invalidate the cached DrawCanvas command so that if another change causes the display list to be
-    //     recorded, it contains the new content generation and damages the canvas. Don't request a display list
-    //     recording here: the new content reaches the compositor through the canvas surface registry when the
-    //     canvas is presented.
-    if (auto paintable = m_canvas_element->unsafe_paintable())
-        paintable->invalidate_paint_cache();
-    m_canvas_element->set_needs_repaint(InvalidateDisplayList::No);
+    m_canvas_element->set_needs_repaint();
+}
+
+bool WebGL2RenderingContext::is_context_lost() const
+{
+    dbgln_if(WEBGL_CONTEXT_DEBUG, "WebGLRenderingContext::is_context_lost()");
+    return m_context_lost;
 }
 
 Optional<WebGLContextAttributes> WebGL2RenderingContext::get_context_attributes()
@@ -99,8 +113,8 @@ Optional<WebGLContextAttributes> WebGL2RenderingContext::get_context_attributes(
 void WebGL2RenderingContext::set_size(Gfx::IntSize const& size)
 {
     Gfx::IntSize final_size;
-    final_size.set_width(clamp(size.width(), 1, max_webgl_drawing_buffer_dimension));
-    final_size.set_height(clamp(size.height(), 1, max_webgl_drawing_buffer_dimension));
+    final_size.set_width(max(size.width(), 1));
+    final_size.set_height(max(size.height(), 1));
     context().set_size(final_size);
 }
 
@@ -108,16 +122,26 @@ void WebGL2RenderingContext::reset_to_default_state()
 {
 }
 
+RefPtr<Gfx::PaintingSurface> WebGL2RenderingContext::surface()
+{
+    return context().surface();
+}
+
+void WebGL2RenderingContext::allocate_painting_surface_if_needed()
+{
+    context().allocate_painting_surface_if_needed();
+}
+
 WebIDL::Long WebGL2RenderingContext::drawing_buffer_width() const
 {
     auto size = canvas_for_binding()->bitmap_size_for_canvas();
-    return min(size.width(), max_webgl_drawing_buffer_dimension);
+    return size.width();
 }
 
 WebIDL::Long WebGL2RenderingContext::drawing_buffer_height() const
 {
     auto size = canvas_for_binding()->bitmap_size_for_canvas();
-    return min(size.height(), max_webgl_drawing_buffer_dimension);
+    return size.height();
 }
 
 }

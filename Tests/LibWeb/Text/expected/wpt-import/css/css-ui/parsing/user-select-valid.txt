@@ -1,9 +1,10 @@
 Harness status: OK
 
-Found 4 tests
+Found 5 tests
 
-4 Pass
+5 Pass
 Pass	e.style['user-select'] = "auto" should set the property value
 Pass	e.style['user-select'] = "text" should set the property value
 Pass	e.style['user-select'] = "none" should set the property value
+Pass	e.style['user-select'] = "contain" should set the property value
 Pass	e.style['user-select'] = "all" should set the property value

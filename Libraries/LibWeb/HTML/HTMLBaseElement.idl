@@ -1,10 +1,12 @@
+#import <HTML/HTMLElement.idl>
+
 // https://html.spec.whatwg.org/multipage/semantics.html#htmlbaseelement
 [Exposed=Window]
 interface HTMLBaseElement : HTMLElement {
 
     [HTMLConstructor] constructor();
 
-    [CEReactions] attribute Utf16USVString href;
-    [CEReactions, Reflect] attribute Utf16DOMString target;
+    [CEReactions] attribute USVString href;
+    [CEReactions, Reflect] attribute DOMString target;
 
 };

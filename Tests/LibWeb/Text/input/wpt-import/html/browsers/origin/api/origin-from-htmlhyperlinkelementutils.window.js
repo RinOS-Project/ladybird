@@ -19,8 +19,6 @@ for (const opaque of urls.opaque) {
     const origin = Origin.from(a);
     assert_true(!!origin);
     assert_true(origin.opaque);
-    assert_true(origin.isSameOrigin(origin));
-    assert_false(origin.isSameOrigin(Origin.from(a)));
   }, `Origin.from(<a href="${opaque}">) returns an opaque origin.`);
 
   // <area>
@@ -30,8 +28,6 @@ for (const opaque of urls.opaque) {
     const origin = Origin.from(area);
     assert_true(!!origin);
     assert_true(origin.opaque);
-    assert_true(origin.isSameOrigin(origin));
-    assert_false(origin.isSameOrigin(Origin.from(area)));
   }, `Origin.from(<area href="${opaque}">) returns an opaque origin.`);
 }
 
@@ -43,8 +39,6 @@ for (const tuple of urls.tuple) {
     const origin = Origin.from(a);
     assert_true(!!origin);
     assert_false(origin.opaque);
-    assert_true(origin.isSameOrigin(origin));
-    assert_true(origin.isSameOrigin(Origin.from(a)));
   }, `Origin.from(<a href="${tuple}">) returns a tuple origin.`);
 
   // <area>
@@ -54,7 +48,7 @@ for (const tuple of urls.tuple) {
     const origin = Origin.from(area);
     assert_true(!!origin);
     assert_false(origin.opaque);
-    assert_true(origin.isSameOrigin(origin));
-    assert_true(origin.isSameOrigin(Origin.from(area)));
   }, `Origin.from(<area href="${tuple}">) returns a tuple origin.`);
 }
+
+

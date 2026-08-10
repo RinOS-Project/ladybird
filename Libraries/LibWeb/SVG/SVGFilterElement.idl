@@ -1,3 +1,7 @@
+#import <SVG/SVGAnimatedEnumeration.idl>
+#import <SVG/SVGAnimatedLength.idl>
+#import <SVG/SVGURIReference.idl>
+
 // https://drafts.fxtf.org/filter-effects/#InterfaceSVGFilterElement
 [Exposed=Window]
 interface SVGFilterElement : SVGElement {

@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/HTMLFieldSetElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/HTMLButtonElement.h>
 #include <LibWeb/HTML/HTMLFieldSetElement.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
@@ -25,6 +26,12 @@ HTMLFieldSetElement::HTMLFieldSetElement(DOM::Document& document, DOM::Qualified
 }
 
 HTMLFieldSetElement::~HTMLFieldSetElement() = default;
+
+void HTMLFieldSetElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLFieldSetElement);
+    Base::initialize(realm);
+}
 
 void HTMLFieldSetElement::visit_edges(Cell::Visitor& visitor)
 {
@@ -52,7 +59,7 @@ bool HTMLFieldSetElement::is_disabled() const
     return false;
 }
 
-void HTMLFieldSetElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
+void HTMLFieldSetElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
 {
     Base::attribute_changed(name, old_value, value, namespace_);
 
@@ -85,9 +92,9 @@ Layout::FieldSetBox* HTMLFieldSetElement::layout_node()
     return static_cast<Layout::FieldSetBox*>(Node::layout_node());
 }
 
-RefPtr<Layout::Node> HTMLFieldSetElement::create_layout_node(NonnullRefPtr<CSS::ComputedValues const> style)
+GC::Ptr<Layout::Node> HTMLFieldSetElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
 {
-    return make_ref_counted<Layout::FieldSetBox>(document(), *this, style);
+    return heap().allocate<Layout::FieldSetBox>(document(), *this, style);
 }
 
 }

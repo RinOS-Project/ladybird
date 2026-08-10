@@ -7,8 +7,7 @@
 #pragma once
 
 #include <AK/Forward.h>
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
+#include <AK/StringView.h>
 #include <LibWeb/Export.h>
 
 namespace Web::ARIA {
@@ -123,8 +122,8 @@ enum class Role {
 #undef __ENUMERATE_ARIA_ROLE
 };
 
-WEB_API Utf16String const& role_name(Role);
-Optional<Role> role_from_string(Utf16View role_name);
+WEB_API StringView role_name(Role);
+Optional<Role> role_from_string(StringView role_name);
 
 bool is_abstract_role(Role);
 bool is_widget_role(Role);

@@ -1,2 +1,0 @@
-flex width: 0
-canvas width: 0

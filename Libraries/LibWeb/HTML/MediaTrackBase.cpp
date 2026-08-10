@@ -10,12 +10,12 @@
 
 namespace Web::HTML {
 
-MediaTrackBase::MediaTrackBase(GC::Ref<HTMLMediaElement> media_element, Media::Track const& track)
-    : m_media_element(media_element)
+MediaTrackBase::MediaTrackBase(JS::Realm& realm, GC::Ref<HTMLMediaElement> media_element, Media::Track const& track)
+    : PlatformObject(realm)
+    , m_media_element(media_element)
     , m_track_in_playback_manager(track)
     , m_id(Utf16String::number(track.identifier()))
-    , m_kind(track.kind())
-    , m_label(track.label())
+    , m_label(track.name())
 {
     // https://html.spec.whatwg.org/multipage/media.html#dom-audiotrack-language
     // https://html.spec.whatwg.org/multipage/media.html#dom-videotrack-language
@@ -25,10 +25,10 @@ MediaTrackBase::MediaTrackBase(GC::Ref<HTMLMediaElement> media_element, Media::T
     // string without a defined interpretation), then the method must return the empty string, as if the track had no
     // language.
     m_language = [&] {
-        auto locale = Unicode::parse_unicode_locale_id(track.language().utf16_view());
+        auto locale = Unicode::parse_unicode_locale_id(track.language().to_utf8());
         if (!locale.has_value())
-            return Utf16String {};
-        auto language = locale->to_utf16_string();
+            return Utf16String();
+        auto language = locale->to_string();
         // NOTE: We specifically want to exclude "und" here, as RFC 5646 says:
         //
         //     The 'und' (Undetermined) primary language subtag identifies linguistic content whose language is not
@@ -40,15 +40,15 @@ MediaTrackBase::MediaTrackBase(GC::Ref<HTMLMediaElement> media_element, Media::T
         //
         // Matroska's TrackEntry->Language element is required, and will use "und" as a placeholder as mentioned above. We
         // don't want to return anything when that placeholder is found:
-        if (language == "und"_utf16)
-            return Utf16String {};
-        return language;
+        if (language == "und")
+            return Utf16String();
+        return Utf16String::from_utf8_without_validation(language);
     }();
 }
 
 MediaTrackBase::~MediaTrackBase() = default;
 
-void MediaTrackBase::visit_edges(GC::Cell::Visitor& visitor)
+void MediaTrackBase::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_media_element);

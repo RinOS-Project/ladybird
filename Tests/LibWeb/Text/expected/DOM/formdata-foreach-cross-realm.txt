@@ -1,2 +1,0 @@
-same=true
-parent-prototype=true

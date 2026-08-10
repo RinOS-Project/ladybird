@@ -1,3 +1,0 @@
-short offset: 250,80
-abs offset: 250,80
-abs position matches short position: true

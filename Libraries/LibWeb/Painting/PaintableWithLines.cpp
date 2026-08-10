@@ -7,47 +7,49 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/HashMap.h>
-#include <AK/QuickSort.h>
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/TextLayout.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Position.h>
+#include <LibWeb/DOM/Range.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
-#include <LibWeb/HTML/HTMLBRElement.h>
-#include <LibWeb/HTML/LocalNavigable.h>
+#include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/Layout/BlockContainer.h>
-#include <LibWeb/Layout/Node.h>
-#include <LibWeb/Layout/TextNode.h>
+#include <LibWeb/Layout/InlineNode.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/DisplayListRecorder.h>
-#include <LibWeb/Painting/HitTestDisplayList.h>
-#include <LibWeb/Painting/InlinePaintable.h>
 #include <LibWeb/Painting/PaintableWithLines.h>
 #include <LibWeb/Painting/ShadowPainting.h>
-#include <LibWeb/Painting/StackingContext.h>
-#include <LibWeb/VisualLines.h>
+#include <LibWeb/Painting/TextPaintable.h>
+#include <LibWeb/Selection/Selection.h>
 
 namespace Web::Painting {
 
-static void paint_text_decoration(DisplayListRecordingContext&, Layout::TextNode const&, PaintableFragment::FragmentSpan const&);
+GC_DEFINE_ALLOCATOR(PaintableWithLines);
+
+static void paint_text_decoration(DisplayListRecordingContext&, TextPaintable const&, PaintableFragment::FragmentSpan const&);
 static Gfx::Path build_triangle_wave_path(Gfx::IntPoint from, Gfx::IntPoint to, float amplitude);
 static void compute_render_spans(PaintableFragment const&, Vector<PaintableFragment::FragmentSpan, 4>&);
 static void paint_text_fragment(DisplayListRecordingContext&, PaintableFragment::FragmentSpan const&);
 
-static bool layout_node_is_visible(Layout::NodeWithStyle const& layout_node)
+GC::Ref<PaintableWithLines> PaintableWithLines::create(Layout::BlockContainer const& block_container)
 {
-    auto const& computed_values = layout_node.computed_values();
-    return computed_values.visibility() == CSS::Visibility::Visible && computed_values.opacity() != 0;
+    return block_container.heap().allocate<PaintableWithLines>(block_container);
 }
 
-NonnullRefPtr<PaintableWithLines> PaintableWithLines::create(Layout::BlockContainer const& block_container)
+GC::Ref<PaintableWithLines> PaintableWithLines::create(Layout::InlineNode const& inline_node, size_t line_index)
 {
-    return adopt_ref(*new PaintableWithLines(block_container));
+    return inline_node.heap().allocate<PaintableWithLines>(inline_node, line_index);
 }
 
 PaintableWithLines::PaintableWithLines(Layout::BlockContainer const& layout_box)
-    : Paintable(layout_box)
+    : PaintableBox(layout_box)
+{
+}
+
+PaintableWithLines::PaintableWithLines(Layout::InlineNode const& inline_node, size_t line_index)
+    : PaintableBox(inline_node)
+    , m_line_index(line_index)
 {
 }
 
@@ -57,135 +59,8 @@ PaintableWithLines::~PaintableWithLines()
 
 void PaintableWithLines::reset_for_relayout()
 {
-    Paintable::reset_for_relayout();
+    PaintableBox::reset_for_relayout();
     m_fragments.clear();
-    m_lines.clear();
-    m_inline_box_pieces.clear();
-    m_fragment_ownership_filter = {
-        .include_everything = true,
-        .included = {},
-        .excluded = {},
-    };
-    m_text_fragment_properties_paint_generation_id.clear();
-}
-
-InlinePaintable const* nearest_self_painting_inline_box(Layout::Node const& node)
-{
-    for (auto const* ancestor = node.nearest_fragmented_inline_ancestor(); ancestor; ancestor = ancestor->nearest_fragmented_inline_ancestor()) {
-        auto const* proxy = as_if<InlinePaintable>(ancestor->paintable().ptr());
-        if (proxy && proxy->is_self_painting())
-            return proxy;
-    }
-    return nullptr;
-}
-
-void PaintableWithLines::assign_inline_box_geometry()
-{
-    HashMap<Layout::Node const*, Vector<u32>> piece_indices_by_node;
-    for (u32 piece_index = 0; piece_index < m_inline_box_pieces.size(); ++piece_index) {
-        if (auto const* piece_node = m_inline_box_pieces[piece_index].node.ptr())
-            piece_indices_by_node.ensure(piece_node).append(piece_index);
-    }
-
-    for (auto& [piece_node, piece_indices] : piece_indices_by_node) {
-        auto* inline_paintable = as_if<InlinePaintable>(const_cast<Layout::Node*>(piece_node)->paintable().ptr());
-        if (!inline_paintable)
-            continue;
-
-        auto const& box_model = inline_paintable->box_model();
-
-        Optional<CSSPixelRect> content_union;
-        Optional<CSSPixelRect> padding_union;
-        Optional<CSSPixelRect> border_union;
-        auto unite = [](Optional<CSSPixelRect>& target, CSSPixelRect const& rect) {
-            if (!target.has_value()) {
-                target = rect;
-                return;
-            }
-            // Degenerate rects (from placeholder pieces) only establish a position; the
-            // first one wins, and any real rect takes precedence over them.
-            if (rect.is_empty())
-                return;
-            if (target->is_empty())
-                target = rect;
-            else
-                target->unite(rect);
-        };
-
-        for (auto piece_index : piece_indices) {
-            auto const& piece = m_inline_box_pieces[piece_index];
-            if (piece.is_geometry_only_placeholder) {
-                // Placeholder pieces carry the (degenerate) content rect directly.
-                auto content_rect = piece.border_box_rect;
-                auto padding_rect = content_rect.inflated(box_model.padding.top, box_model.padding.right, box_model.padding.bottom, box_model.padding.left);
-                auto border_rect = padding_rect.inflated(box_model.border.top, box_model.border.right, box_model.border.bottom, box_model.border.left);
-                unite(content_union, content_rect);
-                unite(padding_union, padding_rect);
-                unite(border_union, border_rect);
-                continue;
-            }
-            auto border_rect = piece.border_box_rect;
-            auto padding_rect = inline_paintable->piece_padding_box_rect(piece, border_rect);
-            auto content_rect = inline_paintable->piece_content_box_rect(piece, border_rect);
-            unite(content_union, content_rect);
-            unite(padding_union, padding_rect);
-            unite(border_union, border_rect);
-        }
-
-        if (!content_union.has_value())
-            continue;
-        inline_paintable->set_offset(content_union->location());
-        inline_paintable->set_content_size(content_union->size());
-        inline_paintable->set_local_box_unions(
-            padding_union->translated(-content_union->x(), -content_union->y()),
-            border_union->translated(-content_union->x(), -content_union->y()));
-        inline_paintable->set_piece_indices(move(piece_indices));
-    }
-}
-
-void PaintableWithLines::assign_fragment_ownership()
-{
-    m_fragment_ownership_filter = {
-        .include_everything = true,
-        .included = {},
-        .excluded = {},
-    };
-
-    // A box that stopped being self-painting since the last assignment must not keep its
-    // stale filter around, so start every piece's box from a clean slate.
-    for (auto const& piece : m_inline_box_pieces) {
-        if (auto const* piece_node = piece.node.ptr()) {
-            if (auto* piece_paintable = as_if<InlinePaintable>(const_cast<Layout::Node*>(piece_node)->paintable().ptr()))
-                piece_paintable->set_fragment_ownership_filter({});
-        }
-    }
-
-    HashMap<InlinePaintable*, FragmentOwnershipFilter> filters;
-    for (auto const& piece : m_inline_box_pieces) {
-        auto const* piece_node = piece.node.ptr();
-        if (!piece_node || piece.fragment_count == 0)
-            continue;
-        auto* piece_paintable = as_if<InlinePaintable>(const_cast<Layout::Node*>(piece_node)->paintable().ptr());
-        if (!piece_paintable || !piece_paintable->is_self_painting())
-            continue;
-        FragmentRange range { piece.first_fragment_index, piece.first_fragment_index + piece.fragment_count };
-        filters.ensure(piece_paintable).included.append(range);
-        // The nearest self-painting box above owns the surrounding content but must not
-        // paint this box's subtree; content outside any such box falls to the block.
-        if (auto const* enclosing_owner = nearest_self_painting_inline_box(*piece_node))
-            filters.ensure(const_cast<InlinePaintable*>(enclosing_owner)).excluded.append(range);
-        else
-            m_fragment_ownership_filter.excluded.append(range);
-    }
-
-    auto sort_ranges = [](Vector<FragmentRange, 4>& ranges) {
-        quick_sort(ranges, [](auto const& a, auto const& b) { return a.begin < b.begin; });
-    };
-    sort_ranges(m_fragment_ownership_filter.excluded);
-    for (auto& [piece_paintable, filter] : filters) {
-        sort_ranges(filter.excluded);
-        piece_paintable->set_fragment_ownership_filter(move(filter));
-    }
 }
 
 void PaintableWithLines::paint_text_fragment_debug_highlight(DisplayListRecordingContext& context, PaintableFragment const& fragment)
@@ -199,139 +74,161 @@ void PaintableWithLines::paint_text_fragment_debug_highlight(DisplayListRecordin
     context.display_list_recorder().draw_line(baseline_start, baseline_end, Color::Red);
 }
 
-void PaintableWithLines::record_hit_test_items(DisplayListRecordingContext& context, PaintPhase phase) const
+TraversalDecision PaintableWithLines::hit_test(CSSPixelPoint position, HitTestType type, Function<TraversalDecision(HitTestResult)> const& callback) const
 {
-    Paintable::record_hit_test_items(context, phase);
+    auto const is_visible = computed_values().visibility() == CSS::Visibility::Visible;
 
-    if (phase != PaintPhase::Foreground)
-        return;
+    Optional<CSSPixelPoint> local_position;
+    bool acquired_local_position = false;
 
-    auto* hit_test_display_list = context.hit_test_display_list();
-    if (!hit_test_display_list)
-        return;
-
-    if (m_fragments.is_empty() && !has_children()) {
-        if (is_visible() && visible_for_hit_testing())
-            record_empty_editable_hit_test_item(*hit_test_display_list);
-        return;
-    }
-
-    // Fragments inside self-painting inline boxes are recorded during that box's paint,
-    // so their hit-test order and visual context match where they are painted.
-    m_fragment_ownership_filter.for_each_owned_fragment_index(m_fragments.size(), [&](size_t index) {
-        auto const& fragment = m_fragments[index];
-        if (fragment.is_block_level_box())
+    auto ensure_local_position = [&]() {
+        if (exchange(acquired_local_position, true))
             return;
-        hit_test_display_list->append_text_fragment(fragment, accumulated_visual_context_for_descendants_index());
-    });
+        local_position = transform_point_to_local(position);
+    };
 
-    record_empty_line_caret_items(*hit_test_display_list, accumulated_visual_context_for_descendants_index());
-}
+    // TextCursor hit testing mode should be able to place cursor in contenteditable elements even if they are empty.
+    if (m_fragments.is_empty()
+        && !has_children()
+        && type == HitTestType::TextCursor
+        && layout_node().dom_node()
+        && layout_node().dom_node()->is_editable_or_editing_host()
+        && is_visible
+        && visible_for_hit_testing()) {
+        ensure_local_position();
 
-Vector<PaintableWithLines::EmptyLineCaretTarget> PaintableWithLines::empty_line_caret_targets() const
-{
-    if (m_fragments.is_empty() || m_lines.is_empty())
-        return {};
+        if (local_position.has_value() && absolute_border_box_rect().contains(*local_position)) {
+            HitTestResult const hit_test_result {
+                .paintable = const_cast<PaintableWithLines&>(*this),
+                .index_in_node = 0,
+                .vertical_distance = 0,
+                .horizontal_distance = 0,
+            };
 
-    // Line boxes without fragments (e.g. the blank line between two consecutive newlines in a textarea) produce no
-    // fragments to hit test or paint a caret in. When all fragments belong to a single text node with preserved
-    // newlines, we can derive the caret offset of each empty line and compute caret targets for them.
-    auto const* text_layout_node = as_if<Layout::TextNode>(m_fragments.first().layout_node());
-    if (!text_layout_node)
-        return {};
-    if (!white_space_preserves_newlines(*text_layout_node))
-        return {};
-
-    // FIXME: Support vertical writing modes.
-    if (computed_values().writing_mode() != CSS::WritingMode::HorizontalTb)
-        return {};
-
-    auto const* dom_text = text_layout_node->dom_text();
-    if (!dom_text)
-        return {};
-    if (!text_contains_empty_visual_line_positions(dom_text->data().utf16_view()))
-        return {};
-
-    for (auto const& fragment : m_fragments) {
-        if (&fragment.layout_node() != text_layout_node)
-            return {};
-    }
-
-    auto lines = collect_visual_lines(*dom_text);
-
-    // The mapping below requires visual lines to correspond 1:1 to this block's line boxes. Trailing blank lines are
-    // the exception: layout does not retain a line box for a blank line at the very end, so visual lines may extend
-    // past m_lines and get extrapolated rects below the last line box.
-    if (lines.size() < m_lines.size())
-        return {};
-    for (size_t i = 0; i < lines.size(); ++i) {
-        if (i >= m_lines.size()) {
-            if (!lines[i].fragments.is_empty())
-                return {};
-            continue;
+            if (callback(hit_test_result) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        if (lines[i].fragments.is_empty() != (m_lines[i].fragment_count == 0))
-            return {};
-        if (!lines[i].fragments.is_empty() && lines[i].fragments.first()->line_index() != i)
-            return {};
     }
 
-    Vector<EmptyLineCaretTarget> targets;
-    auto content_rect = absolute_rect();
-    for (size_t i = 0; i < lines.size(); ++i) {
-        if (!lines[i].fragments.is_empty())
-            continue;
+    if (!layout_node().children_are_inline())
+        return PaintableBox::hit_test(position, type, callback);
 
-        CSSPixelRect line_rect;
-        if (i < m_lines.size()) {
-            line_rect = m_lines[i].rect.translated(content_rect.location());
-        } else {
-            auto last_rect = m_lines.last().rect.translated(content_rect.location());
-            auto steps = static_cast<int>(i - (m_lines.size() - 1));
-            line_rect = { content_rect.x(), last_rect.bottom() + last_rect.height() * (steps - 1), content_rect.width(), last_rect.height() };
+    // Only hit test chrome for visible elements.
+    if (is_visible) {
+        if (hit_test_chrome(position, callback) == TraversalDecision::Break)
+            return TraversalDecision::Break;
+    }
+
+    if (hit_test_children(position, type, callback) == TraversalDecision::Break)
+        return TraversalDecision::Break;
+
+    // Hidden elements and elements with pointer-events: none shouldn't be hit.
+    if (!is_visible || !visible_for_hit_testing())
+        return TraversalDecision::Continue;
+
+    ensure_local_position();
+    if (!local_position.has_value())
+        return TraversalDecision::Continue;
+
+    // Fragments are descendants of this element, so use the descendants' visual context to account for this element's
+    // own scroll offset during fragment hit testing.
+    Optional<CSSPixelPoint> local_position_for_fragments = transform_point_to_local_for_descendants(position);
+    if (local_position_for_fragments.has_value()) {
+        if (hit_test_fragments(position, local_position_for_fragments.value(), type, callback) == TraversalDecision::Break)
+            return TraversalDecision::Break;
+    }
+
+    if (!stacking_context() && (!layout_node().is_anonymous() || is_positioned())
+        && absolute_border_box_rect().contains(local_position.value())) {
+        if (callback(HitTestResult { .paintable = const_cast<PaintableWithLines&>(*this) }) == TraversalDecision::Break)
+            return TraversalDecision::Break;
+    }
+
+    return TraversalDecision::Continue;
+}
+
+TraversalDecision PaintableWithLines::hit_test_fragments(CSSPixelPoint position, CSSPixelPoint local_position, HitTestType type, Function<TraversalDecision(HitTestResult)> const& callback) const
+{
+    for (auto const& fragment : fragments()) {
+        if (fragment.paintable().has_stacking_context() || !fragment.paintable().is_visible() || !fragment.paintable().visible_for_hit_testing())
+            continue;
+        auto fragment_absolute_rect = fragment.absolute_rect();
+        if (fragment_absolute_rect.contains(local_position)) {
+            if (fragment.paintable().hit_test(position, type, callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
+            HitTestResult hit_test_result { .paintable = const_cast<Paintable&>(fragment.paintable()), .index_in_node = fragment.index_in_node_for_point(local_position), .vertical_distance = 0, .horizontal_distance = 0 };
+            if (callback(hit_test_result) == TraversalDecision::Break)
+                return TraversalDecision::Break;
+        } else if (type == HitTestType::TextCursor) {
+            auto const* common_ancestor_parent = [&]() -> DOM::Node const* {
+                auto selection = document().get_selection();
+                if (!selection)
+                    return nullptr;
+                auto range = selection->range();
+                if (!range)
+                    return nullptr;
+                auto common_ancestor = range->common_ancestor_container();
+                if (common_ancestor->parent())
+                    return common_ancestor->parent();
+                return common_ancestor;
+            }();
+
+            // If we reached this point, the position is not within the fragment. However, the fragment start or end might be
+            // the place to place the cursor, so long as it does not have user-select: none.
+            if (fragment.layout_node().user_select_used_value() == CSS::UserSelect::None)
+                continue;
+
+            auto const* fragment_dom_node = fragment.layout_node().dom_node();
+            if (common_ancestor_parent && fragment_dom_node && common_ancestor_parent->is_ancestor_of(*fragment_dom_node)) {
+                // To determine the best place, we first find the closest fragment horizontally to the cursor. If we could not
+                // find one, then find for the closest vertically above the cursor. If we knew the direction of selection, we
+                // would look above if selecting upward.
+                if (fragment_absolute_rect.bottom() - 1 <= local_position.y()) { // fully below the fragment
+                    HitTestResult hit_test_result {
+                        .paintable = const_cast<Paintable&>(fragment.paintable()),
+                        .index_in_node = fragment.start_offset() + fragment.length_in_code_units(),
+                        .vertical_distance = local_position.y() - fragment_absolute_rect.bottom(),
+                    };
+                    if (callback(hit_test_result) == TraversalDecision::Break)
+                        return TraversalDecision::Break;
+                } else if (local_position.y() < fragment_absolute_rect.top()) { // fully above the fragment
+                    HitTestResult hit_test_result {
+                        .paintable = const_cast<Paintable&>(fragment.paintable()),
+                        .index_in_node = fragment.start_offset(),
+                        .vertical_distance = fragment_absolute_rect.top() - local_position.y(),
+                    };
+                    if (callback(hit_test_result) == TraversalDecision::Break)
+                        return TraversalDecision::Break;
+                } else if (fragment_absolute_rect.top() <= local_position.y()) { // vertically within the fragment
+                    if (local_position.x() < fragment_absolute_rect.left()) {
+                        HitTestResult hit_test_result {
+                            .paintable = const_cast<Paintable&>(fragment.paintable()),
+                            .index_in_node = fragment.start_offset(),
+                            .vertical_distance = 0,
+                            .horizontal_distance = fragment_absolute_rect.left() - local_position.x(),
+                        };
+                        if (callback(hit_test_result) == TraversalDecision::Break)
+                            return TraversalDecision::Break;
+                    } else if (local_position.x() > fragment_absolute_rect.right()) {
+                        HitTestResult hit_test_result {
+                            .paintable = const_cast<Paintable&>(fragment.paintable()),
+                            .index_in_node = fragment.start_offset() + fragment.length_in_code_units(),
+                            .vertical_distance = 0,
+                            .horizontal_distance = local_position.x() - fragment_absolute_rect.right(),
+                        };
+                        if (callback(hit_test_result) == TraversalDecision::Break)
+                            return TraversalDecision::Break;
+                    }
+                }
+            }
         }
-
-        targets.append({ lines[i].start_offset, i, line_rect });
     }
-    return targets;
-}
-
-// A cursor on a line box with no fragments (e.g. a blank line in a textarea) has no fragment to position itself in;
-// it is placed at the start of the empty line.
-Optional<CSSPixelRect> PaintableWithLines::empty_line_caret_rect(DOM::Position const& position) const
-{
-    if (m_fragments.is_empty())
-        return {};
-    auto const* text_layout_node = as_if<Layout::TextNode>(m_fragments.first().layout_node());
-    if (!text_layout_node || position.node() != text_layout_node->dom_text())
-        return {};
-    for (auto const& target : empty_line_caret_targets()) {
-        if (target.offset == position.offset())
-            return target.rect;
-    }
-    return {};
-}
-
-void PaintableWithLines::record_empty_line_caret_items(HitTestDisplayList& hit_test_display_list, VisualContextIndex visual_context_index) const
-{
-    for (auto const& target : empty_line_caret_targets())
-        hit_test_display_list.append_empty_line(m_fragments.first(), target.offset, target.line_index, target.rect, visual_context_index);
-
-    auto* dom_node = layout_node().dom_node();
-    if (!dom_node || m_fragments.is_empty())
-        return;
-    // A <br> between fragment-backed lines does not produce a fragment of its own, so record its parent boundary as
-    // a caret target. This covers leading and consecutive editable line breaks.
-    for (auto* child = dom_node->first_child(); child; child = child->next_sibling()) {
-        auto* br = as_if<HTML::HTMLBRElement>(*child);
-        if (!br || !br->represents_empty_line())
-            continue;
-        hit_test_display_list.append_empty_line(*this, *dom_node, br->index(), caret_rect_for_child_offset(br->index()), visual_context_index);
-    }
+    return TraversalDecision::Continue;
 }
 
 static void resolve_text_fragment_properties(PaintableWithLines const& paintable_with_lines)
 {
+    auto const& parent_layout_node = paintable_with_lines.layout_node();
     for (auto& fragment : const_cast<PaintableWithLines&>(paintable_with_lines).fragments()) {
         auto const* text_node = as_if<Layout::TextNode>(fragment.layout_node());
         if (!text_node)
@@ -340,7 +237,7 @@ static void resolve_text_fragment_properties(PaintableWithLines const& paintable
         auto const& font = text_node->first_available_font();
         auto const glyph_height = CSSPixels::nearest_value_for(font.pixel_size());
         auto const line_thickness = [&] {
-            auto const& thickness = text_node->parent()->computed_values().text_decoration_thickness();
+            auto const& thickness = text_node->computed_values().text_decoration_thickness();
             return thickness.value.visit(
                 [glyph_height](CSS::TextDecorationThickness::Auto) {
                     // https://drafts.csswg.org/css-text-decor-4/#valdef-text-decoration-thickness-auto
@@ -356,18 +253,18 @@ static void resolve_text_fragment_properties(PaintableWithLines const& paintable
                 },
                 [&](CSS::LengthPercentage const& length_percentage) {
                     // https://drafts.csswg.org/css-text-decor-4/#valdef-text-decoration-thickness-length-percentage
-                    auto resolved_length = length_percentage.resolved(CSS::Length(1, CSS::LengthUnit::Em).to_px(*text_node->parent())).to_px(*text_node->parent());
+                    auto resolved_length = length_percentage.resolved(*text_node, CSS::Length(1, CSS::LengthUnit::Em).to_px(*text_node)).to_px(*text_node);
                     return max(resolved_length, 1);
                 });
         }();
         fragment.set_text_decoration_thickness(line_thickness);
 
-        auto const& text_shadow = text_node->parent()->computed_values().text_shadow();
+        auto const& text_shadow = text_node->computed_values().text_shadow();
         Vector<ShadowData> resolved_shadow_data;
         if (!text_shadow.is_empty()) {
             resolved_shadow_data.ensure_capacity(text_shadow.size());
             for (auto const& layer : text_shadow)
-                resolved_shadow_data.append(ShadowData::from_css(layer));
+                resolved_shadow_data.append(ShadowData::from_css(layer, parent_layout_node));
         }
         fragment.set_shadows(move(resolved_shadow_data));
     }
@@ -375,55 +272,40 @@ static void resolve_text_fragment_properties(PaintableWithLines const& paintable
 
 void PaintableWithLines::paint(DisplayListRecordingContext& context, PaintPhase phase) const
 {
-    if (is_visible())
-        Paintable::paint(context, phase);
+    if (!is_visible())
+        return;
+
+    PaintableBox::paint(context, phase);
 
     if (phase == PaintPhase::Foreground) {
-        // visibility: hidden on this block does not hide descendants that set visibility:
-        // visible again, so fragments (and the caret between their glyphs) are filtered by
-        // their own node's visibility instead.
-        paint_fragments_foreground(context, m_fragment_ownership_filter);
+        resolve_text_fragment_properties(*this);
+
+        Vector<PaintableFragment::FragmentSpan, 4> spans;
+        for (auto const& fragment : m_fragments)
+            compute_render_spans(fragment, spans);
+
+        for (auto const& span : spans) {
+            if (span.background_color.alpha() > 0) {
+                auto selection_rect = context.rounded_device_rect(span.fragment.selection_rect()).to_type<int>();
+                context.display_list_recorder().fill_rect(selection_rect, span.background_color);
+            }
+        }
+
+        for (auto const& span : spans)
+            paint_text_shadow(context, span);
+
+        for (auto const& span : spans)
+            paint_text_fragment(context, span);
 
         if (document().cursor_position())
-            paint_cursor(context, nullptr);
+            paint_cursor(context);
     }
-}
-
-void PaintableWithLines::paint_fragments_foreground(DisplayListRecordingContext& context, FragmentOwnershipFilter const& filter) const
-{
-    // The resolved properties are shared by all owners painting fragments of this block,
-    // so resolving once per display list build is enough.
-    if (m_text_fragment_properties_paint_generation_id != context.paint_generation_id()) {
-        resolve_text_fragment_properties(*this);
-        m_text_fragment_properties_paint_generation_id = context.paint_generation_id();
-    }
-
-    Vector<PaintableFragment::FragmentSpan, 4> spans;
-    filter.for_each_owned_fragment_index(m_fragments.size(), [&](size_t index) {
-        compute_render_spans(m_fragments[index], spans);
-    });
-
-    for (auto const& span : spans) {
-        if (span.background_color.alpha() > 0) {
-            auto selection_rect = context.rounded_device_rect(span.fragment.selection_rect()).to_type<int>();
-            context.display_list_recorder().fill_rect(selection_rect, span.background_color);
-        }
-    }
-
-    for (auto const& span : spans)
-        paint_text_shadow(context, span);
-
-    for (auto const& span : spans)
-        paint_text_fragment(context, span);
 }
 
 void compute_render_spans(PaintableFragment const& fragment, Vector<PaintableFragment::FragmentSpan, 4>& spans)
 {
-    if (fragment.is_block_level_box())
-        return;
-
-    auto const* text_node = as_if<Layout::TextNode>(fragment.layout_node());
-    if (!text_node) {
+    auto const* text_paintable = as_if<TextPaintable>(fragment.paintable());
+    if (!text_paintable) {
         // Non-text fragments still need shadow painting.
         spans.append({
             .fragment = fragment,
@@ -437,10 +319,10 @@ void compute_render_spans(PaintableFragment const& fragment, Vector<PaintableFra
         return;
     }
 
-    if (!layout_node_is_visible(*text_node->parent()))
+    if (!text_paintable->is_visible())
         return;
 
-    auto text_color = text_node->parent()->computed_values().webkit_text_fill_color();
+    auto text_color = text_paintable->computed_values().webkit_text_fill_color();
     auto selection_offsets = fragment.selection_offsets();
 
     // No selection: single span with base styling.
@@ -457,8 +339,8 @@ void compute_render_spans(PaintableFragment const& fragment, Vector<PaintableFra
         return;
     }
 
-    auto [selection_start, selection_end] = *selection_offsets;
-    auto selection_style = Paintable::selection_style_for_node(*text_node, text_node->dom_text());
+    auto [selection_start, selection_end, _] = *selection_offsets;
+    auto selection_style = text_paintable->selection_style();
     auto selection_text_color = selection_style.text_color.value_or(text_color);
 
     // Convert selection text decoration to fragment text decoration data.
@@ -519,7 +401,7 @@ void paint_text_fragment(DisplayListRecordingContext& context, PaintableFragment
     if (span.start_code_unit == span.end_code_unit)
         return;
 
-    auto const& text_node = as<Layout::TextNode>(fragment.layout_node());
+    auto const& text_paintable = as<TextPaintable>(fragment.paintable());
 
     if (context.should_show_line_box_borders())
         PaintableWithLines::paint_text_fragment_debug_highlight(context, fragment);
@@ -543,8 +425,8 @@ void paint_text_fragment(DisplayListRecordingContext& context, PaintableFragment
         painter.draw_glyph_run(baseline_start, *glyph_run, span.text_color, fragment_device_rect, scale, fragment.orientation());
     } else {
         auto range_rect = fragment.range_rect(Paintable::SelectionState::StartAndEnd,
-            fragment.dom_start_offset_in_node() + span.start_code_unit,
-            fragment.dom_start_offset_in_node() + span.end_code_unit);
+            fragment.start_offset() + span.start_code_unit,
+            fragment.start_offset() + span.end_code_unit);
         auto span_rect = context.rounded_device_rect(range_rect).to_type<int>();
         painter.save();
         painter.add_clip_rect(span_rect);
@@ -552,104 +434,40 @@ void paint_text_fragment(DisplayListRecordingContext& context, PaintableFragment
         painter.restore();
     }
 
-    paint_text_decoration(context, text_node, span);
+    paint_text_decoration(context, text_paintable, span);
 }
 
 Optional<PaintableFragment const&> PaintableWithLines::fragment_at_position(DOM::Position const& position) const
 {
-    PaintableFragment const* fallback_fragment = nullptr;
-    for (auto const& fragment : m_fragments) {
-        auto const* text_node = as_if<Layout::TextNode>(fragment.layout_node());
-        if (!text_node || position.node() != text_node->dom_text())
-            continue;
-        switch (fragment.caret_match(position.offset(), position.affinity())) {
-        case PaintableFragment::CaretMatch::None:
-            continue;
-        case PaintableFragment::CaretMatch::SoftWrapFallback:
-            if (!fallback_fragment)
-                fallback_fragment = &fragment;
-            continue;
-        case PaintableFragment::CaretMatch::Direct:
-            return fragment;
-        }
-    }
-    if (fallback_fragment)
-        return *fallback_fragment;
-    return {};
+    return m_fragments.first_matching([&](auto const& fragment) {
+        auto const* text_paintable = as_if<TextPaintable>(fragment.paintable());
+        if (!text_paintable)
+            return false;
+        if (position.offset() < fragment.start_offset())
+            return false;
+        if (position.offset() > fragment.start_offset() + fragment.length_in_code_units())
+            return false;
+        return position.node() == text_paintable->dom_node();
+    });
 }
 
-CSSPixelRect PaintableWithLines::caret_rect_for_child_offset(size_t offset) const
+void PaintableWithLines::paint_cursor(DisplayListRecordingContext& context) const
 {
-    auto content_box = absolute_padding_box_rect();
-    auto line_height = computed_values().line_height();
-    CSSPixelRect rect { content_box.x(), content_box.y(), 1, line_height };
-
-    auto dom_node = layout_node().dom_node();
-    if (!dom_node)
-        return rect;
-
-    // A boundary immediately after an atomic inline element paints after that element. Atomic inline elements have
-    // no text offset for fragment_at_position() to resolve, so use their inline edge directly.
-    if (offset > 0) {
-        auto* previous_child = dom_node->child_at_index(offset - 1);
-        if (previous_child) {
-            for (auto const& fragment : m_fragments) {
-                auto* fragment_dom_node = fragment.layout_node().dom_node();
-                if (fragment_dom_node != previous_child || !fragment.layout_node().is_atomic_inline())
-                    continue;
-
-                auto fragment_rect = fragment.absolute_rect();
-                if (computed_values().writing_mode() == CSS::WritingMode::HorizontalTb)
-                    rect.set_x(computed_values().inline_axis_is_reverse() ? fragment_rect.left() : fragment_rect.right());
-                else
-                    rect.set_y(computed_values().inline_axis_is_reverse() ? fragment_rect.top() : fragment_rect.bottom());
-                return rect;
-            }
-        }
-    }
-
-    auto* child = dom_node->child_at_index(offset);
-    if (!child || !is<HTML::HTMLBRElement>(*child))
-        return rect;
-
-    // A caret parked before a <br> sits on the line below the content preceding the <br>. Layout produces no
-    // fragments for <br>, so start below the fragments of any preceding content, and add one line height for each
-    // empty line rendered by earlier <br>s.
-    Optional<CSSPixels> preceding_content_bottom;
-    for_each_in_inclusive_subtree_of_type<PaintableWithLines>([&](auto const& paintable_with_lines) {
-        for (auto const& fragment : paintable_with_lines.fragments()) {
-            auto* fragment_dom_node = const_cast<DOM::Node*>(fragment.layout_node().dom_node());
-            if (!fragment_dom_node || !(const_cast<DOM::Node&>(*child).compare_document_position(fragment_dom_node) & DOM::Node::DOCUMENT_POSITION_PRECEDING))
-                continue;
-            auto bottom = fragment.absolute_rect().bottom();
-            if (!preceding_content_bottom.has_value() || bottom > *preceding_content_bottom)
-                preceding_content_bottom = bottom;
-        }
-        return TraversalDecision::Continue;
-    });
-
-    size_t preceding_empty_lines = 0;
-    dom_node->for_each_in_subtree_of_type<HTML::HTMLBRElement>([&](auto& br) {
-        if (&br == child)
-            return TraversalDecision::Break;
-        if (br.represents_empty_line())
-            ++preceding_empty_lines;
-        return TraversalDecision::Continue;
-    });
-
-    rect.set_y(preceding_content_bottom.value_or(content_box.y()) + line_height * preceding_empty_lines);
-    return rect;
-}
-
-void PaintableWithLines::paint_cursor(DisplayListRecordingContext& context, InlinePaintable const* owner) const
-{
-    if (!should_paint_cursor())
+    if (!document().cursor_blink_state() || !document().navigable()->is_focused())
         return;
 
     auto cursor_position = document().cursor_position();
     VERIFY(cursor_position);
 
     auto const* dom_node = layout_node().dom_node();
+    if (!dom_node)
+        return;
+
+    auto active_element_is_editable = false;
+    if (auto const* text_control = as_if<HTML::FormAssociatedTextControlElement>(document().active_element()))
+        active_element_is_editable = text_control->text_control_to_html_element().is_mutable();
+    if (!active_element_is_editable && !dom_node->is_editable_or_editing_host())
+        return;
 
     auto fragment = fragment_at_position(*cursor_position);
 
@@ -657,32 +475,16 @@ void PaintableWithLines::paint_cursor(DisplayListRecordingContext& context, Inli
     Color caret_color;
 
     if (fragment.has_value()) {
-        // The caret paints where its fragment's foreground paints: inside the nearest
-        // self-painting inline box, or in the block itself.
-        if (nearest_self_painting_inline_box(fragment->layout_node()) != owner)
-            return;
-        // Like the glyphs around it, the caret follows the text's own visibility, which may
-        // differ from this box's.
-        if (!layout_node_is_visible(fragment->style_source()))
-            return;
-        caret_color = fragment->style_source().computed_values().caret_color();
+        caret_color = as<TextPaintable>(fragment->paintable()).computed_values().caret_color();
         cursor_rect = fragment->range_rect(SelectionState::StartAndEnd, cursor_position->offset(), cursor_position->offset());
-    } else if (owner) {
-        // Blank lines and empty editable elements are handled by the block / the box itself.
-        return;
-    } else if (!is_visible()) {
-        // Blank-line and empty-element carets belong to this block itself.
-        return;
-    } else if (auto empty_line_rect = empty_line_caret_rect(*cursor_position); empty_line_rect.has_value()) {
-        caret_color = m_fragments.first().style_source().computed_values().caret_color();
-        cursor_rect = { empty_line_rect->x(), empty_line_rect->y(), 1, empty_line_rect->height() };
     } else {
         // Empty editable elements have no fragments, but should still draw a cursor.
         if (cursor_position->node() != dom_node)
             return;
 
         caret_color = computed_values().caret_color();
-        cursor_rect = caret_rect_for_child_offset(cursor_position->offset());
+        auto content_box = absolute_padding_box_rect();
+        cursor_rect = { content_box.x(), content_box.y(), 1, computed_values().line_height() };
     }
 
     if (caret_color.alpha() == 0)
@@ -755,7 +557,7 @@ static Vector<DecorationSegment> compute_skip_ink_segments(
     return segments;
 }
 
-void paint_text_decoration(DisplayListRecordingContext& context, Layout::TextNode const& text_node, PaintableFragment::FragmentSpan const& span)
+void paint_text_decoration(DisplayListRecordingContext& context, TextPaintable const& paintable, PaintableFragment::FragmentSpan const& span)
 {
     auto const& fragment = span.fragment;
     auto& recorder = context.display_list_recorder();
@@ -772,22 +574,22 @@ void paint_text_decoration(DisplayListRecordingContext& context, Layout::TextNod
         line_style = span.text_decoration->style;
         text_decoration_lines = span.text_decoration->line;
     } else {
-        line_color = text_node.parent()->computed_values().text_decoration_color();
-        line_style = text_node.parent()->computed_values().text_decoration_style();
-        text_decoration_lines = text_node.parent()->computed_values().text_decoration_line();
+        line_color = paintable.computed_values().text_decoration_color();
+        line_style = paintable.computed_values().text_decoration_style();
+        text_decoration_lines = paintable.computed_values().text_decoration_line();
     }
 
     // Compute the decoration box for this span.
     auto fragment_box = fragment.absolute_rect();
     if (span.start_code_unit != 0 || span.end_code_unit != fragment.length_in_code_units()) {
         auto span_rect = fragment.range_rect(Paintable::SelectionState::StartAndEnd,
-            fragment.dom_start_offset_in_node() + span.start_code_unit,
-            fragment.dom_start_offset_in_node() + span.end_code_unit);
+            fragment.start_offset() + span.start_code_unit,
+            fragment.start_offset() + span.end_code_unit);
         fragment_box.set_x(span_rect.x());
         fragment_box.set_width(span_rect.width());
     }
-    auto text_underline_offset = text_node.parent()->computed_values().text_underline_offset();
-    auto text_underline_position = text_node.parent()->computed_values().text_underline_position();
+    auto text_underline_offset = paintable.computed_values().text_underline_offset();
+    auto text_underline_position = paintable.computed_values().text_underline_position();
     for (auto line : text_decoration_lines) {
         auto line_thickness = fragment.text_decoration_thickness();
 
@@ -880,7 +682,7 @@ void paint_text_decoration(DisplayListRecordingContext& context, Layout::TextNod
         // https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property
         // FIXME: For text-decoration-skip-ink: auto, skip CJK ideographs and symbols from the intercept
         //        computation, since their complex strokes would create too many gaps in the decoration line.
-        auto skip_ink = text_node.parent()->computed_values().text_decoration_skip_ink();
+        auto skip_ink = paintable.computed_values().text_decoration_skip_ink();
         bool should_skip_ink = skip_ink != CSS::TextDecorationSkipInk::None
             && first_is_one_of(line, CSS::TextDecorationLine::Underline, CSS::TextDecorationLine::Overline);
 

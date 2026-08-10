@@ -6,17 +6,13 @@
 
 #pragma once
 
-#include <AK/OwnPtr.h>
 #include <AK/String.h>
-#include <AK/Utf16String.h>
 #include <AK/Vector.h>
-#include <LibGC/Cell.h>
-#include <LibGC/Weak.h>
 #include <LibWeb/ARIA/AriaData.h>
 #include <LibWeb/ARIA/AttributeNames.h>
 #include <LibWeb/ARIA/Roles.h>
 #include <LibWeb/Export.h>
-#include <LibWeb/Forward.h>
+#include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::ARIA {
 
@@ -37,8 +33,8 @@ public:
     virtual ~ARIAMixin();
 
 #define __ENUMERATE_ARIA_ATTRIBUTE(name, attribute) \
-    virtual Optional<Utf16String> name() const = 0; \
-    virtual void set_##name(Optional<Utf16String> const&) = 0;
+    virtual Optional<String> name() const = 0;      \
+    virtual void set_##name(Optional<String> const&) = 0;
     ENUMERATE_ARIA_ATTRIBUTES
 #undef __ENUMERATE_ARIA_ATTRIBUTE
 
@@ -60,10 +56,10 @@ public:
     bool has_global_aria_attribute() const;
 
     // https://www.w3.org/TR/wai-aria-1.2/#valuetype_idref
-    Optional<Utf16String> parse_id_reference(Optional<Utf16String> const&) const;
+    Optional<String> parse_id_reference(Optional<String> const&) const;
 
     // https://www.w3.org/TR/wai-aria-1.2/#valuetype_idref_list
-    Vector<Utf16String> parse_id_reference_list(Optional<Utf16String> const&) const;
+    Vector<String> parse_id_reference_list(Optional<String> const&) const;
 
 #define __ENUMERATE_ARIA_ATTRIBUTE(attribute, referencing_attribute) \
     GC::Ptr<DOM::Element> attribute() const;                         \
@@ -73,7 +69,10 @@ public:
 
 #define __ENUMERATE_ARIA_ATTRIBUTE(attribute, referencing_attribute)   \
     Optional<Vector<GC::Weak<DOM::Element>> const&> attribute() const; \
-    void set_##attribute(Optional<Vector<GC::Weak<DOM::Element>>>);
+    void set_##attribute(Optional<Vector<GC::Weak<DOM::Element>>>);    \
+                                                                       \
+    GC::Ptr<JS::Array> cached_##attribute() const;                     \
+    void set_cached_##attribute(GC::Ptr<JS::Array>);
     ENUMERATE_ARIA_ELEMENT_LIST_REFERENCING_ATTRIBUTES
 #undef __ENUMERATE_ARIA_ATTRIBUTE
 
@@ -82,7 +81,7 @@ protected:
 
     void visit_edges(GC::Cell::Visitor&);
 
-    virtual bool id_reference_exists(Utf16View) const = 0;
+    virtual bool id_reference_exists(String const&) const = 0;
 
 private:
 #define __ENUMERATE_ARIA_ATTRIBUTE(attribute, referencing_attribute) \
@@ -91,7 +90,8 @@ private:
 #undef __ENUMERATE_ARIA_ATTRIBUTE
 
 #define __ENUMERATE_ARIA_ATTRIBUTE(attribute, referencing_attribute) \
-    OwnPtr<Vector<GC::Weak<DOM::Element>>> m_##attribute;
+    OwnPtr<Vector<GC::Weak<DOM::Element>>> m_##attribute;            \
+    GC::Ptr<JS::Array> m_cached_##attribute;
     ENUMERATE_ARIA_ELEMENT_LIST_REFERENCING_ATTRIBUTES
 #undef __ENUMERATE_ARIA_ATTRIBUTE
 };

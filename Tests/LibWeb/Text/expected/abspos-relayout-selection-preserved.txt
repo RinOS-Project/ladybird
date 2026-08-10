@@ -1,3 +1,0 @@
-partial-layouts=1 full-layouts=1
-selection-painting-matches-full-layout=true
-PASS

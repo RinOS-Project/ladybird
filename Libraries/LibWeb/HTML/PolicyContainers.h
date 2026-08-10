@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
 #include <LibGC/CellAllocator.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibURL/Forward.h>
@@ -20,9 +19,9 @@ namespace Web::HTML {
 
 // https://w3c.github.io/webappsec-subresource-integrity/#integrity-policy
 struct IntegrityPolicy {
-    Vector<Utf16String> sources;
+    Vector<String> sources;
     Vector<Fetch::Infrastructure::Request::Destination> blocked_destinations;
-    Vector<Utf16String> endpoints;
+    Vector<String> endpoints;
 
     bool is_empty() const { return sources.is_empty() && blocked_destinations.is_empty() && endpoints.is_empty(); }
 };
@@ -70,8 +69,8 @@ private:
 [[nodiscard]] bool url_requires_storing_the_policy_container_in_history(URL::URL const& url);
 
 // https://html.spec.whatwg.org/multipage/browsers.html#creating-a-policy-container-from-a-fetch-response
-[[nodiscard]] GC::Ref<PolicyContainer> create_a_policy_container_from_a_fetch_response(GC::Ref<Fetch::Infrastructure::Response const> response, GC::Ptr<Environment> environment);
+[[nodiscard]] GC::Ref<PolicyContainer> create_a_policy_container_from_a_fetch_response(GC::Heap&, GC::Ref<Fetch::Infrastructure::Response const> response, GC::Ptr<Environment> environment);
 
-[[nodiscard]] GC::Ref<PolicyContainer> create_a_policy_container_from_serialized_policy_container(SerializedPolicyContainer const&);
+[[nodiscard]] GC::Ref<PolicyContainer> create_a_policy_container_from_serialized_policy_container(GC::Heap&, SerializedPolicyContainer const&);
 
 }

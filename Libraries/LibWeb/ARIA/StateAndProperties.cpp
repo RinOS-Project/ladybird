@@ -4,28 +4,16 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Utf16StringBuilder.h>
 #include <AK/Variant.h>
 #include <LibWeb/ARIA/StateAndProperties.h>
 
 namespace Web::ARIA {
 
-template<size_t length>
-static constexpr Utf16View utf16_view(char16_t const (&string)[length])
-{
-    return { string, length - 1 };
-}
-
-static Utf16String serialize_aria_string(Utf16String const& value)
-{
-    return value;
-}
-
-ErrorOr<Utf16String> state_or_property_to_string_value(StateAndProperties state_or_property, AriaData const& aria_data, DefaultValueType default_value)
+ErrorOr<String> state_or_property_to_string_value(StateAndProperties state_or_property, AriaData const& aria_data, DefaultValueType default_value)
 {
     switch (state_or_property) {
     case StateAndProperties::AriaActiveDescendant: {
-        return serialize_aria_string(aria_data.aria_active_descendant_or_default().value_or(Utf16String {}));
+        return aria_data.aria_active_descendant_or_default().value_or(String {});
     }
     case StateAndProperties::AriaAtomic: {
         bool value;
@@ -33,28 +21,28 @@ ErrorOr<Utf16String> state_or_property_to_string_value(StateAndProperties state_
             value = aria_data.aria_atomic_or_default(default_value.get<bool>());
         else
             value = aria_data.aria_atomic_or_default();
-        return value ? "true"_utf16 : "false"_utf16;
+        return value ? "true"_string : "false"_string;
     }
     case StateAndProperties::AriaAutoComplete: {
         auto value = aria_data.aria_auto_complete_or_default();
         switch (value) {
         case AriaAutocomplete::None:
-            return "none"_utf16;
+            return "none"_string;
         case AriaAutocomplete::List:
-            return "list"_utf16;
+            return "list"_string;
         case AriaAutocomplete::Both:
-            return "both"_utf16;
+            return "both"_string;
         case AriaAutocomplete::Inline:
-            return "inline"_utf16;
+            return "inline"_string;
         }
         VERIFY_NOT_REACHED();
     }
     case StateAndProperties::AriaBrailleLabel:
-        return serialize_aria_string(aria_data.aria_braille_label_or_default());
+        return aria_data.aria_braille_label_or_default();
     case StateAndProperties::AriaBrailleRoleDescription:
-        return serialize_aria_string(aria_data.aria_braille_role_description_or_default());
+        return aria_data.aria_braille_role_description_or_default();
     case StateAndProperties::AriaBusy:
-        return aria_data.aria_busy_or_default() ? "true"_utf16 : "false"_utf16;
+        return String::from_utf8(aria_data.aria_busy_or_default() ? "true"sv : "false"sv);
     case StateAndProperties::AriaChecked:
         return ARIA::tristate_to_string(aria_data.aria_checked_or_default());
     case StateAndProperties::AriaColCount:
@@ -62,7 +50,7 @@ ErrorOr<Utf16String> state_or_property_to_string_value(StateAndProperties state_
     case StateAndProperties::AriaColIndex:
         return ARIA::optional_integer_to_string(aria_data.aria_col_index_or_default());
     case StateAndProperties::AriaColIndexText:
-        return serialize_aria_string(aria_data.aria_col_index_text_or_default());
+        return aria_data.aria_col_index_text_or_default();
     case StateAndProperties::AriaColSpan:
         return ARIA::optional_integer_to_string(aria_data.aria_col_span_or_default());
     case StateAndProperties::AriaControls:
@@ -71,67 +59,67 @@ ErrorOr<Utf16String> state_or_property_to_string_value(StateAndProperties state_
         auto value = aria_data.aria_current_or_default();
         switch (value) {
         case AriaCurrent::False:
-            return "false"_utf16;
+            return "false"_string;
         case AriaCurrent::True:
-            return "true"_utf16;
+            return "true"_string;
         case AriaCurrent::Date:
-            return "date"_utf16;
+            return "date"_string;
         case AriaCurrent::Location:
-            return "location"_utf16;
+            return "location"_string;
         case AriaCurrent::Page:
-            return "page"_utf16;
+            return "page"_string;
         case AriaCurrent::Step:
-            return "step"_utf16;
+            return "step"_string;
         case AriaCurrent::Time:
-            return "time"_utf16;
+            return "time"_string;
         }
         VERIFY_NOT_REACHED();
     }
     case StateAndProperties::AriaDescribedBy:
         return id_reference_list_to_string(aria_data.aria_described_by_or_default());
     case StateAndProperties::AriaDescription:
-        return serialize_aria_string(aria_data.aria_description_or_default());
+        return aria_data.aria_description_or_default();
     case StateAndProperties::AriaDetails: {
-        return serialize_aria_string(aria_data.aria_details_or_default().value_or(Utf16String {}));
+        return aria_data.aria_details_or_default().value_or(String {});
     }
     case StateAndProperties::AriaDisabled:
-        return aria_data.aria_disabled_or_default() ? "true"_utf16 : "false"_utf16;
+        return aria_data.aria_disabled_or_default() ? "true"_string : "false"_string;
     case StateAndProperties::AriaDropEffect: {
-        Utf16StringBuilder builder;
+        StringBuilder builder;
         auto value = aria_data.aria_drop_effect_or_default();
         for (auto const drop_effect : value) {
-            Utf16View to_add;
+            StringView to_add;
             switch (drop_effect) {
             case AriaDropEffect::Copy:
-                to_add = "copy"_utf16;
+                to_add = "copy"sv;
                 break;
             case AriaDropEffect::Execute:
-                to_add = "execute"_utf16;
+                to_add = "execute"sv;
                 break;
             case AriaDropEffect::Link:
-                to_add = "link"_utf16;
+                to_add = "link"sv;
                 break;
             case AriaDropEffect::Move:
-                to_add = "move"_utf16;
+                to_add = "move"sv;
                 break;
             case AriaDropEffect::None:
-                to_add = "none"_utf16;
+                to_add = "none"sv;
                 break;
             case AriaDropEffect::Popup:
-                to_add = "popup"_utf16;
+                to_add = "popup"sv;
                 break;
             }
             if (builder.is_empty())
                 builder.append(to_add);
             else {
-                builder.append_ascii(' ');
+                builder.append(" "sv);
                 builder.append(to_add);
             }
         }
         return builder.to_string();
     }
     case StateAndProperties::AriaErrorMessage: {
-        return serialize_aria_string(aria_data.aria_error_message_or_default().value_or(Utf16String {}));
+        return aria_data.aria_error_message_or_default().value_or(String {});
     }
     case StateAndProperties::AriaExpanded:
         return ARIA::optional_bool_to_string(aria_data.aria_expanded_or_default());
@@ -143,19 +131,19 @@ ErrorOr<Utf16String> state_or_property_to_string_value(StateAndProperties state_
         auto value = aria_data.aria_has_popup_or_default();
         switch (value) {
         case AriaHasPopup::False:
-            return "false"_utf16;
+            return "false"_string;
         case AriaHasPopup::True:
-            return "true"_utf16;
+            return "true"_string;
         case AriaHasPopup::Menu:
-            return "menu"_utf16;
+            return "menu"_string;
         case AriaHasPopup::Listbox:
-            return "listbox"_utf16;
+            return "listbox"_string;
         case AriaHasPopup::Tree:
-            return "tree"_utf16;
+            return "tree"_string;
         case AriaHasPopup::Grid:
-            return "grid"_utf16;
+            return "grid"_string;
         case AriaHasPopup::Dialog:
-            return "dialog"_utf16;
+            return "dialog"_string;
         }
         VERIFY_NOT_REACHED();
     }
@@ -165,20 +153,20 @@ ErrorOr<Utf16String> state_or_property_to_string_value(StateAndProperties state_
         auto value = aria_data.aria_invalid_or_default();
         switch (value) {
         case AriaInvalid::Grammar:
-            return "grammar"_utf16;
+            return "grammar"_string;
         case AriaInvalid::False:
-            return "false"_utf16;
+            return "false"_string;
         case AriaInvalid::Spelling:
-            return "spelling"_utf16;
+            return "spelling"_string;
         case AriaInvalid::True:
-            return "true"_utf16;
+            return "true"_string;
         }
         VERIFY_NOT_REACHED();
     }
     case StateAndProperties::AriaKeyShortcuts:
-        return serialize_aria_string(aria_data.aria_key_shortcuts_or_default());
+        return aria_data.aria_key_shortcuts_or_default();
     case StateAndProperties::AriaLabel:
-        return serialize_aria_string(aria_data.aria_label_or_default());
+        return aria_data.aria_label_or_default();
     case StateAndProperties::AriaLabelledBy:
         return id_reference_list_to_string(aria_data.aria_labelled_by_or_default());
     case StateAndProperties::AriaLevel:
@@ -192,20 +180,20 @@ ErrorOr<Utf16String> state_or_property_to_string_value(StateAndProperties state_
 
         switch (value) {
         case AriaLive::Assertive:
-            return "assertive"_utf16;
+            return "assertive"_string;
         case AriaLive::Off:
-            return "off"_utf16;
+            return "off"_string;
         case AriaLive::Polite:
-            return "polite"_utf16;
+            return "polite"_string;
         }
         VERIFY_NOT_REACHED();
     }
     case StateAndProperties::AriaModal:
-        return aria_data.aria_modal_or_default() ? "true"_utf16 : "false"_utf16;
+        return aria_data.aria_modal_or_default() ? "true"_string : "false"_string;
     case StateAndProperties::AriaMultiLine:
-        return aria_data.aria_multi_line_or_default() ? "true"_utf16 : "false"_utf16;
+        return aria_data.aria_multi_line_or_default() ? "true"_string : "false"_string;
     case StateAndProperties::AriaMultiSelectable:
-        return aria_data.aria_multi_selectable_or_default() ? "true"_utf16 : "false"_utf16;
+        return aria_data.aria_multi_selectable_or_default() ? "true"_string : "false"_string;
     case StateAndProperties::AriaOrientation: {
         AriaOrientation value;
         if (default_value.has<AriaOrientation>())
@@ -215,65 +203,65 @@ ErrorOr<Utf16String> state_or_property_to_string_value(StateAndProperties state_
 
         switch (value) {
         case AriaOrientation::Horizontal:
-            return "horizontal"_utf16;
+            return "horizontal"_string;
         case AriaOrientation::Undefined:
-            return "undefined"_utf16;
+            return "undefined"_string;
         case AriaOrientation::Vertical:
-            return "vertical"_utf16;
+            return "vertical"_string;
         }
         VERIFY_NOT_REACHED();
     }
     case StateAndProperties::AriaOwns:
         return id_reference_list_to_string(aria_data.aria_owns_or_default());
     case StateAndProperties::AriaPlaceholder:
-        return serialize_aria_string(aria_data.aria_placeholder_or_default());
+        return aria_data.aria_placeholder_or_default();
     case StateAndProperties::AriaPosInSet:
         return ARIA::optional_integer_to_string(aria_data.aria_pos_in_set_or_default());
     case StateAndProperties::AriaPressed:
         return ARIA::tristate_to_string(aria_data.aria_pressed_or_default());
     case StateAndProperties::AriaReadOnly:
-        return aria_data.aria_read_only_or_default() ? "true"_utf16 : "false"_utf16;
+        return aria_data.aria_read_only_or_default() ? "true"_string : "false"_string;
     case StateAndProperties::AriaRelevant: {
-        Utf16StringBuilder builder;
+        StringBuilder builder;
         auto value = aria_data.aria_relevant_or_default();
         for (auto const relevant : value) {
-            Utf16View to_add;
+            StringView to_add;
             switch (relevant) {
             case AriaRelevant::Additions:
-                to_add = "additions"_utf16;
+                to_add = "additions"sv;
                 break;
             case AriaRelevant::AdditionsText:
-                to_add = "additions text"_utf16;
+                to_add = "additions text"sv;
                 break;
             case AriaRelevant::All:
-                to_add = "all"_utf16;
+                to_add = "all"sv;
                 break;
             case AriaRelevant::Removals:
-                to_add = "removals"_utf16;
+                to_add = "removals"sv;
                 break;
             case AriaRelevant::Text:
-                to_add = "text"_utf16;
+                to_add = "text"sv;
                 break;
             }
             if (builder.is_empty())
                 builder.append(to_add);
             else {
-                builder.append_ascii(' ');
+                builder.append(" "sv);
                 builder.append(to_add);
             }
         }
         return builder.to_string();
     }
     case StateAndProperties::AriaRequired:
-        return aria_data.aria_required_or_default() ? "true"_utf16 : "false"_utf16;
+        return String::from_utf8(aria_data.aria_required_or_default() ? "true"sv : "false"sv);
     case StateAndProperties::AriaRoleDescription:
-        return serialize_aria_string(aria_data.aria_role_description_or_default());
+        return aria_data.aria_role_description_or_default();
     case StateAndProperties::AriaRowCount:
         return ARIA::optional_integer_to_string(aria_data.aria_row_count_or_default());
     case StateAndProperties::AriaRowIndex:
         return ARIA::optional_integer_to_string(aria_data.aria_row_index_or_default());
     case StateAndProperties::AriaRowIndexText:
-        return serialize_aria_string(aria_data.aria_row_index_text_or_default());
+        return aria_data.aria_row_index_text_or_default();
     case StateAndProperties::AriaRowSpan:
         return ARIA::optional_integer_to_string(aria_data.aria_row_span_or_default());
     case StateAndProperties::AriaSelected:
@@ -284,13 +272,13 @@ ErrorOr<Utf16String> state_or_property_to_string_value(StateAndProperties state_
         auto value = aria_data.aria_sort_or_default();
         switch (value) {
         case AriaSort::Ascending:
-            return "ascending"_utf16;
+            return "ascending"_string;
         case AriaSort::Descending:
-            return "descending"_utf16;
+            return "descending"_string;
         case AriaSort::None:
-            return "none"_utf16;
+            return "none"_string;
         case AriaSort::Other:
-            return "other"_utf16;
+            return "other"_string;
         }
         VERIFY_NOT_REACHED();
     }
@@ -307,173 +295,172 @@ ErrorOr<Utf16String> state_or_property_to_string_value(StateAndProperties state_
     case StateAndProperties::AriaValueNow:
         return ARIA::optional_number_to_string(aria_data.aria_value_now_or_default());
     case StateAndProperties::AriaValueText:
-        return serialize_aria_string(aria_data.aria_value_text_or_default());
+        return aria_data.aria_value_text_or_default();
     }
     VERIFY_NOT_REACHED();
 }
 
-ErrorOr<Utf16String> tristate_to_string(Tristate value)
+ErrorOr<String> tristate_to_string(Tristate value)
 {
     switch (value) {
     case Tristate::False:
-        return "false"_utf16;
+        return "false"_string;
     case Tristate::True:
-        return "true"_utf16;
+        return "true"_string;
     case Tristate::Undefined:
-        return "undefined"_utf16;
+        return "undefined"_string;
     case Tristate::Mixed:
-        return "mixed"_utf16;
+        return "mixed"_string;
     }
     VERIFY_NOT_REACHED();
 }
 
-ErrorOr<Utf16String> optional_integer_to_string(Optional<i32> value)
+ErrorOr<String> optional_integer_to_string(Optional<i32> value)
 {
     if (value.has_value())
-        return Utf16String::number(value.value());
-    return Utf16String {};
+        return String::number(value.value());
+    return String {};
 }
 
-ErrorOr<Utf16String> optional_bool_to_string(Optional<bool> value)
+ErrorOr<String> optional_bool_to_string(Optional<bool> value)
 {
     if (!value.has_value())
-        return "undefined"_utf16;
+        return "undefined"_string;
     if (value.value())
-        return "true"_utf16;
-    return "false"_utf16;
+        return "true"_string;
+    return "false"_string;
 }
 
-ErrorOr<Utf16String> optional_number_to_string(Optional<f64> value)
+ErrorOr<String> optional_number_to_string(Optional<f64> value)
 {
     if (!value.has_value())
-        return "undefined"_utf16;
-    return Utf16String::number(value.value());
+        return "undefined"_string;
+    return String::number(value.value());
 }
 
-ErrorOr<Utf16String> id_reference_list_to_string(Vector<Utf16String> const& value)
+ErrorOr<String> id_reference_list_to_string(Vector<String> const& value)
 {
-    Utf16StringBuilder builder;
+    StringBuilder builder;
     for (auto const& id : value) {
-        auto serialized_id = serialize_aria_string(id);
         if (builder.is_empty()) {
-            builder.append(serialized_id);
+            builder.append(id);
         } else {
-            builder.append_ascii(' ');
-            builder.append(serialized_id);
+            builder.append(" "sv);
+            builder.append(id);
         }
     }
     return builder.to_string();
 }
 
-Utf16View state_or_property_to_string(StateAndProperties value)
+StringView state_or_property_to_string(StateAndProperties value)
 {
     switch (value) {
     case StateAndProperties::AriaActiveDescendant:
-        return utf16_view(u"aria-activedescendant");
+        return "aria-activedescendant"sv;
     case StateAndProperties::AriaAtomic:
-        return utf16_view(u"aria-atomic");
+        return "aria-atomic"sv;
     case StateAndProperties::AriaAutoComplete:
-        return utf16_view(u"aria-autocomplete");
+        return "aria-autocomplete"sv;
     case StateAndProperties::AriaBrailleLabel:
-        return utf16_view(u"aria-braillelabel");
+        return "aria-braillelabel"sv;
     case StateAndProperties::AriaBrailleRoleDescription:
-        return utf16_view(u"aria-brailleroledescription");
+        return "aria-brailleroledescription"sv;
     case StateAndProperties::AriaBusy:
-        return utf16_view(u"aria-busy");
+        return "aria-busy"sv;
     case StateAndProperties::AriaChecked:
-        return utf16_view(u"aria-checked");
+        return "aria-checked"sv;
     case StateAndProperties::AriaColCount:
-        return utf16_view(u"aria-colcount");
+        return "aria-colcount"sv;
     case StateAndProperties::AriaColIndex:
-        return utf16_view(u"aria-colindex");
+        return "aria-colindex"sv;
     case StateAndProperties::AriaColIndexText:
-        return utf16_view(u"aria-colindextext");
+        return "aria-colindextext"sv;
     case StateAndProperties::AriaColSpan:
-        return utf16_view(u"aria-colspan");
+        return "aria-colspan"sv;
     case StateAndProperties::AriaControls:
-        return utf16_view(u"aria-controls");
+        return "aria-controls"sv;
     case StateAndProperties::AriaCurrent:
-        return utf16_view(u"aria-current");
+        return "aria-current"sv;
     case StateAndProperties::AriaDescribedBy:
-        return utf16_view(u"aria-describedby");
+        return "aria-describedby"sv;
     case StateAndProperties::AriaDescription:
-        return utf16_view(u"aria-description");
+        return "aria-description"sv;
     case StateAndProperties::AriaDetails:
-        return utf16_view(u"aria-details");
+        return "aria-details"sv;
     case StateAndProperties::AriaDisabled:
-        return utf16_view(u"aria-disabled");
+        return "aria-disabled"sv;
     case StateAndProperties::AriaDropEffect:
-        return utf16_view(u"aria-dropeffect");
+        return "aria-dropeffect"sv;
     case StateAndProperties::AriaErrorMessage:
-        return utf16_view(u"aria-errormessage");
+        return "aria-errormessage"sv;
     case StateAndProperties::AriaExpanded:
-        return utf16_view(u"aria-expanded");
+        return "aria-expanded"sv;
     case StateAndProperties::AriaFlowTo:
-        return utf16_view(u"aria-flowto");
+        return "aria-flowto"sv;
     case StateAndProperties::AriaGrabbed:
-        return utf16_view(u"aria-grabbed");
+        return "aria-grabbed"sv;
     case StateAndProperties::AriaHasPopup:
-        return utf16_view(u"aria-haspopup");
+        return "aria-haspopup"sv;
     case StateAndProperties::AriaHidden:
-        return utf16_view(u"aria-hidden");
+        return "aria-hidden"sv;
     case StateAndProperties::AriaInvalid:
-        return utf16_view(u"aria-invalid");
+        return "aria-invalid"sv;
     case StateAndProperties::AriaKeyShortcuts:
-        return utf16_view(u"aria-keyshortcuts");
+        return "aria-keyshortcuts"sv;
     case StateAndProperties::AriaLabel:
-        return utf16_view(u"aria-label");
+        return "aria-label"sv;
     case StateAndProperties::AriaLabelledBy:
-        return utf16_view(u"aria-labelledby");
+        return "aria-labelledby"sv;
     case StateAndProperties::AriaLevel:
-        return utf16_view(u"aria-level");
+        return "aria-level"sv;
     case StateAndProperties::AriaLive:
-        return utf16_view(u"aria-live");
+        return "aria-live"sv;
     case StateAndProperties::AriaModal:
-        return utf16_view(u"aria-modal");
+        return "aria-modal"sv;
     case StateAndProperties::AriaMultiLine:
-        return utf16_view(u"aria-multiline");
+        return "aria-multiline"sv;
     case StateAndProperties::AriaMultiSelectable:
-        return utf16_view(u"aria-multiselectable");
+        return "aria-multiselectable"sv;
     case StateAndProperties::AriaOrientation:
-        return utf16_view(u"aria-orientation");
+        return "aria-orientation"sv;
     case StateAndProperties::AriaOwns:
-        return utf16_view(u"aria-owns");
+        return "aria-owns"sv;
     case StateAndProperties::AriaPlaceholder:
-        return utf16_view(u"aria-placeholder");
+        return "aria-placeholder"sv;
     case StateAndProperties::AriaPosInSet:
-        return utf16_view(u"aria-posinset");
+        return "aria-posinset"sv;
     case StateAndProperties::AriaPressed:
-        return utf16_view(u"aria-pressed");
+        return "aria-pressed"sv;
     case StateAndProperties::AriaReadOnly:
-        return utf16_view(u"aria-readonly");
+        return "aria-readonly"sv;
     case StateAndProperties::AriaRelevant:
-        return utf16_view(u"aria-relevant");
+        return "aria-relevant"sv;
     case StateAndProperties::AriaRequired:
-        return utf16_view(u"aria-required");
+        return "aria-required"sv;
     case StateAndProperties::AriaRoleDescription:
-        return utf16_view(u"aria-roledescription");
+        return "aria-roledescription"sv;
     case StateAndProperties::AriaRowCount:
-        return utf16_view(u"aria-rowcount");
+        return "aria-rowcount"sv;
     case StateAndProperties::AriaRowIndex:
-        return utf16_view(u"aria-rowindex");
+        return "aria-rowindex"sv;
     case StateAndProperties::AriaRowIndexText:
-        return utf16_view(u"aria-rowindextext");
+        return "aria-rowindextext"sv;
     case StateAndProperties::AriaRowSpan:
-        return utf16_view(u"aria-rowspan");
+        return "aria-rowspan"sv;
     case StateAndProperties::AriaSelected:
-        return utf16_view(u"aria-selected");
+        return "aria-selected"sv;
     case StateAndProperties::AriaSetSize:
-        return utf16_view(u"aria-setsize");
+        return "aria-setsize"sv;
     case StateAndProperties::AriaSort:
-        return utf16_view(u"aria-sort");
+        return "aria-sort"sv;
     case StateAndProperties::AriaValueMax:
-        return utf16_view(u"aria-valuemax");
+        return "aria-valuemax"sv;
     case StateAndProperties::AriaValueMin:
-        return utf16_view(u"aria-valuemin");
+        return "aria-valuemin"sv;
     case StateAndProperties::AriaValueNow:
-        return utf16_view(u"aria-valuenow");
+        return "aria-valuenow"sv;
     case StateAndProperties::AriaValueText:
-        return utf16_view(u"aria-valuetext");
+        return "aria-valuetext"sv;
     }
     VERIFY_NOT_REACHED();
 }

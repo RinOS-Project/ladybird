@@ -4,32 +4,35 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CredentialManagement/Credential.h>
-#include <LibWeb/WebIDL/Promise.h>
 
 namespace Web::CredentialManagement {
 
 // https://www.w3.org/TR/credential-management-1/#dom-credential-isconditionalmediationavailable
-bool Credential::is_conditional_mediation_available()
+GC::Ref<WebIDL::Promise> Credential::is_conditional_mediation_available(JS::VM& vm)
 {
-    // 1. Return false.
-    return false;
-}
-
-GC::Ref<WebIDL::Promise> Credential::is_conditional_mediation_available_impl(JS::VM& vm)
-{
-    return WebIDL::create_resolved_promise(*vm.current_realm(), JS::Value(is_conditional_mediation_available()));
+    // 1. Return a promise resolved with false.
+    return WebIDL::create_resolved_promise(*vm.current_realm(), JS::Value(false));
 }
 
 Credential::~Credential() { }
 
-Credential::Credential()
+Credential::Credential(JS::Realm& realm)
+    : PlatformObject(realm)
 {
 }
 
-Credential::Credential(Utf16String id)
-    : m_id(move(id))
+Credential::Credential(JS::Realm& realm, String id)
+    : PlatformObject(realm)
+    , m_id(move(id))
 {
+}
+
+void Credential::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(Credential);
+    Base::initialize(realm);
 }
 
 }

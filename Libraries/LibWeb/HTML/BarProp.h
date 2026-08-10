@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025-present, the Ladybird developers.
+ * Copyright (c) 2025, the Ladybird developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,29 +7,25 @@
 #pragma once
 
 #include <LibGC/CellAllocator.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/WebIDL/Types.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#barprop
-class BarProp : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(BarProp, Bindings::GCAllocatedWrappable);
+class BarProp : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(BarProp, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(BarProp);
 
 public:
-    BarProp(Window&);
-    static GC::Ref<BarProp> create(Window&);
+    BarProp(JS::Realm&);
+    static GC::Ref<BarProp> create(JS::Realm&);
 
-    [[nodiscard]] Window& window() { return m_window; }
-    [[nodiscard]] Window const& window() const { return m_window; }
     [[nodiscard]] bool visible() const;
 
 private:
-    virtual void visit_edges(GC::Cell::Visitor&) override;
-    virtual GC::Ptr<Bindings::Wrappable> relevant_global_impl() const override;
-
-    GC::Ref<Window> m_window;
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

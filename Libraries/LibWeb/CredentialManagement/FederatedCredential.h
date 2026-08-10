@@ -6,47 +6,55 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/FederatedCredential.h>
+#include <LibJS/Forward.h>
+#include <LibWeb/Bindings/FederatedCredentialPrototype.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CredentialManagement/Credential.h>
 #include <LibWeb/CredentialManagement/CredentialUserData.h>
 
 namespace Web::CredentialManagement {
 
-// https://www.w3.org/TR/credential-management-1/#dictdef-federatedcredentialrequestoptions
-struct FederatedCredentialRequestOptions {
-    Vector<String> providers;
-    Vector<String> protocols;
-};
-
-// https://www.w3.org/TR/credential-management-1/#dictdef-federatedcredentialinit
-using FederatedCredentialInit = Bindings::FederatedCredentialInit;
-
 // https://w3c.github.io/webappsec-credential-management/#federatedcredential
 class FederatedCredential final
     : public Credential
     , public CredentialUserData {
-    WEB_WRAPPABLE(FederatedCredential, Credential);
+    WEB_PLATFORM_OBJECT(FederatedCredential, Credential);
     GC_DECLARE_ALLOCATOR(FederatedCredential);
 
 public:
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<FederatedCredential>> create(FederatedCredentialInit const&);
+    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<FederatedCredential>> construct_impl(JS::Realm&, FederatedCredentialInit const&);
 
     virtual ~FederatedCredential() override;
 
-    Utf16String const& provider() const { return m_provider; }
-    Optional<Utf16String> const& protocol() const { return m_protocol; }
+    String const& provider() const { return m_provider; }
+    Optional<String> const& protocol() const { return m_protocol; }
     URL::Origin const& origin() const { return m_origin; }
 
-    Utf16FlyString const& type() const override;
+    String type() const override { return "federated"_string; }
 
 private:
-    FederatedCredential(FederatedCredentialInit, URL::Origin);
+    FederatedCredential(JS::Realm&, FederatedCredentialInit const&, URL::Origin);
+    virtual void initialize(JS::Realm&) override;
 
-    Utf16String m_provider;
-    Optional<Utf16String> m_protocol;
+    String m_provider;
+    Optional<String> m_protocol;
 
     // https://www.w3.org/TR/credential-management-1/#dom-credential-origin-slot
     URL::Origin m_origin;
+};
+
+// https://www.w3.org/TR/credential-management-1/#dictdef-federatedcredentialrequestoptions
+struct FederatedCredentialRequestOptions {
+    Optional<Vector<String>> providers;
+    Optional<Vector<String>> protocols;
+};
+
+// https://www.w3.org/TR/credential-management-1/#dictdef-federatedcredentialinit
+struct FederatedCredentialInit : CredentialData {
+    Optional<String> name;
+    Optional<String> icon_url;
+    String provider;
+    Optional<String> protocol;
 };
 
 }

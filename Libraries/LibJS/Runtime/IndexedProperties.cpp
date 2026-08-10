@@ -71,27 +71,28 @@ bool GenericIndexedPropertyStorage::set_array_like_size(size_t new_size)
         return true;
     }
 
-    Optional<u32> highest_non_configurable_index;
+    bool any_failed = false;
+    size_t highest_index = 0;
+
+    HashMap<u32, ValueAndAttributes> new_sparse_elements;
     for (auto& entry : m_sparse_elements) {
-        if (entry.key >= new_size && !entry.value.attributes.is_configurable()) {
-            if (!highest_non_configurable_index.has_value() || entry.key > highest_non_configurable_index.value())
-                highest_non_configurable_index = entry.key;
+        if (entry.key >= new_size) {
+            if (entry.value.attributes.is_configurable())
+                continue;
+            else
+                any_failed = true;
         }
-    }
-
-    auto failed = highest_non_configurable_index.has_value();
-    auto truncation_boundary = failed ? highest_non_configurable_index.value() + 1 : new_size;
-
-    GC::ConservativeHashMap<u32, ValueAndAttributes> new_sparse_elements;
-    for (auto& entry : m_sparse_elements) {
-        if (entry.key >= truncation_boundary && entry.value.attributes.is_configurable())
-            continue;
         new_sparse_elements.set(entry.key, entry.value);
+        highest_index = max(highest_index, entry.key);
     }
 
-    m_array_size = truncation_boundary;
+    if (any_failed)
+        m_array_size = highest_index + 1;
+    else
+        m_array_size = new_size;
+
     m_sparse_elements = move(new_sparse_elements);
-    return !failed;
+    return !any_failed;
 }
 
 }

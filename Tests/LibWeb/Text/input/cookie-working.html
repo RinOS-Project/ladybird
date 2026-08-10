@@ -64,13 +64,11 @@
     const defaultPathTest = () => {
         document.cookie = "cookie1=value; path=";
         document.cookie = "cookie2=value; path=f";
-        document.cookie = `cookie3=value; path=/${"x".repeat(1024)}`;
 
         printCookies("Default path");
 
         deleteCookie("cookie1");
         deleteCookie("cookie2");
-        deleteCookie("cookie3");
     };
 
     const secureCookiePrefixTest = () => {
@@ -126,11 +124,11 @@
     };
 
     const maxAgeTest = () => {
-        document.cookie = "cookie-max-age1=value; max-age=999999";
+        document.cookie = "cookie-max-age1=value; max-age=1";
         document.cookie = `cookie-max-age2=value; max-age=${"1".repeat(1024)}`;
         printCookies("Max-Age (before expiration)");
 
-        document.cookie = "cookie-max-age1=value; max-age=-1";
+        internals.expireCookiesWithTimeOffset(2);
         printCookies("Max-Age (after expiration)");
         deleteCookie("cookie-max-age2");
     };
@@ -148,7 +146,7 @@
         document.cookie = `cookie-expires=value; expires=${expiry}`;
         printCookies("Expires (before expiration)");
 
-        document.cookie = "cookie-expires=value; expires=Mon, 23 Jan 1989 08:10:36 GMT";
+        internals.expireCookiesWithTimeOffset(4);
         printCookies("Expires (after expiration)");
     };
 

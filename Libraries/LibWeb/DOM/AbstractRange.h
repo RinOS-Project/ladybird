@@ -8,8 +8,7 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/WebIDL/Types.h>
 
@@ -22,8 +21,8 @@ struct BoundaryPoint {
 };
 
 // https://dom.spec.whatwg.org/#abstractrange
-class WEB_API AbstractRange : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(AbstractRange, Bindings::GCAllocatedWrappable);
+class AbstractRange : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(AbstractRange, Bindings::PlatformObject);
 
 public:
     virtual ~AbstractRange() override;
@@ -54,7 +53,8 @@ public:
 protected:
     AbstractRange(GC::Ref<Node> start_container, WebIDL::UnsignedLong start_offset, GC::Ref<Node> end_container, WebIDL::UnsignedLong end_offset);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     GC::Ref<Node> m_start_container;
     WebIDL::UnsignedLong m_start_offset;

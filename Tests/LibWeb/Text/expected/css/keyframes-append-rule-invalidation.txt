@@ -1,2 +1,0 @@
-opacity before appendRule: 0.25
-opacity after appendRule: 0.75

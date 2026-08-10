@@ -6,7 +6,6 @@
 
 #include <LibWebView/Application.h>
 
-#import <Application/Application.h>
 #import <Application/ApplicationDelegate.h>
 #import <Interface/InfoBar.h>
 #import <Interface/LadybirdWebView.h>
@@ -73,9 +72,7 @@
 - (nonnull TabController*)createNewTab:(Web::HTML::ActivateTab)activate_tab
                                fromTab:(nullable Tab*)tab
 {
-    auto is_private = tab ? [tab isPrivate] : WebView::IsPrivate::No;
-    auto* controller = [[TabController alloc] init:is_private];
-
+    auto* controller = [[TabController alloc] init];
     [self initializeTabController:controller
                       activateTab:activate_tab
                           fromTab:tab];
@@ -85,22 +82,12 @@
 
 - (TabController*)createNewTab:(Optional<URL::URL> const&)url
                        fromTab:(Tab*)tab
-                     isPrivate:(WebView::IsPrivate)is_private
                    activateTab:(Web::HTML::ActivateTab)activate_tab
-                   tabLocation:(TabLocation)tab_location
 {
-    auto* controller = [[TabController alloc] init:is_private];
-
-    [self initializeTabController:controller
-                      activateTab:activate_tab
-                          fromTab:tab
-                      tabLocation:tab_location];
+    auto* controller = [self createNewTab:activate_tab fromTab:tab];
 
     if (url.has_value()) {
         [controller loadURL:*url];
-
-        if (*url != WebView::Application::settings().new_tab_page_url())
-            [controller focusWebView];
     }
 
     return controller;
@@ -117,8 +104,6 @@
         [controller loadURL:*url];
     }
 
-    [controller focusWebView];
-
     return controller;
 }
 
@@ -134,7 +119,6 @@
     }
 
     WebView::Application::the().update_bookmark_action_for_current_web_view();
-    WebView::Application::the().update_editing_history_actions();
 }
 
 - (Tab*)activeTab
@@ -147,22 +131,6 @@
     [self.managed_tabs removeObject:controller];
 }
 
-- (NSUInteger)tabCount
-{
-    return self.managed_tabs.count;
-}
-
-- (void)restartPrivateBrowsingSession
-{
-    for (TabController* controller in [self.managed_tabs copy]) {
-        if ([controller isPrivate] == WebView::IsPrivate::Yes)
-            [[controller window] close];
-    }
-
-    WebView::Application::the().reset_private_browsing_session();
-    [self openNewWindow:WebView::IsPrivate::Yes];
-}
-
 - (void)rebuildBookmarksMenu
 {
     Ladybird::repopulate_application_menu(self.bookmarks_menu, WebView::Application::the().bookmarks_menu());
@@ -170,6 +138,15 @@
     for (TabController* controller in self.managed_tabs) {
         auto* tab = (Tab*)[controller window];
         [tab rebuildBookmarksBar];
+    }
+}
+
+- (void)updateBookmarksBarDisplay:(bool)show_bookmarks_bar
+{
+    for (TabController* controller in self.managed_tabs) {
+        if (auto* tab = (Tab*)[controller window]; ([tab styleMask] & NSWindowStyleMaskFullScreen) == 0) {
+            [tab updateBookmarksBarDisplay:show_bookmarks_bar];
+        }
     }
 }
 
@@ -182,16 +159,11 @@
     auto message = MUST(String::formatted("DevTools is enabled on port {}", WebView::Application::browser_options().devtools_port));
 
     [self.info_bar showWithMessage:Ladybird::string_to_ns_string(message)
-        actionButtonTitle:@"Open Client"
-        actionButtonClicked:^{
-            if (auto result = WebView::Application::the().launch_devtools_client(); result.is_error())
-                WebView::Application::the().display_error_dialog(MUST(String::formatted("Unable to launch the DevTools client: {}", result.error())));
-        }
-        dismissButtonTitle:@"Disable"
-        dismissButtonClicked:^{
-            MUST(WebView::Application::the().toggle_devtools_enabled());
-        }
-        activeTab:self.active_tab];
+                dismissButtonTitle:@"Disable"
+              dismissButtonClicked:^{
+                  MUST(WebView::Application::the().toggle_devtools_enabled());
+              }
+                         activeTab:self.active_tab];
 }
 
 - (void)onDevtoolsDisabled
@@ -216,26 +188,6 @@
     [controller focusLocationToolbarItem];
 }
 
-- (void)createNewWindow:(id)sender
-{
-    [self openNewWindow:WebView::IsPrivate::No];
-}
-
-- (void)createNewPrivateWindow:(id)sender
-{
-    [self openNewWindow:WebView::IsPrivate::Yes];
-}
-
-- (void)openNewWindow:(WebView::IsPrivate)is_private
-{
-    // FIXME: Create a new tab page specific to private windows.
-    [self createNewTab:WebView::Application::settings().new_tab_page_url()
-               fromTab:nil
-             isPrivate:is_private
-           activateTab:Web::HTML::ActivateTab::Yes
-           tabLocation:TabLocation::end()];
-}
-
 - (nonnull TabController*)createChildTab:(Web::HTML::ActivateTab)activate_tab
                                  fromTab:(nonnull Tab*)tab
                                pageIndex:(u64)page_index
@@ -252,46 +204,14 @@
                     activateTab:(Web::HTML::ActivateTab)activate_tab
                         fromTab:(nullable Tab*)tab
 {
-    [self initializeTabController:controller
-                      activateTab:activate_tab
-                          fromTab:tab
-                      tabLocation:TabLocation::end()];
-}
-
-- (void)initializeTabController:(TabController*)controller
-                    activateTab:(Web::HTML::ActivateTab)activate_tab
-                        fromTab:(nullable Tab*)tab
-                    tabLocation:(TabLocation)tab_location
-{
-    Optional<NSUInteger> insertion_index;
-    NSWindowTabGroup* tab_group = nil;
-
-    auto* tab_for_location = tab_location.is_after_tab() ? tab_location.tab() : tab;
-    if (tab_for_location && [tab_for_location isPrivate] != [controller isPrivate])
-        tab_for_location = nil;
-
-    if (tab_for_location) {
-        tab_group = [tab_for_location tabGroup];
-
-        if (tab_location.is_after_tab()) {
-            auto* windows = [tab_group windows];
-            auto tab_index = [windows indexOfObject:tab_for_location];
-            if (tab_index != NSNotFound)
-                insertion_index = tab_index + 1;
-        }
-    }
-
     [controller showWindow:nil];
 
-    if (tab_for_location) {
-        if (insertion_index.has_value())
-            [tab_group insertWindow:controller.window atIndex:insertion_index.value()];
-        else
-            [tab_group addWindow:controller.window];
+    if (tab) {
+        [[tab tabGroup] addWindow:controller.window];
 
         // FIXME: Can we create the tabbed window above without it becoming active in the first place?
         if (activate_tab == Web::HTML::ActivateTab::No) {
-            [tab_for_location orderFront:nil];
+            [tab orderFront:nil];
         }
     }
 
@@ -307,6 +227,13 @@
 {
     auto* current_window = [NSApp keyWindow];
     [current_window performClose:self];
+}
+
+- (void)clearHistory:(id)sender
+{
+    for (TabController* controller in self.managed_tabs) {
+        [controller clearHistory];
+    }
 }
 
 - (NSMenuItem*)createApplicationMenu
@@ -340,12 +267,6 @@
     auto* menu = [[NSMenuItem alloc] init];
     auto* submenu = [[NSMenu alloc] initWithTitle:@"File"];
 
-    [submenu addItem:[[NSMenuItem alloc] initWithTitle:@"New Window"
-                                                action:@selector(createNewWindow:)
-                                         keyEquivalent:@"n"]];
-    [submenu addItem:[[NSMenuItem alloc] initWithTitle:@"New Private Window"
-                                                action:@selector(createNewPrivateWindow:)
-                                         keyEquivalent:@"N"]];
     [submenu addItem:[[NSMenuItem alloc] initWithTitle:@"New Tab"
                                                 action:@selector(createNewTab:)
                                          keyEquivalent:@"t"]];
@@ -354,7 +275,6 @@
                                          keyEquivalent:@"w"]];
     [submenu addItem:[NSMenuItem separatorItem]];
 
-    [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().open_downloads_page_action())];
     [submenu addItem:[[NSMenuItem alloc] initWithTitle:@"Open Location"
                                                 action:@selector(openLocation:)
                                          keyEquivalent:@"l"]];
@@ -368,11 +288,18 @@
     auto* menu = [[NSMenuItem alloc] init];
     auto* submenu = [[NSMenu alloc] initWithTitle:@"Edit"];
 
-    [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().undo_action())];
-    [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().redo_action())];
+    [submenu addItem:[[NSMenuItem alloc] initWithTitle:@"Undo"
+                                                action:@selector(undo:)
+                                         keyEquivalent:@"z"]];
+    [submenu addItem:[[NSMenuItem alloc] initWithTitle:@"Redo"
+                                                action:@selector(redo:)
+                                         keyEquivalent:@"y"]];
     [submenu addItem:[NSMenuItem separatorItem]];
 
-    [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().cut_selection_action())];
+    [submenu addItem:[[NSMenuItem alloc] initWithTitle:@"Cut"
+                                                action:@selector(cut:)
+                                         keyEquivalent:@"x"]];
+
     [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().copy_selection_action())];
     [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().paste_action())];
     [submenu addItem:[NSMenuItem separatorItem]];
@@ -402,14 +329,35 @@
     auto* menu = [[NSMenuItem alloc] init];
     auto* submenu = [[NSMenu alloc] initWithTitle:@"View"];
 
-    [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().reload_action())];
-    [submenu addItem:[NSMenuItem separatorItem]];
+    auto* zoom_menu = Ladybird::create_application_menu(WebView::Application::the().zoom_menu());
+    auto* zoom_menu_item = [[NSMenuItem alloc] initWithTitle:[zoom_menu title]
+                                                      action:nil
+                                               keyEquivalent:@""];
+    [zoom_menu_item setSubmenu:zoom_menu];
 
-    [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().zoom_menu())];
+    auto* color_scheme_menu = Ladybird::create_application_menu(WebView::Application::the().color_scheme_menu());
+    auto* color_scheme_menu_item = [[NSMenuItem alloc] initWithTitle:[color_scheme_menu title]
+                                                              action:nil
+                                                       keyEquivalent:@""];
+    [color_scheme_menu_item setSubmenu:color_scheme_menu];
+
+    auto* contrast_menu = Ladybird::create_application_menu(WebView::Application::the().contrast_menu());
+    auto* contrast_menu_item = [[NSMenuItem alloc] initWithTitle:[contrast_menu title]
+                                                          action:nil
+                                                   keyEquivalent:@""];
+    [contrast_menu_item setSubmenu:contrast_menu];
+
+    auto* motion_menu = Ladybird::create_application_menu(WebView::Application::the().motion_menu());
+    auto* motion_menu_item = [[NSMenuItem alloc] initWithTitle:[motion_menu title]
+                                                        action:nil
+                                                 keyEquivalent:@""];
+    [motion_menu_item setSubmenu:motion_menu];
+
+    [submenu addItem:zoom_menu_item];
     [submenu addItem:[NSMenuItem separatorItem]];
-    [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().color_scheme_menu())];
-    [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().contrast_menu())];
-    [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().motion_menu())];
+    [submenu addItem:color_scheme_menu_item];
+    [submenu addItem:contrast_menu_item];
+    [submenu addItem:motion_menu_item];
     [submenu addItem:[NSMenuItem separatorItem]];
 
     [menu setSubmenu:submenu];
@@ -418,24 +366,50 @@
 
 - (NSMenuItem*)createHistoryMenu
 {
-    return Ladybird::create_application_menu_item(WebView::Application::the().history_menu());
+    auto* menu = [[NSMenuItem alloc] init];
+
+    auto* submenu = [[NSMenu alloc] initWithTitle:@"History"];
+    [submenu setAutoenablesItems:NO];
+
+    [submenu addItem:Ladybird::create_application_menu_item(WebView::Application::the().reload_action())];
+    [submenu addItem:[NSMenuItem separatorItem]];
+
+    [submenu addItem:[[NSMenuItem alloc] initWithTitle:@"Clear History"
+                                                action:@selector(clearHistory:)
+                                         keyEquivalent:@""]];
+
+    [menu setSubmenu:submenu];
+    return menu;
 }
 
 - (NSMenuItem*)createBookmarksMenu
 {
-    auto* menu = Ladybird::create_application_menu_item(WebView::Application::the().bookmarks_menu());
-    self.bookmarks_menu = [menu submenu];
+    auto* menu = [[NSMenuItem alloc] init];
+
+    self.bookmarks_menu = Ladybird::create_application_menu(WebView::Application::the().bookmarks_menu());
+    [menu setSubmenu:self.bookmarks_menu];
+
     return menu;
 }
 
 - (NSMenuItem*)createInspectMenu
 {
-    return Ladybird::create_application_menu_item(WebView::Application::the().inspect_menu());
+    auto* menu = [[NSMenuItem alloc] init];
+
+    auto* submenu = Ladybird::create_application_menu(WebView::Application::the().inspect_menu());
+    [menu setSubmenu:submenu];
+
+    return menu;
 }
 
 - (NSMenuItem*)createDebugMenu
 {
-    return Ladybird::create_application_menu_item(WebView::Application::the().debug_menu());
+    auto* menu = [[NSMenuItem alloc] init];
+
+    auto* submenu = Ladybird::create_application_menu(WebView::Application::the().debug_menu());
+    [menu setSubmenu:submenu];
+
+    return menu;
 }
 
 - (NSMenuItem*)createWindowMenu
@@ -476,9 +450,7 @@
 
         auto* controller = [self createNewTab:url
                                       fromTab:tab
-                                    isPrivate:WebView::IsPrivate::No
-                                  activateTab:activate_tab
-                                  tabLocation:TabLocation::end()];
+                                  activateTab:activate_tab];
 
         tab = (Tab*)[controller window];
     }
@@ -490,7 +462,7 @@
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender
 {
-    return [(Application*)sender confirmStopActiveDownloads];
+    return YES;
 }
 
 - (void)applicationDidChangeScreenParameters:(NSNotification*)notification

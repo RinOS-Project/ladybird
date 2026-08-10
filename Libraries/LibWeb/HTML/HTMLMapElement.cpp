@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLMapElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/HTMLAreaElement.h>
 #include <LibWeb/HTML/HTMLMapElement.h>
 
@@ -17,6 +19,12 @@ HTMLMapElement::HTMLMapElement(DOM::Document& document, DOM::QualifiedName quali
 }
 
 HTMLMapElement::~HTMLMapElement() = default;
+
+void HTMLMapElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLMapElement);
+    Base::initialize(realm);
+}
 
 void HTMLMapElement::visit_edges(Cell::Visitor& visitor)
 {

@@ -9,7 +9,6 @@
 #include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/Types.h>
-#include <AK/Utf16String.h>
 #include <AK/Variant.h>
 #include <LibCrypto/BigInt/SignedBigInteger.h>
 #include <LibUnicode/Calendar.h>
@@ -51,13 +50,13 @@ struct ISOYearMonth {
 // 13.32 ISO String Time Zone Parse Records, https://tc39.es/proposal-temporal/#sec-temporal-iso-string-time-zone-parse-records
 struct ParsedISOTimeZone {
     bool z_designator { false };
-    Optional<Utf16String> offset_string;
-    Optional<Utf16String> time_zone_annotation;
+    Optional<String> offset_string;
+    Optional<String> time_zone_annotation;
 };
 
 // 13.33 Time Zone Identifier Parse Records, https://tc39.es/proposal-temporal/#sec-temporal-time-zone-identifier-parse-records
 struct ParsedTimeZoneIdentifier {
-    Optional<Utf16String> name;
+    Optional<String> name;
     Optional<i64> offset_minutes;
 };
 
@@ -70,7 +69,7 @@ struct ParsedISODateTime {
     u8 day { 0 };
     Variant<StartOfDay, Time> time;
     ParsedISOTimeZone time_zone;
-    Optional<Utf16String> calendar;
+    Optional<String> calendar;
 };
 
 }

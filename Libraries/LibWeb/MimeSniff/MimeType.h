@@ -9,13 +9,11 @@
 
 #include <AK/HashMap.h>
 #include <AK/String.h>
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
 #include <LibWeb/Export.h>
 
 namespace Web::MimeSniff {
 
-bool is_javascript_mime_type_essence_match(Utf16View);
+bool is_javascript_mime_type_essence_match(StringView);
 
 // https://mimesniff.spec.whatwg.org/#javascript-mime-type
 // A JavaScript MIME type is any MIME type whose essence is one of the following:
@@ -43,7 +41,6 @@ class WEB_API MimeType {
 public:
     [[nodiscard]] static MimeType create(String type, String subtype);
     [[nodiscard]] static Optional<MimeType> parse(StringView);
-    [[nodiscard]] static Optional<MimeType> parse(Utf16View);
 
     MimeType(MimeType const&);
     MimeType& operator=(MimeType const&);
@@ -72,7 +69,6 @@ public:
 
     String const& essence() const;
     [[nodiscard]] String serialized() const;
-    [[nodiscard]] Utf16String serialized_as_utf16() const;
 
 private:
     MimeType(String type, String subtype);

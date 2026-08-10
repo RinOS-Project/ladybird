@@ -1,19 +1,23 @@
 /*
- * Copyright (c) 2026-present, the Ladybird developers.
+ * Copyright (c) 2026, The Ladybird developers
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Atomic.h>
 #include <AK/Function.h>
-#include <AK/ScopeGuard.h>
+#include <AK/MemoryStream.h>
+#include <AK/Optional.h>
 #include <AK/Time.h>
 #include <LibCore/AnonymousBuffer.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Socket.h>
 #include <LibCore/System.h>
-#include <LibIPC/Attachment.h>
-#include <LibIPC/Forward.h>
+#include <LibGfx/Bitmap.h>
+#include <LibGfx/ShareableBitmap.h>
+#include <LibIPC/Decoder.h>
+#include <LibIPC/Encoder.h>
+#include <LibIPC/Message.h>
 #include <LibIPC/TransportSocket.h>
 #include <LibTest/TestCase.h>
 
@@ -32,38 +36,64 @@ static void spin_until(Core::EventLoop& loop, Function<bool()> condition, AK::Du
     FAIL("Timed out waiting for condition");
 }
 
-TEST_CASE(send_queue_does_not_send_message_bytes_without_fds)
+struct TransportPair {
+    NonnullOwnPtr<IPC::TransportSocket> sender;
+    NonnullOwnPtr<IPC::TransportSocket> receiver;
+};
+
+static TransportPair create_transport_pair()
 {
-    auto queue = adopt_ref(*new IPC::SendQueue);
+    int fds[2] = {};
+    MUST(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, fds));
 
-    IPC::MessageDataType first_payload;
-    first_payload.append('A');
+    auto sender_socket = TRY_OR_FAIL(Core::LocalSocket::adopt_fd(fds[0]));
+    auto receiver_socket = TRY_OR_FAIL(Core::LocalSocket::adopt_fd(fds[1]));
 
-    IPC::MessageDataType second_payload;
-    second_payload.append('B');
+    MUST(sender_socket->set_blocking(false));
+    MUST(receiver_socket->set_blocking(false));
 
-    Vector<int> first_fds;
-    first_fds.ensure_capacity(Core::LocalSocket::MAX_TRANSFER_FDS);
-    for (size_t i = 0; i < Core::LocalSocket::MAX_TRANSFER_FDS; ++i)
-        first_fds.unchecked_append(static_cast<int>(i));
+    return {
+        TRY_OR_FAIL(IPC::TransportSocket::from_socket(move(sender_socket))),
+        TRY_OR_FAIL(IPC::TransportSocket::from_socket(move(receiver_socket))),
+    };
+}
 
-    Vector<int> second_fds;
-    second_fds.append(999);
+template<typename T>
+static T roundtrip_over_transport(T const& value)
+{
+    auto pair = create_transport_pair();
 
-    queue->enqueue_message({}, move(first_payload), move(first_fds));
-    queue->enqueue_message({}, move(second_payload), move(second_fds));
+    IPC::MessageBuffer buffer;
+    IPC::Encoder encoder(buffer);
+    TRY_OR_FAIL(encoder.encode(value));
 
-    auto first_batch = queue->peek(4096);
-    EXPECT_EQ(first_batch.bytes.size(), sizeof(IPC::SocketMessageHeader) + 1);
-    EXPECT_EQ(first_batch.bytes[sizeof(IPC::SocketMessageHeader)], static_cast<u8>('A'));
-    EXPECT_EQ(first_batch.fds.size(), Core::LocalSocket::MAX_TRANSFER_FDS);
+    auto data = buffer.take_data();
+    auto attachments = buffer.take_attachments();
+    pair.sender->post_message(data, attachments);
 
-    queue->discard(first_batch.bytes.size(), first_batch.fds.size());
+    pair.receiver->wait_until_readable();
 
-    auto second_batch = queue->peek(4096);
-    EXPECT_EQ(second_batch.bytes.size(), sizeof(IPC::SocketMessageHeader) + 1);
-    EXPECT_EQ(second_batch.bytes[sizeof(IPC::SocketMessageHeader)], static_cast<u8>('B'));
-    EXPECT_EQ(second_batch.fds.size(), 1u);
+    Optional<T> decoded_value;
+    auto should_shutdown = pair.receiver->read_as_many_messages_as_possible_without_blocking([&](auto&& message) {
+        FixedMemoryStream stream { ReadonlyBytes { message.bytes.data(), message.bytes.size() } };
+        auto message_attachments = move(message.attachments);
+        IPC::Decoder decoder(stream, message_attachments);
+        decoded_value = TRY_OR_FAIL(decoder.decode<T>());
+    });
+
+    EXPECT_EQ(should_shutdown, IPC::TransportSocket::ShouldShutdown::No);
+    EXPECT(decoded_value.has_value());
+
+    return move(decoded_value.release_value());
+}
+
+static bool buffers_have_same_contents(Core::AnonymousBuffer const& left, Core::AnonymousBuffer const& right)
+{
+    if (left.size() != right.size())
+        return false;
+    if (left.size() == 0)
+        return true;
+    return __builtin_memcmp(left.data<u8>(), right.data<u8>(), left.size()) == 0;
 }
 
 TEST_CASE(read_hook_is_notified_on_peer_hangup)
@@ -132,115 +162,71 @@ TEST_CASE(read_hook_is_notified_when_io_thread_exits_on_close)
     EXPECT(observed_shutdown.load(AK::MemoryOrder::memory_order_relaxed));
 }
 
-// A message that arrives immediately before EOF must be delivered to the consumer — even when the consumer drains in
-// the narrow window between the IO thread observing EOF and that message becoming available. Otherwise, the consumer
-// (e.g. a MessagePort) can tear itself down on the EOF, and drop the final message. See the EOF/message ordering in
-// read_incoming_messages and read_as_many_messages_as_possible_without_blocking.
-TEST_CASE(message_arriving_just_before_eof_is_not_dropped_on_shutdown)
+TEST_CASE(anonymous_buffer_roundtrips_with_fd_backing)
 {
-    Core::EventLoop loop;
+    auto buffer = TRY_OR_FAIL(Core::AnonymousBuffer::create_with_size(128 * KiB));
+    for (size_t i = 0; i < buffer.size(); ++i)
+        buffer.data<u8>()[i] = static_cast<u8>(i % 251);
 
-    int fds[2] = {};
-    MUST(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, fds));
+    auto roundtripped = roundtrip_over_transport(buffer);
 
-    // Queue one message and hang up the peer before the reading transport (and its IO thread) exists — so the IO
-    // thread's first read sees the message bytes and EOF together.
-    {
-        auto peer_socket = TRY_OR_FAIL(Core::LocalSocket::adopt_fd(fds[1]));
-        MUST(peer_socket->set_blocking(false));
-        IPC::TransportSocket peer(move(peer_socket));
-
-        auto hello = "hello"sv.bytes();
-        IPC::MessageDataType payload;
-        payload.append(hello.data(), hello.size());
-        Vector<IPC::Attachment> no_attachments;
-        MUST(peer.post_message(move(payload), no_attachments));
-        peer.close_after_sending_all_pending_messages();
-    }
-
-    // Force the IO thread to wake the consumer and pause on EOF before it parses and appends the message it read — so
-    // the consumer's first drain falls inside the window that would otherwise drop the message.
-    IPC::TransportSocket::set_eof_drain_window_for_test(200);
-    ScopeGuard reset_window = [] { IPC::TransportSocket::set_eof_drain_window_for_test(0); };
-
-    auto reader_socket = TRY_OR_FAIL(Core::LocalSocket::adopt_fd(fds[0]));
-    MUST(reader_socket->set_blocking(false));
-    IPC::TransportSocket transport(move(reader_socket));
-
-    IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<u32> delivered = 0;
-    IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<bool> observed_shutdown = false;
-
-    transport.set_up_read_hook([&] {
-        // Model a consumer that tears itself down once it observes shutdown (as MessagePort does): A message not
-        // delivered before shutdown is observed is lost for good.
-        if (observed_shutdown.load(AK::MemoryOrder::memory_order_relaxed))
-            return;
-        auto should_shutdown = transport.read_as_many_messages_as_possible_without_blocking([&](auto&&) {
-            delivered.fetch_add(1, AK::MemoryOrder::memory_order_relaxed);
-        });
-        if (should_shutdown == IPC::TransportSocket::ShouldShutdown::Yes)
-            observed_shutdown.store(true, AK::MemoryOrder::memory_order_relaxed);
-    });
-
-    spin_until(loop, [&] {
-        return observed_shutdown.load(AK::MemoryOrder::memory_order_relaxed);
-    });
-
-    EXPECT_EQ(delivered.load(AK::MemoryOrder::memory_order_relaxed), 1u);
+    EXPECT(roundtripped.is_valid());
+    EXPECT_EQ(roundtripped.size(), buffer.size());
+    EXPECT(buffers_have_same_contents(buffer, roundtripped));
+#ifndef AK_OS_WINDOWS
+    EXPECT(roundtripped.fd() >= 0);
+#endif
 }
 
-// A message already buffered on the socket when the IO thread stops must still be delivered — even if the loop stops on
-// a path that doesn't run its in-loop read. That happens when a send fails because the peer closed (transfer_data
-// returns SocketClosed): The loop ends without draining the receive side. The loop-exit drain is the backstop. Without
-// it, the message is lost, and a consumer that tears down on EOF (like MessagePort, e.g. a cross-realm transform stream
-// receiving a final "error") hangs its peer forever.
-TEST_CASE(buffered_message_is_drained_when_io_thread_stops_without_reading_it)
+TEST_CASE(shareable_bitmap_roundtrips_with_fd_backing)
 {
-    Core::EventLoop loop;
-
-    int fds[2] = {};
-    MUST(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, fds));
-
-    // Queue one message, and hang up the peer before the reading transport exists — so the reader's first poll sees the
-    // message bytes and EOF together.
-    {
-        auto peer_socket = TRY_OR_FAIL(Core::LocalSocket::adopt_fd(fds[1]));
-        MUST(peer_socket->set_blocking(false));
-        IPC::TransportSocket peer(move(peer_socket));
-
-        auto hello = "hello"sv.bytes();
-        IPC::MessageDataType payload;
-        payload.append(hello.data(), hello.size());
-        Vector<IPC::Attachment> no_attachments;
-        MUST(peer.post_message(move(payload), no_attachments));
-        peer.close_after_sending_all_pending_messages();
+    auto bitmap = TRY_OR_FAIL(Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, { 128, 96 }));
+    for (int y = 0; y < bitmap->height(); ++y) {
+        auto* row = bitmap->scanline_u8(y);
+        for (int x = 0; x < bitmap->width(); ++x) {
+            auto offset = static_cast<size_t>(x) * sizeof(u32);
+            row[offset + 0] = static_cast<u8>(x);
+            row[offset + 1] = static_cast<u8>(y);
+            row[offset + 2] = static_cast<u8>(x ^ y);
+            row[offset + 3] = 0xff;
+        }
     }
 
-    // Model a stop path that doesn't run the in-loop read (e.g. SocketClosed from a failed send): The loop reaches its
-    // exit with the message still buffered on the socket — so only the loop-exit drain can deliver it.
-    IPC::TransportSocket::set_skip_inloop_read_for_test(true);
-    ScopeGuard reset_skip = [] { IPC::TransportSocket::set_skip_inloop_read_for_test(false); };
+    auto roundtripped = roundtrip_over_transport(bitmap->to_shareable_bitmap());
 
-    auto reader_socket = TRY_OR_FAIL(Core::LocalSocket::adopt_fd(fds[0]));
-    MUST(reader_socket->set_blocking(false));
-    IPC::TransportSocket transport(move(reader_socket));
+    EXPECT(roundtripped.is_valid());
+    EXPECT_EQ(roundtripped.bitmap()->size(), bitmap->size());
+    EXPECT_EQ(roundtripped.bitmap()->format(), bitmap->format());
+    EXPECT_EQ(roundtripped.bitmap()->alpha_type(), bitmap->alpha_type());
+    EXPECT_EQ(roundtripped.bitmap()->size_in_bytes(), bitmap->size_in_bytes());
+    EXPECT_EQ(__builtin_memcmp(roundtripped.bitmap()->scanline_u8(0), bitmap->scanline_u8(0), bitmap->size_in_bytes()), 0);
+#ifndef AK_OS_WINDOWS
+    EXPECT(roundtripped.bitmap()->anonymous_buffer().fd() >= 0);
+#endif
+}
 
-    IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<u32> delivered = 0;
-    IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<bool> observed_shutdown = false;
+TEST_CASE(two_large_anonymous_buffers_roundtrip_without_inline_payload_copy)
+{
+    static constexpr size_t buffer_size = static_cast<size_t>(800 * 437 * sizeof(u32));
 
-    transport.set_up_read_hook([&] {
-        if (observed_shutdown.load(AK::MemoryOrder::memory_order_relaxed))
-            return;
-        auto should_shutdown = transport.read_as_many_messages_as_possible_without_blocking([&](auto&&) {
-            delivered.fetch_add(1, AK::MemoryOrder::memory_order_relaxed);
-        });
-        if (should_shutdown == IPC::TransportSocket::ShouldShutdown::Yes)
-            observed_shutdown.store(true, AK::MemoryOrder::memory_order_relaxed);
-    });
+    Array<Core::AnonymousBuffer, 2> buffers {
+        TRY_OR_FAIL(Core::AnonymousBuffer::create_with_size(buffer_size)),
+        TRY_OR_FAIL(Core::AnonymousBuffer::create_with_size(buffer_size)),
+    };
 
-    spin_until(loop, [&] {
-        return observed_shutdown.load(AK::MemoryOrder::memory_order_relaxed);
-    });
+    for (size_t i = 0; i < buffers[0].size(); ++i) {
+        buffers[0].data<u8>()[i] = static_cast<u8>(i % 251);
+        buffers[1].data<u8>()[i] = static_cast<u8>((i * 7) % 251);
+    }
 
-    EXPECT_EQ(delivered.load(AK::MemoryOrder::memory_order_relaxed), 1u);
+    auto roundtripped = roundtrip_over_transport(buffers);
+
+    for (size_t i = 0; i < buffers.size(); ++i) {
+        EXPECT(roundtripped[i].is_valid());
+        EXPECT_EQ(roundtripped[i].size(), buffers[i].size());
+        EXPECT(buffers_have_same_contents(buffers[i], roundtripped[i]));
+#ifndef AK_OS_WINDOWS
+        EXPECT(roundtripped[i].fd() >= 0);
+#endif
+    }
 }

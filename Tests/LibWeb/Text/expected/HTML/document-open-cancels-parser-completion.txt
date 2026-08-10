@@ -1,2 +1,0 @@
-Replacement DOMContentLoaded event fired
-Replacement iframe load event fired

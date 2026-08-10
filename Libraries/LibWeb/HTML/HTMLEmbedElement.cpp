@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLEmbedElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
@@ -21,7 +24,13 @@ HTMLEmbedElement::HTMLEmbedElement(DOM::Document& document, DOM::QualifiedName q
 
 HTMLEmbedElement::~HTMLEmbedElement() = default;
 
-bool HTMLEmbedElement::is_presentational_hint(Utf16FlyString const& name) const
+void HTMLEmbedElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLEmbedElement);
+    Base::initialize(realm);
+}
+
+bool HTMLEmbedElement::is_presentational_hint(FlyString const& name) const
 {
     if (Base::is_presentational_hint(name))
         return true;
@@ -34,41 +43,43 @@ bool HTMLEmbedElement::is_presentational_hint(Utf16FlyString const& name) const
         HTML::AttributeNames::width);
 }
 
-void HTMLEmbedElement::apply_presentational_hints(Vector<CSS::StyleProperty>& properties) const
+void HTMLEmbedElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
 {
-    Base::apply_presentational_hints(properties);
-    for_each_attribute([&](Utf16FlyString const& name, Utf16View value) {
+    Base::apply_presentational_hints(cascaded_properties);
+    for_each_attribute([&](auto& name, auto& value) {
         if (name == HTML::AttributeNames::align) {
-            // https://html.spec.whatwg.org/multipage/rendering.html#attributes-for-embedded-content-and-images
-            // When an embed, iframe, img, or object element, or an input element whose type attribute is in the Image Button state,
-            // has an align attribute whose value is an ASCII case-insensitive match for the string "center" or the string "middle",
-            // the user agent is expected to act as if the element's 'vertical-align' property was set to a value that aligns the
-            // vertical middle of the element with the parent element's baseline.
-            // FIXME: This should use legacy baseline-middle alignment instead of CSS vertical-align: middle,
-            //        as Firefox and Chrome do with engine-specific legacy values.
-            if (value.equals_ignoring_ascii_case(u"center"sv) || value.equals_ignoring_ascii_case(u"middle"sv))
-                properties.append({ .property_id = CSS::PropertyID::VerticalAlign, .value = CSS::KeywordStyleValue::create(CSS::Keyword::Middle) });
+            if (value.equals_ignoring_ascii_case("center"sv))
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::Center));
+            else if (value.equals_ignoring_ascii_case("middle"sv))
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::Middle));
         } else if (name == HTML::AttributeNames::height) {
             if (auto parsed_value = parse_dimension_value(value))
-                properties.append({ .property_id = CSS::PropertyID::Height, .value = *parsed_value });
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::Height, *parsed_value);
         }
         // https://html.spec.whatwg.org/multipage/rendering.html#attributes-for-embedded-content-and-images:maps-to-the-dimension-property
         else if (name == HTML::AttributeNames::hspace) {
             if (auto parsed_value = parse_dimension_value(value)) {
-                properties.append({ .property_id = CSS::PropertyID::MarginLeft, .value = *parsed_value });
-                properties.append({ .property_id = CSS::PropertyID::MarginRight, .value = *parsed_value });
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::MarginLeft, *parsed_value);
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::MarginRight, *parsed_value);
             }
         } else if (name == HTML::AttributeNames::vspace) {
             if (auto parsed_value = parse_dimension_value(value)) {
-                properties.append({ .property_id = CSS::PropertyID::MarginTop, .value = *parsed_value });
-                properties.append({ .property_id = CSS::PropertyID::MarginBottom, .value = *parsed_value });
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::MarginTop, *parsed_value);
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::MarginBottom, *parsed_value);
             }
         } else if (name == HTML::AttributeNames::width) {
             if (auto parsed_value = parse_dimension_value(value)) {
-                properties.append({ .property_id = CSS::PropertyID::Width, .value = *parsed_value });
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::Width, *parsed_value);
             }
         }
     });
+}
+
+void HTMLEmbedElement::adjust_computed_style(CSS::ComputedProperties& style)
+{
+    // https://drafts.csswg.org/css-display-3/#unbox
+    if (style.display().is_contents())
+        style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::None)));
 }
 
 }

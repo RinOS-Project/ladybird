@@ -6,33 +6,33 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Encoding/TextEncoderCommon.h>
-#include <LibWeb/Forward.h>
 #include <LibWeb/Streams/GenericTransformStream.h>
 
 namespace Web::Encoding {
 
 class TextEncoderStream final
-    : public Bindings::GCAllocatedWrappable
+    : public Bindings::PlatformObject
     , public Streams::GenericTransformStreamMixin
     , public TextEncoderCommonMixin {
-    WEB_WRAPPABLE(TextEncoderStream, Bindings::GCAllocatedWrappable);
+    WEB_PLATFORM_OBJECT(TextEncoderStream, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(TextEncoderStream);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<TextEncoderStream>> create_for_constructor(JS::Object&);
+    static WebIDL::ExceptionOr<GC::Ref<TextEncoderStream>> construct_impl(JS::Realm&);
     virtual ~TextEncoderStream() override;
 
 private:
-    TextEncoderStream(GC::Ref<Streams::TransformStream>);
+    TextEncoderStream(JS::Realm&, GC::Ref<Streams::TransformStream>);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    WebIDL::ExceptionOr<void> encode_and_enqueue_chunk(JS::Object&, JS::Value);
-    WebIDL::ExceptionOr<void> encode_and_flush(JS::Object&);
+    WebIDL::ExceptionOr<void> encode_and_enqueue_chunk(JS::Value);
+    WebIDL::ExceptionOr<void> encode_and_flush();
 
-    Optional<u32> convert_code_unit_to_scalar_value(u32 item, size_t& code_unit_index);
+    Optional<u32> convert_code_unit_to_scalar_value(u32 item, Utf8CodePointIterator& code_point_iterator);
 
     // https://encoding.spec.whatwg.org/#textencoderstream-pending-high-surrogate
     Optional<u32> m_leading_surrogate;

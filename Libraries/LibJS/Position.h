@@ -13,6 +13,7 @@ namespace JS {
 struct Position {
     u32 line { 0 };
     u32 column { 0 };
+    u32 offset { 0 };
 };
 
 }

@@ -1,2 +1,0 @@
-timer stopped after iframe removal: true
-animation restarted after iframe reattach: true

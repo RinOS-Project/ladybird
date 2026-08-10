@@ -2,10 +2,11 @@ Harness status: OK
 
 Found 6 tests
 
-6 Pass
+5 Pass
+1 Fail
 Pass	Start .inner transition based on inherited after-change color from .outer (lime)
 Pass	Start .inner transition based on inherited after-change background-color from .outer (lime)
 Pass	Initial computed styles
 Pass	Start inner transitions based on inherited after-change color and word-spacing from two different ancestors
 Pass	@starting-style rules should not apply to after-change style
-Pass	@container rules apply to after-change style
+Fail	@container rules apply to after-change style

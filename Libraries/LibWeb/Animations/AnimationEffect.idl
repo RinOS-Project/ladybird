@@ -1,3 +1,5 @@
+#import <CSS/CSSNumericValue.idl>
+
 // https://drafts.csswg.org/web-animations-1/#the-effecttiming-dictionaries
 // https://drafts.csswg.org/web-animations-2/#the-effecttiming-dictionaries
 dictionary EffectTiming {
@@ -7,9 +9,9 @@ dictionary EffectTiming {
     double iterationStart = 0.0;
     unrestricted double iterations = 1.0;
     // FIXME: Support playbackRate
-    (unrestricted double or CSSNumericValue or Utf16DOMString) duration = "auto";
+    (unrestricted double or CSSNumericValue or DOMString) duration = "auto";
     PlaybackDirection direction = "normal";
-    Utf16DOMString easing = "linear";
+    DOMString easing = "linear";
 };
 
 // https://drafts.csswg.org/web-animations-1/#dictdef-optionaleffecttiming
@@ -21,9 +23,9 @@ dictionary OptionalEffectTiming {
     double iterationStart;
     unrestricted double iterations;
     // FIXME: Support playbackRate
-    (unrestricted double or Utf16DOMString) duration;
+    (unrestricted double or DOMString) duration;
     PlaybackDirection direction;
-    Utf16DOMString easing;
+    DOMString easing;
 };
 
 // https://drafts.csswg.org/web-animations-1/#the-fillmode-enumeration
@@ -34,8 +36,8 @@ enum PlaybackDirection { "normal", "reverse", "alternate", "alternate-reverse" }
 
 // https://drafts.csswg.org/web-animations-1/#the-computedeffecttiming-dictionary
 dictionary ComputedEffectTiming : EffectTiming {
-    CSSNumberish endTime;
-    CSSNumberish activeDuration;
+    [GenerateAsRequired] CSSNumberish endTime;
+    [GenerateAsRequired] CSSNumberish activeDuration;
     CSSNumberish? localTime;
     double? progress;
     unrestricted double? currentIteration;

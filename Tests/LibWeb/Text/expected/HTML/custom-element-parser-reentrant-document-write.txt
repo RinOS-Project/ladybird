@@ -1,4 +1,0 @@
-connected
-written parent: body
-host child count: 3
-body children: reentrant-writer,span

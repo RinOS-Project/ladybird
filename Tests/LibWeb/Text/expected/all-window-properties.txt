@@ -38,7 +38,6 @@ ByteLengthQueuingStrategy
 CDATASection
 CSSAnimation
 CSSConditionRule
-CSSContainerRule
 CSSCounterStyleRule
 CSSFontFaceDescriptors
 CSSFontFaceRule
@@ -78,7 +77,6 @@ CSSRotate
 CSSRule
 CSSRuleList
 CSSScale
-CSSScopeRule
 CSSSkew
 CSSSkewX
 CSSSkewY
@@ -95,12 +93,10 @@ CSSTranslate
 CSSUnitValue
 CSSUnparsedValue
 CSSVariableReferenceValue
-Cache
 CacheStorage
 CanvasGradient
 CanvasPattern
 CanvasRenderingContext2D
-CaretPosition
 ChannelMergerNode
 ChannelSplitterNode
 CharacterData
@@ -293,16 +289,11 @@ Iterator
 KeyboardEvent
 KeyframeEffect
 Location
-Lock
-LockManager
 ManagedMediaSource
 ManagedSourceBuffer
 Map
-MathMLAnchorElement
 MathMLElement
 MediaCapabilities
-MediaDeviceInfo
-MediaDevices
 MediaElementAudioSourceNode
 MediaError
 MediaKeySystemAccess
@@ -311,9 +302,6 @@ MediaQueryList
 MediaQueryListEvent
 MediaSource
 MediaSourceHandle
-MediaStream
-MediaStreamTrack
-MediaStreamTrackEvent
 MessageChannel
 MessageEvent
 MessagePort
@@ -325,7 +313,6 @@ MutationRecord
 NamedNodeMap
 NavigateEvent
 Navigation
-NavigationActivation
 NavigationCurrentEntryChangeEvent
 NavigationDestination
 NavigationHistoryEntry
@@ -344,7 +331,6 @@ OffscreenCanvasRenderingContext2D
 Option
 Origin
 OscillatorNode
-PageSwapEvent
 PageTransitionEvent
 PannerNode
 PasswordCredential
@@ -360,8 +346,6 @@ PerformanceObserverEntryList
 PerformanceResourceTiming
 PerformanceTiming
 PeriodicWave
-PermissionStatus
-Permissions
 Plugin
 PluginArray
 PointerEvent
@@ -451,7 +435,6 @@ SVGSVGElement
 SVGScriptElement
 SVGStopElement
 SVGStyleElement
-SVGSwitchElement
 SVGSymbolElement
 SVGTSpanElement
 SVGTextContentElement
@@ -476,6 +459,7 @@ ServiceWorker
 ServiceWorkerContainer
 ServiceWorkerRegistration
 Set
+ShadowRealm
 ShadowRoot
 SharedArrayBuffer
 SharedWorker
@@ -509,7 +493,6 @@ Symbol
 SyntaxError
 Text
 TextDecoder
-TextDecoderStream
 TextEncoder
 TextEncoderStream
 TextEvent
@@ -585,12 +568,9 @@ XMLSerializer
 XPathEvaluator
 XPathExpression
 XPathResult
-XRLayer
-XRRenderState
 XRSession
 XRSessionEvent
 XRSystem
-XRWebGLLayer
 __finishTest
 __preventMultipleTestFunctions
 animationFrame
@@ -603,6 +583,4 @@ removeTestErrorHandler
 spoofCurrentURL
 test
 timeout
-uniqueLocalhostHostname
 webkitURL
-withCollectedWrapper

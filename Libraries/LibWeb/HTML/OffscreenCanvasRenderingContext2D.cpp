@@ -1,29 +1,29 @@
 /*
- * Copyright (c) 2025-present, the Ladybird developers.
+ * Copyright (c) 2025, Ladybird contributors
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/OwnPtr.h>
-#include <LibGC/Heap.h>
 #include <LibGfx/CompositingAndBlendingOperator.h>
 #ifndef AK_OS_RINOS
 #include <LibGfx/PainterSkia.h>
 #endif
 #include <LibGfx/Rect.h>
 #include <LibUnicode/Segmenter.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/OffscreenCanvasRenderingContext2DPrototype.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
 #include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/HTML/ImageBitmap.h>
 #include <LibWeb/HTML/ImageData.h>
-#include <LibWeb/HTML/LocalTraversableNavigable.h>
 #include <LibWeb/HTML/OffscreenCanvas.h>
 #include <LibWeb/HTML/OffscreenCanvasRenderingContext2D.h>
 #include <LibWeb/HTML/Path2D.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/TextMetrics.h>
+#include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 #include <LibWeb/Layout/TextNode.h>
 #include <LibWeb/Painting/Paintable.h>
@@ -35,13 +35,15 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(OffscreenCanvasRenderingContext2D);
 
-GC::Ref<OffscreenCanvasRenderingContext2D> OffscreenCanvasRenderingContext2D::create(OffscreenCanvas& offscreen_canvas, HTML::CanvasRenderingContext2DSettings context_attributes)
+JS::ThrowCompletionOr<GC::Ref<OffscreenCanvasRenderingContext2D>> OffscreenCanvasRenderingContext2D::create(JS::Realm& realm, OffscreenCanvas& offscreen_canvas, JS::Value options)
 {
-    return GC::Heap::the().allocate<OffscreenCanvasRenderingContext2D>(offscreen_canvas, context_attributes);
+    auto context_attributes = TRY(CanvasRenderingContext2DSettings::from_js_value(realm.vm(), options));
+    return realm.create<OffscreenCanvasRenderingContext2D>(realm, offscreen_canvas, context_attributes);
 }
 
-OffscreenCanvasRenderingContext2D::OffscreenCanvasRenderingContext2D(OffscreenCanvas& offscreen_canvas, HTML::CanvasRenderingContext2DSettings context_attributes)
-    : CanvasPath(static_cast<CanvasState const&>(*this))
+OffscreenCanvasRenderingContext2D::OffscreenCanvasRenderingContext2D(JS::Realm& realm, OffscreenCanvas& offscreen_canvas, CanvasRenderingContext2DSettings context_attributes)
+    : PlatformObject(realm)
+    , CanvasPath(static_cast<Bindings::PlatformObject&>(*this), *this)
     , m_canvas(offscreen_canvas)
     , m_size(offscreen_canvas.bitmap_size_for_canvas())
     , m_context_attributes(context_attributes)
@@ -50,7 +52,13 @@ OffscreenCanvasRenderingContext2D::OffscreenCanvasRenderingContext2D(OffscreenCa
 
 OffscreenCanvasRenderingContext2D::~OffscreenCanvasRenderingContext2D() = default;
 
-void OffscreenCanvasRenderingContext2D::visit_edges(GC::Cell::Visitor& visitor)
+void OffscreenCanvasRenderingContext2D::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    set_prototype(&Bindings::ensure_web_prototype<Bindings::OffscreenCanvasRenderingContext2DPrototype>(realm, "OffscreenCanvasRenderingContext2D"_string));
+}
+
+void OffscreenCanvasRenderingContext2D::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     CanvasState::visit_edges(visitor);
@@ -69,9 +77,15 @@ GC::Ref<OffscreenCanvas> OffscreenCanvasRenderingContext2D::canvas()
     return m_canvas;
 }
 
-JS::Realm& OffscreenCanvasRenderingContext2D::my_realm()
+OffscreenCanvas& OffscreenCanvasRenderingContext2D::canvas_element()
 {
-    return relevant_realm(m_canvas->relevant_global_object());
+    return *m_canvas;
+}
+
+OffscreenCanvas const& OffscreenCanvasRenderingContext2D::canvas_element() const
+{
+
+    return *m_canvas;
 }
 
 void OffscreenCanvasRenderingContext2D::fill_rect(float, float, float, float)
@@ -110,40 +124,40 @@ void OffscreenCanvasRenderingContext2D::stroke(Path2D const&)
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::stroke(Path2D)");
 }
 
-void OffscreenCanvasRenderingContext2D::fill_text(Utf16View, float, float, Optional<double>)
+void OffscreenCanvasRenderingContext2D::fill_text(Utf16String const&, float, float, Optional<double>)
 {
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::fill_text()");
 }
 
-void OffscreenCanvasRenderingContext2D::stroke_text(Utf16View, float, float, Optional<double>)
+void OffscreenCanvasRenderingContext2D::stroke_text(Utf16String const&, float, float, Optional<double>)
 {
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::stroke_text()");
 }
 
-void OffscreenCanvasRenderingContext2D::fill(Utf16FlyString const&)
+void OffscreenCanvasRenderingContext2D::fill(StringView)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::fill(Utf16FlyString)");
+    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::fill(StringView)");
 }
 
-void OffscreenCanvasRenderingContext2D::fill(Path2D&, Utf16FlyString const&)
+void OffscreenCanvasRenderingContext2D::fill(Path2D&, StringView)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::fill(Path2D&, Utf16FlyString)");
+    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::fill(Path2D&, StringView)");
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-createimagedata
-WebIDL::ExceptionOr<GC::Ref<ImageData>> OffscreenCanvasRenderingContext2D::create_image_data(int, int, Optional<ImageData::Settings> const&) const
+WebIDL::ExceptionOr<GC::Ref<ImageData>> OffscreenCanvasRenderingContext2D::create_image_data(int, int, Optional<ImageDataSettings> const&) const
 {
-    return WebIDL::NotSupportedError::create("(STUBBED) OffscreenCanvasRenderingContext2D::create_image_data(int, int)"_utf16);
+    return WebIDL::NotSupportedError::create(realm(), "(STUBBED) OffscreenCanvasRenderingContext2D::create_image_data(int, int)"_utf16);
 }
 
 WebIDL::ExceptionOr<GC::Ref<ImageData>> OffscreenCanvasRenderingContext2D::create_image_data(ImageData const&) const
 {
-    return WebIDL::NotSupportedError::create("(STUBBED) OffscreenCanvasRenderingContext2D::create_image_data(ImageData&)"_utf16);
+    return WebIDL::NotSupportedError::create(realm(), "(STUBBED) OffscreenCanvasRenderingContext2D::create_image_data(ImageData&)"_utf16);
 }
 
-WebIDL::ExceptionOr<GC::Ptr<ImageData>> OffscreenCanvasRenderingContext2D::get_image_data(int, int, int, int, Optional<ImageData::Settings> const&)
+WebIDL::ExceptionOr<GC::Ptr<ImageData>> OffscreenCanvasRenderingContext2D::get_image_data(int, int, int, int, Optional<ImageDataSettings> const&) const
 {
-    return WebIDL::NotSupportedError::create("(STUBBED) OffscreenCanvasRenderingContext2D::get_image_data()"_utf16);
+    return WebIDL::NotSupportedError::create(realm(), "(STUBBED) OffscreenCanvasRenderingContext2D::get_image_data()"_utf16);
 }
 
 WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::put_image_data(ImageData&, float, float)
@@ -163,33 +177,33 @@ void OffscreenCanvasRenderingContext2D::reset_to_default_state()
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::reset_to_default_state()");
 }
 
-GC::Ref<TextMetrics> OffscreenCanvasRenderingContext2D::measure_text(Utf16View)
+GC::Ref<TextMetrics> OffscreenCanvasRenderingContext2D::measure_text(Utf16String const&)
 {
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::measure_text()");
 
-    auto metrics = TextMetrics::create();
+    auto metrics = TextMetrics::create(realm());
     return metrics;
 }
 
-void OffscreenCanvasRenderingContext2D::clip(Utf16FlyString const&)
+void OffscreenCanvasRenderingContext2D::clip(StringView)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::clip(Utf16FlyString)");
+    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::clip(StringView)");
 }
 
-void OffscreenCanvasRenderingContext2D::clip(Path2D&, Utf16FlyString const&)
+void OffscreenCanvasRenderingContext2D::clip(Path2D&, StringView)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::clip(Path2D&, Utf16FlyString)");
+    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::clip(Path2D&, StringView)");
 }
 
-bool OffscreenCanvasRenderingContext2D::is_point_in_path(double, double, Utf16FlyString const&)
+bool OffscreenCanvasRenderingContext2D::is_point_in_path(double, double, StringView)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::is_point_in_path(double, double, Utf16FlyString)");
+    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::is_point_in_path(double, double, StringView)");
     return false;
 }
 
-bool OffscreenCanvasRenderingContext2D::is_point_in_path(Path2D const&, double, double, Utf16FlyString const&)
+bool OffscreenCanvasRenderingContext2D::is_point_in_path(Path2D const&, double, double, StringView)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::clip(Path2D const&, double, double, Utf16FlyString)");
+    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::clip(Path2D const&, double, double, StringView)");
     return false;
 }
 
@@ -203,23 +217,23 @@ void OffscreenCanvasRenderingContext2D::set_image_smoothing_enabled(bool enabled
     drawing_state().image_smoothing_enabled = enabled;
 }
 
-ImageSmoothingQuality OffscreenCanvasRenderingContext2D::image_smoothing_quality() const
+Bindings::ImageSmoothingQuality OffscreenCanvasRenderingContext2D::image_smoothing_quality() const
 {
     return drawing_state().image_smoothing_quality;
 }
 
-void OffscreenCanvasRenderingContext2D::set_image_smoothing_quality(ImageSmoothingQuality quality)
+void OffscreenCanvasRenderingContext2D::set_image_smoothing_quality(Bindings::ImageSmoothingQuality quality)
 {
     drawing_state().image_smoothing_quality = quality;
 }
 
-Utf16String OffscreenCanvasRenderingContext2D::filter() const
+String OffscreenCanvasRenderingContext2D::filter() const
 {
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::filter()");
-    return "none"_utf16;
+    return String::from_utf8_without_validation("none"sv.bytes());
 }
 
-void OffscreenCanvasRenderingContext2D::set_filter(Utf16View)
+void OffscreenCanvasRenderingContext2D::set_filter(String)
 {
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::set_filter()");
 }
@@ -272,26 +286,27 @@ void OffscreenCanvasRenderingContext2D::set_shadow_blur(float blur_radius)
     drawing_state().shadow_blur = blur_radius;
 }
 
-Utf16String OffscreenCanvasRenderingContext2D::shadow_color() const
+String OffscreenCanvasRenderingContext2D::shadow_color() const
 {
     // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-shadowcolor
-    auto serialized_color = drawing_state().shadow_color.to_string(Gfx::Color::HTMLCompatibleSerialization::Yes);
-    return Utf16String::from_ascii_without_validation(serialized_color.bytes());
+    return drawing_state().shadow_color.to_string(Gfx::Color::HTMLCompatibleSerialization::Yes);
 }
 
-void OffscreenCanvasRenderingContext2D::set_shadow_color(Utf16View color)
+void OffscreenCanvasRenderingContext2D::set_shadow_color(String color)
 {
     // 1. Let context be this's canvas attribute's value, if that is an element; otherwise null.
 
     // 2. Let parsedValue be the result of parsing the given value with context if non-null.
-    auto parsed_value = parse_a_css_color_value(color);
+    auto style_value = parse_css_value(CSS::Parser::ParsingParams(), color, CSS::PropertyID::Color);
+    if (style_value && style_value->has_color()) {
+        auto parsedValue = style_value->to_color({}).value_or(Color::Black);
 
-    // 3. If parsedValue is failure, then return.
-    if (!parsed_value.has_value())
+        // 4. Set this's shadow color to parsedValue.
+        drawing_state().shadow_color = parsedValue;
+    } else {
+        // 3. If parsedValue is failure, then return.
         return;
-
-    // 4. Set this's shadow color to parsedValue.
-    drawing_state().shadow_color = parsed_value.value();
+    }
 }
 
 float OffscreenCanvasRenderingContext2D::global_alpha() const
@@ -310,21 +325,21 @@ void OffscreenCanvasRenderingContext2D::set_global_alpha(float alpha)
     drawing_state().global_alpha = alpha;
 }
 
-Utf16String OffscreenCanvasRenderingContext2D::global_composite_operation() const
+String OffscreenCanvasRenderingContext2D::global_composite_operation() const
 {
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::global_composite_operation()");
-    return {};
+    return String::from_utf8_without_validation(""sv.bytes());
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-globalcompositeoperation
-void OffscreenCanvasRenderingContext2D::set_global_composite_operation(Utf16View)
+void OffscreenCanvasRenderingContext2D::set_global_composite_operation(String)
 {
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::set_global_composite_operation()");
 }
 
-[[nodiscard]] Gfx::CanvasCommandList* OffscreenCanvasRenderingContext2D::canvas_command_list()
+[[nodiscard]] Gfx::Painter* OffscreenCanvasRenderingContext2D::painter()
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::canvas_command_list()");
+    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::painter()");
     return nullptr;
 }
 

@@ -7,7 +7,6 @@ caret-color: rgb(0, 0, 0)
 clip-rule: nonzero
 color: rgb(0, 0, 0)
 color-interpolation: srgb
-color-interpolation-filters: linearrgb
 color-scheme: normal
 cursor: auto
 direction: ltr
@@ -95,7 +94,6 @@ animation-timing-function: ease
 appearance: none
 aspect-ratio: auto
 backdrop-filter: none
-backface-visibility: visible
 background-attachment: scroll
 background-blend-mode: normal
 background-clip: border-box
@@ -106,7 +104,7 @@ background-position-x: 0%
 background-position-y: 0%
 background-repeat: repeat
 background-size: auto
-block-size: 1404px
+block-size: 1590px
 border-block-end-color: rgb(0, 0, 0)
 border-block-end-style: none
 border-block-end-width: 0px
@@ -156,7 +154,6 @@ column-height: auto
 column-span: none
 column-width: auto
 contain: none
-container-name: none
 container-type: normal
 content: normal
 content-visibility: visible
@@ -173,7 +170,6 @@ counter-reset: none
 counter-set: none
 cx: 0px
 cy: 0px
-d: none
 display: block
 filter: none
 flex-basis: auto
@@ -194,7 +190,7 @@ grid-row-start: auto
 grid-template-areas: none
 grid-template-columns: none
 grid-template-rows: none
-height: 2548px
+height: 2880px
 inline-size: 784px
 inset-block-end: auto
 inset-block-start: auto
@@ -205,9 +201,9 @@ justify-content: normal
 justify-items: legacy
 justify-self: auto
 left: auto
-margin-block-end: 8px
+margin-block-end: 13px
 margin-block-start: 8px
-margin-bottom: 8px
+margin-bottom: 13px
 margin-inline-end: 8px
 margin-inline-start: 8px
 margin-left: 8px
@@ -262,7 +258,7 @@ padding-top: 0px
 perspective: none
 perspective-origin: 50% 50%
 position: static
-position-anchor: normal
+position-anchor: auto
 position-area: none
 position-try-fallbacks: none
 position-try-order: normal
@@ -276,22 +272,6 @@ rx: auto
 ry: auto
 scale: none
 scroll-behavior: auto
-scroll-margin-block-end: 0px
-scroll-margin-block-start: 0px
-scroll-margin-bottom: 0px
-scroll-margin-inline-end: 0px
-scroll-margin-inline-start: 0px
-scroll-margin-left: 0px
-scroll-margin-right: 0px
-scroll-margin-top: 0px
-scroll-padding-block-end: auto
-scroll-padding-block-start: auto
-scroll-padding-bottom: auto
-scroll-padding-inline-end: auto
-scroll-padding-inline-start: auto
-scroll-padding-left: auto
-scroll-padding-right: auto
-scroll-padding-top: auto
 scroll-timeline-axis: block
 scroll-timeline-name: none
 scrollbar-gutter: auto
@@ -321,7 +301,6 @@ transition-timing-function: ease
 translate: none
 unicode-bidi: normal
 user-select: auto
-vector-effect: none
 vertical-align: baseline
 view-timeline-axis: block
 view-timeline-inset: auto

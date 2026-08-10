@@ -1,3 +1,6 @@
+#import <DOM/Node.idl>
+#import <DOM/NodeFilter.idl>
+
 // https://dom.spec.whatwg.org/#interface-nodeiterator
 [Exposed=Window]
 interface NodeIterator {
@@ -6,10 +9,10 @@ interface NodeIterator {
     readonly attribute boolean pointerBeforeReferenceNode;
     readonly attribute unsigned long whatToShow;
 
-    [ImplementedInBindings, ReturnsJSValue] readonly attribute NodeFilter? filter;
+    readonly attribute NodeFilter? filter;
 
-    [ImplementedInBindings] Node? nextNode();
-    [ImplementedInBindings] Node? previousNode();
+    Node? nextNode();
+    Node? previousNode();
 
     undefined detach();
 };

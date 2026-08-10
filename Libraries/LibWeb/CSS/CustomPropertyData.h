@@ -8,10 +8,8 @@
 
 #include <AK/Function.h>
 #include <AK/HashMap.h>
-#include <AK/NumericLimits.h>
 #include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
-#include <AK/Types.h>
 #include <LibWeb/CSS/StyleProperty.h>
 #include <LibWeb/Export.h>
 
@@ -22,42 +20,26 @@ namespace Web::CSS {
 // with a parent pointer to the inherited chain.
 class WEB_API CustomPropertyData : public RefCounted<CustomPropertyData> {
 public:
-    enum class AllowParentOwnValueAbsorption : u8 {
-        No,
-        Yes,
-    };
-
     static NonnullRefPtr<CustomPropertyData> create(
-        OrderedHashMap<Utf16FlyString, StyleProperty> own_values,
-        RefPtr<CustomPropertyData const> parent,
-        AllowParentOwnValueAbsorption allow_parent_own_value_absorption = AllowParentOwnValueAbsorption::Yes);
-    ~CustomPropertyData();
+        OrderedHashMap<FlyString, StyleProperty> own_values,
+        RefPtr<CustomPropertyData const> parent);
 
-    StyleProperty const* get(Utf16FlyString const& name) const;
-    RefPtr<CustomPropertyData const> inheritable_impl(RefPtr<CustomPropertyData const> inheritable_parent, AK::Function<Optional<CustomPropertyRegistration const&>(Utf16FlyString const&)> get_custom_property_registration) const;
-    RefPtr<CustomPropertyData const> inheritable(DOM::Document const&) const;
+    StyleProperty const* get(FlyString const& name) const;
 
-    OrderedHashMap<Utf16FlyString, StyleProperty> const& own_values() const { return m_own_values; }
+    OrderedHashMap<FlyString, StyleProperty> const& own_values() const { return m_own_values; }
 
-    void for_each_property(Function<void(Utf16FlyString const&, StyleProperty const&)> callback) const;
+    void for_each_property(Function<void(FlyString const&, StyleProperty const&)> callback) const;
 
     RefPtr<CustomPropertyData const> parent() const { return m_parent; }
 
     bool is_empty() const;
 
-    void const* rust_store() const { return m_rust_store; }
-
 private:
-    CustomPropertyData(OrderedHashMap<Utf16FlyString, StyleProperty> own_values, RefPtr<CustomPropertyData const> parent, u8 ancestor_count);
+    CustomPropertyData(OrderedHashMap<FlyString, StyleProperty> own_values, RefPtr<CustomPropertyData const> parent, u8 ancestor_count);
 
-    OrderedHashMap<Utf16FlyString, StyleProperty> m_own_values;
+    OrderedHashMap<FlyString, StyleProperty> m_own_values;
     RefPtr<CustomPropertyData const> m_parent;
     u8 m_ancestor_count { 0 };
-    mutable FlatPtr m_cached_inheritable_document_identity { NumericLimits<FlatPtr>::max() };
-    mutable size_t m_cached_inheritable_generation { NumericLimits<size_t>::max() };
-    mutable RefPtr<CustomPropertyData const> m_cached_inheritable_data;
-    mutable bool m_cached_inheritable_is_self { false };
-    void const* m_rust_store { nullptr };
 };
 
 }

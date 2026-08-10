@@ -14,16 +14,12 @@ struct LinearEasingFunction {
     struct ControlPoint {
         Optional<double> input;
         double output;
-
-        bool operator==(ControlPoint const&) const = default;
     };
 
     Vector<ControlPoint> control_points;
-    Utf16String stringified;
+    String stringified;
 
     double evaluate_at(double input_progress, bool before_flag) const;
-
-    bool operator==(LinearEasingFunction const&) const = default;
 };
 
 struct CubicBezierEasingFunction {
@@ -31,21 +27,17 @@ struct CubicBezierEasingFunction {
     double y1;
     double x2;
     double y2;
-    Utf16String stringified;
+    String stringified;
 
     double evaluate_at(double input_progress, bool before_flag) const;
-
-    bool operator==(CubicBezierEasingFunction const&) const = default;
 };
 
 struct StepsEasingFunction {
     i32 interval_count;
     StepPosition position;
-    Utf16String stringified;
+    String stringified;
 
     double evaluate_at(double input_progress, bool before_flag) const;
-
-    bool operator==(StepsEasingFunction const&) const = default;
 };
 
 struct EasingFunction : public Variant<LinearEasingFunction, CubicBezierEasingFunction, StepsEasingFunction> {
@@ -58,11 +50,9 @@ struct EasingFunction : public Variant<LinearEasingFunction, CubicBezierEasingFu
     static EasingFunction ease();
 
     static EasingFunction from_style_value(StyleValue const&);
-    NonnullRefPtr<StyleValue const> to_style_value() const;
 
     double evaluate_at(double input_progress, bool before_flag) const;
     String to_string() const;
-    Utf16String const& to_utf16_string() const;
 };
 
 }

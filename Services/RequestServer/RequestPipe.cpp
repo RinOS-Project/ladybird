@@ -37,8 +37,6 @@ RequestPipe& RequestPipe::operator=(RequestPipe&& other)
 
 RequestPipe::~RequestPipe()
 {
-    if (m_reader_fd != -1)
-        MUST(Core::System::close(m_reader_fd));
     if (m_writer_fd != -1)
         MUST(Core::System::close(m_writer_fd));
 }
@@ -47,8 +45,9 @@ ErrorOr<RequestPipe> RequestPipe::create()
 {
     int socket_fds[2] {};
     TRY(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, socket_fds));
-    TRY(Core::System::set_socket_blocking(socket_fds[0], false));
-    TRY(Core::System::set_socket_blocking(socket_fds[1], false));
+    int option = 1;
+    TRY(Core::System::ioctl(socket_fds[0], FIONBIO, &option));
+    TRY(Core::System::ioctl(socket_fds[1], FIONBIO, &option));
 
     // Increase socket buffer sizes from OS default (~8KB on macOS) to allow
     // larger writes/reads per syscall, significantly improving throughput for

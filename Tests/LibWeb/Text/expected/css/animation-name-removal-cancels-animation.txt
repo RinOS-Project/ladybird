@@ -1,2 +1,0 @@
-with both animations: a,b
-after removing 'b' from animation-name: a

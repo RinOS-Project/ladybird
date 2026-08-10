@@ -1,3 +1,6 @@
+#import <DOM/Event.idl>
+#import <CSS/CSSNumericValue.idl>
+
 // https://drafts.csswg.org/web-animations-2/#animationplaybackevent
 [Exposed=Window]
 interface AnimationPlaybackEvent : Event {

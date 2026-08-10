@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <LibGC/Weak.h>
+#include <LibGC/Cell.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/PixelUnits.h>
 
@@ -20,8 +20,10 @@ public:
 
     void handle_pointer_move(CSSPixelPoint pointer_position);
 
+    void visit_edges(GC::Cell::Visitor&) const;
+
 private:
-    GC::Weak<DOM::Element> m_element;
+    GC::Ref<DOM::Element> m_element;
     CSSPixelPoint m_pointer_down_origin;
     CSSPixelSize m_initial_border_box_size;
 };

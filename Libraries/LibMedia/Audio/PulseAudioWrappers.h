@@ -8,7 +8,6 @@
 
 #include "Forward.h"
 #include "PlaybackStream.h"
-#include <AK/Atomic.h>
 #include <AK/AtomicRefCounted.h>
 #include <AK/Error.h>
 #include <AK/NonnullRefPtr.h>
@@ -98,6 +97,10 @@ public:
     PulseAudioStreamState get_connection_state();
     bool connection_is_good();
 
+    // Sets the callback to be run when the server consumes more of the buffer than
+    // has been written yet.
+    void set_underrun_callback(Function<void()>);
+
     SampleSpecification sample_specification();
     u32 sample_rate();
     size_t sample_size();
@@ -125,20 +128,17 @@ public:
 
     ErrorOr<void> set_volume(double volume);
 
-    void notify_data_available();
-
     PulseAudioContext& context() { return *m_context; }
 
 private:
     friend class PulseAudioContext;
 
-    explicit PulseAudioStream(PulseAudioContext&, pa_stream*);
-    PulseAudioStream(PulseAudioStream const&) = delete;
+    explicit PulseAudioStream(NonnullRefPtr<PulseAudioContext>&& context, pa_stream* stream);
+    PulseAudioStream(PulseAudioStream const& other) = delete;
 
     ErrorOr<void> wait_for_operation(pa_operation*, StringView error_message);
 
     void on_write_requested(size_t bytes_to_write);
-    void queue_a_write_while_locked();
 
     NonnullRefPtr<PulseAudioContext> m_context;
     pa_stream* m_stream { nullptr };
@@ -149,13 +149,7 @@ private:
     // if the stream is becoming or is already corked.
     bool m_suspended { false };
 
-    enum CallbackState : u8 {
-        Parked,
-        Active,
-        ActiveWithFutureData,
-    };
-
-    Atomic<CallbackState> m_callback_state { CallbackState::Parked };
+    Function<void()> m_underrun_callback;
 };
 
 enum class PulseAudioErrorCode {

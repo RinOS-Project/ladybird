@@ -9,19 +9,12 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
 #include <LibWeb/DOM/AbstractRange.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Selection/Selection.h>
 #include <LibWeb/TrustedTypes/TrustedHTML.h>
 #include <LibWeb/WebIDL/Types.h>
-
-namespace Web::HTML {
-
-enum class ParserScriptingMode : u8;
-
-}
 
 namespace Web::DOM {
 
@@ -35,15 +28,16 @@ enum class RelativeBoundaryPointPosition {
 RelativeBoundaryPointPosition position_of_boundary_point_relative_to_other_boundary_point(BoundaryPoint a, BoundaryPoint b);
 
 class WEB_API Range final : public AbstractRange {
-    WEB_WRAPPABLE(Range, AbstractRange);
+    WEB_PLATFORM_OBJECT(Range, AbstractRange);
     GC_DECLARE_ALLOCATOR(Range);
 
 public:
     static constexpr bool OVERRIDES_FINALIZE = true;
 
     [[nodiscard]] static GC::Ref<Range> create(Document&);
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<Range>> create_for_constructor(JS::Object&);
+    [[nodiscard]] static GC::Ref<Range> create(HTML::Window&);
     [[nodiscard]] static GC::Ref<Range> create(GC::Ref<Node> start_container, WebIDL::UnsignedLong start_offset, GC::Ref<Node> end_container, WebIDL::UnsignedLong end_offset);
+    static WebIDL::ExceptionOr<GC::Ref<Range>> construct_impl(JS::Realm&);
 
     virtual ~Range() override;
 
@@ -100,8 +94,7 @@ public:
 
     void set_associated_selection(Badge<Selection::Selection>, GC::Ptr<Selection::Selection>);
 
-    WebIDL::ExceptionOr<GC::Ref<DocumentFragment>> create_contextual_fragment(TrustedTypes::TrustedHTMLOrString const&);
-    WebIDL::ExceptionOr<GC::Ref<DocumentFragment>> create_contextual_fragment(StringView fragment);
+    WebIDL::ExceptionOr<GC::Ref<DocumentFragment>> create_contextual_fragment(TrustedTypes::TrustedHTMLOrString const& fragment);
 
     template<typename Callback>
     void for_each_contained(Callback callback) const
@@ -134,7 +127,8 @@ private:
     explicit Range(Document&);
     Range(GC::Ref<Node> start_container, WebIDL::UnsignedLong start_offset, GC::Ref<Node> end_container, WebIDL::UnsignedLong end_offset);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
     virtual void finalize() override;
 
     GC::Ref<Node> root() const;

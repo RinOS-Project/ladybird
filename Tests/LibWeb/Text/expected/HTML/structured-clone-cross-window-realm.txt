@@ -1,4 +1,0 @@
-object uses callee realm: true
-object uses caller realm: false
-array uses callee realm: true
-array uses caller realm: false

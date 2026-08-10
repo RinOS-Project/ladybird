@@ -1,5 +1,0 @@
-item=42
-index=42
-namedItem=42
-namedProperty=42
-same=true

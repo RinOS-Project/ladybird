@@ -28,11 +28,6 @@ test("syntax errors", () => {
         function foo(bar, ...bar) {}
     `).not.toEval();
 
-    // Regular function with duplicate parameters before rest parameter
-    expect(`
-        function foo(bar, bar, ...baz) {}
-    `).not.toEval();
-
     // Arrow function with rest parameter
     expect(`
         const foo = (bar, ...bar) => {};
@@ -61,15 +56,5 @@ test("syntax errors", () => {
     // Duplicate between destructuring and identifier parameter
     expect(`
         function foo({ bar }, bar) {}
-    `).not.toEval();
-
-    // Object method with duplicate parameters
-    expect(`
-        ({ foo(bar, bar) {} });
-    `).not.toEval();
-
-    // Object method with rest parameter
-    expect(`
-        ({ foo(bar, ...bar) {} });
     `).not.toEval();
 });

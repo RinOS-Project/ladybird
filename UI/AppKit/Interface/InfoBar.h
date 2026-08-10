@@ -10,15 +10,13 @@
 
 @class Tab;
 
-using InfoBarButtonClicked = void (^)(void);
+using InfoBarDismissed = void (^)(void);
 
 @interface InfoBar : NSStackView
 
 - (void)showWithMessage:(NSString*)message
-       actionButtonTitle:(NSString*)action_title
-     actionButtonClicked:(InfoBarButtonClicked)on_action
       dismissButtonTitle:(NSString*)title
-    dismissButtonClicked:(InfoBarButtonClicked)on_dismissed
+    dismissButtonClicked:(InfoBarDismissed)on_dismissed
                activeTab:(Tab*)tab;
 - (void)hide;
 

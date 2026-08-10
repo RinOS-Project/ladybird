@@ -17,25 +17,25 @@ class ConnectionQueueHandler {
     struct Connection;
 
 public:
-    static RequestList& for_key_and_name(StorageAPI::StorageKey const& key, Utf16String const& name);
+    static RequestList& for_key_and_name(StorageAPI::StorageKey const& key, String const& name);
     static ConnectionQueueHandler& the()
     {
-        static ConnectionQueueHandler& instance = *new ConnectionQueueHandler;
-        return instance;
+        static ConnectionQueueHandler s_instance;
+        return s_instance;
     }
 
 private:
     Vector<NonnullRefPtr<Connection>> m_open_requests;
 
     struct Connection final : public RefCounted<Connection> {
-        Connection(StorageAPI::StorageKey storage_key, Utf16String name)
+        Connection(StorageAPI::StorageKey storage_key, String name)
             : storage_key(move(storage_key))
             , name(move(name))
         {
         }
 
         StorageAPI::StorageKey storage_key;
-        Utf16String name;
+        String name;
         RequestList request_list;
     };
 };

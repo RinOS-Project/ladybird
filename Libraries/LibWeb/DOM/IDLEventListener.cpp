@@ -5,23 +5,25 @@
  */
 
 #include <LibGC/Heap.h>
+#include <LibJS/Runtime/Error.h>
 #include <LibWeb/DOM/IDLEventListener.h>
 
 namespace Web::DOM {
 
 GC_DEFINE_ALLOCATOR(IDLEventListener);
 
-GC::Ref<IDLEventListener> IDLEventListener::create(GC::Ref<WebIDL::CallbackType> callback)
+GC::Ref<IDLEventListener> IDLEventListener::create(JS::Realm& realm, GC::Ref<WebIDL::CallbackType> callback)
 {
-    return GC::Heap::the().allocate<IDLEventListener>(move(callback));
+    return realm.create<IDLEventListener>(realm, move(callback));
 }
 
-IDLEventListener::IDLEventListener(GC::Ref<WebIDL::CallbackType> callback)
-    : m_callback(move(callback))
+IDLEventListener::IDLEventListener(JS::Realm& realm, GC::Ref<WebIDL::CallbackType> callback)
+    : JS::Object(ConstructWithPrototypeTag::Tag, realm.intrinsics().object_prototype())
+    , m_callback(move(callback))
 {
 }
 
-void IDLEventListener::visit_edges(GC::Cell::Visitor& visitor)
+void IDLEventListener::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_callback);

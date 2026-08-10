@@ -27,23 +27,13 @@ class CacheIndex {
         NonnullRefPtr<HeaderList> request_headers;
         NonnullRefPtr<HeaderList> response_headers;
         u64 data_size { 0 };
-        u64 associated_data_size { 0 };
-        u64 serialized_request_headers_size { 0 };
-        u64 serialized_response_headers_size { 0 };
 
         UnixDateTime request_time;
         UnixDateTime response_time;
         UnixDateTime last_access_time;
-
-        u64 estimated_size() const
-        {
-            return data_size + associated_data_size + serialized_request_headers_size + serialized_response_headers_size;
-        }
     };
 
 public:
-    static ErrorOr<Database::MigrationOutcome> migrate_schema(Database::Database&, Database::MigrationMode = Database::MigrationMode::Apply);
-
     static ErrorOr<CacheIndex> create(Database::Database&, LexicalPath const& cache_directory);
 
     ErrorOr<void> create_entry(u64 cache_key, u64 vary_key, String url, NonnullRefPtr<HeaderList> request_headers, NonnullRefPtr<HeaderList> response_headers, u64 data_size, UnixDateTime request_time, UnixDateTime response_time);
@@ -52,10 +42,8 @@ public:
     void remove_entries_accessed_since(UnixDateTime, Function<void(u64 cache_key, u64 vary_key)> on_entry_removed);
 
     Optional<Entry const&> find_entry(u64 cache_key, HeaderList const& request_headers);
-    bool has_entry(u64 cache_key, u64 vary_key);
 
     void update_response_headers(u64 cache_key, u64 vary_key, NonnullRefPtr<HeaderList>);
-    void update_associated_data_size(u64 cache_key, u64 vary_key, u64 associated_data_size);
     void update_last_access_time(u64 cache_key, u64 vary_key);
 
     Requests::CacheSizes estimate_cache_size_accessed_since(UnixDateTime since);
@@ -70,10 +58,8 @@ private:
         Database::StatementID remove_entries_accessed_since { 0 };
         Database::StatementID select_entries { 0 };
         Database::StatementID update_response_headers { 0 };
-        Database::StatementID update_associated_data_size { 0 };
         Database::StatementID update_last_access_time { 0 };
         Database::StatementID estimate_cache_size_accessed_since { 0 };
-        Database::StatementID select_total_estimated_size { 0 };
     };
 
     struct Limits {
@@ -82,7 +68,7 @@ private:
         u64 maximum_disk_cache_entry_size { 0 };
     };
 
-    CacheIndex(Database::Database&, Statements, Limits, u64 total_estimated_size);
+    CacheIndex(Database::Database&, Statements, Limits);
 
     Optional<Entry&> get_entry(u64 cache_key, u64 vary_key);
     void delete_entry(u64 cache_key, u64 vary_key);
@@ -93,7 +79,6 @@ private:
     HashMap<u64, Vector<Entry>, IdentityHashTraits<u64>> m_entries;
 
     Limits m_limits;
-    u64 m_total_estimated_size { 0 };
 };
 
 }

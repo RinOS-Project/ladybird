@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
+#include <AK/FlyString.h>
 #include <LibWeb/CSS/PercentageOr.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
 
@@ -15,49 +15,36 @@ namespace Web::CSS {
 // https://drafts.csswg.org/css-anchor-position-1/#funcdef-anchor-size
 class AnchorSizeStyleValue final : public StyleValueWithDefaultOperators<AnchorSizeStyleValue> {
 public:
-    static ValueComparingNonnullRefPtr<AnchorSizeStyleValue const> create(Optional<Utf16FlyString> const& anchor_name,
+    static ValueComparingNonnullRefPtr<AnchorSizeStyleValue const> create(Optional<FlyString> const& anchor_name,
         Optional<AnchorSize> const& anchor_size,
         ValueComparingRefPtr<StyleValue const> const& fallback_value);
     virtual ~AnchorSizeStyleValue() override = default;
 
-    void serialize(StringBuilder&, SerializationMode) const;
+    virtual void serialize(StringBuilder&, SerializationMode) const override;
 
-    bool properties_equal(AnchorSizeStyleValue const& other) const { return anchor_name() == other.anchor_name() && anchor_size() == other.anchor_size() && fallback_value() == other.fallback_value(); }
+    bool properties_equal(AnchorSizeStyleValue const& other) const { return m_properties == other.m_properties; }
 
-    Optional<Utf16FlyString> anchor_name() const
-    {
-        if (!m_value->anchor_size.has_anchor_name)
-            return {};
-        return Utf16FlyString::from_raw(m_value->anchor_size.anchor_name.raw);
-    }
-    Optional<AnchorSize> anchor_size() const
-    {
-        if (!m_value->anchor_size.has_anchor_size)
-            return {};
-        return static_cast<AnchorSize>(m_value->anchor_size.anchor_size);
-    }
+    virtual bool is_computationally_independent() const override { return true; }
+
+    Optional<FlyString const&> anchor_name() const { return m_properties.anchor_name; }
+    Optional<AnchorSize> anchor_size() const { return m_properties.anchor_size; }
     ValueComparingRefPtr<StyleValue const> fallback_value() const
     {
-        return m_fallback_value;
+        return m_properties.fallback_value;
     }
 
 private:
-    friend class StyleValue;
-
-    explicit AnchorSizeStyleValue(StyleValueFFI::StyleValueData const* data)
-        : StyleValueWithDefaultOperators(Type::AnchorSize, data)
-    {
-        auto const* fallback_data = static_cast<StyleValueFFI::StyleValueData const*>(data->anchor_size.fallback_value.pointer);
-        if (fallback_data)
-            m_fallback_value = StyleValue::adopt_rust_style_value_data(StyleValueFFI::rust_style_value_retain(fallback_data));
-    }
-
     AnchorSizeStyleValue(
-        Optional<Utf16FlyString> const& anchor_name,
+        Optional<FlyString> const& anchor_name,
         Optional<AnchorSize> const& anchor_size,
         ValueComparingRefPtr<StyleValue const> const& fallback_value);
 
-    ValueComparingRefPtr<StyleValue const> m_fallback_value;
+    struct Properties {
+        Optional<FlyString> anchor_name;
+        Optional<AnchorSize> anchor_size;
+        ValueComparingRefPtr<StyleValue const> fallback_value;
+        bool operator==(Properties const&) const = default;
+    } m_properties;
 };
 
 }

@@ -71,7 +71,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
         return 1;
     }
 
-    auto& loop = Core::EventLoop::initialize_for_current_thread();
+    Core::EventLoop loop;
 
     DNS::Resolver resolver {
         [&] -> ErrorOr<DNS::Resolver::SocketResult> {

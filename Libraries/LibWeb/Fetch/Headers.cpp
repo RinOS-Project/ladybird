@@ -4,10 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibTextCodec/Decoder.h>
+#include <LibWeb/Bindings/HeadersPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Fetch/Headers.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/CORS.h>
 
@@ -15,16 +16,11 @@ namespace Web::Fetch {
 
 GC_DEFINE_ALLOCATOR(Headers);
 
-GC::Ref<Headers> Headers::create(NonnullRefPtr<HTTP::HeaderList> header_list)
-{
-    return GC::Heap::the().allocate<Headers>(move(header_list));
-}
-
 // https://fetch.spec.whatwg.org/#dom-headers
-WebIDL::ExceptionOr<GC::Ref<Headers>> Headers::create_from_init(Optional<HeadersInit> const& init)
+WebIDL::ExceptionOr<GC::Ref<Headers>> Headers::construct_impl(JS::Realm& realm, Optional<HeadersInit> const& init)
 {
     // The new Headers(init) constructor steps are:
-    auto headers = create(HTTP::HeaderList::create());
+    auto headers = realm.create<Headers>(realm, HTTP::HeaderList::create());
 
     // 1. Set this’s guard to "none".
     headers->m_guard = Guard::None;
@@ -36,12 +32,19 @@ WebIDL::ExceptionOr<GC::Ref<Headers>> Headers::create_from_init(Optional<Headers
     return headers;
 }
 
-Headers::Headers(NonnullRefPtr<HTTP::HeaderList> header_list)
-    : m_header_list(move(header_list))
+Headers::Headers(JS::Realm& realm, NonnullRefPtr<HTTP::HeaderList> header_list)
+    : PlatformObject(realm)
+    , m_header_list(move(header_list))
 {
 }
 
 Headers::~Headers() = default;
+
+void Headers::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(Headers);
+    Base::initialize(realm);
+}
 
 // https://fetch.spec.whatwg.org/#dom-headers-append
 WebIDL::ExceptionOr<void> Headers::append(String const& name_string, String const& value_string)
@@ -88,7 +91,7 @@ WebIDL::ExceptionOr<Optional<String>> Headers::get(String const& name)
 
     // 1. If name is not a header name, then throw a TypeError.
     if (!HTTP::is_header_name(name))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid header name"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid header name"sv };
 
     // 2. Return the result of getting name from this’s header list.
     auto byte_buffer = m_header_list->get(name);
@@ -121,7 +124,7 @@ WebIDL::ExceptionOr<bool> Headers::has(String const& name)
 
     // 1. If name is not a header name, then throw a TypeError.
     if (!HTTP::is_header_name(name))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid header name"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid header name"sv };
 
     // 2. Return true if this’s header list contains name; otherwise false.
     return m_header_list->contains(name);
@@ -156,7 +159,7 @@ WebIDL::ExceptionOr<void> Headers::set(String const& name, String const& value)
 }
 
 // https://webidl.spec.whatwg.org/#es-iterable, Step 4
-void Headers::for_each(ForEachCallback callback)
+JS::ThrowCompletionOr<void> Headers::for_each(ForEachCallback callback)
 {
     // The value pairs to iterate over are the return value of running sort and combine with this’s header list.
     auto value_pairs_to_iterate_over = [&]() {
@@ -177,8 +180,7 @@ void Headers::for_each(ForEachCallback callback)
         auto const& pair = pairs[i];
 
         // 2. Invoke idlCallback with « pair’s value, pair’s key, idlObject » and with thisArg as the callback this value.
-        if (callback(TextCodec::isomorphic_decode(pair.name), TextCodec::isomorphic_decode(pair.value)) == IterationDecision::Break)
-            break;
+        TRY(callback(TextCodec::isomorphic_decode(pair.name), TextCodec::isomorphic_decode(pair.value)));
 
         // 3. Set pairs to idlObject’s current list of value pairs to iterate over. (It might have changed.)
         pairs = value_pairs_to_iterate_over();
@@ -186,6 +188,8 @@ void Headers::for_each(ForEachCallback callback)
         // 4. Set i to i + 1.
         ++i;
     }
+
+    return {};
 }
 
 // https://fetch.spec.whatwg.org/#headers-validate
@@ -196,13 +200,13 @@ WebIDL::ExceptionOr<bool> Headers::validate(HTTP::Header const& header) const
 
     // 1. If name is not a header name or value is not a header value, then throw a TypeError.
     if (!HTTP::is_header_name(name))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid header name"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid header name"sv };
     if (!HTTP::is_header_value(value))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid header value"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid header value"sv };
 
     // 2. If headers’s guard is "immutable", then throw a TypeError.
     if (m_guard == Guard::Immutable)
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Headers object is immutable"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Headers object is immutable"sv };
 
     // 3. If headers’s guard is "request" and (name, value) is a forbidden request-header, then return false.
     if (m_guard == Guard::Request && HTTP::is_forbidden_request_header(header))
@@ -273,7 +277,7 @@ WebIDL::ExceptionOr<void> Headers::fill(HeadersInit const& object)
             for (auto const& entry : object) {
                 // 1. If header's size is not 2, then throw a TypeError.
                 if (entry.size() != 2)
-                    return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Array must contain header key/value pair"_utf16 };
+                    return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Array must contain header key/value pair"sv };
 
                 // 2. Append (header[0], header[1]) to headers.
                 auto header = HTTP::Header::isomorphic_encode(entry[0], entry[1]);

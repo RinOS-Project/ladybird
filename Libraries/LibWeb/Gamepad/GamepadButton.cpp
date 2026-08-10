@@ -4,23 +4,26 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/GamepadButtonPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Gamepad/GamepadButton.h>
 
 namespace Web::Gamepad {
 
 GC_DEFINE_ALLOCATOR(GamepadButton);
 
-GC::Ref<GamepadButton> GamepadButton::create()
-{
-    return GC::Heap::the().allocate<GamepadButton>();
-}
-
-GamepadButton::GamepadButton()
+GamepadButton::GamepadButton(JS::Realm& realm)
+    : Bindings::PlatformObject(realm)
 {
 }
 
 GamepadButton::~GamepadButton() = default;
+
+void GamepadButton::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(GamepadButton);
+    Base::initialize(realm);
+}
 
 void GamepadButton::set_pressed(Badge<Gamepad>, bool value)
 {

@@ -1,26 +1,23 @@
 /*
- * Copyright (c) 2024-present, the Ladybird developers.
+ * Copyright (c) 2024, the Ladybird developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/Vector.h>
-#include <LibGC/Cell.h>
-#include <LibGC/Ptr.h>
-#include <LibJS/Forward.h>
-#include <LibWeb/Forward.h>
+#include <AK/Forward.h>
+#include <LibWeb/DOM/EventTarget.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/interaction.html#close-watcher-manager
-class CloseWatcherManager final : public GC::Cell {
-    GC_CELL(CloseWatcherManager, GC::Cell);
+class CloseWatcherManager final : public Bindings::PlatformObject {
+    WEB_NON_IDL_PLATFORM_OBJECT(CloseWatcherManager, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(CloseWatcherManager);
 
 public:
-    [[nodiscard]] static GC::Ref<CloseWatcherManager> create();
+    [[nodiscard]] static GC::Ref<CloseWatcherManager> create(JS::Realm&);
 
     void add(GC::Ref<CloseWatcher>);
     void remove(CloseWatcher const&);
@@ -31,9 +28,9 @@ public:
     bool can_prevent_close();
 
 private:
-    explicit CloseWatcherManager();
+    explicit CloseWatcherManager(JS::Realm&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     Vector<Vector<GC::Ref<CloseWatcher>>> m_groups;
     uint32_t m_allowed_number_of_groups { 1 };

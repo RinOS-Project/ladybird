@@ -6,48 +6,51 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/AudioContext.h>
+#include <AK/Variant.h>
+#include <LibWeb/Bindings/AudioContextPrototype.h>
+#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/MediaElementAudioSourceNode.h>
-#include <LibWeb/WebAudio/Rendering/RealtimeAudioRenderer.h>
 
 namespace Web::WebAudio {
 
-using AudioContextOptions = Bindings::AudioContextOptions;
-using AudioTimestamp = Bindings::AudioTimestamp;
+struct AudioContextOptions {
+    Variant<Bindings::AudioContextLatencyCategory, double> latency_hint = Bindings::AudioContextLatencyCategory::Interactive;
+    Optional<float> sample_rate;
+};
+
+struct AudioTimestamp {
+    double context_time { 0 };
+    double performance_time { 0 };
+};
 
 // https://webaudio.github.io/web-audio-api/#AudioContext
 class AudioContext final : public BaseAudioContext {
-    WEB_WRAPPABLE(AudioContext, BaseAudioContext);
+    WEB_PLATFORM_OBJECT(AudioContext, BaseAudioContext);
     GC_DECLARE_ALLOCATOR(AudioContext);
 
-    static constexpr bool OVERRIDES_FINALIZE = true;
-
 public:
-    static WebIDL::ExceptionOr<GC::Ref<AudioContext>> create_for_constructor(JS::Object&, AudioContextOptions const&);
-    static WebIDL::ExceptionOr<GC::Ref<AudioContext>> create_for_constructor(GC::Ref<DOM::EventTarget> relevant_global_object, HTML::EnvironmentSettingsObject&, Optional<AudioContextOptions> const& context_options = {});
+    static WebIDL::ExceptionOr<GC::Ref<AudioContext>> construct_impl(JS::Realm&, Optional<AudioContextOptions> const& context_options = {});
 
     virtual ~AudioContext() override;
-
-    virtual double current_time() const override;
 
     double base_latency() const { return m_base_latency; }
     double output_latency() const { return m_output_latency; }
     AudioTimestamp get_output_timestamp();
-    WebIDL::ExceptionOr<void> resume(GC::Ref<WebIDL::Promise>);
-    WebIDL::ExceptionOr<void> suspend(GC::Ref<WebIDL::Promise>);
-    WebIDL::ExceptionOr<void> close(GC::Ref<WebIDL::Promise>);
+    WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> resume();
+    WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> suspend();
+    WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> close();
 
     WebIDL::ExceptionOr<GC::Ref<MediaElementAudioSourceNode>> create_media_element_source(GC::Ptr<HTML::HTMLMediaElement>);
 
 private:
-    explicit AudioContext(GC::Ref<DOM::EventTarget> relevant_global_object)
-        : BaseAudioContext(relevant_global_object)
+    explicit AudioContext(JS::Realm& realm)
+        : BaseAudioContext(realm)
     {
     }
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
-    virtual void finalize() override;
-    virtual void document_became_inactive() override;
 
     double m_base_latency { 0 };
     double m_output_latency { 0 };
@@ -56,10 +59,7 @@ private:
     Vector<GC::Ref<WebIDL::Promise>> m_pending_resume_promises;
     bool m_suspended_by_user = false;
 
-    RefPtr<Rendering::RealtimeAudioRenderer> m_renderer;
-
     bool start_rendering_audio_graph();
-    void set_renderer_callbacks();
 };
 
 }

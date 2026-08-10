@@ -10,7 +10,6 @@
 #include <AK/MemoryStream.h>
 #include <AK/NumberFormat.h>
 #include <AK/StringBuilder.h>
-#include <AK/Utf16StringBuilder.h>
 #include <LibJS/Console.h>
 #include <LibJS/Print.h>
 #include <LibJS/Runtime/AbstractOperations.h>
@@ -52,10 +51,10 @@ ThrowCompletionOr<Value> Console::assert_()
         return js_undefined();
 
     // 2. Let message be a string without any formatting specifiers indicating generically an assertion failure (such as "Assertion failed").
-    auto message = PrimitiveString::create(vm, "Assertion failed"_utf16_fly_string);
+    auto message = PrimitiveString::create(vm, "Assertion failed"_string);
 
     // NOTE: Assemble `data` from the function arguments.
-    GC::RootVector<Value> data;
+    GC::RootVector<Value> data { vm.heap() };
     if (vm.argument_count() > 1) {
         data.ensure_capacity(vm.argument_count() - 1);
         for (size_t i = 1; i < vm.argument_count(); ++i) {
@@ -78,11 +77,7 @@ ThrowCompletionOr<Value> Console::assert_()
         // 3. Otherwise:
         else {
             // 1. Let concat be the concatenation of message, U+003A (:), U+0020 SPACE, and first.
-            Utf16StringBuilder builder;
-            builder.append(message->utf16_string_view());
-            builder.append_ascii(": "sv);
-            builder.append(first.as_string().utf16_string_view());
-            auto concat = builder.to_string();
+            auto concat = TRY_OR_THROW_OOM(vm, String::formatted("{}: {}", message->utf8_string(), MUST(first.to_string(vm))));
             // 2. Set data[0] to concat.
             data[0] = PrimitiveString::create(vm, move(concat));
         }
@@ -151,7 +146,7 @@ ThrowCompletionOr<Value> Console::log()
 }
 
 // To [create table row] given tabularDataItem, rowIndex, list finalColumns, and optional list properties, perform the following steps:
-static ThrowCompletionOr<GC::Ref<Object>> create_table_row(Realm& realm, Value row_index, Value tabular_data_item, GC::RootVector<Value>& final_columns, GC::ConservativeHashTable<PropertyKey>& visited_columns, GC::ConservativeHashTable<PropertyKey>& properties)
+static ThrowCompletionOr<GC::Ref<Object>> create_table_row(Realm& realm, Value row_index, Value tabular_data_item, GC::RootVector<Value>& final_columns, HashMap<PropertyKey, bool>& visited_columns, HashMap<PropertyKey, bool>& properties)
 {
     auto& vm = realm.vm();
 
@@ -161,7 +156,7 @@ static ThrowCompletionOr<GC::Ref<Object>> create_table_row(Realm& realm, Value r
         // if a column is already visited without needing to loop through the whole
         // array.
         if (!visited_columns.contains(column_name)) {
-            visited_columns.set(column_name);
+            visited_columns.set(column_name, true);
 
             if (column_name.is_string()) {
                 final_columns.append(PrimitiveString::create(vm, column_name.as_string()));
@@ -188,17 +183,17 @@ static ThrowCompletionOr<GC::Ref<Object>> create_table_row(Realm& realm, Value r
 
     // 3. If `tabularDataItem` is a list, then:
     if (TRY(tabular_data_item.is_array(vm))) {
-        auto& array_like = tabular_data_item.as_object();
+        auto& array = tabular_data_item.as_array();
 
         // 3.1. Let `indices` be get the indices of `tabularDataItem`
-        auto length = TRY(length_of_array_like(vm, array_like));
+        auto indices = array.indexed_indices();
 
         // 3.2. For each `index` of `indices`
-        for (size_t i = 0; i < length; ++i) {
-            PropertyKey key(i);
+        for (auto index : indices) {
+            PropertyKey key(index);
 
             // 3.2.1. Let `value` be `tabularDataItem[index]`
-            Value value = TRY(array_like.get(key));
+            Value value = TRY(array.get(key));
 
             // 3.2.2. If `properties` is not empty and `properties` does not contain `index`, continue
             if (properties.size() > 0 && !properties.contains(key)) {
@@ -258,39 +253,39 @@ ThrowCompletionOr<Value> Console::table()
         auto tabular_data = vm.argument(0);
         auto properties_arg = vm.argument(1);
 
-        GC::ConservativeHashTable<PropertyKey> properties;
+        HashMap<PropertyKey, bool> properties;
 
         if (TRY(properties_arg.is_array(vm))) {
-            auto& properties_arr = properties_arg.as_object();
-            auto properties_length = TRY(length_of_array_like(vm, properties_arr));
-            for (size_t index = 0; index < properties_length; ++index) {
-                auto value = TRY(properties_arr.get(index));
-                if (!value.is_undefined())
-                    properties.set(TRY(PropertyKey::from_value(vm, value)));
+            auto& properties_arr = properties_arg.as_array();
+            auto prop_indices = properties_arr.indexed_indices();
+            for (auto index : prop_indices) {
+                auto col_result = properties_arr.indexed_get(index);
+                if (col_result.has_value())
+                    properties.set(TRY(PropertyKey::from_value(vm, col_result->value)), true);
             }
         }
 
         // 1. Let `finalRows` be the new list, initially empty
-        GC::RootVector<Value> final_rows;
+        GC::RootVector<Value> final_rows(vm.heap());
 
         // 2. Let `finalColumns` be the new list, initially empty
-        GC::RootVector<Value> final_columns;
+        GC::RootVector<Value> final_columns(vm.heap());
 
-        GC::ConservativeHashTable<PropertyKey> visited_columns;
+        HashMap<PropertyKey, bool> visited_columns;
 
         // 3. If `tabularData` is a list, then:
         if (TRY(tabular_data.is_array(vm))) {
-            auto& array_like = tabular_data.as_object();
+            auto& array = tabular_data.as_array();
 
             // 3.1. Let `indices` be get the indices of `tabularData`
-            auto length = TRY(length_of_array_like(vm, array_like));
+            auto table_indices = array.indexed_indices();
 
             // 3.2. For each `index` of `indices`
-            for (size_t idx = 0; idx < length; ++idx) {
+            for (auto idx : table_indices) {
                 PropertyKey index(idx);
 
                 // 3.2.1. Let `value` be `tabularData[index]`
-                Value value = TRY(array_like.get(index));
+                Value value = TRY(array.get(index));
 
                 // 3.2.2. Perform create table row with `value`, `key`, `finalColumns`, and `properties` that returns `row`
                 auto row = TRY(create_table_row(realm(), Value(index.as_number()), value, final_columns, visited_columns, properties));
@@ -332,7 +327,7 @@ ThrowCompletionOr<Value> Console::table()
             TRY(final_data->set(vm.names.columns, table_cols, Object::ShouldThrowExceptions::No));
 
             // 5.4. Perform `Printer("table", finalData)`
-            GC::RootVector<Value> args;
+            GC::RootVector<Value> args(vm.heap());
             args.append(Value(final_data));
             return m_client->printer(LogLevel::Table, args);
         }
@@ -362,12 +357,12 @@ ThrowCompletionOr<Value> Console::trace()
         Console::TraceFrame frame;
 
         auto function_name = (context && context->function) ? context->function->name_for_call_stack() : ""_utf16;
-        frame.function_name = function_name.is_empty() ? "<anonymous>"_utf16 : function_name;
+        frame.function_name = function_name.is_empty() ? "<anonymous>"_string : function_name.to_utf8();
 
         if (element.source_range.has_value()) {
             auto const& source_range = *element.source_range;
             if (!source_range.filename().is_empty()) {
-                frame.source_file = source_range.filename();
+                frame.source_file = MUST(String::from_byte_string(source_range.filename()));
                 frame.line = source_range.start.line;
                 frame.column = source_range.start.column;
             }
@@ -409,7 +404,7 @@ ThrowCompletionOr<Value> Console::dir()
 
     // 2. Perform Printer("dir", « object », options).
     if (m_client) {
-        GC::RootVector<Value> printer_arguments;
+        GC::RootVector<Value> printer_arguments { vm.heap() };
         TRY_OR_THROW_OOM(vm, printer_arguments.try_append(object));
 
         return m_client->printer(LogLevel::Dir, move(printer_arguments));
@@ -424,7 +419,7 @@ ThrowCompletionOr<Value> Console::dirxml()
     auto& vm = realm().vm();
 
     // 1. Let finalList be a new list, initially empty.
-    GC::RootVector<Value> final_list;
+    GC::RootVector<Value> final_list(vm.heap());
 
     // 2. For each item of data:
     for (size_t i = 0; i < vm.argument_count(); ++i) {
@@ -446,11 +441,11 @@ ThrowCompletionOr<Value> Console::dirxml()
     return js_undefined();
 }
 
-static ThrowCompletionOr<Utf16String> label_or_fallback(VM& vm, Utf16View fallback)
+static ThrowCompletionOr<String> label_or_fallback(VM& vm, StringView fallback)
 {
     return vm.argument_count() > 0 && !vm.argument(0).is_undefined()
-        ? TRY(vm.argument(0).to_utf16_string(vm))
-        : Utf16String::from_utf16(fallback);
+        ? vm.argument(0).to_string(vm)
+        : TRY_OR_THROW_OOM(vm, String::from_utf8(fallback));
 }
 
 // 1.2.1. count(label), https://console.spec.whatwg.org/#count
@@ -474,10 +469,10 @@ ThrowCompletionOr<Value> Console::count()
     }
 
     // 4. Let concat be the concatenation of label, U+003A (:), U+0020 SPACE, and ToString(map[label]).
-    auto concat = Utf16String::formatted("{}: {}", label, map.get(label).value());
+    auto concat = TRY_OR_THROW_OOM(vm, String::formatted("{}: {}", label, map.get(label).value()));
 
     // 5. Perform Logger("count", « concat »).
-    GC::RootVector<Value> concat_as_vector;
+    GC::RootVector<Value> concat_as_vector { vm.heap() };
     concat_as_vector.append(PrimitiveString::create(vm, move(concat)));
     if (m_client)
         TRY(m_client->logger(LogLevel::Count, concat_as_vector));
@@ -503,9 +498,9 @@ ThrowCompletionOr<Value> Console::count_reset()
     else {
         // 1. Let message be a string without any formatting specifiers indicating generically
         //    that the given label does not have an associated count.
-        auto message = Utf16String::formatted("\"{}\" doesn't have a count", label);
+        auto message = TRY_OR_THROW_OOM(vm, String::formatted("\"{}\" doesn't have a count", label));
         // 2. Perform Logger("countReset", « message »);
-        GC::RootVector<Value> message_as_vector;
+        GC::RootVector<Value> message_as_vector { vm.heap() };
         message_as_vector.append(PrimitiveString::create(vm, move(message)));
         if (m_client)
             TRY(m_client->logger(LogLevel::CountReset, message_as_vector));
@@ -521,19 +516,15 @@ ThrowCompletionOr<Value> Console::group()
     Group group;
 
     // 2. If data is not empty, let groupLabel be the result of Formatter(data).
-    Utf16String group_label {};
+    String group_label {};
     auto data = vm_arguments();
     if (!data.is_empty()) {
-        if (m_client) {
-            auto formatted_data = TRY(m_client->formatter(data));
-            group_label = TRY(value_vector_to_string(formatted_data));
-        } else {
-            group_label = TRY(value_vector_to_string(data));
-        }
+        auto formatted_data = TRY(m_client->formatter(data));
+        group_label = TRY(value_vector_to_string(formatted_data));
     }
     // ... Otherwise, let groupLabel be an implementation-chosen label representing a group.
     else {
-        group_label = "Group"_utf16;
+        group_label = "Group"_string;
     }
 
     // 3. Incorporate groupLabel as a label for group.
@@ -559,19 +550,15 @@ ThrowCompletionOr<Value> Console::group_collapsed()
     Group group;
 
     // 2. If data is not empty, let groupLabel be the result of Formatter(data).
-    Utf16String group_label {};
+    String group_label {};
     auto data = vm_arguments();
     if (!data.is_empty()) {
-        if (m_client) {
-            auto formatted_data = TRY(m_client->formatter(data));
-            group_label = TRY(value_vector_to_string(formatted_data));
-        } else {
-            group_label = TRY(value_vector_to_string(data));
-        }
+        auto formatted_data = TRY(m_client->formatter(data));
+        group_label = TRY(value_vector_to_string(formatted_data));
     }
     // ... Otherwise, let groupLabel be an implementation-chosen label representing a group.
     else {
-        group_label = "Group"_utf16;
+        group_label = "Group"_string;
     }
 
     // 3. Incorporate groupLabel as a label for group.
@@ -616,9 +603,9 @@ ThrowCompletionOr<Value> Console::time()
     //    a warning to the console indicating that a timer with label `label` has already been started.
     if (m_timer_table.contains(label)) {
         if (m_client) {
-            GC::RootVector<Value> timer_already_exists_warning_message_as_vector;
+            GC::RootVector<Value> timer_already_exists_warning_message_as_vector { vm.heap() };
 
-            auto message = Utf16String::formatted("Timer '{}' already exists.", label);
+            auto message = TRY_OR_THROW_OOM(vm, String::formatted("Timer '{}' already exists.", label));
             timer_already_exists_warning_message_as_vector.append(PrimitiveString::create(vm, move(message)));
 
             TRY(m_client->printer(LogLevel::Warn, move(timer_already_exists_warning_message_as_vector)));
@@ -647,9 +634,9 @@ ThrowCompletionOr<Value> Console::time_log()
     // NOTE: Warn if the timer doesn't exist. Not part of the spec yet, but discussed here: https://github.com/whatwg/console/issues/134
     if (maybe_start_time == m_timer_table.end()) {
         if (m_client) {
-            GC::RootVector<Value> timer_does_not_exist_warning_message_as_vector;
+            GC::RootVector<Value> timer_does_not_exist_warning_message_as_vector { vm.heap() };
 
-            auto message = Utf16String::formatted("Timer '{}' does not exist.", label);
+            auto message = TRY_OR_THROW_OOM(vm, String::formatted("Timer '{}' does not exist.", label));
             timer_does_not_exist_warning_message_as_vector.append(PrimitiveString::create(vm, move(message)));
 
             TRY(m_client->printer(LogLevel::Warn, move(timer_does_not_exist_warning_message_as_vector)));
@@ -662,10 +649,10 @@ ThrowCompletionOr<Value> Console::time_log()
     auto duration = AK::human_readable_time(start_time.elapsed_time());
 
     // 4. Let concat be the concatenation of label, U+003A (:), U+0020 SPACE, and duration.
-    auto concat = Utf16String::formatted("{}: {}", label, duration);
+    auto concat = TRY_OR_THROW_OOM(vm, String::formatted("{}: {}", label, duration));
 
     // 5. Prepend concat to data.
-    GC::RootVector<Value> data;
+    GC::RootVector<Value> data { vm.heap() };
     data.ensure_capacity(vm.argument_count());
     data.append(PrimitiveString::create(vm, move(concat)));
     for (size_t i = 1; i < vm.argument_count(); ++i)
@@ -693,9 +680,9 @@ ThrowCompletionOr<Value> Console::time_end()
     // NOTE: Warn if the timer doesn't exist. Not part of the spec yet, but discussed here: https://github.com/whatwg/console/issues/134
     if (maybe_start_time == m_timer_table.end()) {
         if (m_client) {
-            GC::RootVector<Value> timer_does_not_exist_warning_message_as_vector;
+            GC::RootVector<Value> timer_does_not_exist_warning_message_as_vector { vm.heap() };
 
-            auto message = Utf16String::formatted("Timer '{}' does not exist.", label);
+            auto message = TRY_OR_THROW_OOM(vm, String::formatted("Timer '{}' does not exist.", label));
             timer_does_not_exist_warning_message_as_vector.append(PrimitiveString::create(vm, move(message)));
 
             TRY(m_client->printer(LogLevel::Warn, move(timer_does_not_exist_warning_message_as_vector)));
@@ -711,11 +698,11 @@ ThrowCompletionOr<Value> Console::time_end()
     auto duration = AK::human_readable_time(start_time.elapsed_time());
 
     // 5. Let concat be the concatenation of label, U+003A (:), U+0020 SPACE, and duration.
-    auto concat = Utf16String::formatted("{}: {}", label, duration);
+    auto concat = TRY_OR_THROW_OOM(vm, String::formatted("{}: {}", label, duration));
 
     // 6. Perform Printer("timeEnd", « concat »).
     if (m_client) {
-        GC::RootVector<Value> concat_as_vector;
+        GC::RootVector<Value> concat_as_vector { vm.heap() };
         concat_as_vector.append(PrimitiveString::create(vm, move(concat)));
         TRY(m_client->printer(LogLevel::TimeEnd, move(concat_as_vector)));
     }
@@ -726,7 +713,7 @@ GC::RootVector<Value> Console::vm_arguments()
 {
     auto& vm = realm().vm();
 
-    GC::RootVector<Value> arguments;
+    GC::RootVector<Value> arguments { vm.heap() };
     arguments.ensure_capacity(vm.argument_count());
     for (size_t i = 0; i < vm.argument_count(); ++i) {
         arguments.append(vm.argument(i));
@@ -758,49 +745,25 @@ void Console::output_debug_message(LogLevel log_level, StringView output) const
     }
 }
 
-void Console::output_debug_message(LogLevel log_level, Utf16View output) const
-{
-    switch (log_level) {
-    case Console::LogLevel::Debug:
-        dbgln("\033[32;1m(js debug)\033[0m {}", output);
-        break;
-    case Console::LogLevel::Error:
-        dbgln("\033[32;1m(js error)\033[0m {}", output);
-        break;
-    case Console::LogLevel::Info:
-        dbgln("\033[32;1m(js info)\033[0m {}", output);
-        break;
-    case Console::LogLevel::Log:
-        dbgln("\033[32;1m(js log)\033[0m {}", output);
-        break;
-    case Console::LogLevel::Warn:
-        dbgln("\033[32;1m(js warn)\033[0m {}", output);
-        break;
-    default:
-        dbgln("\033[32;1m(js)\033[0m {}", output);
-        break;
-    }
-}
-
-void Console::report_exception(Utf16View name, Utf16View message, JS::ErrorData const& error_data, bool in_promise) const
+void Console::report_exception(JS::Error const& exception, bool in_promise) const
 {
     if (m_client)
-        m_client->report_exception(name, message, error_data, in_promise);
+        m_client->report_exception(exception, in_promise);
 }
 
-ThrowCompletionOr<Utf16String> Console::value_vector_to_string(GC::RootVector<Value> const& values)
+ThrowCompletionOr<String> Console::value_vector_to_string(GC::RootVector<Value> const& values)
 {
     auto& vm = realm().vm();
-    Utf16StringBuilder builder;
+    StringBuilder builder;
 
     for (auto const& item : values) {
         if (!builder.is_empty())
-            builder.append_ascii(' ');
+            builder.append(' ');
 
-        builder.append(TRY(item.to_utf16_string(vm)));
+        builder.append(TRY(item.to_string(vm)));
     }
 
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 ConsoleClient::ConsoleClient(Console& console)
@@ -819,6 +782,8 @@ void ConsoleClient::visit_edges(Visitor& visitor)
 // 2.1. Logger(logLevel, args), https://console.spec.whatwg.org/#logger
 ThrowCompletionOr<Value> ConsoleClient::logger(Console::LogLevel log_level, GC::RootVector<Value> const& args)
 {
+    auto& vm = m_console->realm().vm();
+
     // 1. If args is empty, return.
     if (args.is_empty())
         return js_undefined();
@@ -831,10 +796,11 @@ ThrowCompletionOr<Value> ConsoleClient::logger(Console::LogLevel log_level, GC::
 
     // 4. If rest is empty, perform Printer(logLevel, « first ») and return.
     if (rest_size == 0) {
-        GC::RootVector<Value> first_as_vector;
+        GC::RootVector<Value> first_as_vector { vm.heap() };
         first_as_vector.append(first);
         return printer(log_level, move(first_as_vector));
     }
+
     // 5. Otherwise, perform Printer(logLevel, Formatter(args)).
     else {
         auto formatted = TRY(formatter(args));
@@ -856,24 +822,24 @@ ThrowCompletionOr<GC::RootVector<Value>> ConsoleClient::formatter(GC::RootVector
         return args;
 
     // 2. Let target be the first element of args.
-    auto target = (!args.is_empty()) ? TRY(args.first().to_utf16_string(vm)) : Utf16String {};
+    auto target = (!args.is_empty()) ? TRY(args.first().to_string(vm)) : String {};
 
     // 3. Let current be the second element of args.
     auto current = (args.size() > 1) ? args[1] : js_undefined();
 
     // 4. Find the first possible format specifier specifier, from the left to the right in target.
-    auto find_specifier = [](Utf16View target) -> Optional<Utf16View> {
+    auto find_specifier = [](StringView target) -> Optional<StringView> {
         size_t start_index = 0;
-        while (start_index < target.length_in_code_units()) {
-            auto maybe_index = target.find_code_unit_offset('%', start_index);
+        while (start_index < target.length()) {
+            auto maybe_index = target.find('%', start_index);
             if (!maybe_index.has_value())
                 return {};
 
             auto index = maybe_index.value();
-            if (index + 1 >= target.length_in_code_units())
+            if (index + 1 >= target.length())
                 return {};
 
-            switch (target.code_unit_at(index + 1)) {
+            switch (target[index + 1]) {
             case 'c':
             case 'd':
             case 'f':
@@ -888,7 +854,7 @@ ThrowCompletionOr<GC::RootVector<Value>> ConsoleClient::formatter(GC::RootVector
         }
         return {};
     };
-    auto maybe_specifier = find_specifier(target.utf16_view());
+    auto maybe_specifier = find_specifier(target);
 
     // 5. If no format specifier was found, return args.
     if (!maybe_specifier.has_value()) {
@@ -938,20 +904,17 @@ ThrowCompletionOr<GC::RootVector<Value>> ConsoleClient::formatter(GC::RootVector
         // 6. TODO: process %c
         else if (specifier == "%c"sv) {
             // NOTE: This has no spec yet. `%c` specifiers treat the argument as CSS styling for the log message.
-            auto css_style = TRY(current.to_utf16_string(vm));
-            add_css_style_to_current_message(css_style.utf16_view());
-            converted = PrimitiveString::create(vm, Utf16String {});
+            add_css_style_to_current_message(TRY(current.to_string(vm)));
+            converted = PrimitiveString::create(vm, String {});
         }
 
         // 7. If any of the previous steps set converted, replace specifier in target with converted.
-        if (converted.has_value()) {
-            auto converted_string = TRY(converted->to_utf16_string(vm));
-            target = target.replace(specifier, converted_string.utf16_view(), ReplaceMode::FirstOnly);
-        }
+        if (converted.has_value())
+            target = TRY_OR_THROW_OOM(vm, target.replace(specifier, TRY(converted->to_string(vm)), ReplaceMode::FirstOnly));
     }
 
     // 7. Let result be a list containing target together with the elements of args starting from the third onward.
-    GC::RootVector<Value> result;
+    GC::RootVector<Value> result { vm.heap() };
     result.ensure_capacity(args.size() - 1);
     result.empend(PrimitiveString::create(vm, move(target)));
     for (size_t i = 2; i < args.size(); ++i)
@@ -961,19 +924,20 @@ ThrowCompletionOr<GC::RootVector<Value>> ConsoleClient::formatter(GC::RootVector
     return formatter(result);
 }
 
-ThrowCompletionOr<Utf16String> ConsoleClient::generically_format_values(GC::RootVector<Value> const& values)
+ThrowCompletionOr<String> ConsoleClient::generically_format_values(GC::RootVector<Value> const& values)
 {
+    AllocatingMemoryStream stream;
     auto& vm = m_console->realm().vm();
-    Utf16StringBuilder builder;
-    PrintContext ctx { .vm = vm, .builder = &builder, .strip_ansi = true };
+    PrintContext ctx { vm, stream, true };
     bool first = true;
     for (auto const& value : values) {
         if (!first)
-            builder.append_ascii(' ');
+            TRY_OR_THROW_OOM(vm, stream.write_until_depleted(" "sv.bytes()));
         TRY_OR_THROW_OOM(vm, JS::print(value, ctx));
         first = false;
     }
-    return builder.to_string();
+    // FIXME: Is it possible we could end up serializing objects to invalid UTF-8?
+    return TRY_OR_THROW_OOM(vm, String::from_stream(stream, stream.used_buffer_size()));
 }
 
 }

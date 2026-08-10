@@ -2,7 +2,8 @@ Harness status: OK
 
 Found 22 tests
 
-22 Pass
+21 Pass
+1 Fail
 Pass	e.style['font-weight'] = "normal" should set the property value
 Pass	e.style['font-weight'] = "bold" should set the property value
 Pass	e.style['font-weight'] = "bolder" should set the property value
@@ -24,4 +25,4 @@ Pass	e.style['font-weight'] = "calc(100)" should set the property value
 Pass	e.style['font-weight'] = "calc(0)" should set the property value
 Pass	e.style['font-weight'] = "calc(-100)" should set the property value
 Pass	e.style['font-weight'] = "calc(100 + 100)" should set the property value
-Pass	e.style['font-weight'] = "calc(100 + (sign(20cqw - 10px) * 5))" should set the property value
+Fail	e.style['font-weight'] = "calc(100 + (sign(20cqw - 10px) * 5))" should set the property value

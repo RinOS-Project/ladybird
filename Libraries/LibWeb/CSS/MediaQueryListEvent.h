@@ -6,40 +6,35 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
-#include <LibWeb/Bindings/MediaQueryListEvent.h>
+#include <AK/FlyString.h>
 #include <LibWeb/DOM/Event.h>
-#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
-
-namespace Web::HTML {
-
-class Window;
-
-}
 
 namespace Web::CSS {
 
-using MediaQueryListEventInit = Bindings::MediaQueryListEventInit;
+struct MediaQueryListEventInit : public DOM::EventInit {
+    String media;
+    bool matches { false };
+};
 
 class MediaQueryListEvent final : public DOM::Event {
-    WEB_WRAPPABLE(MediaQueryListEvent, DOM::Event);
+    WEB_PLATFORM_OBJECT(MediaQueryListEvent, DOM::Event);
     GC_DECLARE_ALLOCATOR(MediaQueryListEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<MediaQueryListEvent> create(Utf16FlyString const& event_name, Bindings::MediaQueryListEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<MediaQueryListEvent> create(Utf16FlyString const& event_name, Utf16String media, bool matches, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<MediaQueryListEvent> create_for_constructor(Utf16FlyString const& event_name, Bindings::MediaQueryListEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static GC::Ref<MediaQueryListEvent> create(JS::Realm&, FlyString const& event_name, MediaQueryListEventInit const& = {});
+    [[nodiscard]] static GC::Ref<MediaQueryListEvent> construct_impl(JS::Realm&, FlyString const& event_name, MediaQueryListEventInit const& = {});
 
     virtual ~MediaQueryListEvent() override;
 
-    Utf16String const& media() const { return m_media; }
+    String const& media() const { return m_media; }
     bool matches() const { return m_matches; }
 
 private:
-    MediaQueryListEvent(Utf16FlyString const& event_name, Bindings::MediaQueryListEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
-    MediaQueryListEvent(Utf16FlyString const& event_name, Utf16String media, bool matches, HighResolutionTime::DOMHighResTimeStamp);
+    MediaQueryListEvent(JS::Realm&, FlyString const& event_name, MediaQueryListEventInit const& event_init);
 
-    Utf16String m_media;
+    virtual void initialize(JS::Realm&) override;
+
+    String m_media;
     bool m_matches;
 };
 

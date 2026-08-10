@@ -1,3 +1,24 @@
+#import <Clipboard/Clipboard.idl>
+#import <CredentialManagement/CredentialsContainer.idl>
+#import <EncryptedMediaExtensions/MediaKeySystemAccess.idl>
+#import <Gamepad/Gamepad.idl>
+#import <Geolocation/Geolocation.idl>
+#import <GPC/GlobalPrivacyControl.idl>
+#import <HTML/MimeTypeArray.idl>
+#import <HTML/NavigatorBeacon.idl>
+#import <HTML/NavigatorConcurrentHardware.idl>
+#import <HTML/NavigatorDeviceMemory.idl>
+#import <HTML/NavigatorID.idl>
+#import <HTML/NavigatorLanguage.idl>
+#import <HTML/NavigatorOnLine.idl>
+#import <HTML/PluginArray.idl>
+#import <HTML/UserActivation.idl>
+#import <MediaCapabilitiesAPI/MediaCapabilities.idl>
+#import <Serial/Serial.idl>
+#import <ServiceWorker/ServiceWorkerContainer.idl>
+#import <StorageAPI/NavigatorStorage.idl>
+#import <WebXR/XRSystem.idl>
+
 // https://html.spec.whatwg.org/multipage/system-state.html#navigator
 [Exposed=Window]
 interface Navigator {
@@ -24,20 +45,14 @@ interface Navigator {
     // https://w3c.github.io/media-capabilities/#dom-navigator-mediacapabilities
     [SameObject] readonly attribute MediaCapabilities mediaCapabilities;
 
-    // https://w3c.github.io/mediacapture-main/#dom-navigator-mediadevices
-    [SecureContext, SameObject] readonly attribute MediaDevices mediaDevices;
-
     // https://w3c.github.io/webappsec-credential-management/#framework-credential-management
     [SecureContext, SameObject] readonly attribute CredentialsContainer credentials;
 
     // https://w3c.github.io/battery/
-    [SecureContext, Experimental] Promise<BatteryManager> getBattery();
+    [SecureContext] Promise<BatteryManager> getBattery();
 
     // https://immersive-web.github.io/webxr/#navigator-xr-attribute
     [SecureContext, SameObject] readonly attribute XRSystem xr;
-
-    // https://w3c.github.io/permissions/#navigator-and-workernavigator-extension
-    [SameObject, Experimental] readonly attribute Permissions permissions;
 };
 
 // NOTE: As NavigatorContentUtils, NavigatorCookies, NavigatorPlugins, and NavigatorAutomationInformation
@@ -45,8 +60,8 @@ interface Navigator {
 
 // https://html.spec.whatwg.org/multipage/system-state.html#navigatorcontentutils
 interface mixin NavigatorContentUtils {
-    [FIXME, SecureContext] undefined registerProtocolHandler(Utf16DOMString scheme, Utf16USVString url);
-    [FIXME, SecureContext] undefined unregisterProtocolHandler(Utf16DOMString scheme, Utf16USVString url);
+    [FIXME, SecureContext] undefined registerProtocolHandler(DOMString scheme, USVString url);
+    [FIXME, SecureContext] undefined unregisterProtocolHandler(DOMString scheme, USVString url);
 };
 
 // https://html.spec.whatwg.org/multipage/system-state.html#navigatorcookies
@@ -77,5 +92,4 @@ Navigator includes NavigatorPlugins;
 Navigator includes NavigatorConcurrentHardware;
 Navigator includes NavigatorAutomationInformation;
 Navigator includes NavigatorStorage;
-Navigator includes NavigatorLocks;
 Navigator includes NavigatorDeviceMemory;

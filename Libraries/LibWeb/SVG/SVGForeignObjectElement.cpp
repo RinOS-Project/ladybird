@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGForeignObjectElementPrototype.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/Layout/BlockContainer.h>
 #include <LibWeb/Layout/SVGForeignObjectBox.h>
@@ -24,22 +26,50 @@ SVGForeignObjectElement::SVGForeignObjectElement(DOM::Document& document, DOM::Q
 
 SVGForeignObjectElement::~SVGForeignObjectElement() = default;
 
-void SVGForeignObjectElement::initialize_element()
+void SVGForeignObjectElement::initialize(JS::Realm& realm)
 {
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGForeignObjectElement);
+    Base::initialize(realm);
+
+    // FIXME: These never actually get updated!
+    m_x = fake_animated_length_fixme();
+    m_y = fake_animated_length_fixme();
+    m_width = fake_animated_length_fixme();
+    m_height = fake_animated_length_fixme();
 }
 
-RefPtr<Layout::Node> SVGForeignObjectElement::create_layout_node(NonnullRefPtr<CSS::ComputedValues const> style)
-{
-    return make_ref_counted<Layout::SVGForeignObjectBox>(document(), *this, style);
-}
-
-void SVGForeignObjectElement::visit_edges(GC::Cell::Visitor& visitor)
+void SVGForeignObjectElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_x);
     visitor.visit(m_y);
     visitor.visit(m_width);
     visitor.visit(m_height);
+}
+
+GC::Ptr<Layout::Node> SVGForeignObjectElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+{
+    return heap().allocate<Layout::SVGForeignObjectBox>(document(), *this, move(style));
+}
+
+GC::Ref<SVG::SVGAnimatedLength> SVGForeignObjectElement::x()
+{
+    return *m_x;
+}
+
+GC::Ref<SVG::SVGAnimatedLength> SVGForeignObjectElement::y()
+{
+    return *m_y;
+}
+
+GC::Ref<SVG::SVGAnimatedLength> SVGForeignObjectElement::width()
+{
+    return *m_width;
+}
+
+GC::Ref<SVG::SVGAnimatedLength> SVGForeignObjectElement::height()
+{
+    return *m_height;
 }
 
 }

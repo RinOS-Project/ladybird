@@ -1,4 +1,0 @@
-CSSMathMax: SyntaxError
-CSSMathMin: SyntaxError
-CSSMathProduct: SyntaxError
-CSSMathSum: SyntaxError

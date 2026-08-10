@@ -1,3 +1,9 @@
+#import <DOM/AbortSignal.idl>
+#import <DOM/Event.idl>
+#import <HTML/NavigationDestination.idl>
+#import <HTML/NavigationType.idl>
+#import <XHR/FormData.idl>
+
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#the-navigateevent-interface
 [Exposed=Window]
 interface NavigateEvent : Event {
@@ -15,7 +21,7 @@ interface NavigateEvent : Event {
     readonly attribute boolean hasUAVisualTransition;
     readonly attribute Element? sourceElement;
 
-    [NeedsCallerRealm] undefined intercept(optional NavigationInterceptOptions options = {});
+    undefined intercept(optional NavigationInterceptOptions options = {});
     undefined scroll();
 };
 
@@ -27,7 +33,7 @@ dictionary NavigateEventInit : EventInit {
     boolean hashChange = false;
     required AbortSignal signal;
     FormData? formData = null;
-    Utf16DOMString? downloadRequest = null;
+    DOMString? downloadRequest = null;
     any info;
     boolean hasUAVisualTransition = false;
     Element? sourceElement = null;

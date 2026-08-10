@@ -1,2 +1,0 @@
-PASS: imported layer-only stylesheet add schedules full restyle
-PASS: imported layer-only stylesheet remove schedules full restyle

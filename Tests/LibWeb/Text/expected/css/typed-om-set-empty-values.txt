@@ -1,3 +1,0 @@
-Initial style: width: 10px;
-Empty set threw TypeError
-After empty set: width: 10px;

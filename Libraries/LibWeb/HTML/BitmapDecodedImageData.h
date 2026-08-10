@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <LibGfx/DecodedImageFrame.h>
 #include <LibGfx/Forward.h>
 #include <LibWeb/HTML/DecodedImageData.h>
 
@@ -18,28 +17,33 @@ class BitmapDecodedImageData final : public DecodedImageData {
 
 public:
     struct Frame {
-        Gfx::DecodedImageFrame frame;
+        RefPtr<Gfx::ImmutableBitmap> bitmap;
         int duration { 0 };
     };
 
-    static ErrorOr<GC::Ref<BitmapDecodedImageData>> create(Vector<Frame>&&, size_t loop_count, bool animated);
+    static ErrorOr<GC::Ref<BitmapDecodedImageData>> create(JS::Realm&, Vector<Frame>&&, size_t loop_count, bool animated);
     virtual ~BitmapDecodedImageData() override;
 
-    virtual Optional<Gfx::DecodedImageFrame> default_frame(Gfx::IntSize = {}) const override;
-    virtual Optional<Gfx::DecodedImageFrame> current_frame(Gfx::IntSize = {}) const override;
+    virtual RefPtr<Gfx::ImmutableBitmap> bitmap(size_t frame_index, Gfx::IntSize = {}) const override;
+    virtual int frame_duration(size_t frame_index) const override;
+
+    virtual size_t frame_count() const override { return m_frames.size(); }
+    virtual size_t loop_count() const override { return m_loop_count; }
+    virtual bool is_animated() const override { return m_animated; }
 
     virtual Optional<CSSPixels> intrinsic_width() const override;
     virtual Optional<CSSPixels> intrinsic_height() const override;
     virtual Optional<CSSPixelFraction> intrinsic_aspect_ratio() const override;
 
-    virtual void paint(DisplayListRecordingContext&, Gfx::IntRect dst_rect, CSS::ImageRendering, CSS::PreferredColorScheme) const override;
+    virtual Optional<Gfx::IntRect> frame_rect(size_t frame_index) const override;
+    virtual void paint(DisplayListRecordingContext&, size_t frame_index, Gfx::IntRect dst_rect, Gfx::IntRect clip_rect, Gfx::ScalingMode scaling_mode) const override;
 
 private:
-    BitmapDecodedImageData(Gfx::DecodedImageFrame&& frame);
+    BitmapDecodedImageData(Vector<Frame>&&, size_t loop_count, bool animated);
 
-    virtual size_t external_memory_size() const override;
-
-    Gfx::DecodedImageFrame m_frame;
+    Vector<Frame> m_frames;
+    size_t m_loop_count { 0 };
+    bool m_animated { false };
 };
 
 }

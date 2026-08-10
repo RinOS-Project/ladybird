@@ -14,17 +14,18 @@
 namespace Web::Layout {
 
 class FieldSetBox final : public BlockContainer {
-    LAYOUT_NODE(FieldSetBox, BlockContainer);
+    GC_CELL(FieldSetBox, BlockContainer);
+    GC_DECLARE_ALLOCATOR(FieldSetBox);
 
 public:
-    FieldSetBox(DOM::Document&, DOM::Element&, NonnullRefPtr<CSS::ComputedValues const>);
+    FieldSetBox(DOM::Document&, DOM::Element&, GC::Ref<CSS::ComputedProperties>);
     virtual ~FieldSetBox() override;
 
     DOM::Element& dom_node() { return static_cast<DOM::Element&>(*BlockContainer::dom_node()); }
     DOM::Element const& dom_node() const { return static_cast<DOM::Element const&>(*BlockContainer::dom_node()); }
 
     GC::Ptr<LegendBox const> rendered_legend() const;
-    virtual RefPtr<Painting::Paintable> create_paintable() const override;
+    virtual GC::Ptr<Painting::Paintable> create_paintable() const override;
 
 private:
     virtual bool is_fieldset_box() const final

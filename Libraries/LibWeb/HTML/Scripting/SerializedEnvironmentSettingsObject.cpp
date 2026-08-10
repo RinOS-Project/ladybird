@@ -35,7 +35,6 @@ template<>
 ErrorOr<void> encode(Encoder& encoder, Web::HTML::SerializedWorkerGlobalScope const& worker_global_scope)
 {
     TRY(encoder.encode(worker_global_scope.relevant_settings_object_is_secure_context));
-    TRY(encoder.encode(worker_global_scope.is_supported_animation_frame_provider));
     return {};
 }
 
@@ -44,7 +43,6 @@ ErrorOr<Web::HTML::SerializedWorkerGlobalScope> decode(Decoder& decoder)
 {
     return Web::HTML::SerializedWorkerGlobalScope {
         .relevant_settings_object_is_secure_context = TRY(decoder.decode<bool>()),
-        .is_supported_animation_frame_provider = TRY(decoder.decode<bool>()),
     };
 }
 
@@ -70,7 +68,7 @@ template<>
 ErrorOr<Web::HTML::SerializedEnvironmentSettingsObject> decode(Decoder& decoder)
 {
     return Web::HTML::SerializedEnvironmentSettingsObject {
-        .id = TRY(decoder.decode<Utf16String>()),
+        .id = TRY(decoder.decode<String>()),
         .creation_url = TRY(decoder.decode<URL::URL>()),
         .top_level_creation_url = TRY(decoder.decode<Optional<URL::URL>>()),
         .top_level_origin = TRY(decoder.decode<Optional<URL::Origin>>()),

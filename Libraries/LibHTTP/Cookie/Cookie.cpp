@@ -10,7 +10,6 @@
 #include <LibHTTP/Cookie/Cookie.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
-#include <LibURL/PublicSuffixData.h>
 #include <LibURL/URL.h>
 
 namespace HTTP::Cookie {
@@ -162,7 +161,7 @@ bool cookie_matches_url(Cookie const& cookie, URL::URL const& url, String const&
     //       the cookie's domain.
     //     - The cookie's domain is not a public suffix, for user agents configured to reject "public suffixes".
     bool is_not_host_only_and_domain_matches = (!cookie.host_only && domain_matches(retrieval_host_canonical, cookie.domain))
-        && !URL::PublicSuffixData::is_matching_public_suffix(cookie.domain, URL::PublicSuffixData::IncludeStarRule::Yes);
+        && !URL::is_public_suffix(cookie.domain);
 
     if (!is_host_only_and_has_identical_domain && !is_not_host_only_and_domain_matches)
         return false;

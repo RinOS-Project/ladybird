@@ -1,4 +1,0 @@
-opacity: 0.5
-width: 20px
-color: rgb(128, 128, 128)
-animation evaluations: 1

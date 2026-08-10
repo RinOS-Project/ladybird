@@ -15,7 +15,7 @@
 
 namespace Unicode {
 
-Usage usage_from_string(Utf16View usage)
+Usage usage_from_string(StringView usage)
 {
     if (usage == "sort"sv)
         return Usage::Sort;
@@ -24,25 +24,26 @@ Usage usage_from_string(Utf16View usage)
     VERIFY_NOT_REACHED();
 }
 
-Utf16String usage_to_string(Usage usage)
+StringView usage_to_string(Usage usage)
 {
     switch (usage) {
     case Usage::Sort:
-        return "sort"_utf16;
+        return "sort"sv;
     case Usage::Search:
-        return "search"_utf16;
+        return "search"sv;
     }
     VERIFY_NOT_REACHED();
 }
 
-static NonnullOwnPtr<icu::Locale> apply_usage_to_locale(icu::Locale const& locale, Usage usage, Utf16View collation)
+#ifndef AK_OS_RINOS
+static NonnullOwnPtr<icu::Locale> apply_usage_to_locale(icu::Locale const& locale, Usage usage, StringView collation)
 {
     auto result = adopt_own(*locale.clone());
     UErrorCode status = U_ZERO_ERROR;
 
     switch (usage) {
     case Usage::Sort:
-        result->setUnicodeKeywordValue("co", icu_string_piece(StringView { collation.bytes() }), status);
+        result->setUnicodeKeywordValue("co", icu_string_piece(collation), status);
         break;
     case Usage::Search:
         result->setUnicodeKeywordValue("co", "search", status);
@@ -54,7 +55,7 @@ static NonnullOwnPtr<icu::Locale> apply_usage_to_locale(icu::Locale const& local
 }
 #endif
 
-Sensitivity sensitivity_from_string(Utf16View sensitivity)
+Sensitivity sensitivity_from_string(StringView sensitivity)
 {
     if (sensitivity == "base"sv)
         return Sensitivity::Base;
@@ -67,17 +68,17 @@ Sensitivity sensitivity_from_string(Utf16View sensitivity)
     VERIFY_NOT_REACHED();
 }
 
-Utf16String sensitivity_to_string(Sensitivity sensitivity)
+StringView sensitivity_to_string(Sensitivity sensitivity)
 {
     switch (sensitivity) {
     case Sensitivity::Base:
-        return "base"_utf16;
+        return "base"sv;
     case Sensitivity::Accent:
-        return "accent"_utf16;
+        return "accent"sv;
     case Sensitivity::Case:
-        return "case"_utf16;
+        return "case"sv;
     case Sensitivity::Variant:
-        return "variant"_utf16;
+        return "variant"sv;
     }
     VERIFY_NOT_REACHED();
 }
@@ -121,7 +122,7 @@ static Sensitivity sensitivity_for_collator(icu::Collator const& collator)
 }
 #endif // !AK_OS_RINOS (icu_sensitivity / sensitivity_for_collator)
 
-CaseFirst case_first_from_string(Utf16View case_first)
+CaseFirst case_first_from_string(StringView case_first)
 {
     if (case_first == "upper"sv)
         return CaseFirst::Upper;
@@ -132,15 +133,15 @@ CaseFirst case_first_from_string(Utf16View case_first)
     VERIFY_NOT_REACHED();
 }
 
-Utf16String case_first_to_string(CaseFirst case_first)
+StringView case_first_to_string(CaseFirst case_first)
 {
     switch (case_first) {
     case CaseFirst::Upper:
-        return "upper"_utf16;
+        return "upper"sv;
     case CaseFirst::Lower:
-        return "lower"_utf16;
+        return "lower"sv;
     case CaseFirst::False:
-        return "false"_utf16;
+        return "false"sv;
     }
     VERIFY_NOT_REACHED();
 }
@@ -307,9 +308,9 @@ private:
 };
 
 NonnullOwnPtr<Collator> Collator::create(
-    Utf16View locale,
+    StringView locale,
     Usage usage,
-    Utf16View collation,
+    StringView collation,
     Optional<Sensitivity> sensitivity,
     CaseFirst case_first,
     bool numeric,
@@ -317,7 +318,7 @@ NonnullOwnPtr<Collator> Collator::create(
 {
     UErrorCode status = U_ZERO_ERROR;
 
-    auto locale_data = LocaleData::for_locale(locale.bytes());
+    auto locale_data = LocaleData::for_locale(locale);
     VERIFY(locale_data.has_value());
 
     auto locale_with_usage = apply_usage_to_locale(locale_data->locale(), usage, collation);

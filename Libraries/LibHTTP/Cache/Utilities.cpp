@@ -7,7 +7,6 @@
 #include <AK/GenericLexer.h>
 #include <AK/QuickSort.h>
 #include <AK/StringBuilder.h>
-#include <AK/StringConversions.h>
 #include <LibCrypto/Hash/SHA1.h>
 #include <LibHTTP/Cache/DiskCache.h>
 #include <LibHTTP/Cache/Utilities.h>
@@ -72,11 +71,14 @@ static u64 serialize_hash(Crypto::Hash::SHA1& hasher)
     return result;
 }
 
-u64 create_cache_key(StringView url, StringView method)
+u64 create_cache_key(StringView url, StringView method, Optional<String const&> extra_cache_key)
 {
     auto hasher = Crypto::Hash::SHA1::create();
     hasher->update(url);
     hasher->update(method);
+
+    if (extra_cache_key.has_value())
+        hasher->update(*extra_cache_key);
 
     return serialize_hash(*hasher);
 }
@@ -107,66 +109,6 @@ LexicalPath path_for_cache_entry(LexicalPath const& cache_directory, u64 cache_k
         : ByteString::formatted("{:016x}_{:016x}", cache_key, vary_key);
 
     return cache_directory.append(file);
-}
-
-static constexpr StringView cache_entry_associated_data_suffix(CacheEntryAssociatedData associated_data)
-{
-    switch (associated_data) {
-    case CacheEntryAssociatedData::JavaScriptBytecode:
-        return "jsbc"sv;
-    case CacheEntryAssociatedData::WebAssemblyCompiledCode:
-        return "wasmjit"sv;
-    }
-    VERIFY_NOT_REACHED();
-}
-
-static constexpr Optional<CacheEntryAssociatedData> cache_entry_associated_data_from_suffix(StringView suffix)
-{
-    if (suffix == "jsbc"sv)
-        return CacheEntryAssociatedData::JavaScriptBytecode;
-    return {};
-}
-
-LexicalPath path_for_cache_entry_associated_data(LexicalPath const& cache_directory, u64 cache_key, u64 vary_key, CacheEntryAssociatedData associated_data)
-{
-    auto file = vary_key == 0
-        ? ByteString::formatted("{:016x}.{}", cache_key, cache_entry_associated_data_suffix(associated_data))
-        : ByteString::formatted("{:016x}_{:016x}.{}", cache_key, vary_key, cache_entry_associated_data_suffix(associated_data));
-
-    return cache_directory.append(file);
-}
-
-Optional<CacheEntryData> cache_entry_data_for_file(LexicalPath const& cache_file)
-{
-    CacheEntryData result;
-
-    if (auto file_name = cache_file.basename(LexicalPath::StripExtension::Yes); file_name.contains('_')) {
-        auto parts = file_name.split_view('_', SplitBehavior::KeepEmpty);
-        if (parts.size() != 2)
-            return {};
-
-        auto cache_key = AK::parse_number<u64>(parts[0], TrimWhitespace::No, 16);
-        auto vary_key = AK::parse_number<u64>(parts[1], TrimWhitespace::No, 16);
-        if (!cache_key.has_value() || !vary_key.has_value())
-            return {};
-
-        result.cache_key = *cache_key;
-        result.vary_key = *vary_key;
-    } else {
-        auto cache_key = AK::parse_number<u64>(file_name, TrimWhitespace::No, 16);
-        if (!cache_key.has_value())
-            return {};
-
-        result.cache_key = *cache_key;
-    }
-
-    if (auto extension = cache_file.extension(); !extension.is_empty()) {
-        result.associated_data = cache_entry_associated_data_from_suffix(extension);
-        if (!result.associated_data.has_value())
-            return {};
-    }
-
-    return result;
 }
 
 // https://httpwg.org/specs/rfc9111.html#response.cacheability
@@ -506,16 +448,10 @@ CacheLifetimeStatus cache_lifetime_status(HeaderList const& request_headers, Hea
 
         // https://httpwg.org/specs/rfc9111.html#cache-request-directive.max-age
         // The max-age request directive indicates that the client prefers a response whose age is less than or equal to
-        // the specified number of seconds. Unless the max-stale request directive is also present, the client doesn't
-        // wish to receive a stale response.
-        //
-        // NB: This doesn't preclude validating the stored response: per Section 4, a stored response may also be reused
-        //     if it's "successfully validated (see Section 4.3)". Clients send "Cache-Control: max-age=0" to request
-        //     exactly that. Notably, Fetch attaches it to requests whose cache mode is "no-cache" — which is how a
-        //     browser reload forces revalidation of the document.
+        // the specified number of seconds.
         if (auto max_age = extract_cache_control_duration_directive(*request_cache_control, "max-age"sv); max_age.has_value()) {
             if (*max_age <= current_age)
-                return revalidation_status(CacheLifetimeStatus::MustRevalidate);
+                return CacheLifetimeStatus::Expired;
         }
 
         // https://httpwg.org/specs/rfc9111.html#cache-request-directive.min-fresh

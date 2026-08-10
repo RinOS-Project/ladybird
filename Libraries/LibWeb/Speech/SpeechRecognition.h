@@ -6,8 +6,9 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
+#include <AK/String.h>
 #include <LibGC/Ptr.h>
+#include <LibJS/Forward.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/EventNames.h>
@@ -31,11 +32,11 @@
 namespace Web::Speech {
 
 class SpeechRecognition final : public DOM::EventTarget {
-    WEB_WRAPPABLE(SpeechRecognition, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(SpeechRecognition, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(SpeechRecognition);
 
 public:
-    static GC::Ref<SpeechRecognition> create();
+    static WebIDL::ExceptionOr<GC::Ref<SpeechRecognition>> construct_impl(JS::Realm&);
     virtual ~SpeechRecognition() override;
 
     // https://wicg.github.io/speech-api/#dom-speechrecognition-grammars
@@ -43,8 +44,8 @@ public:
     void set_grammars(GC::Ref<SpeechGrammarList> grammars) { m_grammars = grammars; }
 
     // https://wicg.github.io/speech-api/#dom-speechrecognition-lang
-    Utf16String const& lang() const { return m_lang; }
-    void set_lang(Utf16String const& lang) { m_lang = lang; }
+    String const& lang() const { return m_lang; }
+    void set_lang(String const& lang) { m_lang = lang; }
 
     // https://wicg.github.io/speech-api/#dom-speechrecognition-continuous
     bool continuous() const { return m_continuous; }
@@ -66,11 +67,13 @@ public:
 #undef __ENUMERATE
 
 private:
-    explicit SpeechRecognition();
+    explicit SpeechRecognition(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     GC::Ptr<SpeechGrammarList> m_grammars;
-    Utf16String m_lang;
+    String m_lang;
     bool m_continuous { false };
     bool m_interim_results { false };
     WebIDL::UnsignedLong m_max_alternatives { 1 };

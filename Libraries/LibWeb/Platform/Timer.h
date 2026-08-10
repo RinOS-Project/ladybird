@@ -8,14 +8,12 @@
 
 #include <AK/NonnullRefPtr.h>
 #include <LibCore/Forward.h>
-#include <LibGC/ActivityRoot.h>
 #include <LibGC/CellAllocator.h>
 #include <LibJS/Heap/Cell.h>
-#include <LibWeb/Export.h>
 
 namespace Web::Platform {
 
-class WEB_API Timer : public JS::Cell {
+class Timer : public JS::Cell {
     GC_CELL(Timer, JS::Cell);
     GC_DECLARE_ALLOCATOR(Timer);
 
@@ -24,10 +22,7 @@ public:
     static GC::Ref<Timer> create_repeating(GC::Heap&, int interval_ms, GC::Ptr<GC::Function<void()>> timeout_handler);
     static GC::Ref<Timer> create_single_shot(GC::Heap&, int interval_ms, GC::Ptr<GC::Function<void()>> timeout_handler);
 
-    static constexpr bool OVERRIDES_FINALIZE = true;
-
     virtual ~Timer();
-    virtual void finalize() override;
 
     void start();
     void start(int interval_ms);
@@ -44,8 +39,6 @@ public:
     bool is_single_shot() const;
     void set_single_shot(bool);
 
-    bool has_activity_root() const { return m_activity_root.is_taken(); }
-
     GC::Ptr<GC::Function<void()>> on_timeout;
 
 private:
@@ -54,7 +47,6 @@ private:
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
     NonnullRefPtr<Core::Timer> m_timer;
-    GC::ActivityRoot m_activity_root;
 };
 
 }

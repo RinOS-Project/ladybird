@@ -18,13 +18,13 @@ public:
     virtual ~DimensionStyleValue() override = default;
 
     virtual double raw_value() const = 0;
-    virtual Utf16FlyString unit_name() const = 0;
-    Vector<Parser::ComponentValue> tokenize() const;
-    GC::Ref<CSSStyleValue> reify(Utf16FlyString const& associated_property) const;
+    virtual FlyString unit_name() const = 0;
+    virtual Vector<Parser::ComponentValue> tokenize() const override;
+    virtual GC::Ref<CSSStyleValue> reify(JS::Realm&, FlyString const& associated_property) const override;
 
 protected:
-    DimensionStyleValue(Type type, StyleValueFFI::StyleValueData const* value)
-        : StyleValue(type, value)
+    explicit DimensionStyleValue(Type type)
+        : StyleValue(type)
     {
     }
 };

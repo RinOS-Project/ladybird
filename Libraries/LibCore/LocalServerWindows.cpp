@@ -58,7 +58,8 @@ bool LocalServer::listen(ByteString const& address)
         return false;
 
     m_fd = MUST(Core::System::socket(AF_LOCAL, SOCK_STREAM, 0));
-    MUST(Core::System::set_socket_blocking(m_fd, false));
+    int option = 1;
+    MUST(Core::System::ioctl(m_fd, FIONBIO, &option));
     auto const ret = SetHandleInformation(to_handle(m_fd), HANDLE_FLAG_INHERIT, 0);
     VERIFY(ret != 0);
 

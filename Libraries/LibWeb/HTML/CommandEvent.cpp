@@ -4,27 +4,28 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/CommandEventPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/CommandEvent.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(CommandEvent);
 
-GC::Ref<CommandEvent> CommandEvent::create(FlyString const& event_name, CommandEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
+GC::Ref<CommandEvent> CommandEvent::create(JS::Realm& realm, FlyString const& event_name, CommandEventInit event_init)
 {
-    return GC::Heap::the().allocate<CommandEvent>(event_name, event_init, time_stamp);
+    return realm.create<CommandEvent>(realm, event_name, move(event_init));
 }
 
-GC::Ref<CommandEvent> CommandEvent::create(Utf16FlyString const& event_name, CommandEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
+WebIDL::ExceptionOr<GC::Ref<CommandEvent>> CommandEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, CommandEventInit event_init)
 {
-    return GC::Heap::the().allocate<CommandEvent>(FlyString { event_name.to_utf16_string().to_utf8() }, event_init, time_stamp);
+    return create(realm, event_name, move(event_init));
 }
 
-CommandEvent::CommandEvent(FlyString const& event_name, CommandEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-    : DOM::Event(event_name, event_init, time_stamp)
+CommandEvent::CommandEvent(JS::Realm& realm, FlyString const& event_name, CommandEventInit event_init)
+    : DOM::Event(realm, event_name, event_init)
     , m_source(event_init.source)
-    , m_command(event_init.command)
+    , m_command(move(event_init.command))
 {
 }
 
@@ -32,6 +33,12 @@ void CommandEvent::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_source);
+}
+
+void CommandEvent::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CommandEvent);
+    Base::initialize(realm);
 }
 
 }

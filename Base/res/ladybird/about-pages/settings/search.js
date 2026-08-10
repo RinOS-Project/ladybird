@@ -1,5 +1,3 @@
-import { registerDialogDeepLink } from "./dialog-deep-link.js";
-
 const searchClose = document.querySelector("#search-close");
 const searchCustomAdd = document.querySelector("#search-custom-add");
 const searchCustomName = document.querySelector("#search-custom-name");
@@ -207,15 +205,9 @@ searchClose.addEventListener("click", () => {
     searchDialog.close();
 });
 
-registerDialogDeepLink({
-    hash: "searchEngines",
-    tab: "search",
-    dialog: searchDialog,
-    onOpen: showSearchEngineSettings,
-});
-
-searchSettings.addEventListener("click", () => {
-    location.hash = "searchEngines";
+searchSettings.addEventListener("click", event => {
+    showSearchEngineSettings();
+    event.stopPropagation();
 });
 
 document.addEventListener("WebUILoaded", () => {

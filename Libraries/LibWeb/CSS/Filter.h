@@ -6,14 +6,15 @@
 
 #pragma once
 
-#include <LibWeb/CSS/StyleValues/StyleValueList.h>
+#include <AK/Variant.h>
+#include <LibWeb/CSS/StyleValues/StyleValue.h>
 
 namespace Web::CSS {
 
 class Filter {
 public:
     Filter() = default;
-    Filter(StyleValueList const& filter_value_list)
+    Filter(StyleValue const& filter_value_list)
         : m_filter_value_list { filter_value_list }
     {
     }
@@ -26,12 +27,10 @@ public:
     bool has_filters() const { return m_filter_value_list; }
     bool is_none() const { return !has_filters(); }
 
-    StyleValueVector filters() const;
-
-    bool operator==(Filter const&) const = default;
+    ReadonlySpan<FilterValue> filters() const;
 
 private:
-    RefPtr<StyleValueList const> m_filter_value_list { nullptr };
+    RefPtr<StyleValue const> m_filter_value_list { nullptr };
 };
 
 }

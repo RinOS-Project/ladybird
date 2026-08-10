@@ -4,58 +4,61 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibJS/Runtime/VM.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/VideoTrackListPrototype.h>
 #include <LibWeb/HTML/EventNames.h>
-#include <LibWeb/HTML/HTMLMediaElement.h>
 #include <LibWeb/HTML/VideoTrackList.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(VideoTrackList);
 
-VideoTrackList::VideoTrackList(GC::Ptr<HTMLMediaElement> media_element)
-    : DOM::EventTarget()
-    , m_media_element(media_element)
+VideoTrackList::VideoTrackList(JS::Realm& realm)
+    : DOM::EventTarget(realm, MayInterfereWithIndexedPropertyAccess::Yes)
 {
 }
 
-GC::Ref<VideoTrackList> VideoTrackList::create(GC::Ptr<HTMLMediaElement> media_element)
+void VideoTrackList::initialize(JS::Realm& realm)
 {
-    return GC::Heap::the().allocate<VideoTrackList>(media_element);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(VideoTrackList);
+    Base::initialize(realm);
 }
 
-GC::Ptr<VideoTrack> VideoTrackList::item(size_t index) const
+// https://html.spec.whatwg.org/multipage/media.html#dom-tracklist-item
+JS::ThrowCompletionOr<Optional<JS::PropertyDescriptor>> VideoTrackList::internal_get_own_property(JS::PropertyKey const& property_name) const
 {
     // To determine the value of an indexed property for a given index index in an AudioTrackList or VideoTrackList
     // object list, the user agent must return the AudioTrack or VideoTrack object that represents the indexth track
     // in list.
-    if (index >= m_video_tracks.size())
-        return nullptr;
+    if (property_name.is_number()) {
+        if (auto index = property_name.as_number(); index < m_video_tracks.size()) {
+            JS::PropertyDescriptor descriptor;
+            descriptor.value = m_video_tracks.at(index);
 
-    return m_video_tracks.at(index);
+            return descriptor;
+        }
+    }
+
+    return Base::internal_get_own_property(property_name);
 }
 
-void VideoTrackList::add_track(GC::Ref<VideoTrack> video_track)
+void VideoTrackList::add_track(Badge<HTMLMediaElement>, GC::Ref<VideoTrack> video_track)
 {
     m_video_tracks.append(video_track);
     video_track->set_video_track_list({}, this);
-    if (m_media_element)
-        m_media_element->update_natural_dimensions();
 }
 
-void VideoTrackList::remove_all_tracks()
+void VideoTrackList::remove_all_tracks(Badge<HTMLMediaElement>)
 {
-    for (auto& video_track : m_video_tracks) {
+    for (auto& video_track : m_video_tracks)
         video_track->set_selected(false);
-        video_track->set_video_track_list({}, nullptr);
-    }
     m_video_tracks.clear();
-    if (m_media_element)
-        m_media_element->update_natural_dimensions();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-videotracklist-gettrackbyid
-GC::Ptr<VideoTrack> VideoTrackList::get_track_by_id(Utf16View id) const
+GC::Ptr<VideoTrack> VideoTrackList::get_track_by_id(StringView id) const
 {
     // The AudioTrackList getTrackById(id) and VideoTrackList getTrackById(id) methods must return the first AudioTrack
     // or VideoTrack object (respectively) in the AudioTrackList or VideoTrackList object (respectively) whose identifier
@@ -126,7 +129,6 @@ WebIDL::CallbackType* VideoTrackList::onremovetrack()
 void VideoTrackList::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(m_media_element);
     visitor.visit(m_video_tracks);
 }
 

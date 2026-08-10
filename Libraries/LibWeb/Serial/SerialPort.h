@@ -6,20 +6,45 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/SerialPort.h>
+#include <LibWeb/Bindings/SerialPortPrototype.h>
 #include <LibWeb/DOM/EventTarget.h>
-#include <LibWeb/Export.h>
 #include <LibWeb/Streams/ReadableStream.h>
 #include <LibWeb/Streams/WritableStream.h>
-#include <LibWeb/WebIDL/Promise.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::Serial {
 
-using SerialInputSignals = Bindings::SerialInputSignals;
-using SerialOptions = Bindings::SerialOptions;
-using SerialOutputSignals = Bindings::SerialOutputSignals;
-using SerialPortInfo = Bindings::SerialPortInfo;
+// https://wicg.github.io/serial/#serialoptions-dictionary
+struct SerialOptions {
+    Optional<WebIDL::UnsignedLong> baud_rate = {};
+    Optional<WebIDL::Octet> data_bits = 8;
+    Optional<WebIDL::Octet> stop_bits = 1;
+    Optional<Bindings::ParityType> parity = Bindings::ParityType::None;
+    Optional<WebIDL::UnsignedLong> buffer_size = 255;
+    Optional<Bindings::FlowControlType> flow_control = Bindings::FlowControlType::None;
+};
+
+// https://wicg.github.io/serial/#serialoutputsignals-dictionary
+struct SerialOutputSignals {
+    Optional<WebIDL::Boolean> data_terminal_ready;
+    Optional<WebIDL::Boolean> request_to_send;
+    Optional<WebIDL::Boolean> break_;
+};
+
+// https://wicg.github.io/serial/#serialinputsignals-dictionary
+struct SerialInputSignals {
+    WebIDL::Boolean data_carrier_detect;
+    WebIDL::Boolean clear_to_send;
+    WebIDL::Boolean ring_indicator;
+    WebIDL::Boolean data_set_ready;
+};
+
+// https://wicg.github.io/serial/#serialportinfo-dictionary
+struct SerialPortInfo {
+    Optional<WebIDL::UnsignedShort> usb_vendor_id;
+    Optional<WebIDL::UnsignedShort> usb_product_id;
+    Optional<String> bluetooth_service_class_id;
+};
 
 enum SerialPortState : u8 {
     Closed,
@@ -32,29 +57,28 @@ enum SerialPortState : u8 {
 
 // https://wicg.github.io/serial/#serialport-interface
 class SerialPort : public DOM::EventTarget {
-    WEB_WRAPPABLE(SerialPort, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(SerialPort, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(SerialPort);
 
-public:
     // https://wicg.github.io/serial/#getinfo-method
     SerialPortInfo get_info() const;
     // https://wicg.github.io/serial/#open-method
-    void open(SerialOptions const&, GC::Ref<WebIDL::Promise>);
+    GC::Ref<WebIDL::Promise> open(SerialOptions);
     // https://wicg.github.io/serial/#setsignals-method
-    void set_signals(SerialOutputSignals const&, GC::Ref<WebIDL::Promise>);
+    GC::Ref<WebIDL::Promise> set_signals(SerialOutputSignals = {});
     // https://wicg.github.io/serial/#getsignals-method
-    void get_signals(GC::Ref<WebIDL::Promise>) const;
+    GC::Ref<WebIDL::Promise> get_signals() const;
     // https://wicg.github.io/serial/#close-method
-    void close(GC::Ref<WebIDL::Promise>);
+    GC::Ref<WebIDL::Promise> close();
     // https://wicg.github.io/serial/#forget-method
-    void forget(GC::Ref<WebIDL::Promise>);
+    GC::Ref<WebIDL::Promise> forget();
 
     // https://wicg.github.io/serial/#connected-attribute
     bool connected() const { return m_connected; }
     // https://wicg.github.io/serial/#readable-attribute
-    GC::Ptr<Streams::ReadableStream> readable() { return m_readable; }
+    GC::Ref<Streams::ReadableStream> readable() { return *m_readable; }
     // https://wicg.github.io/serial/#writable-attribute
-    GC::Ptr<Streams::WritableStream> writable() { return m_writable; }
+    GC::Ref<Streams::WritableStream> writable() { return *m_writable; }
 
     // https://wicg.github.io/serial/#onconnect-attribute-0
     void set_onconnect(WebIDL::CallbackType*);
@@ -68,7 +92,9 @@ protected:
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:
-    explicit SerialPort();
+    explicit SerialPort(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 
     // https://wicg.github.io/serial/#dfn-state
     // Tracks the active state of the SerialPort

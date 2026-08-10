@@ -6,13 +6,13 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::CSS {
 
 // https://drafts.css-houdini.org/css-typed-om-1/#csstransformcomponent
-class CSSTransformComponent : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(CSSTransformComponent, Bindings::GCAllocatedWrappable);
+class CSSTransformComponent : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(CSSTransformComponent, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(CSSTransformComponent);
 
 public:
@@ -20,6 +20,8 @@ public:
         No,
         Yes,
     };
+
+    virtual void initialize(JS::Realm&) override;
     virtual ~CSSTransformComponent() override;
 
     virtual WebIDL::ExceptionOr<Utf16String> to_string() const = 0;
@@ -32,7 +34,7 @@ public:
     virtual WebIDL::ExceptionOr<NonnullRefPtr<TransformationStyleValue const>> create_style_value(PropertyNameAndID const&) const = 0;
 
 protected:
-    explicit CSSTransformComponent(Is2D is_2d);
+    explicit CSSTransformComponent(JS::Realm&, Is2D is_2d);
 
 private:
     bool m_is_2d;

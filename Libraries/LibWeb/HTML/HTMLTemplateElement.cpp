@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLTemplateElementPrototype.h>
+#include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/DOM/Document.h>
-#include <LibWeb/DOM/DocumentFragment.h>
 #include <LibWeb/HTML/HTMLTemplateElement.h>
 
 namespace Web::HTML {
@@ -19,15 +20,18 @@ HTMLTemplateElement::HTMLTemplateElement(DOM::Document& document, DOM::Qualified
 
 HTMLTemplateElement::~HTMLTemplateElement() = default;
 
-void HTMLTemplateElement::initialize_element()
+void HTMLTemplateElement::initialize(JS::Realm& realm)
 {
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLTemplateElement);
+    Base::initialize(realm);
+
     // https://html.spec.whatwg.org/multipage/scripting.html#template-contents
     // When a template element is created, the user agent must run the following steps to establish the template contents:
     // 1. Let document be the template element's node document's appropriate template contents owner document.
     auto document = m_document->appropriate_template_contents_owner_document();
 
     // 2. Create a DocumentFragment object whose node document is document and host is the template element.
-    auto document_fragment = DOM::DocumentFragment::create(document);
+    auto document_fragment = realm.create<DOM::DocumentFragment>(document);
     document_fragment->set_host(this);
 
     // 3. Set the template element's template contents to the newly created DocumentFragment object.
@@ -47,7 +51,7 @@ void HTMLTemplateElement::adopted_from(DOM::Document&)
     auto document = this->document().appropriate_template_contents_owner_document();
 
     // 2. Adopt node's template contents (a DocumentFragment object) into document.
-    document->adopt_node_steps(content());
+    document->adopt_node(content());
 }
 
 // https://html.spec.whatwg.org/multipage/scripting.html#the-template-element:concept-node-clone-ext

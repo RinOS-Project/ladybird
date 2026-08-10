@@ -17,7 +17,7 @@ namespace Web::SVG {
 class SVGFEBlendElement final
     : public SVGElement
     , public SVGFilterPrimitiveStandardAttributes<SVGFEBlendElement> {
-    WEB_WRAPPABLE(SVGFEBlendElement, SVGElement);
+    WEB_PLATFORM_OBJECT(SVGFEBlendElement, SVGElement);
     GC_DECLARE_ALLOCATOR(SVGFEBlendElement);
 
 public:
@@ -31,9 +31,11 @@ public:
 
 private:
     SVGFEBlendElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& new_value, Optional<Utf16FlyString> const& namespace_) override;
+    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& new_value, Optional<FlyString> const& namespace_) override;
 
     GC::Ptr<SVGAnimatedString> m_in1;
     GC::Ptr<SVGAnimatedString> m_in2;

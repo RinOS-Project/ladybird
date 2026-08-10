@@ -10,37 +10,11 @@
 #include <AK/StringView.h>
 #include <LibURL/URL.h>
 #include <LibWeb/HTML/ActivateTab.h>
-#include <LibWebView/PrivateBrowsing.h>
 
 #import <Cocoa/Cocoa.h>
 
 @class Tab;
 @class TabController;
-
-class TabLocation {
-private:
-    enum class Kind {
-        End,
-        AfterTab,
-    };
-
-public:
-    static TabLocation end() { return { Kind::End, nil }; }
-    static TabLocation after_tab(Tab* _Nullable tab) { return { Kind::AfterTab, tab }; }
-
-    bool is_after_tab() const { return m_kind == Kind::AfterTab; }
-    Tab* _Nullable tab() const { return m_tab; }
-
-private:
-    TabLocation(Kind kind, Tab* _Nullable tab)
-        : m_kind(kind)
-        , m_tab(tab)
-    {
-    }
-
-    Kind m_kind;
-    Tab* _Nullable m_tab { nil };
-};
 
 @interface ApplicationDelegate : NSObject <NSApplicationDelegate>
 
@@ -51,9 +25,7 @@ private:
 
 - (nonnull TabController*)createNewTab:(Optional<URL::URL> const&)url
                                fromTab:(nullable Tab*)tab
-                             isPrivate:(WebView::IsPrivate)is_private
-                           activateTab:(Web::HTML::ActivateTab)activate_tab
-                           tabLocation:(TabLocation)tab_location;
+                           activateTab:(Web::HTML::ActivateTab)activate_tab;
 
 - (nonnull TabController*)createChildTab:(Optional<URL::URL> const&)url
                                  fromTab:(nonnull Tab*)tab
@@ -64,11 +36,9 @@ private:
 - (nullable Tab*)activeTab;
 
 - (void)removeTab:(nonnull TabController*)controller;
-- (NSUInteger)tabCount;
-
-- (void)restartPrivateBrowsingSession;
 
 - (void)rebuildBookmarksMenu;
+- (void)updateBookmarksBarDisplay:(bool)show_bookmarks_bar;
 
 - (void)onDevtoolsEnabled;
 - (void)onDevtoolsDisabled;

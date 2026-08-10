@@ -28,7 +28,6 @@ public:
 
     void update_execution_generation() { m_last_execution_generation = vm().execution_generation(); }
 
-    virtual Cell const& owner_cell(Badge<GC::Heap>) const override { return *this; }
     virtual void remove_dead_cells(Badge<GC::Heap>) override;
 
 private:

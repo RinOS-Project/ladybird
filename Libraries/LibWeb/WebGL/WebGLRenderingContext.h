@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
 #include <LibGC/Ptr.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
@@ -18,7 +17,7 @@
 namespace Web::WebGL {
 
 class WebGLRenderingContext final : public WebGLRenderingContextOverloads {
-    WEB_WRAPPABLE(WebGLRenderingContext, WebGLRenderingContextOverloads);
+    WEB_PLATFORM_OBJECT(WebGLRenderingContext, WebGLRenderingContextOverloads);
     GC_DECLARE_ALLOCATOR(WebGLRenderingContext);
 
 public:
@@ -26,12 +25,16 @@ public:
 
     virtual ~WebGLRenderingContext() override;
 
-    void prepare_for_compositing() override;
-    void did_update_canvas_content() override;
+    void present() override;
+    void needs_to_present() override;
 
-    virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const override;
+    GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const;
 
+    bool is_context_lost() const;
     Optional<WebGLContextAttributes> get_context_attributes();
+
+    RefPtr<Gfx::PaintingSurface> surface();
+    void allocate_painting_surface_if_needed();
 
     void set_size(Gfx::IntSize const&);
     void reset_to_default_state();
@@ -40,10 +43,11 @@ public:
     WebIDL::Long drawing_buffer_height() const;
 
 private:
-    WebGLRenderingContext(JS::Realm&, HTML::HTMLCanvasElement&, NonnullOwnPtr<WebGLContextProxy> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters);
+    virtual void initialize(JS::Realm&) override;
+
+    WebGLRenderingContext(JS::Realm&, HTML::HTMLCanvasElement&, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters);
 
     virtual void visit_edges(Cell::Visitor&) override;
-    virtual bool reestablish_remote_context() override;
 
     GC::Ref<HTML::HTMLCanvasElement> m_canvas_element;
 
@@ -54,12 +58,13 @@ private:
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#actual-context-parameters
     // Each WebGLRenderingContext has actual context parameters, set each time the drawing buffer is created, in a WebGLContextAttributes object.
     WebGLContextAttributes m_actual_context_parameters {};
+
+    // https://www.khronos.org/registry/webgl/specs/latest/1.0/#webgl-context-lost-flag
+    // Each WebGLRenderingContext has a webgl context lost flag, which is initially unset.
+    bool m_context_lost { false };
 };
 
-bool fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, Utf16FlyString const& type);
+void fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, FlyString const& type);
 void fire_webgl_context_creation_error(HTML::HTMLCanvasElement& canvas_element);
-
-OwnPtr<WebGLContextProxy> create_webgl_context_proxy(HTML::HTMLCanvasElement&, WebGLVersion, WebGLContextAttributes const&);
-bool restore_webgl_context_proxy(WebGLContextProxy&, HTML::HTMLCanvasElement&, WebGLVersion, WebGLContextAttributes const&);
 
 }

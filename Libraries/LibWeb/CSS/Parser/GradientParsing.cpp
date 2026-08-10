@@ -102,10 +102,9 @@ Optional<Vector<ColorStopListElement>> Parser::parse_color_stop_list(TokenStream
     return color_stops;
 }
 
-static Utf16View consume_if_starts_with(Utf16View str, StringView start, auto found_callback)
+static StringView consume_if_starts_with(StringView str, StringView start, auto found_callback)
 {
-    if (str.length_in_code_units() >= start.length()
-        && str.substring_view(0, start.length()).equals_ignoring_ascii_case(start)) {
+    if (str.starts_with(start, CaseSensitivity::CaseInsensitive)) {
         found_callback();
         return str.substring_view(start.length());
     }
@@ -118,11 +117,13 @@ Optional<Vector<ColorStopListElement>> Parser::parse_linear_color_stop_list(Toke
     //   <linear-color-stop> , [ <linear-color-hint>? , <linear-color-stop> ]#
     return parse_color_stop_list(
         tokens,
-        [&](auto& it) { return parse_length_percentage_value(it, infinite_range, infinite_range); });
+        [&](auto& it) { return parse_length_percentage_value(it); });
 }
 
 Optional<Vector<ColorStopListElement>> Parser::parse_angular_color_stop_list(TokenStream<ComponentValue>& tokens)
 {
+    auto context_guard = push_temporary_value_parsing_context(SpecialContext::AngularColorStopList);
+
     // <angular-color-stop-list> =
     //   <angular-color-stop> , [ <angular-color-hint>? , <angular-color-stop> ]#
     return parse_color_stop_list(
@@ -137,7 +138,7 @@ Optional<Vector<ColorStopListElement>> Parser::parse_angular_color_stop_list(Tok
                 }
             }
 
-            return parse_angle_percentage_value(it, infinite_range, infinite_range);
+            return parse_angle_percentage_value(it);
         });
 }
 
@@ -154,13 +155,13 @@ RefPtr<LinearGradientStyleValue const> Parser::parse_linear_gradient_function(To
     GradientRepeating repeating_gradient = GradientRepeating::No;
     GradientType gradient_type { GradientType::Standard };
 
-    auto function_name = component_value.function().name.view();
+    auto function_name = component_value.function().name.bytes_as_string_view();
 
     function_name = consume_if_starts_with(function_name, "-webkit-"sv, [&] {
         gradient_type = GradientType::WebKit;
     });
 
-    auto context_guard = push_temporary_value_parsing_context(FunctionContext { Utf16FlyString::from_utf16(function_name) });
+    auto context_guard = push_temporary_value_parsing_context(FunctionContext { function_name });
 
     function_name = consume_if_starts_with(function_name, "repeating-"sv, [&] {
         repeating_gradient = GradientRepeating::Yes;
@@ -182,7 +183,7 @@ RefPtr<LinearGradientStyleValue const> Parser::parse_linear_gradient_function(To
         ? SideOrCorner::Bottom
         : SideOrCorner::Top;
 
-    auto to_side = [](Utf16View value) -> Optional<SideOrCorner> {
+    auto to_side = [](StringView value) -> Optional<SideOrCorner> {
         if (value.equals_ignoring_ascii_case("top"sv))
             return SideOrCorner::Top;
         if (value.equals_ignoring_ascii_case("bottom"sv))
@@ -206,9 +207,9 @@ RefPtr<LinearGradientStyleValue const> Parser::parse_linear_gradient_function(To
     tokens.discard_whitespace();
 
     auto const& first_param = tokens.next_token();
-    if (auto maybe_angle = parse_angle_value(tokens, infinite_range)) {
+    if (auto maybe_angle = parse_angle_value(tokens)) {
         gradient_direction = maybe_angle.release_nonnull();
-    } else if (first_param.is(Token::Type::Number) && first_param.token().number_value() == 0) {
+    } else if (first_param.is(Token::Type::Number) && first_param.token().number().value() == 0) {
         // <zero>
         tokens.discard_a_token(); // <zero>
         gradient_direction = { AngleStyleValue::create(Angle::make_degrees(0)) };
@@ -289,8 +290,8 @@ RefPtr<ConicGradientStyleValue const> Parser::parse_conic_gradient_function(Toke
 
     GradientRepeating repeating_gradient = GradientRepeating::No;
 
-    auto function_name = component_value.function().name.view();
-    auto context_guard = push_temporary_value_parsing_context(FunctionContext { Utf16FlyString::from_utf16(function_name) });
+    auto function_name = component_value.function().name.bytes_as_string_view();
+    auto context_guard = push_temporary_value_parsing_context(FunctionContext { function_name });
 
     function_name = consume_if_starts_with(function_name, "repeating-"sv, [&] {
         repeating_gradient = GradientRepeating::Yes;
@@ -326,9 +327,9 @@ RefPtr<ConicGradientStyleValue const> Parser::parse_conic_gradient_function(Toke
             // from [ <angle> | <zero> ]
             if (from_angle || at_position)
                 return nullptr;
-            if (auto maybe_angle = parse_angle_value(tokens, infinite_range)) {
+            if (auto maybe_angle = parse_angle_value(tokens)) {
                 from_angle = maybe_angle.release_nonnull();
-            } else if (auto peek_token = tokens.next_token(); peek_token.is(Token::Type::Number) && peek_token.token().number_value() == 0) {
+            } else if (auto peek_token = tokens.next_token(); peek_token.is(Token::Type::Number) && peek_token.token().number().value() == 0) {
                 tokens.discard_a_token(); // 0
                 from_angle = AngleStyleValue::create(Angle::make_degrees(0));
             } else {
@@ -387,8 +388,8 @@ RefPtr<RadialGradientStyleValue const> Parser::parse_radial_gradient_function(To
 
     auto repeating_gradient = GradientRepeating::No;
 
-    auto function_name = component_value.function().name.view();
-    auto context_guard = push_temporary_value_parsing_context(FunctionContext { Utf16FlyString::from_utf16(function_name) });
+    auto function_name = component_value.function().name.bytes_as_string_view();
+    auto context_guard = push_temporary_value_parsing_context(FunctionContext { function_name });
 
     function_name = consume_if_starts_with(function_name, "repeating-"sv, [&] {
         repeating_gradient = GradientRepeating::Yes;
@@ -467,7 +468,7 @@ RefPtr<RadialGradientStyleValue const> Parser::parse_radial_gradient_function(To
         return nullptr;
 
     auto& token = tokens.next_token();
-    if (token.is_ident("at"_utf16)) {
+    if (token.is_ident("at"sv)) {
         tokens.discard_a_token();
         auto position = parse_position_value(tokens);
         if (!position)

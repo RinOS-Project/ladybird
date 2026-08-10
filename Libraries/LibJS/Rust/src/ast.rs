@@ -14,206 +14,19 @@
 //! - `ExpressionKind` and `StatementKind` are flat enums — pattern matching
 //!   replaces virtual dispatch.
 //! - `Node<T>` wraps every AST node with source location info.
-//! - `Identifier` carries scope analysis results as plain fields, written
-//!   by the scope collector through `&mut arena.identifiers[id]` after
-//!   parsing.
+//! - `Identifier` uses `Cell` fields for scope analysis results that are
+//!   written after parsing (by the scope collector).
 //! - Operator enums use `#[repr(u8)]` with ABI-compatible values for
 //!   trivial FFI conversion.
 //! - `ScopeData` is carried by block-like constructs (Program,
 //!   BlockStatement, FunctionBody, etc.) and holds scope analysis results.
 
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::fmt;
-use std::ops::Index;
-use std::ops::IndexMut;
-use std::sync::Arc;
-use std::sync::atomic::AtomicPtr;
-use std::sync::atomic::Ordering;
+use std::rc::Rc;
 
-use crate::fast_hash::HashMap;
-
-use crate::u32_from_usize;
-
-// =============================================================================
-// AST arena (contiguous storage for identifiers, scopes, and interned strings)
-// =============================================================================
-//
-// Bulk allocation replaces per-node `Rc::new` calls. AST nodes hold opaque
-// `Copy` indexes into the arena's `Vec`s; the actual data lives contiguously
-// for cache-friendly traversal during scope analysis and codegen. After parse
-// the arena is logically frozen and can be shared across threads via
-// `Arc<AstArena>` without atomic refcount churn on individual nodes.
-
-/// Opaque handle into `IdentifierArena`. `Copy` so AST nodes can hold one
-/// without cloning anything.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-pub struct IdentifierId(u32);
-
-/// Opaque handle into `ScopeArena`.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-pub struct ScopeId(u32);
-
-/// Opaque handle into `StringInterner`. Equal `StringId`s mean equal strings,
-/// so name comparisons are a single `u32` compare instead of slice equality.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-pub struct StringId(u32);
-
-/// Contiguous backing store for `Identifier` nodes.
-#[derive(Debug, Default)]
-pub struct IdentifierArena {
-    storage: Vec<Identifier>,
-}
-
-impl IdentifierArena {
-    pub fn new() -> Self {
-        Self { storage: Vec::new() }
-    }
-
-    pub fn insert(&mut self, identifier: Identifier) -> IdentifierId {
-        let id = IdentifierId(u32_from_usize(self.storage.len()));
-        self.storage.push(identifier);
-        id
-    }
-
-    pub fn len(&self) -> usize {
-        self.storage.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.storage.is_empty()
-    }
-}
-
-impl Index<IdentifierId> for IdentifierArena {
-    type Output = Identifier;
-    fn index(&self, id: IdentifierId) -> &Identifier {
-        &self.storage[id.0 as usize]
-    }
-}
-
-impl IndexMut<IdentifierId> for IdentifierArena {
-    fn index_mut(&mut self, id: IdentifierId) -> &mut Identifier {
-        &mut self.storage[id.0 as usize]
-    }
-}
-
-/// Contiguous backing store for `ScopeData` nodes.
-#[derive(Debug, Default)]
-pub struct ScopeArena {
-    storage: Vec<ScopeData>,
-}
-
-impl ScopeArena {
-    pub fn new() -> Self {
-        Self { storage: Vec::new() }
-    }
-
-    pub fn insert(&mut self, scope: ScopeData) -> ScopeId {
-        let id = ScopeId(u32_from_usize(self.storage.len()));
-        self.storage.push(scope);
-        id
-    }
-
-    pub fn len(&self) -> usize {
-        self.storage.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.storage.is_empty()
-    }
-}
-
-impl Index<ScopeId> for ScopeArena {
-    type Output = ScopeData;
-    fn index(&self, id: ScopeId) -> &ScopeData {
-        &self.storage[id.0 as usize]
-    }
-}
-
-impl IndexMut<ScopeId> for ScopeArena {
-    fn index_mut(&mut self, id: ScopeId) -> &mut ScopeData {
-        &mut self.storage[id.0 as usize]
-    }
-}
-
-/// Deduplicating string table. Repeated identifier names from the source
-/// (`length`, `i`, `this`, ...) all map to the same `StringId`, so the
-/// per-identifier name no longer allocates after the first occurrence.
-#[derive(Debug, Default)]
-pub struct StringInterner {
-    storage: Vec<Utf16String>,
-    lookup: HashMap<Utf16String, StringId>,
-}
-
-impl StringInterner {
-    pub fn new() -> Self {
-        Self {
-            storage: Vec::new(),
-            lookup: HashMap::default(),
-        }
-    }
-
-    pub fn intern(&mut self, value: &[u16]) -> StringId {
-        if let Some(&id) = self.lookup.get(value) {
-            return id;
-        }
-        let id = StringId(u32_from_usize(self.storage.len()));
-        let owned = Utf16String::from(value);
-        self.storage.push(owned.clone());
-        self.lookup.insert(owned, id);
-        id
-    }
-
-    pub fn intern_owned(&mut self, value: Utf16String) -> StringId {
-        if let Some(&id) = self.lookup.get(value.as_slice()) {
-            return id;
-        }
-        let id = StringId(u32_from_usize(self.storage.len()));
-        self.storage.push(value.clone());
-        self.lookup.insert(value, id);
-        id
-    }
-
-    pub fn len(&self) -> usize {
-        self.storage.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.storage.is_empty()
-    }
-}
-
-impl Index<StringId> for StringInterner {
-    type Output = Utf16String;
-    fn index(&self, id: StringId) -> &Utf16String {
-        &self.storage[id.0 as usize]
-    }
-}
-
-/// Bundles the three arenas. Owned by the parser during parsing, then handed
-/// to `ParsedProgram`/`CompiledProgram`. Since every contained type is plain
-/// data (no `Cell`/`RefCell`/`Rc`) once the parser is done, this is naturally
-/// `Send + Sync` and can be wrapped in `Arc` for concurrent codegen.
-#[derive(Debug, Default)]
-pub struct AstArena {
-    pub identifiers: IdentifierArena,
-    pub scopes: ScopeArena,
-    pub strings: StringInterner,
-}
-
-impl AstArena {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn name_of(&self, id: IdentifierId) -> &Utf16String {
-        &self.strings[self.identifiers[id].name]
-    }
-
-    pub fn name_slice(&self, id: IdentifierId) -> &[u16] {
-        self.strings[self.identifiers[id].name].as_slice()
-    }
-}
+use std::collections::HashMap;
 
 // =============================================================================
 // Function table (side table for FunctionData)
@@ -236,15 +49,6 @@ pub struct FunctionId(u32);
 pub struct FunctionTable {
     functions: HashMap<FunctionId, Box<FunctionData>>,
     next_id: u32,
-}
-
-impl Clone for FunctionTable {
-    fn clone(&self) -> Self {
-        Self {
-            functions: self.functions.iter().map(|(id, data)| (*id, data.clone())).collect(),
-            next_id: self.next_id,
-        }
-    }
 }
 
 impl Default for FunctionTable {
@@ -274,7 +78,9 @@ impl FunctionTable {
     /// # Panics
     /// Panics if the slot was already taken.
     pub fn get(&self, id: FunctionId) -> &FunctionData {
-        self.functions.get(&id).expect("FunctionTable::get: slot already taken")
+        self.functions
+            .get(&id)
+            .expect("FunctionTable::get: slot already taken")
     }
 
     /// Take ownership of the data (for codegen / GDI).
@@ -297,174 +103,170 @@ impl FunctionTable {
         self.functions.insert(id, data);
     }
 
-    /// Extract the nested function subtree needed to compile `data` later.
-    ///
-    /// Parser-created functions carry an explicit child list, so this is
-    /// normally proportional to the number of nested functions instead of the
-    /// size of the function body.
-    pub fn extract_reachable(&mut self, data: &FunctionData, scopes: &ScopeArena) -> FunctionTable {
+    /// Extract a subtable containing all `FunctionId`s reachable from the
+    /// given function body and parameters. This recursively takes nested
+    /// functions so that the returned subtable has everything needed to
+    /// compile the function.
+    pub fn extract_reachable(&mut self, data: &FunctionData) -> FunctionTable {
         let mut subtable = FunctionTable::new();
-        if let Some(nested_function_ids) = &data.nested_function_ids {
-            for id in nested_function_ids {
-                self.transfer(*id, &mut subtable, scopes);
+        // Walk parameters first (default values can contain functions).
+        for param in &data.parameters {
+            if let Some(ref default) = param.default_value {
+                self.collect_from_expression(default, &mut subtable);
             }
-        } else {
-            // Synthetic function wrappers created during codegen (for example
-            // class field initializers) do not come from the parser's function
-            // context stack, so keep the structural scan for those rare cases.
-            for param in &data.parameters {
-                if let Some(ref default) = param.default_value {
-                    self.collect_from_expression(default, &mut subtable, scopes);
-                }
-                if let FunctionParameterBinding::BindingPattern(ref pat) = param.binding {
-                    self.collect_from_pattern(pat, &mut subtable, scopes);
-                }
+            if let FunctionParameterBinding::BindingPattern(ref pat) = param.binding {
+                self.collect_from_pattern(pat, &mut subtable);
             }
-            self.collect_from_statement(&data.body, &mut subtable, scopes);
         }
+        self.collect_from_statement(&data.body, &mut subtable);
         subtable
     }
 
-    fn transfer(&mut self, id: FunctionId, result: &mut FunctionTable, scopes: &ScopeArena) {
+    fn transfer(&mut self, id: FunctionId, result: &mut FunctionTable) {
         if let Some(data) = self.try_take(id) {
-            if let Some(nested_function_ids) = &data.nested_function_ids {
-                for id in nested_function_ids {
-                    self.transfer(*id, result, scopes);
+            // Walk parameters (default values / binding patterns can contain functions).
+            for param in &data.parameters {
+                if let Some(ref default) = param.default_value {
+                    self.collect_from_expression(default, result);
                 }
-            } else {
-                for param in &data.parameters {
-                    if let Some(ref default) = param.default_value {
-                        self.collect_from_expression(default, result, scopes);
-                    }
-                    if let FunctionParameterBinding::BindingPattern(ref pat) = param.binding {
-                        self.collect_from_pattern(pat, result, scopes);
-                    }
+                if let FunctionParameterBinding::BindingPattern(ref pat) = param.binding {
+                    self.collect_from_pattern(pat, result);
                 }
-                self.collect_from_statement(&data.body, result, scopes);
             }
+            // Walk the function body.
+            self.collect_from_statement(&data.body, result);
             result.insert_at(id, data);
         }
     }
 
-    fn collect_from_statement(&mut self, stmt: &Statement, result: &mut FunctionTable, scopes: &ScopeArena) {
+    fn collect_from_statement(&mut self, stmt: &Statement, result: &mut FunctionTable) {
         match &stmt.inner {
-            StatementKind::FunctionDeclaration(data) => {
-                self.transfer(data.function_id, result, scopes);
+            StatementKind::FunctionDeclaration { function_id, .. } => {
+                self.transfer(*function_id, result);
             }
-            StatementKind::Expression(expr) => self.collect_from_expression(expr, result, scopes),
+            StatementKind::Expression(expr) => self.collect_from_expression(expr, result),
             StatementKind::Block(scope) | StatementKind::FunctionBody { scope, .. } => {
-                for child in &scopes[*scope].children {
-                    self.collect_from_statement(child, result, scopes);
+                for child in &scope.borrow().children {
+                    self.collect_from_statement(child, result);
                 }
             }
             StatementKind::Program(data) => {
-                for child in &scopes[data.scope].children {
-                    self.collect_from_statement(child, result, scopes);
+                for child in &data.scope.borrow().children {
+                    self.collect_from_statement(child, result);
                 }
             }
-            StatementKind::If(data) => {
-                self.collect_from_expression(&data.test, result, scopes);
-                self.collect_from_statement(&data.consequent, result, scopes);
-                if let Some(alt) = &data.alternate {
-                    self.collect_from_statement(alt, result, scopes);
+            StatementKind::If {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.collect_from_expression(test, result);
+                self.collect_from_statement(consequent, result);
+                if let Some(alt) = alternate {
+                    self.collect_from_statement(alt, result);
                 }
             }
-            StatementKind::While(data) => {
-                self.collect_from_expression(&data.test, result, scopes);
-                self.collect_from_statement(&data.body, result, scopes);
+            StatementKind::While { test, body } => {
+                self.collect_from_expression(test, result);
+                self.collect_from_statement(body, result);
             }
-            StatementKind::DoWhile(data) => {
-                self.collect_from_statement(&data.body, result, scopes);
-                self.collect_from_expression(&data.test, result, scopes);
+            StatementKind::DoWhile { test, body } => {
+                self.collect_from_statement(body, result);
+                self.collect_from_expression(test, result);
             }
-            StatementKind::For(data) => {
-                if let Some(init) = &data.init {
+            StatementKind::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                if let Some(init) = init {
                     match init {
-                        ForInit::Expression(expr) => self.collect_from_expression(expr, result, scopes),
-                        ForInit::Declaration(decl) => self.collect_from_statement(decl, result, scopes),
+                        ForInit::Expression(expr) => self.collect_from_expression(expr, result),
+                        ForInit::Declaration(decl) => self.collect_from_statement(decl, result),
                     }
                 }
-                if let Some(test) = &data.test {
-                    self.collect_from_expression(test, result, scopes);
+                if let Some(test) = test {
+                    self.collect_from_expression(test, result);
                 }
-                if let Some(update) = &data.update {
-                    self.collect_from_expression(update, result, scopes);
+                if let Some(update) = update {
+                    self.collect_from_expression(update, result);
                 }
-                self.collect_from_statement(&data.body, result, scopes);
+                self.collect_from_statement(body, result);
             }
-            StatementKind::ForInOf(data) => {
-                match &data.lhs {
-                    ForInOfLhs::Declaration(decl) => self.collect_from_statement(decl, result, scopes),
-                    ForInOfLhs::Expression(expr) => self.collect_from_expression(expr, result, scopes),
-                    ForInOfLhs::Pattern(pattern) => self.collect_from_pattern(pattern, result, scopes),
+            StatementKind::ForInOf { lhs, rhs, body, .. } => {
+                match lhs {
+                    ForInOfLhs::Declaration(decl) => self.collect_from_statement(decl, result),
+                    ForInOfLhs::Expression(expr) => self.collect_from_expression(expr, result),
+                    ForInOfLhs::Pattern(pattern) => self.collect_from_pattern(pattern, result),
                 }
-                self.collect_from_expression(&data.rhs, result, scopes);
-                self.collect_from_statement(&data.body, result, scopes);
+                self.collect_from_expression(rhs, result);
+                self.collect_from_statement(body, result);
             }
             StatementKind::Switch(data) => {
-                self.collect_from_expression(&data.discriminant, result, scopes);
+                self.collect_from_expression(&data.discriminant, result);
                 for case in &data.cases {
                     if let Some(ref test) = case.test {
-                        self.collect_from_expression(test, result, scopes);
+                        self.collect_from_expression(test, result);
                     }
-                    for child in &scopes[case.scope].children {
-                        self.collect_from_statement(child, result, scopes);
+                    for child in &case.scope.borrow().children {
+                        self.collect_from_statement(child, result);
                     }
                 }
             }
-            StatementKind::With(data) => {
-                self.collect_from_expression(&data.object, result, scopes);
-                self.collect_from_statement(&data.body, result, scopes);
+            StatementKind::With { object, body } => {
+                self.collect_from_expression(object, result);
+                self.collect_from_statement(body, result);
             }
-            StatementKind::Labelled(data) => {
-                self.collect_from_statement(&data.item, result, scopes);
+            StatementKind::Labelled { item, .. } => {
+                self.collect_from_statement(item, result);
             }
             StatementKind::Return(arg) => {
                 if let Some(expr) = arg {
-                    self.collect_from_expression(expr, result, scopes);
+                    self.collect_from_expression(expr, result);
                 }
             }
             StatementKind::Throw(expr) => {
-                self.collect_from_expression(expr, result, scopes);
+                self.collect_from_expression(expr, result);
             }
             StatementKind::Try(data) => {
-                self.collect_from_statement(&data.block, result, scopes);
+                self.collect_from_statement(&data.block, result);
                 if let Some(ref handler) = data.handler {
                     if let Some(CatchBinding::BindingPattern(ref pat)) = handler.parameter {
-                        self.collect_from_pattern(pat, result, scopes);
+                        self.collect_from_pattern(pat, result);
                     }
-                    self.collect_from_statement(&handler.body, result, scopes);
+                    self.collect_from_statement(&handler.body, result);
                 }
                 if let Some(ref finalizer) = data.finalizer {
-                    self.collect_from_statement(finalizer, result, scopes);
+                    self.collect_from_statement(finalizer, result);
                 }
             }
-            StatementKind::VariableDeclaration(data) => {
-                for decl in &data.declarations {
-                    self.collect_from_target(&decl.target, result, scopes);
+            StatementKind::VariableDeclaration { declarations, .. } => {
+                for decl in declarations {
+                    self.collect_from_target(&decl.target, result);
                     if let Some(ref init) = decl.init {
-                        self.collect_from_expression(init, result, scopes);
+                        self.collect_from_expression(init, result);
                     }
                 }
             }
-            StatementKind::UsingDeclaration(declarations) => {
-                for decl in declarations.iter() {
-                    self.collect_from_target(&decl.target, result, scopes);
+            StatementKind::UsingDeclaration { declarations } => {
+                for decl in declarations {
+                    self.collect_from_target(&decl.target, result);
                     if let Some(ref init) = decl.init {
-                        self.collect_from_expression(init, result, scopes);
+                        self.collect_from_expression(init, result);
                     }
                 }
             }
             StatementKind::ClassDeclaration(class_data) => {
-                self.collect_from_class(class_data, result, scopes);
+                self.collect_from_class(class_data, result);
             }
             StatementKind::Export(data) => {
                 if let Some(ref stmt) = data.statement {
-                    self.collect_from_statement(stmt, result, scopes);
+                    self.collect_from_statement(stmt, result);
                 }
             }
-            StatementKind::ClassFieldInitializer(data) => {
-                self.collect_from_expression(&data.expression, result, scopes);
+            StatementKind::ClassFieldInitializer { expression, .. } => {
+                self.collect_from_expression(expression, result);
             }
             StatementKind::Empty
             | StatementKind::Debugger
@@ -476,60 +278,62 @@ impl FunctionTable {
         }
     }
 
-    fn collect_from_expression(&mut self, expr: &Expression, result: &mut FunctionTable, scopes: &ScopeArena) {
+    fn collect_from_expression(&mut self, expr: &Expression, result: &mut FunctionTable) {
         match &expr.inner {
             ExpressionKind::Function(function_id) => {
-                self.transfer(*function_id, result, scopes);
+                self.transfer(*function_id, result);
             }
             ExpressionKind::Class(class_data) => {
-                self.collect_from_class(class_data, result, scopes);
+                self.collect_from_class(class_data, result);
             }
-            ExpressionKind::Binary(data) => {
-                self.collect_from_expression(&data.lhs, result, scopes);
-                self.collect_from_expression(&data.rhs, result, scopes);
-            }
-            ExpressionKind::Logical(data) => {
-                self.collect_from_expression(&data.lhs, result, scopes);
-                self.collect_from_expression(&data.rhs, result, scopes);
+            ExpressionKind::Binary { lhs, rhs, .. } | ExpressionKind::Logical { lhs, rhs, .. } => {
+                self.collect_from_expression(lhs, result);
+                self.collect_from_expression(rhs, result);
             }
             ExpressionKind::Unary { operand, .. } => {
-                self.collect_from_expression(operand, result, scopes);
+                self.collect_from_expression(operand, result);
             }
-            ExpressionKind::Update(data) => {
-                self.collect_from_expression(&data.argument, result, scopes);
+            ExpressionKind::Update { argument, .. } => {
+                self.collect_from_expression(argument, result);
             }
-            ExpressionKind::Assignment(data) => {
-                match &data.lhs {
-                    AssignmentLhs::Expression(expr) => self.collect_from_expression(expr, result, scopes),
-                    AssignmentLhs::Pattern(pat) => self.collect_from_pattern(pat, result, scopes),
+            ExpressionKind::Assignment { lhs, rhs, .. } => {
+                match lhs {
+                    AssignmentLhs::Expression(expr) => self.collect_from_expression(expr, result),
+                    AssignmentLhs::Pattern(pat) => self.collect_from_pattern(pat, result),
                 }
-                self.collect_from_expression(&data.rhs, result, scopes);
+                self.collect_from_expression(rhs, result);
             }
-            ExpressionKind::Conditional(data) => {
-                self.collect_from_expression(&data.test, result, scopes);
-                self.collect_from_expression(&data.consequent, result, scopes);
-                self.collect_from_expression(&data.alternate, result, scopes);
+            ExpressionKind::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.collect_from_expression(test, result);
+                self.collect_from_expression(consequent, result);
+                self.collect_from_expression(alternate, result);
             }
             ExpressionKind::Sequence(exprs) => {
-                for expr in exprs.iter() {
-                    self.collect_from_expression(expr, result, scopes);
+                for expr in exprs {
+                    self.collect_from_expression(expr, result);
                 }
             }
-            ExpressionKind::Member(data) => {
-                self.collect_from_expression(&data.object, result, scopes);
-                self.collect_from_expression(&data.property, result, scopes);
+            ExpressionKind::Member {
+                object, property, ..
+            } => {
+                self.collect_from_expression(object, result);
+                self.collect_from_expression(property, result);
             }
-            ExpressionKind::OptionalChain(data) => {
-                self.collect_from_expression(&data.base, result, scopes);
-                for reference in &data.references {
+            ExpressionKind::OptionalChain { base, references } => {
+                self.collect_from_expression(base, result);
+                for reference in references {
                     match reference {
                         OptionalChainReference::Call { arguments, .. } => {
                             for arg in arguments {
-                                self.collect_from_expression(&arg.value, result, scopes);
+                                self.collect_from_expression(&arg.value, result);
                             }
                         }
                         OptionalChainReference::ComputedReference { expression, .. } => {
-                            self.collect_from_expression(expression, result, scopes);
+                            self.collect_from_expression(expression, result);
                         }
                         OptionalChainReference::MemberReference { .. }
                         | OptionalChainReference::PrivateMemberReference { .. } => {}
@@ -537,50 +341,53 @@ impl FunctionTable {
                 }
             }
             ExpressionKind::Call(data) | ExpressionKind::New(data) => {
-                self.collect_from_expression(&data.callee, result, scopes);
+                self.collect_from_expression(&data.callee, result);
                 for arg in &data.arguments {
-                    self.collect_from_expression(&arg.value, result, scopes);
+                    self.collect_from_expression(&arg.value, result);
                 }
             }
             ExpressionKind::SuperCall(data) => {
                 for arg in &data.arguments {
-                    self.collect_from_expression(&arg.value, result, scopes);
+                    self.collect_from_expression(&arg.value, result);
                 }
             }
             ExpressionKind::Spread(expr) | ExpressionKind::Await(expr) => {
-                self.collect_from_expression(expr, result, scopes);
+                self.collect_from_expression(expr, result);
             }
             ExpressionKind::Array(elements) => {
                 for expr in elements.iter().flatten() {
-                    self.collect_from_expression(expr, result, scopes);
+                    self.collect_from_expression(expr, result);
                 }
             }
             ExpressionKind::Object(properties) => {
-                for prop in properties.iter() {
-                    self.collect_from_expression(&prop.key, result, scopes);
+                for prop in properties {
+                    self.collect_from_expression(&prop.key, result);
                     if let Some(ref val) = prop.value {
-                        self.collect_from_expression(val, result, scopes);
+                        self.collect_from_expression(val, result);
                     }
                 }
             }
             ExpressionKind::TemplateLiteral(data) => {
                 for expr in &data.expressions {
-                    self.collect_from_expression(expr, result, scopes);
+                    self.collect_from_expression(expr, result);
                 }
             }
-            ExpressionKind::TaggedTemplateLiteral(data) => {
-                self.collect_from_expression(&data.tag, result, scopes);
-                self.collect_from_expression(&data.template_literal, result, scopes);
+            ExpressionKind::TaggedTemplateLiteral {
+                tag,
+                template_literal,
+            } => {
+                self.collect_from_expression(tag, result);
+                self.collect_from_expression(template_literal, result);
             }
-            ExpressionKind::Yield(data) => {
-                if let Some(ref expr) = data.argument {
-                    self.collect_from_expression(expr, result, scopes);
+            ExpressionKind::Yield { argument, .. } => {
+                if let Some(expr) = argument {
+                    self.collect_from_expression(expr, result);
                 }
             }
-            ExpressionKind::ImportCall(data) => {
-                self.collect_from_expression(&data.specifier, result, scopes);
-                if let Some(ref opts) = data.options {
-                    self.collect_from_expression(opts, result, scopes);
+            ExpressionKind::ImportCall { specifier, options } => {
+                self.collect_from_expression(specifier, result);
+                if let Some(opts) = options {
+                    self.collect_from_expression(opts, result);
                 }
             }
             ExpressionKind::NumericLiteral(_)
@@ -598,50 +405,52 @@ impl FunctionTable {
         }
     }
 
-    fn collect_from_class(&mut self, class_data: &ClassData, result: &mut FunctionTable, scopes: &ScopeArena) {
+    fn collect_from_class(&mut self, class_data: &ClassData, result: &mut FunctionTable) {
         if let Some(ref super_class) = class_data.super_class {
-            self.collect_from_expression(super_class, result, scopes);
+            self.collect_from_expression(super_class, result);
         }
         if let Some(ref constructor) = class_data.constructor {
-            self.collect_from_expression(constructor, result, scopes);
+            self.collect_from_expression(constructor, result);
         }
         for element in &class_data.elements {
             match &element.inner {
                 ClassElement::Method { key, function, .. } => {
-                    self.collect_from_expression(key, result, scopes);
-                    self.collect_from_expression(function, result, scopes);
+                    self.collect_from_expression(key, result);
+                    self.collect_from_expression(function, result);
                 }
-                ClassElement::Field { key, initializer, .. } => {
-                    self.collect_from_expression(key, result, scopes);
+                ClassElement::Field {
+                    key, initializer, ..
+                } => {
+                    self.collect_from_expression(key, result);
                     if let Some(init) = initializer {
-                        self.collect_from_expression(init, result, scopes);
+                        self.collect_from_expression(init, result);
                     }
                 }
                 ClassElement::StaticInitializer { body } => {
-                    self.collect_from_statement(body, result, scopes);
+                    self.collect_from_statement(body, result);
                 }
             }
         }
     }
 
-    fn collect_from_pattern(&mut self, pattern: &BindingPattern, result: &mut FunctionTable, scopes: &ScopeArena) {
+    fn collect_from_pattern(&mut self, pattern: &BindingPattern, result: &mut FunctionTable) {
         for entry in &pattern.entries {
             if let Some(BindingEntryName::Expression(expr)) = entry.name.as_ref() {
-                self.collect_from_expression(expr, result, scopes);
+                self.collect_from_expression(expr, result);
             }
             if let Some(ref alias) = entry.alias {
                 match alias {
                     BindingEntryAlias::BindingPattern(sub) => {
-                        self.collect_from_pattern(sub, result, scopes);
+                        self.collect_from_pattern(sub, result);
                     }
                     BindingEntryAlias::MemberExpression(expr) => {
-                        self.collect_from_expression(expr, result, scopes);
+                        self.collect_from_expression(expr, result);
                     }
                     BindingEntryAlias::Identifier(_) => {}
                 }
             }
             if let Some(ref init) = entry.initializer {
-                self.collect_from_expression(init, result, scopes);
+                self.collect_from_expression(init, result);
             }
         }
     }
@@ -650,24 +459,18 @@ impl FunctionTable {
         &mut self,
         target: &VariableDeclaratorTarget,
         result: &mut FunctionTable,
-        scopes: &ScopeArena,
     ) {
         if let VariableDeclaratorTarget::BindingPattern(pat) = target {
-            self.collect_from_pattern(pat, result, scopes);
+            self.collect_from_pattern(pat, result);
         }
     }
 }
 
 /// Bundles a `FunctionData` with a subtable of all nested functions
 /// reachable from its body. Stored as the raw pointer in C++ SFDs.
-#[derive(Clone)]
 pub struct FunctionPayload {
     pub data: FunctionData,
     pub function_table: FunctionTable,
-    /// Shared access to the program-wide identifier/scope/string tables.
-    /// Each lazy-compile SFD carries an Arc clone so it can resolve its
-    /// identifier IDs without depending on a parent generator.
-    pub arena: Arc<AstArena>,
 }
 
 // =============================================================================
@@ -761,7 +564,7 @@ impl Utf16String {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct Position {
     pub line: u32,
     pub column: u32,
@@ -932,36 +735,35 @@ pub enum LocalType {
 
 /// An identifier reference or binding name.
 ///
-/// Scope analysis writes the resolution fields via `&mut arena.identifiers[id]`
-/// during analyze(); after that the arena is logically frozen and these
-/// fields are read-only.
+/// Scope analysis results are stored in `Cell` fields because the scope
+/// collector writes them after parsing through shared references.
 #[derive(Clone, Debug)]
 pub struct Identifier {
     pub range: SourceRange,
-    pub name: StringId,
+    pub name: Utf16String,
     // Scope analysis results — set by scope collector after parsing.
-    pub local_type: Option<LocalType>,
-    pub local_index: u32,
-    pub is_global: bool,
-    pub is_inside_scope_with_eval: bool,
-    pub declaration_kind: Option<DeclarationKind>,
+    pub local_type: Cell<Option<LocalType>>,
+    pub local_index: Cell<u32>,
+    pub is_global: Cell<bool>,
+    pub is_inside_scope_with_eval: Cell<bool>,
+    pub declaration_kind: Cell<Option<DeclarationKind>>,
 }
 
 impl Identifier {
-    pub fn new(range: SourceRange, name: StringId) -> Self {
+    pub fn new(range: SourceRange, name: Utf16String) -> Self {
         Self {
             range,
             name,
-            local_type: None,
-            local_index: 0,
-            is_global: false,
-            is_inside_scope_with_eval: false,
-            declaration_kind: None,
+            local_type: Cell::new(None),
+            local_index: Cell::new(0),
+            is_global: Cell::new(false),
+            is_inside_scope_with_eval: Cell::new(false),
+            declaration_kind: Cell::new(None),
         }
     }
 
     pub fn is_local(&self) -> bool {
-        self.local_type.is_some()
+        self.local_type.get().is_some()
     }
 }
 
@@ -997,14 +799,14 @@ pub struct FunctionParameter {
 
 #[derive(Clone, Debug)]
 pub enum FunctionParameterBinding {
-    Identifier(IdentifierId),
+    Identifier(Rc<Identifier>),
     BindingPattern(BindingPattern),
 }
 
 /// Shared data for FunctionDeclaration and FunctionExpression.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct FunctionData {
-    pub name: Option<IdentifierId>,
+    pub name: Option<Rc<Identifier>>,
     pub source_text_start: u32,
     pub source_text_end: u32,
     pub body: Box<Statement>,
@@ -1014,12 +816,6 @@ pub struct FunctionData {
     pub is_strict_mode: bool,
     pub is_arrow_function: bool,
     pub parsing_insights: FunctionParsingInsights,
-    /// Parser-created functions know their nested function ids up front, so
-    /// lazy-compile payload extraction can move only that subtree instead of
-    /// re-walking the full body. `None` is reserved for synthetic function
-    /// wrappers built during codegen, where the old structural scan is still
-    /// needed to discover nested functions inside the wrapped AST.
-    pub nested_function_ids: Option<Vec<FunctionId>>,
 }
 
 // =============================================================================
@@ -1029,7 +825,7 @@ pub struct FunctionData {
 /// Shared data for ClassDeclaration and ClassExpression.
 #[derive(Clone, Debug)]
 pub struct ClassData {
-    pub name: Option<IdentifierId>,
+    pub name: Option<Rc<Identifier>>,
     pub source_text_start: u32,
     pub source_text_end: u32,
     pub constructor: Option<Box<Expression>>,
@@ -1112,7 +908,7 @@ pub struct BindingEntry {
 /// - `Expression`: computed property key (`{ [expression]: x }`)
 #[derive(Clone, Debug)]
 pub enum BindingEntryName {
-    Identifier(IdentifierId),
+    Identifier(Rc<Identifier>),
     Expression(Box<Expression>),
 }
 
@@ -1123,7 +919,7 @@ pub enum BindingEntryName {
 /// - `MemberExpression`: assignment target (`{ x: obj.property }`)
 #[derive(Clone, Debug)]
 pub enum BindingEntryAlias {
-    Identifier(IdentifierId),
+    Identifier(Rc<Identifier>),
     BindingPattern(Box<BindingPattern>),
     MemberExpression(Box<Expression>),
 }
@@ -1141,7 +937,7 @@ pub struct VariableDeclarator {
 
 #[derive(Clone, Debug)]
 pub enum VariableDeclaratorTarget {
-    Identifier(IdentifierId),
+    Identifier(Rc<Identifier>),
     BindingPattern(BindingPattern),
 }
 
@@ -1214,7 +1010,7 @@ pub enum OptionalChainReference {
         mode: OptionalChainMode,
     },
     MemberReference {
-        identifier: IdentifierId,
+        identifier: Rc<Identifier>,
         mode: OptionalChainMode,
     },
     PrivateMemberReference {
@@ -1243,33 +1039,31 @@ unsafe extern "C" {
 
 /// Handle to a compiled regex from C++.
 ///
-/// Wrapped in `Arc` in `RegExpLiteralData` so that AST clones (e.g. for
+/// Wrapped in `Rc` in `RegExpLiteralData` so that AST clones (e.g. for
 /// class field initializers) share the handle cheaply. The first codegen
 /// path to call `take()` gets the handle; `Drop` frees it if untaken.
-/// Uses `AtomicPtr` so the regex can be safely shared across threads
-/// during background compile of sibling functions.
-pub struct CompiledRegex(AtomicPtr<c_void>);
+pub struct CompiledRegex(Cell<*mut c_void>);
 
 impl CompiledRegex {
     pub fn new(ptr: *mut c_void) -> Self {
-        Self(AtomicPtr::new(ptr))
+        Self(Cell::new(ptr))
     }
 
     /// Take ownership of the compiled regex handle, leaving null behind
     /// so the destructor won't free it.
     pub fn take(&self) -> *mut c_void {
-        self.0.swap(std::ptr::null_mut(), Ordering::AcqRel)
+        self.0.replace(std::ptr::null_mut())
     }
 
     /// Set the compiled regex handle (used by deferred compilation).
     pub fn set(&self, ptr: *mut c_void) {
-        self.0.store(ptr, Ordering::Release);
+        self.0.set(ptr);
     }
 }
 
 impl Drop for CompiledRegex {
     fn drop(&mut self) {
-        let ptr = *self.0.get_mut();
+        let ptr = self.0.get();
         if !ptr.is_null() {
             unsafe { rust_free_compiled_regex(ptr) };
         }
@@ -1278,7 +1072,7 @@ impl Drop for CompiledRegex {
 
 impl fmt::Debug for CompiledRegex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "CompiledRegex({:p})", self.0.load(Ordering::Acquire))
+        write!(f, "CompiledRegex({:p})", self.0.get())
     }
 }
 
@@ -1286,7 +1080,7 @@ impl fmt::Debug for CompiledRegex {
 pub struct RegExpLiteralData {
     pub pattern: Utf16String,
     pub flags: Utf16String,
-    pub compiled_regex: Arc<CompiledRegex>,
+    pub compiled_regex: Rc<CompiledRegex>,
 }
 
 // =============================================================================
@@ -1309,7 +1103,7 @@ pub struct CatchClause {
 
 #[derive(Clone, Debug)]
 pub enum CatchBinding {
-    Identifier(IdentifierId),
+    Identifier(Rc<Identifier>),
     BindingPattern(BindingPattern),
 }
 
@@ -1319,7 +1113,7 @@ pub enum CatchBinding {
 
 #[derive(Clone, Debug)]
 pub struct SwitchStatementData {
-    pub scope: ScopeId,
+    pub scope: Rc<RefCell<ScopeData>>,
     pub discriminant: Box<Expression>,
     pub cases: Vec<SwitchCase>,
 }
@@ -1327,7 +1121,7 @@ pub struct SwitchStatementData {
 #[derive(Clone, Debug)]
 pub struct SwitchCase {
     pub range: SourceRange,
-    pub scope: ScopeId,
+    pub scope: Rc<RefCell<ScopeData>>,
     pub test: Option<Expression>,
 }
 
@@ -1449,12 +1243,11 @@ pub struct LocalVariable {
 /// Data shared by all scope-bearing nodes (Program, BlockStatement,
 /// FunctionBody, SwitchStatement, SwitchCase).
 ///
-/// AST nodes refer to scopes via `ScopeId` indices into `ScopeArena`,
-/// so the AST itself is plain data — no `Rc`/`RefCell` and naturally
-/// `Send + Sync` once parsing is done. The scope collector's two-phase
-/// design (build tree during parse, analyze bottom-up afterwards)
-/// ensures only one mutable borrow of a given `ScopeData` is ever
-/// live at a time.
+/// Wrapped in `Rc<RefCell<...>>` for interior mutability during the
+/// scope collector's analysis phase. Borrow safety: the scope
+/// collector's two-phase design (build tree during parsing, then
+/// analyze bottom-up) ensures borrows never overlap — the analysis
+/// phase only borrows one scope at a time in a bottom-up traversal.
 #[derive(Clone, Debug, Default)]
 pub struct ScopeData {
     pub children: Vec<Statement>,
@@ -1470,6 +1263,19 @@ pub struct ScopeData {
     pub uses_this_from_environment: bool,
     pub contains_direct_call_to_eval: bool,
     pub contains_access_to_arguments_object: bool,
+}
+
+impl ScopeData {
+    pub fn new_shared() -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self::default()))
+    }
+
+    pub fn shared_with_children(children: Vec<Statement>) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self {
+            children,
+            ..Default::default()
+        }))
+    }
 }
 
 /// Scope analysis data for function bodies, populated by the scope collector.
@@ -1510,77 +1316,6 @@ pub struct VarToInit {
 }
 
 // =============================================================================
-// Expression data structs (boxed variants)
-// =============================================================================
-
-#[derive(Clone, Debug)]
-pub struct BinaryExprData {
-    pub op: BinaryOp,
-    pub lhs: Box<Expression>,
-    pub rhs: Box<Expression>,
-}
-
-#[derive(Clone, Debug)]
-pub struct LogicalExprData {
-    pub op: LogicalOp,
-    pub lhs: Box<Expression>,
-    pub rhs: Box<Expression>,
-}
-
-#[derive(Clone, Debug)]
-pub struct UpdateExprData {
-    pub op: UpdateOp,
-    pub argument: Box<Expression>,
-    pub prefixed: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct AssignmentExprData {
-    pub op: AssignmentOp,
-    pub lhs: AssignmentLhs,
-    pub rhs: Box<Expression>,
-    pub lhs_is_parenthesized: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct ConditionalExprData {
-    pub test: Box<Expression>,
-    pub consequent: Box<Expression>,
-    pub alternate: Box<Expression>,
-}
-
-#[derive(Clone, Debug)]
-pub struct MemberExprData {
-    pub object: Box<Expression>,
-    pub property: Box<Expression>,
-    pub computed: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct OptionalChainData {
-    pub base: Box<Expression>,
-    pub references: Vec<OptionalChainReference>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TaggedTemplateData {
-    pub tag: Box<Expression>,
-    pub template_literal: Box<Expression>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ImportCallData {
-    pub specifier: Box<Expression>,
-    pub options: Option<Box<Expression>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct YieldExprData {
-    pub argument: Option<Box<Expression>>,
-    pub is_yield_from: bool,
-}
-
-// =============================================================================
 // Expression enum
 // =============================================================================
 
@@ -1588,33 +1323,63 @@ pub struct YieldExprData {
 pub enum ExpressionKind {
     // Literals
     NumericLiteral(f64),
-    StringLiteral(Box<Utf16String>),
+    StringLiteral(Utf16String),
     BooleanLiteral(bool),
     NullLiteral,
-    BigIntLiteral(Box<Utf16String>),
-    RegExpLiteral(Box<RegExpLiteralData>),
+    BigIntLiteral(String),
+    RegExpLiteral(RegExpLiteralData),
 
     // Identifiers
-    Identifier(IdentifierId),
-    PrivateIdentifier(Box<PrivateIdentifier>),
+    Identifier(Rc<Identifier>),
+    PrivateIdentifier(PrivateIdentifier),
 
     // Operators
-    Binary(Box<BinaryExprData>),
-    Logical(Box<LogicalExprData>),
-    Unary { op: UnaryOp, operand: Box<Expression> },
-    Update(Box<UpdateExprData>),
-    Assignment(Box<AssignmentExprData>),
-    Conditional(Box<ConditionalExprData>),
-    Sequence(Box<Vec<Expression>>),
+    Binary {
+        op: BinaryOp,
+        lhs: Box<Expression>,
+        rhs: Box<Expression>,
+    },
+    Logical {
+        op: LogicalOp,
+        lhs: Box<Expression>,
+        rhs: Box<Expression>,
+    },
+    Unary {
+        op: UnaryOp,
+        operand: Box<Expression>,
+    },
+    Update {
+        op: UpdateOp,
+        argument: Box<Expression>,
+        prefixed: bool,
+    },
+    Assignment {
+        op: AssignmentOp,
+        lhs: AssignmentLhs,
+        rhs: Box<Expression>,
+    },
+    Conditional {
+        test: Box<Expression>,
+        consequent: Box<Expression>,
+        alternate: Box<Expression>,
+    },
+    Sequence(Vec<Expression>),
 
     // Member access
-    Member(Box<MemberExprData>),
-    OptionalChain(Box<OptionalChainData>),
+    Member {
+        object: Box<Expression>,
+        property: Box<Expression>,
+        computed: bool,
+    },
+    OptionalChain {
+        base: Box<Expression>,
+        references: Vec<OptionalChainReference>,
+    },
 
     // Calls
-    Call(Box<CallExpressionData>),
-    New(Box<CallExpressionData>),
-    SuperCall(Box<SuperCallData>),
+    Call(CallExpressionData),
+    New(CallExpressionData),
+    SuperCall(SuperCallData),
 
     // Spread
     Spread(Box<Expression>),
@@ -1630,88 +1395,32 @@ pub enum ExpressionKind {
     Class(Box<ClassData>),
 
     // Collections
-    Array(Box<Vec<Option<Expression>>>),
-    Object(Box<Vec<ObjectProperty>>),
+    Array(Vec<Option<Expression>>),
+    Object(Vec<ObjectProperty>),
 
     // Templates
-    TemplateLiteral(Box<TemplateLiteralData>),
-    TaggedTemplateLiteral(Box<TaggedTemplateData>),
+    TemplateLiteral(TemplateLiteralData),
+    TaggedTemplateLiteral {
+        tag: Box<Expression>,
+        template_literal: Box<Expression>,
+    },
 
     // Meta
     MetaProperty(MetaPropertyType),
-    ImportCall(Box<ImportCallData>),
+    ImportCall {
+        specifier: Box<Expression>,
+        options: Option<Box<Expression>>,
+    },
 
     // Async / Generator
-    Yield(Box<YieldExprData>),
+    Yield {
+        argument: Option<Box<Expression>>,
+        is_yield_from: bool,
+    },
     Await(Box<Expression>),
 
     // Error recovery
     Error,
-}
-
-// =============================================================================
-// Statement data structs
-// =============================================================================
-
-#[derive(Clone, Debug)]
-pub struct IfStatementData {
-    pub test: Box<Expression>,
-    pub consequent: Box<Statement>,
-    pub alternate: Option<Box<Statement>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct WhileStatementData {
-    pub test: Box<Expression>,
-    pub body: Box<Statement>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ForStatementData {
-    pub init: Option<ForInit>,
-    pub test: Option<Box<Expression>>,
-    pub update: Option<Box<Expression>>,
-    pub body: Box<Statement>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ForInOfStatementData {
-    pub kind: ForInOfKind,
-    pub lhs: ForInOfLhs,
-    pub rhs: Box<Expression>,
-    pub body: Box<Statement>,
-}
-
-#[derive(Clone, Debug)]
-pub struct WithStatementData {
-    pub object: Box<Expression>,
-    pub body: Box<Statement>,
-}
-
-#[derive(Clone, Debug)]
-pub struct LabelledStatementData {
-    pub label: Utf16String,
-    pub item: Box<Statement>,
-}
-
-#[derive(Clone, Debug)]
-pub struct VariableDeclarationData {
-    pub kind: DeclarationKind,
-    pub declarations: Vec<VariableDeclarator>,
-}
-
-#[derive(Clone, Debug)]
-pub struct FunctionDeclarationData {
-    pub function_id: FunctionId,
-    pub name: Option<IdentifierId>,
-    pub kind: FunctionKind,
-    pub is_hoisted: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct ClassFieldInitializerData {
-    pub expression: Box<Expression>,
-    pub field_name: Utf16String,
 }
 
 // =============================================================================
@@ -1727,61 +1436,86 @@ pub enum StatementKind {
     Debugger,
 
     // Blocks (carry ScopeData for scope analysis)
-    Block(ScopeId),
-    FunctionBody { scope: ScopeId, in_strict_mode: bool },
-    Program(Box<ProgramData>),
+    Block(Rc<RefCell<ScopeData>>),
+    FunctionBody {
+        scope: Rc<RefCell<ScopeData>>,
+        in_strict_mode: bool,
+    },
+    Program(ProgramData),
 
     // Control flow
-    If(Box<IfStatementData>),
-    While(Box<WhileStatementData>),
-    DoWhile(Box<WhileStatementData>),
-    For(Box<ForStatementData>),
-    ForInOf(Box<ForInOfStatementData>),
-    Switch(Box<SwitchStatementData>),
-    With(Box<WithStatementData>),
-    Labelled(Box<LabelledStatementData>),
+    If {
+        test: Box<Expression>,
+        consequent: Box<Statement>,
+        alternate: Option<Box<Statement>>,
+    },
+    While {
+        test: Box<Expression>,
+        body: Box<Statement>,
+    },
+    DoWhile {
+        test: Box<Expression>,
+        body: Box<Statement>,
+    },
+    For {
+        init: Option<ForInit>,
+        test: Option<Box<Expression>>,
+        update: Option<Box<Expression>>,
+        body: Box<Statement>,
+    },
+    ForInOf {
+        kind: ForInOfKind,
+        lhs: ForInOfLhs,
+        rhs: Box<Expression>,
+        body: Box<Statement>,
+    },
+    Switch(SwitchStatementData),
+    With {
+        object: Box<Expression>,
+        body: Box<Statement>,
+    },
+    Labelled {
+        label: Utf16String,
+        item: Box<Statement>,
+    },
 
     // Jumps
-    Break { target_label: Option<Utf16String> },
-    Continue { target_label: Option<Utf16String> },
+    Break {
+        target_label: Option<Utf16String>,
+    },
+    Continue {
+        target_label: Option<Utf16String>,
+    },
     Return(Option<Box<Expression>>),
     Throw(Box<Expression>),
-    Try(Box<TryStatementData>),
+    Try(TryStatementData),
 
     // Declarations
-    VariableDeclaration(Box<VariableDeclarationData>),
-    UsingDeclaration(Box<Vec<VariableDeclarator>>),
-    FunctionDeclaration(Box<FunctionDeclarationData>),
+    VariableDeclaration {
+        kind: DeclarationKind,
+        declarations: Vec<VariableDeclarator>,
+    },
+    UsingDeclaration {
+        declarations: Vec<VariableDeclarator>,
+    },
+    FunctionDeclaration {
+        function_id: FunctionId,
+        name: Option<Rc<Identifier>>,
+        kind: FunctionKind,
+        is_hoisted: Cell<bool>,
+    },
     ClassDeclaration(Box<ClassData>),
     ErrorDeclaration,
 
     // Module
-    Import(Box<ImportStatementData>),
-    Export(Box<ExportStatementData>),
+    Import(ImportStatementData),
+    Export(ExportStatementData),
 
     // Special
-    ClassFieldInitializer(Box<ClassFieldInitializerData>),
-}
-
-impl StatementKind {
-    pub fn function_declaration_for_labelled_item(&self) -> Option<&FunctionDeclarationData> {
-        // https://tc39.es/ecma262/#sec-static-semantics-lexicallyscopeddeclarations
-        // LabelledItem : FunctionDeclaration
-        // 1. Return « |FunctionDeclaration| ».
-        match self {
-            StatementKind::FunctionDeclaration(function) => Some(function),
-            StatementKind::Labelled(data) => data.item.inner.function_declaration_for_labelled_item(),
-            _ => None,
-        }
-    }
-
-    pub fn function_declaration_for_labelled_item_mut(&mut self) -> Option<&mut FunctionDeclarationData> {
-        match self {
-            StatementKind::FunctionDeclaration(function) => Some(function),
-            StatementKind::Labelled(data) => data.item.inner.function_declaration_for_labelled_item_mut(),
-            _ => None,
-        }
-    }
+    ClassFieldInitializer {
+        expression: Box<Expression>,
+        field_name: Utf16String,
+    },
 }
 
 // =============================================================================
@@ -1790,7 +1524,7 @@ impl StatementKind {
 
 #[derive(Clone, Debug)]
 pub struct ProgramData {
-    pub scope: ScopeId,
+    pub scope: Rc<RefCell<ScopeData>>,
     pub program_type: ProgramType,
     pub is_strict_mode: bool,
     pub has_top_level_await: bool,

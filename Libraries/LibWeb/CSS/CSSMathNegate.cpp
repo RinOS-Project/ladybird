@@ -5,7 +5,8 @@
  */
 
 #include "CSSMathNegate.h"
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/CSSMathNegatePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
@@ -13,38 +14,44 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSMathNegate);
 
-GC::Ref<CSSMathNegate> CSSMathNegate::create(NumericType type, GC::Ref<CSSNumericValue> values)
+GC::Ref<CSSMathNegate> CSSMathNegate::create(JS::Realm& realm, NumericType type, GC::Ref<CSSNumericValue> values)
 {
-    return GC::Heap::the().allocate<CSSMathNegate>(move(type), move(values));
+    return realm.create<CSSMathNegate>(realm, move(type), move(values));
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-cssmathnegate-cssmathnegate
-GC::Ref<CSSMathNegate> CSSMathNegate::create_from_numberish(CSSNumberish value)
+GC::Ref<CSSMathNegate> CSSMathNegate::construct_impl(JS::Realm& realm, CSSNumberish value)
 {
     // The CSSMathNegate(arg) constructor must, when called, perform the following steps:
     // 1. Replace arg with the result of rectifying a numberish value for arg.
-    auto converted_value = rectify_a_numberish_value(value);
+    auto converted_value = rectify_a_numberish_value(realm, value);
 
     // 2. Return a new CSSMathNegate whose value internal slot is set to arg.
-    return CSSMathNegate::create(converted_value->type(), converted_value);
+    return CSSMathNegate::create(realm, converted_value->type(), converted_value);
 }
 
-CSSMathNegate::CSSMathNegate(NumericType type, GC::Ref<CSSNumericValue> values)
-    : CSSMathValue(CSSMathOperator::Negate, move(type))
+CSSMathNegate::CSSMathNegate(JS::Realm& realm, NumericType type, GC::Ref<CSSNumericValue> values)
+    : CSSMathValue(realm, Bindings::CSSMathOperator::Negate, move(type))
     , m_value(move(values))
 {
 }
 
 CSSMathNegate::~CSSMathNegate() = default;
 
-void CSSMathNegate::visit_edges(GC::Cell::Visitor& visitor)
+void CSSMathNegate::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSMathNegate);
+    Base::initialize(realm);
+}
+
+void CSSMathNegate::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_value);
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#serialize-a-cssmathvalue
-void CSSMathNegate::serialize_math_value(Utf16StringBuilder& s, Nested nested, Parens parens) const
+void CSSMathNegate::serialize_math_value(StringBuilder& s, Nested nested, Parens parens) const
 {
     // NB: Only steps 1 and 4 apply here.
     // 1. Let s initially be the empty string.
@@ -55,21 +62,21 @@ void CSSMathNegate::serialize_math_value(Utf16StringBuilder& s, Nested nested, P
         //    otherwise, append "calc(" to s.
         if (parens == Parens::With) {
             if (nested == Nested::Yes) {
-                s.append_ascii('(');
+                s.append('(');
             } else {
-                s.append_ascii("calc("sv);
+                s.append("calc("sv);
             }
         }
 
         // 2. Append "-" to s.
-        s.append_ascii('-');
+        s.append('-');
 
         // 3. Serialize this’s value internal slot with nested set to true, and append the result to s.
         m_value->serialize(s, { .nested = true });
 
         // 4. If paren-less is false, append ")" to s,
         if (parens == Parens::With)
-            s.append_ascii(')');
+            s.append(')');
 
         // 5. Return s.
     }
@@ -113,9 +120,9 @@ Optional<SumValue> CSSMathNegate::create_a_sum_value() const
     return values;
 }
 
-WebIDL::ExceptionOr<CalcNodeRef> CSSMathNegate::create_calculation_node(CalculationContext const& context) const
+WebIDL::ExceptionOr<NonnullRefPtr<CalculationNode const>> CSSMathNegate::create_calculation_node(CalculationContext const& context) const
 {
-    return CalcNodeRef::negate(TRY(m_value->create_calculation_node(context)));
+    return NegateCalculationNode::create(TRY(m_value->create_calculation_node(context)));
 }
 
 }

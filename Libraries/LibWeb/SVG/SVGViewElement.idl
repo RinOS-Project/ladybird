@@ -1,3 +1,6 @@
+#import <SVG/SVGGraphicsElement.idl>
+#import <SVG/SVGFitToViewBox.idl>
+
 // https://svgwg.org/svg2-draft/linking.html#InterfaceSVGViewElement
 [Exposed=Window]
 interface SVGViewElement : SVGElement {};

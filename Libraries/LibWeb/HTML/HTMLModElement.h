@@ -12,7 +12,7 @@
 namespace Web::HTML {
 
 class HTMLModElement final : public HTMLElement {
-    WEB_WRAPPABLE(HTMLModElement, HTMLElement);
+    WEB_PLATFORM_OBJECT(HTMLModElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLModElement);
 
 public:
@@ -22,6 +22,8 @@ public:
 
 private:
     HTMLModElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

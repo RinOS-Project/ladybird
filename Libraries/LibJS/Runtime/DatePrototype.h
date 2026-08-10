@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/PrototypeObject.h>
 
@@ -76,9 +75,9 @@ private:
 };
 
 ThrowCompletionOr<double> this_time_value(VM&, Value value);
-Utf16String time_string(double time);
-Utf16String date_string(double time);
-Utf16String time_zone_string(double time);
-Utf16String to_date_string(double time);
+ByteString time_string(double time);
+ByteString date_string(double time);
+ByteString time_zone_string(double time);
+ByteString to_date_string(double time);
 
 }

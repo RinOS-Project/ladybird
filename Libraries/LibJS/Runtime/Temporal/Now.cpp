@@ -1,11 +1,10 @@
 /*
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
- * Copyright (c) 2024-2026, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2024, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Time.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/Temporal/Instant.h>
 #include <LibJS/Runtime/Temporal/Now.h>
@@ -32,7 +31,7 @@ void Now::initialize(Realm& realm)
     auto& vm = this->vm();
 
     // 2.1.1 Temporal.Now [ %Symbol.toStringTag% ], https://tc39.es/proposal-temporal/#sec-temporal-now-%symbol.tostringtag%
-    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Temporal.Now"_utf16_fly_string), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Temporal.Now"_string), Attribute::Configurable);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.timeZoneId, time_zone_id, 0, attr);
@@ -47,8 +46,7 @@ void Now::initialize(Realm& realm)
 JS_DEFINE_NATIVE_FUNCTION(Now::time_zone_id)
 {
     // 1. Return SystemTimeZoneIdentifier().
-    auto time_zone = system_time_zone_identifier();
-    return PrimitiveString::create(vm, time_zone);
+    return PrimitiveString::create(vm, system_time_zone_identifier());
 }
 
 // 2.2.2 Temporal.Now.instant ( ), https://tc39.es/proposal-temporal/#sec-temporal.now.instant
@@ -70,14 +68,14 @@ JS_DEFINE_NATIVE_FUNCTION(Now::plain_date_time_iso)
     auto iso_date_time = TRY(system_date_time(vm, temporal_time_zone_like));
 
     // 2. Return ! CreateTemporalDateTime(isoDateTime, "iso8601").
-    return MUST(create_temporal_date_time(vm, iso_date_time, "iso8601"_utf16));
+    return MUST(create_temporal_date_time(vm, iso_date_time, "iso8601"_string));
 }
 
 // 2.2.4 Temporal.Now.zonedDateTimeISO ( [ temporalTimeZoneLike ] ), https://tc39.es/proposal-temporal/#sec-temporal.now.zoneddatetimeiso
 JS_DEFINE_NATIVE_FUNCTION(Now::zoned_date_time_iso)
 {
     auto temporal_time_zone_like = vm.argument(0);
-    Utf16String time_zone;
+    String time_zone;
 
     // 1. If temporalTimeZoneLike is undefined, then
     if (temporal_time_zone_like.is_undefined()) {
@@ -94,7 +92,7 @@ JS_DEFINE_NATIVE_FUNCTION(Now::zoned_date_time_iso)
     auto nanoseconds = system_utc_epoch_nanoseconds(vm);
 
     //  4. Return ! CreateTemporalZonedDateTime(ns, timeZone, "iso8601").
-    return MUST(create_temporal_zoned_date_time(vm, BigInt::create(vm, move(nanoseconds)), move(time_zone), "iso8601"_utf16));
+    return MUST(create_temporal_zoned_date_time(vm, BigInt::create(vm, move(nanoseconds)), move(time_zone), "iso8601"_string));
 }
 
 // 2.2.5 Temporal.Now.plainDateISO ( [ temporalTimeZoneLike ] ), https://tc39.es/proposal-temporal/#sec-temporal.now.plaindateiso
@@ -106,7 +104,7 @@ JS_DEFINE_NATIVE_FUNCTION(Now::plain_date_iso)
     auto iso_date_time = TRY(system_date_time(vm, temporal_time_zone_like));
 
     // 2. Return ! CreateTemporalDate(isoDateTime.[[ISODate]], "iso8601").
-    return MUST(create_temporal_date(vm, iso_date_time.iso_date, "iso8601"_utf16));
+    return MUST(create_temporal_date(vm, iso_date_time.iso_date, "iso8601"_string));
 }
 
 // 2.2.6 Temporal.Now.plainTimeISO ( [ temporalTimeZoneLike ] ), https://tc39.es/proposal-temporal/#sec-temporal.now.plaintimeiso
@@ -122,16 +120,16 @@ JS_DEFINE_NATIVE_FUNCTION(Now::plain_time_iso)
 }
 
 // 2.3.2 SystemUTCEpochMilliseconds ( ), https://tc39.es/proposal-temporal/#sec-temporal-systemutcepochmilliseconds
-double system_utc_epoch_milliseconds()
+double system_utc_epoch_milliseconds(VM& vm)
 {
     // 1. Let global be GetGlobalObject().
+    auto const& global = vm.get_global_object();
+
     // 2. Let nowNs be HostSystemUTCEpochNanoseconds(global).
-    // AD-HOC: Every caller of SystemUTCEpochMilliseconds is via Date.now and the Date constructor, which do not need
-    //         nanosecond precision. We can avoid unnecessary bigint math by returning milliseconds directly.
-    auto now_ns = AK::UnixDateTime::now().nanoseconds_since_epoch();
+    auto now_ns = vm.host_system_utc_epoch_nanoseconds(global);
 
     // 3. Return 𝔽(floor(nowNs / 10**6)).
-    return floor(now_ns / 1'000'000);
+    return big_floor(now_ns, NANOSECONDS_PER_MILLISECOND).to_double();
 }
 
 // 2.3.3 SystemUTCEpochNanoseconds ( ), https://tc39.es/proposal-temporal/#sec-temporal-systemutcepochnanoseconds
@@ -150,7 +148,7 @@ Crypto::SignedBigInteger system_utc_epoch_nanoseconds(VM& vm)
 // 2.3.4 SystemDateTime ( temporalTimeZoneLike ), https://tc39.es/proposal-temporal/#sec-temporal-systemdatetime
 ThrowCompletionOr<ISODateTime> system_date_time(VM& vm, Value temporal_time_zone_like)
 {
-    Utf16String time_zone;
+    String time_zone;
 
     // 1. If temporalTimeZoneLike is undefined, then
     if (temporal_time_zone_like.is_undefined()) {

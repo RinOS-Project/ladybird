@@ -4,20 +4,26 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/CloseEventPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/CloseEvent.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(CloseEvent);
 
-GC::Ref<CloseEvent> CloseEvent::create(Utf16FlyString const& event_name, CloseEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
+GC::Ref<CloseEvent> CloseEvent::create(JS::Realm& realm, FlyString const& event_name, CloseEventInit const& event_init)
 {
-    return GC::Heap::the().allocate<CloseEvent>(event_name, event_init, time_stamp);
+    return realm.create<CloseEvent>(realm, event_name, event_init);
 }
 
-CloseEvent::CloseEvent(Utf16FlyString const& event_name, CloseEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-    : DOM::Event(event_name, event_init, time_stamp)
+WebIDL::ExceptionOr<GC::Ref<CloseEvent>> CloseEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, CloseEventInit const& event_init)
+{
+    return create(realm, event_name, event_init);
+}
+
+CloseEvent::CloseEvent(JS::Realm& realm, FlyString const& event_name, CloseEventInit const& event_init)
+    : DOM::Event(realm, event_name, event_init)
     , m_was_clean(event_init.was_clean)
     , m_code(event_init.code)
     , m_reason(event_init.reason)
@@ -25,5 +31,11 @@ CloseEvent::CloseEvent(Utf16FlyString const& event_name, CloseEventInit const& e
 }
 
 CloseEvent::~CloseEvent() = default;
+
+void CloseEvent::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CloseEvent);
+    Base::initialize(realm);
+}
 
 }

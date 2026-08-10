@@ -18,14 +18,13 @@ ValueComparingNonnullRefPtr<GridTrackPlacementStyleValue const> GridTrackPlaceme
 
 void GridTrackPlacementStyleValue::serialize(StringBuilder& builder, SerializationMode mode) const
 {
-    grid_track_placement().serialize(builder, mode);
+    m_grid_track_placement.serialize(builder, mode);
 }
 
 ValueComparingNonnullRefPtr<StyleValue const> GridTrackPlacementStyleValue::absolutized(ComputationContext const& context) const
 {
-    auto grid_track_placement = this->grid_track_placement();
-    auto absolutized_placement = grid_track_placement.absolutized(context);
-    if (absolutized_placement == grid_track_placement)
+    auto absolutized_placement = m_grid_track_placement.absolutized(context);
+    if (absolutized_placement == m_grid_track_placement)
         return *this;
     return create(move(absolutized_placement));
 }

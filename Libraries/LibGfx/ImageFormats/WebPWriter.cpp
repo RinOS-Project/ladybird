@@ -7,7 +7,6 @@
 // Container: https://developers.google.com/speed/webp/docs/riff_container
 
 #include <AK/BitStream.h>
-#include <AK/ByteBuffer.h>
 #include <AK/Debug.h>
 #include <AK/Endian.h>
 #include <AK/MemoryStream.h>

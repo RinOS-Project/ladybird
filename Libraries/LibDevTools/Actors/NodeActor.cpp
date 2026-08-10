@@ -17,7 +17,7 @@
 namespace DevTools {
 
 struct AttributeModification {
-    Optional<Utf16FlyString> attribute_to_replace;
+    Optional<String> attribute_to_replace;
     Vector<WebView::Attribute> replacement_attributes;
 };
 static AttributeModification parse_attribute_modification(JsonArray const& modifications)
@@ -25,10 +25,10 @@ static AttributeModification parse_attribute_modification(JsonArray const& modif
     if (modifications.is_empty())
         return {};
 
-    Optional<Utf16FlyString> attribute_to_replace;
+    Optional<String> attribute_to_replace;
     Vector<WebView::Attribute> replacement_attributes;
 
-    auto parse_modification = [&](JsonValue const& modification) -> Variant<Empty, Utf16FlyString, WebView::Attribute> {
+    auto parse_modification = [&](JsonValue const& modification) -> Variant<Empty, String, WebView::Attribute> {
         if (!modification.is_object())
             return {};
 
@@ -38,9 +38,9 @@ static AttributeModification parse_attribute_modification(JsonArray const& modif
 
         auto value = modification.as_object().get_string("newValue"sv);
         if (!value.has_value())
-            return Utf16FlyString::from_utf8(*name);
+            return *name;
 
-        return WebView::Attribute { Utf16FlyString::from_utf8(*name), Utf16String::from_utf8(*value) };
+        return WebView::Attribute { *name, *value };
     };
 
     auto modification = parse_modification(modifications.at(0));
@@ -48,7 +48,7 @@ static AttributeModification parse_attribute_modification(JsonArray const& modif
         return {};
 
     modification.visit(
-        [&](Utf16FlyString& name) { attribute_to_replace = move(name); },
+        [&](String& name) { attribute_to_replace = move(name); },
         [&](WebView::Attribute& attribute) { replacement_attributes.append(move(attribute)); },
         [](Empty) { VERIFY_NOT_REACHED(); });
 

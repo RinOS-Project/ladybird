@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/DefaultDelete.h>
 #include <AK/SinglyLinkedListSizePolicy.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Types.h>
@@ -57,8 +58,9 @@ class StringView;
 class UnixDateTime;
 class Utf16FlyString;
 class Utf16String;
-class Utf16StringBuilder;
 class Utf16View;
+class Utf32CodePointIterator;
+class Utf32View;
 class Utf8CodePointIterator;
 class Utf8View;
 
@@ -112,11 +114,14 @@ class HashMap;
 template<typename K, typename V, typename KeyTraits = Traits<K>, typename ValueTraits = Traits<V>>
 using OrderedHashMap = HashMap<K, V, KeyTraits, ValueTraits, true>;
 
-template<typename... Ts>
+template<typename T>
 class Badge;
 
 template<typename T>
 class FixedArray;
+
+template<size_t precision, typename Underlying = i32>
+class FixedPoint;
 
 template<typename>
 class Function;
@@ -148,7 +153,7 @@ class Optional<FlyString>;
 template<typename T>
 class RefPtr;
 
-template<typename T>
+template<typename T, typename TDeleter = DefaultDelete<T>>
 class OwnPtr;
 
 template<typename T>
@@ -230,6 +235,8 @@ using AK::Utf16FlyString;
 using AK::Utf16GenericLexer;
 using AK::Utf16String;
 using AK::Utf16View;
+using AK::Utf32CodePointIterator;
+using AK::Utf32View;
 using AK::Utf8CodePointIterator;
 using AK::Utf8View;
 using AK::ValueComparingNonnullRefPtr;

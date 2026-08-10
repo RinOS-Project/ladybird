@@ -8,7 +8,6 @@
 #pragma once
 
 #include <AK/BitStream.h>
-#include <AK/ByteBuffer.h>
 #include <AK/Concepts.h>
 #include <AK/Debug.h>
 #include <AK/Format.h>
@@ -91,9 +90,10 @@ protected:
 template<InputBitStream InputStream>
 class LzwDecompressor : private Details::LzwState {
 public:
-    LzwDecompressor(MaybeOwned<InputStream> lzw_stream, u8 min_code_size, i32 offset_for_size_change = 0)
+    explicit LzwDecompressor(MaybeOwned<InputStream> lzw_stream, u8 min_code_size, i32 offset_for_size_change = 0)
         : LzwState(min_code_size, offset_for_size_change)
         , m_bit_stream(move(lzw_stream))
+
     {
     }
 
@@ -109,15 +109,7 @@ public:
         u16 const end_of_data_code = lzw_decompressor.add_control_code();
 
         while (true) {
-            // Some encoders omit the End-of-Information code or emit trailing padding that decodes as invalid LZW
-            // codes. Treat any LZW error as an implicit end of the compressed stream and use whatever was successfully
-            // decoded so far - this matches the behavior of Firefox, Chrome and Safari.
-            auto code_or_error = lzw_decompressor.next_code();
-            if (code_or_error.is_error()) {
-                dbgln_if(LZW_DEBUG, "LZW stream ended unexpectedly: {}", code_or_error.release_error());
-                break;
-            }
-            auto const code = code_or_error.release_value();
+            auto const code = TRY(lzw_decompressor.next_code());
 
             if (code == clear_code) {
                 lzw_decompressor.reset();
@@ -236,7 +228,7 @@ public:
     }
 
 private:
-    explicit LzwCompressor(u8 initial_code_size)
+    LzwCompressor(u8 initial_code_size)
         : Details::LzwState(initial_code_size, 1)
     {
     }

@@ -11,13 +11,15 @@
 
 namespace Web::Painting {
 
-NonnullRefPtr<FieldSetPaintable> FieldSetPaintable::create(Layout::FieldSetBox const& layout_box)
+GC_DEFINE_ALLOCATOR(FieldSetPaintable);
+
+GC::Ref<FieldSetPaintable> FieldSetPaintable::create(Layout::FieldSetBox const& layout_box)
 {
-    return adopt_ref(*new FieldSetPaintable(layout_box));
+    return layout_box.heap().allocate<FieldSetPaintable>(layout_box);
 }
 
 FieldSetPaintable::FieldSetPaintable(Layout::FieldSetBox const& layout_box)
-    : Paintable(layout_box)
+    : PaintableBox(layout_box)
 {
 }
 
@@ -39,7 +41,7 @@ CSSPixels FieldSetPaintable::effective_border_top() const
     // whichever is greater.
     auto css_border_top = computed_values().border_top().width;
     if (auto legend = layout_box().rendered_legend()) {
-        auto legend_paintable = legend->paintable_box();
+        auto const* legend_paintable = legend->paintable_box();
         auto legend_margin_box_height = legend_paintable->box_model().margin.top
             + legend_paintable->absolute_border_box_rect().height()
             + legend_paintable->box_model().margin.bottom;
@@ -68,7 +70,7 @@ void FieldSetPaintable::paint_background(DisplayListRecordingContext& context) c
     auto& recorder = context.display_list_recorder();
     recorder.save();
     recorder.add_clip_rect(context.rounded_device_rect(visual_border_box_rect()).to_type<int>());
-    Paintable::paint_background(context);
+    PaintableBox::paint_background(context);
     recorder.restore();
 }
 
@@ -78,17 +80,17 @@ void FieldSetPaintable::paint(DisplayListRecordingContext& context, PaintPhase p
         return;
 
     if (phase != PaintPhase::Border) {
-        Paintable::paint(context, phase);
+        PaintableBox::paint(context, phase);
         return;
     }
 
     auto legend = layout_box().rendered_legend();
     if (!legend) {
-        Paintable::paint(context, phase);
+        PaintableBox::paint(context, phase);
         return;
     }
 
-    auto legend_paintable = legend->paintable_box();
+    auto const* legend_paintable = legend->paintable_box();
 
     auto legend_border_rect = context.rounded_device_rect(legend_paintable->absolute_border_box_rect());
 

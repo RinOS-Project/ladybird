@@ -5,6 +5,9 @@
  */
 
 #include <AK/Math.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/TextTrackCuePrototype.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/TextTrackCue.h>
 
@@ -12,13 +15,19 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(TextTrackCue);
 
-TextTrackCue::TextTrackCue(GC::Ptr<TextTrack> track)
-    : DOM::EventTarget()
+TextTrackCue::TextTrackCue(JS::Realm& realm, GC::Ptr<TextTrack> track)
+    : DOM::EventTarget(realm)
     , m_track(track)
 {
 }
 
 TextTrackCue::~TextTrackCue() = default;
+
+void TextTrackCue::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(TextTrackCue);
+    Base::initialize(realm);
+}
 
 void TextTrackCue::visit_edges(JS::Cell::Visitor& visitor)
 {
@@ -42,7 +51,7 @@ WebIDL::ExceptionOr<void> TextTrackCue::set_end_time(double end_time)
 {
     // On setting, if the new value is negative Infinity or a Not-a-Number (NaN) value, then throw a TypeError exception.
     if (end_time == -AK::Infinity<double> || isnan(end_time))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Value is negative infinity or NaN"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Value is negative infinity or NaN"_string };
 
     // Otherwise, the text track cue end time must be set to the new value.
     m_end_time = end_time;

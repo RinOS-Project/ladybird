@@ -14,15 +14,12 @@ namespace GC {
 
 struct GC_API HeapRoot {
     enum class Type {
-        ConservativeHashMap,
-        ConservativeHashTable,
         ConservativeVector,
-        CrossHeapMember,
         HeapFunctionCapturedPointer,
+        MustSurviveGC,
         RegisterPointer,
         Root,
         RootHashMap,
-        RootHashTable,
         RootVector,
         StackPointer,
         VM,

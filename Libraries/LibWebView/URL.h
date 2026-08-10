@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <AK/String.h>
 #include <AK/StringView.h>
 #include <LibURL/URL.h>
 #include <LibWebView/Forward.h>
@@ -20,10 +19,7 @@ enum class AppendTLD {
     Yes,
 };
 WEBVIEW_API Optional<URL::URL> sanitize_url(StringView, Optional<SearchEngine> const& search_engine = {}, AppendTLD = AppendTLD::No);
-WEBVIEW_API bool location_looks_like_url(StringView, AppendTLD = AppendTLD::No);
-WEBVIEW_API Optional<URL::URL> url_from_text(StringView);
-WEBVIEW_API Vector<URL::URL> sanitize_urls(ReadonlySpan<ByteString> raw_urls);
-WEBVIEW_API String url_for_display(URL::URL const&);
+WEBVIEW_API Vector<URL::URL> sanitize_urls(ReadonlySpan<ByteString> raw_urls, URL::URL const& new_tab_page_url);
 
 struct URLParts {
     StringView scheme_and_subdomain;

@@ -6,8 +6,7 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
+#include <AK/String.h>
 #include <LibWeb/HTML/Canvas/CanvasState.h>
 #include <LibWeb/HTML/CanvasGradient.h>
 #include <LibWeb/HTML/CanvasPattern.h>
@@ -15,6 +14,7 @@
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/canvas.html#canvasshadowstyles
+template<typename IncludingClass>
 class CanvasShadowStyles {
 public:
     ~CanvasShadowStyles() = default;
@@ -28,11 +28,15 @@ public:
     virtual float shadow_blur() const = 0;
     virtual void set_shadow_blur(float offsetY) = 0;
 
-    virtual Utf16String shadow_color() const = 0;
-    virtual void set_shadow_color(Utf16View color) = 0;
+    virtual String shadow_color() const = 0;
+    virtual void set_shadow_color(String color) = 0;
 
 protected:
     CanvasShadowStyles() = default;
+
+private:
+    CanvasState::DrawingState& my_drawing_state() { return static_cast<IncludingClass&>(*this).drawing_state(); }
+    CanvasState::DrawingState const& my_drawing_state() const { return static_cast<IncludingClass const&>(*this).drawing_state(); }
 };
 
 }

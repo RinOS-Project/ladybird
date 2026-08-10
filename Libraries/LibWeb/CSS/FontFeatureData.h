@@ -9,9 +9,6 @@
 
 #include <AK/FlyString.h>
 #include <AK/HashMap.h>
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16View.h>
-#include <LibGfx/FourCC.h>
 #include <LibGfx/ShapeFeature.h>
 #include <LibWeb/Forward.h>
 
@@ -26,11 +23,9 @@ enum class FontFeatureValueType : u8 {
     Annotation,
 };
 
-Optional<FontFeatureValueType> font_feature_value_type_from_string(Utf16View);
-
 struct FontFeatureValueKey {
     FontFeatureValueType type;
-    Utf16FlyString name;
+    FlyString name;
 
     bool operator==(FontFeatureValueKey const&) const = default;
 };
@@ -80,7 +75,7 @@ struct FontFeatureData {
     Optional<FontVariantNumeric> font_variant_numeric;
     FontVariantPosition font_variant_position;
 
-    HashMap<Utf16FlyString, u8> font_feature_settings;
+    HashMap<FlyString, u8> font_feature_settings;
 
     FontKerning font_kerning;
     TextRendering text_rendering;
@@ -89,8 +84,6 @@ struct FontFeatureData {
 
     bool operator==(FontFeatureData const& other) const = default;
 };
-
-Optional<Gfx::FourCC> open_type_tag_to_four_cc(Utf16FlyString const&);
 
 }
 

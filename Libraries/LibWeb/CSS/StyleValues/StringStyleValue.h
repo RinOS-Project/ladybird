@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
+#include <AK/FlyString.h>
 #include <LibWeb/CSS/Parser/ComponentValue.h>
 #include <LibWeb/CSS/Serialize.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
@@ -15,33 +15,31 @@ namespace Web::CSS {
 
 class StringStyleValue : public StyleValueWithDefaultOperators<StringStyleValue> {
 public:
-    static ValueComparingNonnullRefPtr<StringStyleValue const> create(Utf16FlyString string)
+    static ValueComparingNonnullRefPtr<StringStyleValue const> create(FlyString const& string)
     {
-        return adopt_ref(*new (nothrow) StringStyleValue(move(string)));
+        return adopt_ref(*new (nothrow) StringStyleValue(string));
     }
     virtual ~StringStyleValue() override = default;
 
-    Utf16FlyString string_value() const { return Utf16FlyString::from_raw(m_value->string.string.raw); }
-    void serialize(StringBuilder& builder, SerializationMode) const { builder.append(serialize_a_string(string_value())); }
-    Vector<Parser::ComponentValue> tokenize() const
+    FlyString const& string_value() const { return m_string; }
+    virtual void serialize(StringBuilder& builder, SerializationMode) const override { builder.append(serialize_a_string(m_string)); }
+    virtual Vector<Parser::ComponentValue> tokenize() const override
     {
-        return { Parser::Token::create_string(string_value()) };
+        return { Parser::Token::create_string(m_string) };
     }
 
-    bool properties_equal(StringStyleValue const& other) const { return string_value() == other.string_value(); }
+    bool properties_equal(StringStyleValue const& other) const { return m_string == other.m_string; }
+
+    virtual bool is_computationally_independent() const override { return true; }
 
 private:
-    friend class StyleValue;
-
-    explicit StringStyleValue(StyleValueFFI::StyleValueData const* data)
-        : StyleValueWithDefaultOperators(Type::String, data)
+    explicit StringStyleValue(FlyString const& string)
+        : StyleValueWithDefaultOperators(Type::String)
+        , m_string(string)
     {
     }
 
-    explicit StringStyleValue(Utf16FlyString string)
-        : StyleValueWithDefaultOperators(Type::String, StyleValueFFI::rust_style_value_create_string(string.to_raw_leaked()))
-    {
-    }
+    FlyString m_string;
 };
 
 }

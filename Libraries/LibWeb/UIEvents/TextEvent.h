@@ -6,29 +6,30 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
 #include <LibWeb/UIEvents/UIEvent.h>
 
 namespace Web::UIEvents {
 
 class TextEvent final : public UIEvent {
-    WEB_WRAPPABLE(TextEvent, UIEvent);
+    WEB_PLATFORM_OBJECT(TextEvent, UIEvent);
     GC_DECLARE_ALLOCATOR(TextEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<TextEvent> create(Utf16FlyString const& event_name, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static GC::Ref<TextEvent> create(JS::Realm&, FlyString const& event_name);
 
     virtual ~TextEvent() override;
 
     // https://w3c.github.io/uievents/#dom-textevent-data
-    Utf16String const& data() const { return m_data; }
+    String data() const { return m_data; }
 
-    void init_text_event(Utf16FlyString const& type, bool bubbles, bool cancelable, GC::Ptr<HTML::WindowProxy> view, Utf16String const& data);
+    void init_text_event(String const& type, bool bubbles, bool cancelable, GC::Ptr<HTML::WindowProxy> view, String const& data);
 
 private:
-    TextEvent(Utf16FlyString const& event_name, HighResolutionTime::DOMHighResTimeStamp);
+    TextEvent(JS::Realm&, FlyString const& event_name);
 
-    Utf16String m_data;
+    virtual void initialize(JS::Realm&) override;
+
+    String m_data;
 };
 
 }

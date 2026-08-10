@@ -6,40 +6,41 @@
 
 #pragma once
 
-#include <AK/Optional.h>
 #include <AK/Vector.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/PeriodicWave.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/WebAudio/Rendering/AudioData.h>
-#include <LibWeb/WebIDL/ExceptionOr.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::WebAudio {
 
-class BaseAudioContext;
+// https://webaudio.github.io/web-audio-api/#PeriodicWaveConstraints
+struct PeriodicWaveConstraints {
+    bool disable_normalization { false };
+};
 
-using PeriodicWaveConstraints = Bindings::PeriodicWaveConstraints;
-using PeriodicWaveOptions = Bindings::PeriodicWaveOptions;
+// https://webaudio.github.io/web-audio-api/#PeriodicWaveOptions
+struct PeriodicWaveOptions : PeriodicWaveConstraints {
+    Optional<Vector<float>> real;
+    Optional<Vector<float>> imag;
+};
 
 // https://webaudio.github.io/web-audio-api/#PeriodicWave
-class PeriodicWave : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(PeriodicWave, Bindings::GCAllocatedWrappable);
+class PeriodicWave : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(PeriodicWave, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(PeriodicWave);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<PeriodicWave>> create_for_constructor(GC::Ref<BaseAudioContext>, PeriodicWaveOptions const&);
+    static WebIDL::ExceptionOr<GC::Ref<PeriodicWave>> construct_impl(JS::Realm&, GC::Ref<BaseAudioContext>, PeriodicWaveOptions const&);
 
-    PeriodicWave();
+    explicit PeriodicWave(JS::Realm&);
     virtual ~PeriodicWave() override;
 
-    NonnullRefPtr<Rendering::PeriodicWaveData> render_data() const;
-
 protected:
-    virtual size_t external_memory_size() const override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
 private:
-    Vector<float> m_real;
-    Vector<float> m_imag;
+    GC::Ptr<JS::Float32Array> m_real;
+    GC::Ptr<JS::Float32Array> m_imag;
     bool m_normalize { true };
 };
 

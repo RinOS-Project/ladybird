@@ -9,7 +9,6 @@
 #include <LibURL/URL.h>
 #include <LibWeb/HTML/SelectedFile.h>
 #include <LibWeb/UIEvents/KeyCode.h>
-#include <LibWebView/Utilities.h>
 
 #import <Carbon/Carbon.h>
 #import <Interface/Event.h>
@@ -17,7 +16,7 @@
 
 namespace Ladybird {
 
-Web::UIEvents::KeyModifier ns_modifiers_to_key_modifiers(NSEventModifierFlags modifier_flags)
+static Web::UIEvents::KeyModifier ns_modifiers_to_key_modifiers(NSEventModifierFlags modifier_flags)
 {
     unsigned modifiers = Web::UIEvents::KeyModifier::Mod_None;
 
@@ -47,19 +46,22 @@ Web::MouseEvent ns_event_to_mouse_event(Web::MouseEvent::Type type, NSEvent* eve
 
     auto modifiers = ns_modifiers_to_key_modifiers(event.modifierFlags);
 
-    double wheel_delta_x = 0;
-    double wheel_delta_y = 0;
+    int wheel_delta_x = 0;
+    int wheel_delta_y = 0;
 
     if (type == Web::MouseEvent::Type::MouseWheel) {
-        wheel_delta_x = -[event scrollingDeltaX];
-        wheel_delta_y = -[event scrollingDeltaY];
+        CGFloat delta_x = -[event scrollingDeltaX];
+        CGFloat delta_y = -[event scrollingDeltaY];
 
         if (![event hasPreciseScrollingDeltas]) {
-            static constexpr double imprecise_scroll_multiplier = 40;
+            static constexpr CGFloat imprecise_scroll_multiplier = 24;
 
-            wheel_delta_x *= imprecise_scroll_multiplier;
-            wheel_delta_y *= imprecise_scroll_multiplier;
+            delta_x *= imprecise_scroll_multiplier;
+            delta_y *= imprecise_scroll_multiplier;
         }
+
+        wheel_delta_x = static_cast<int>(delta_x);
+        wheel_delta_y = static_cast<int>(delta_y);
     }
 
     int click_count = 0;
@@ -104,7 +106,7 @@ Web::DragEvent ns_event_to_drag_event(Web::DragEvent::Type type, id<NSDraggingIn
 
     if (type == Web::DragEvent::Type::DragStart) {
         for_each_file([&](ByteString const& file_path) {
-            if (auto file = WebView::create_selected_file(file_path); file.is_error())
+            if (auto file = Web::HTML::SelectedFile::from_file_path(file_path); file.is_error())
                 warnln("Unable to open file {}: {}", file_path, file.error());
             else
                 files.append(file.release_value());
@@ -289,7 +291,7 @@ private:
     CFTypeRef m_event { nullptr };
 };
 
-Web::KeyEvent ns_event_to_key_event(Web::KeyEvent::Type type, NSEvent* event, bool should_insert_text)
+Web::KeyEvent ns_event_to_key_event(Web::KeyEvent::Type type, NSEvent* event)
 {
     auto modifiers = ns_modifiers_to_key_modifiers(event.modifierFlags);
     auto key_code = ns_key_code_to_key_code(event.keyCode, modifiers);
@@ -311,7 +313,7 @@ Web::KeyEvent ns_event_to_key_event(Web::KeyEvent::Type type, NSEvent* event, bo
     if (code_point >= 0xE000 && code_point <= 0xF8FF)
         code_point = 0;
 
-    return { type, key_code, modifiers, code_point, repeat, should_insert_text, make<KeyData>(event) };
+    return { type, key_code, modifiers, code_point, repeat, make<KeyData>(event) };
 }
 
 NSEvent* key_event_to_ns_event(Web::KeyEvent const& event)

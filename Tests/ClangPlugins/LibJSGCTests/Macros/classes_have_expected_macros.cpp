@@ -9,7 +9,6 @@
 
 #include <LibJS/Runtime/PrototypeObject.h>
 #include <LibWeb/Bindings/PlatformObject.h>
-#include <LibWeb/Bindings/Wrappable.h>
 
 class TestCellClass : JS::Cell {
     GC_CELL(TestCellClass, JS::Cell);
@@ -25,10 +24,6 @@ class TestEnvironmentClass : JS::Environment {
 
 class TestPlatformClass : Web::Bindings::PlatformObject {
     WEB_NON_IDL_PLATFORM_OBJECT(TestPlatformClass, Web::Bindings::PlatformObject);
-};
-
-class TestWrappableClass : Web::Bindings::Wrappable {
-    WEB_NON_IDL_WRAPPABLE(TestWrappableClass, Web::Bindings::Wrappable);
 };
 
 namespace JS {

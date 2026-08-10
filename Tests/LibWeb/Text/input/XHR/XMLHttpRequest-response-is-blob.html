@@ -6,12 +6,7 @@
         xhr.responseType = "blob";
         xhr.onreadystatechange = async function() {
             if (xhr.readyState === 4 && xhr.status === 200) {
-                const response = xhr.response;
-                if (response instanceof Blob)
-                    println("PASS");
-                else
-                    println("FAIL");
-                if (response === xhr.response)
+                if (xhr.response instanceof Blob)
                     println("PASS");
                 else
                     println("FAIL");

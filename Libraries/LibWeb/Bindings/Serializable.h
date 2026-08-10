@@ -6,24 +6,22 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
 #include <LibWeb/Bindings/IntrinsicDefinitions.h>
-#include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/StructuredSerializeTypes.h>
 
 namespace Web::Bindings {
 
 // https://html.spec.whatwg.org/multipage/structured-data.html#serializable-objects
-class WEB_API Serializable {
+class Serializable {
 public:
     virtual ~Serializable() = default;
 
     // https://html.spec.whatwg.org/multipage/structured-data.html#serialization-steps
-    virtual WebIDL::ExceptionOr<void> serialization_steps(HTML::StructuredSerializeWriter&, bool for_storage, HTML::SerializationMemory&) = 0;
+    virtual WebIDL::ExceptionOr<void> serialization_steps(HTML::TransferDataEncoder&, bool for_storage, HTML::SerializationMemory&) = 0;
 
     // https://html.spec.whatwg.org/multipage/structured-data.html#deserialization-steps
-    virtual WebIDL::ExceptionOr<void> deserialization_steps(JS::Realm&, HTML::StructuredSerializeReader&, HTML::DeserializationMemory&) = 0;
+    virtual WebIDL::ExceptionOr<void> deserialization_steps(HTML::TransferDataDecoder&, HTML::DeserializationMemory&) = 0;
 };
 
 }

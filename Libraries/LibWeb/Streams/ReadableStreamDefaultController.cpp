@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/ReadableStreamDefaultControllerPrototype.h>
 #include <LibWeb/Streams/AbstractOperations.h>
 #include <LibWeb/Streams/ReadableStream.h>
 #include <LibWeb/Streams/ReadableStreamDefaultController.h>
@@ -16,7 +18,8 @@ namespace Web::Streams {
 
 GC_DEFINE_ALLOCATOR(ReadableStreamDefaultController);
 
-ReadableStreamDefaultController::ReadableStreamDefaultController()
+ReadableStreamDefaultController::ReadableStreamDefaultController(JS::Realm& realm)
+    : Bindings::PlatformObject(realm)
 {
 }
 
@@ -32,7 +35,7 @@ WebIDL::ExceptionOr<void> ReadableStreamDefaultController::close()
 {
     // 1. If ! ReadableStreamDefaultControllerCanCloseOrEnqueue(this) is false, throw a TypeError exception.
     if (!readable_stream_default_controller_can_close_or_enqueue(*this)) {
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Stream is not closable"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Stream is not closable"sv };
     }
 
     // 2. Perform ! ReadableStreamDefaultControllerClose(this).
@@ -42,23 +45,23 @@ WebIDL::ExceptionOr<void> ReadableStreamDefaultController::close()
 }
 
 // https://streams.spec.whatwg.org/#rs-default-controller-enqueue
-WebIDL::ExceptionOr<void> ReadableStreamDefaultController::enqueue(JS::Realm& realm, Optional<JS::Value> chunk)
+WebIDL::ExceptionOr<void> ReadableStreamDefaultController::enqueue(JS::Value chunk)
 {
     // 1. If ! ReadableStreamDefaultControllerCanCloseOrEnqueue(this) is false, throw a TypeError exception.
     if (!readable_stream_default_controller_can_close_or_enqueue(*this))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot enqueue chunk to stream"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot enqueue chunk to stream"sv };
 
     // 2. Perform ? ReadableStreamDefaultControllerEnqueue(this, chunk).
-    TRY(readable_stream_default_controller_enqueue(realm, *this, chunk.value_or(JS::js_undefined())));
+    TRY(readable_stream_default_controller_enqueue(*this, chunk));
 
     return {};
 }
 
 // https://streams.spec.whatwg.org/#rs-default-controller-error
-void ReadableStreamDefaultController::error(Optional<JS::Value> error)
+void ReadableStreamDefaultController::error(JS::Value error)
 {
     // 1. Perform ! ReadableStreamDefaultControllerError(this, e).
-    readable_stream_default_controller_error(*this, error.value_or(JS::js_undefined()));
+    readable_stream_default_controller_error(*this, error);
 }
 
 // https://streams.spec.whatwg.org/#rs-default-controller-private-cancel
@@ -120,7 +123,13 @@ void ReadableStreamDefaultController::release_steps()
     // 1. Return.
 }
 
-void ReadableStreamDefaultController::visit_edges(GC::Cell::Visitor& visitor)
+void ReadableStreamDefaultController::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(ReadableStreamDefaultController);
+    Base::initialize(realm);
+}
+
+void ReadableStreamDefaultController::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     for (auto const& item : m_queue)

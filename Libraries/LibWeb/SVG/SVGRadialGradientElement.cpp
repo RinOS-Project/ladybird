@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGRadialGradientElementPrototype.h>
 #include <LibWeb/Painting/PaintStyle.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/SVGRadialGradientElement.h>
@@ -17,35 +19,47 @@ SVGRadialGradientElement::SVGRadialGradientElement(DOM::Document& document, DOM:
 {
 }
 
-void SVGRadialGradientElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
+void SVGRadialGradientElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGRadialGradientElement);
+    Base::initialize(realm);
+}
+
+void SVGRadialGradientElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
 {
     Base::attribute_changed(name, old_value, value, namespace_);
 
     // FIXME: These are <length> or <coordinate> in the spec, but all examples seem to allow percentages
     // and unitless values.
     if (name == SVG::AttributeNames::cx) {
-        m_cx = AttributeParser::parse_number_percentage(value.value_or({}));
+        m_cx = AttributeParser::parse_number_percentage(value.value_or(String {}));
+        m_paint_style = nullptr;
     } else if (name == SVG::AttributeNames::cy) {
-        m_cy = AttributeParser::parse_number_percentage(value.value_or({}));
+        m_cy = AttributeParser::parse_number_percentage(value.value_or(String {}));
+        m_paint_style = nullptr;
     } else if (name == SVG::AttributeNames::fx) {
-        m_fx = AttributeParser::parse_number_percentage(value.value_or({}));
+        m_fx = AttributeParser::parse_number_percentage(value.value_or(String {}));
+        m_paint_style = nullptr;
     } else if (name == SVG::AttributeNames::fy) {
-        m_fy = AttributeParser::parse_number_percentage(value.value_or({}));
+        m_fy = AttributeParser::parse_number_percentage(value.value_or(String {}));
+        m_paint_style = nullptr;
     } else if (name == SVG::AttributeNames::fr) {
-        m_fr = AttributeParser::parse_number_percentage(value.value_or({}));
+        m_fr = AttributeParser::parse_number_percentage(value.value_or(String {}));
+        m_paint_style = nullptr;
     } else if (name == SVG::AttributeNames::r) {
-        m_r = AttributeParser::parse_number_percentage(value.value_or({}));
+        m_r = AttributeParser::parse_number_percentage(value.value_or(String {}));
+        m_paint_style = nullptr;
     }
 }
 
 // https://svgwg.org/svg2-draft/pservers.html#RadialGradientElementFXAttribute
 NumberPercentage SVGRadialGradientElement::start_circle_x() const
 {
-    GC::RootHashTable<SVGGradientElement const*> seen_gradients;
+    HashTable<SVGGradientElement const*> seen_gradients;
     return start_circle_x_impl(seen_gradients);
 }
 
-NumberPercentage SVGRadialGradientElement::start_circle_x_impl(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const
+NumberPercentage SVGRadialGradientElement::start_circle_x_impl(HashTable<SVGGradientElement const*>& seen_gradients) const
 {
     if (m_fx.has_value())
         return *m_fx;
@@ -61,11 +75,11 @@ NumberPercentage SVGRadialGradientElement::start_circle_x_impl(GC::RootHashTable
 // https://svgwg.org/svg2-draft/pservers.html#RadialGradientElementFYAttribute
 NumberPercentage SVGRadialGradientElement::start_circle_y() const
 {
-    GC::RootHashTable<SVGGradientElement const*> seen_gradients;
+    HashTable<SVGGradientElement const*> seen_gradients;
     return start_circle_y_impl(seen_gradients);
 }
 
-NumberPercentage SVGRadialGradientElement::start_circle_y_impl(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const
+NumberPercentage SVGRadialGradientElement::start_circle_y_impl(HashTable<SVGGradientElement const*>& seen_gradients) const
 {
     if (m_fy.has_value())
         return *m_fy;
@@ -81,11 +95,11 @@ NumberPercentage SVGRadialGradientElement::start_circle_y_impl(GC::RootHashTable
 // https://svgwg.org/svg2-draft/pservers.html#RadialGradientElementFRAttribute
 NumberPercentage SVGRadialGradientElement::start_circle_radius() const
 {
-    GC::RootHashTable<SVGGradientElement const*> seen_gradients;
+    HashTable<SVGGradientElement const*> seen_gradients;
     return start_circle_radius_impl(seen_gradients);
 }
 
-NumberPercentage SVGRadialGradientElement::start_circle_radius_impl(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const
+NumberPercentage SVGRadialGradientElement::start_circle_radius_impl(HashTable<SVGGradientElement const*>& seen_gradients) const
 {
     // Note: A negative value is an error.
     if (m_fr.has_value() && m_fr->value() >= 0)
@@ -101,11 +115,11 @@ NumberPercentage SVGRadialGradientElement::start_circle_radius_impl(GC::RootHash
 // https://svgwg.org/svg2-draft/pservers.html#RadialGradientElementCXAttribute
 NumberPercentage SVGRadialGradientElement::end_circle_x() const
 {
-    GC::RootHashTable<SVGGradientElement const*> seen_gradients;
+    HashTable<SVGGradientElement const*> seen_gradients;
     return end_circle_x_impl(seen_gradients);
 }
 
-NumberPercentage SVGRadialGradientElement::end_circle_x_impl(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const
+NumberPercentage SVGRadialGradientElement::end_circle_x_impl(HashTable<SVGGradientElement const*>& seen_gradients) const
 {
     if (m_cx.has_value())
         return *m_cx;
@@ -117,11 +131,11 @@ NumberPercentage SVGRadialGradientElement::end_circle_x_impl(GC::RootHashTable<S
 // https://svgwg.org/svg2-draft/pservers.html#RadialGradientElementCYAttribute
 NumberPercentage SVGRadialGradientElement::end_circle_y() const
 {
-    GC::RootHashTable<SVGGradientElement const*> seen_gradients;
+    HashTable<SVGGradientElement const*> seen_gradients;
     return end_circle_y_impl(seen_gradients);
 }
 
-NumberPercentage SVGRadialGradientElement::end_circle_y_impl(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const
+NumberPercentage SVGRadialGradientElement::end_circle_y_impl(HashTable<SVGGradientElement const*>& seen_gradients) const
 {
     if (m_cy.has_value())
         return *m_cy;
@@ -133,11 +147,11 @@ NumberPercentage SVGRadialGradientElement::end_circle_y_impl(GC::RootHashTable<S
 // https://svgwg.org/svg2-draft/pservers.html#RadialGradientElementRAttribute
 NumberPercentage SVGRadialGradientElement::end_circle_radius() const
 {
-    GC::RootHashTable<SVGGradientElement const*> seen_gradients;
+    HashTable<SVGGradientElement const*> seen_gradients;
     return end_circle_radius_impl(seen_gradients);
 }
 
-NumberPercentage SVGRadialGradientElement::end_circle_radius_impl(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const
+NumberPercentage SVGRadialGradientElement::end_circle_radius_impl(HashTable<SVGGradientElement const*>& seen_gradients) const
 {
     // Note: A negative value is an error.
     if (m_r.has_value() && m_r->value() >= 0)
@@ -193,12 +207,50 @@ Optional<Painting::PaintStyle> SVGRadialGradientElement::to_gfx_paint_style(SVGP
         end_radius = end_circle_radius().resolve_relative_to(paint_context.viewport.width());
     }
 
-    Painting::RadialGradientPaintStyle paint_style { start_center, start_radius, end_center, end_radius };
-    add_color_stops(paint_style);
-    paint_style.set_gradient_transform(gradient_paint_transform(paint_context));
-    paint_style.set_spread_method(to_painting_spread_method(spread_method()));
-    paint_style.set_color_space(color_space());
-    return Painting::PaintStyle { move(paint_style) };
+    if (!m_paint_style) {
+        m_paint_style = Painting::SVGRadialGradientPaintStyle::create(start_center, start_radius, end_center, end_radius);
+        // FIXME: Update stops in DOM changes:
+        add_color_stops(*m_paint_style);
+    } else {
+        m_paint_style->set_start_center(start_center);
+        m_paint_style->set_start_radius(start_radius);
+        m_paint_style->set_end_center(end_center);
+        m_paint_style->set_end_radius(end_radius);
+    }
+    m_paint_style->set_gradient_transform(gradient_paint_transform(paint_context));
+    m_paint_style->set_spread_method(to_painting_spread_method(spread_method()));
+    m_paint_style->set_color_space(color_space());
+    return *m_paint_style;
+}
+
+GC::Ref<SVGAnimatedLength> SVGRadialGradientElement::cx() const
+{
+    return fake_animated_length_fixme();
+}
+
+GC::Ref<SVGAnimatedLength> SVGRadialGradientElement::cy() const
+{
+    return fake_animated_length_fixme();
+}
+
+GC::Ref<SVGAnimatedLength> SVGRadialGradientElement::fx() const
+{
+    return fake_animated_length_fixme();
+}
+
+GC::Ref<SVGAnimatedLength> SVGRadialGradientElement::fy() const
+{
+    return fake_animated_length_fixme();
+}
+
+GC::Ref<SVGAnimatedLength> SVGRadialGradientElement::fr() const
+{
+    return fake_animated_length_fixme();
+}
+
+GC::Ref<SVGAnimatedLength> SVGRadialGradientElement::r() const
+{
+    return fake_animated_length_fixme();
 }
 
 }

@@ -8,13 +8,12 @@
 
 #include <AK/Format.h>
 #include <AK/String.h>
-#include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/PixelUnits.h>
 
 namespace Web::Layout {
 
-class WEB_API AvailableSize {
+class AvailableSize {
 public:
     enum class Type {
         Definite,
@@ -80,18 +79,18 @@ inline bool operator<(AvailableSize const& left, CSSPixels right)
     return left.to_px_or_zero() < right;
 }
 
-class WEB_API AvailableSpace {
+class AvailableSpace {
 public:
-    AvailableSpace(AvailableSize inline_size, AvailableSize block_size)
-        : inline_size(move(inline_size))
-        , block_size(move(block_size))
+    AvailableSpace(AvailableSize w, AvailableSize h)
+        : width(move(w))
+        , height(move(h))
     {
     }
 
     bool operator==(AvailableSpace const& other) const = default;
 
-    AvailableSize inline_size;
-    AvailableSize block_size;
+    AvailableSize width;
+    AvailableSize height;
 
     String to_string() const;
 };

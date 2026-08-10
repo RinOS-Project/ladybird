@@ -1,2 +1,0 @@
-editor text: ab
-events: keydown:Backspace

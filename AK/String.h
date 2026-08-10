@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <AK/AllOf.h>
 #include <AK/CharacterTypes.h>
 #include <AK/Concepts.h>
 #include <AK/Format.h>
@@ -56,40 +55,6 @@ public:
 
     [[nodiscard]] static String from_utf8_without_validation(ReadonlyBytes);
     [[nodiscard]] static String from_ascii_without_validation(ReadonlyBytes);
-
-    // NB: These round-trip the one-word raw representation through FFI bridges (e.g. the LibWeb
-    //     Rust style value data), which retain the raw value and manage its reference manually.
-    //     to_raw_leaked() leaks one reference to the bridge, from_raw() reconstructs a string
-    //     without consuming the bridge's reference, and unref_raw() releases it.
-    [[nodiscard]] FlatPtr to_raw_leaked() const
-    {
-        if (!is_short_string())
-            data_without_union_member_assertion()->ref();
-        return raw({});
-    }
-
-    [[nodiscard]] static String from_raw(FlatPtr raw)
-    {
-        auto string = adopt_raw(raw);
-        if (!string.is_short_string())
-            string.data_without_union_member_assertion()->ref();
-        return string;
-    }
-
-    static void unref_raw(FlatPtr raw)
-    {
-        // Adopt the bridge's reference and let it drop.
-        auto string = adopt_raw(raw);
-    }
-
-    [[nodiscard]] static constexpr String from_ascii_short_string_without_validation(char const* data, size_t length)
-    {
-        VERIFY(length <= Detail::MAX_SHORT_STRING_BYTE_COUNT);
-        auto short_string = Detail::ShortString::create_with_byte_count(length);
-        for (size_t i = 0; i < length; ++i)
-            short_string.storage[i] = static_cast<u8>(data[i]);
-        return String { StringBase { short_string } };
-    }
 
     static ErrorOr<String> from_string_builder(Badge<StringBuilder>, StringBuilder&);
     [[nodiscard]] static String from_string_builder_without_validation(Badge<StringBuilder>, StringBuilder&);
@@ -256,16 +221,6 @@ private:
 
     using ShortString = Detail::ShortString;
 
-    // Adopts a raw value previously produced by to_raw_leaked(), together with ownership of one
-    // reference to its data if it is not a short string.
-    [[nodiscard]] static String adopt_raw(FlatPtr raw)
-    {
-        String string;
-        auto const** data = __builtin_launder(&string.m_impl.data);
-        *data = bit_cast<Detail::StringData const*>(raw);
-        return string;
-    }
-
     constexpr bool is_invalid() const
     {
         return raw(Badge<String> {}) == 0;
@@ -311,14 +266,8 @@ struct ASCIICaseInsensitiveStringTraits : public Traits<String> {
 
 }
 
-[[nodiscard]] ALWAYS_INLINE constexpr AK::String operator""_string(char const* cstring, size_t length)
+[[nodiscard]] ALWAYS_INLINE AK::String operator""_string(char const* cstring, size_t length)
 {
-    // OPTIMIZATION: Short ASCII strings become compile-time constants with no runtime validation or heap allocation.
-    if (length <= AK::Detail::MAX_SHORT_STRING_BYTE_COUNT
-        && AK::all_of(cstring, cstring + length, AK::is_ascii)) {
-        return AK::String::from_ascii_short_string_without_validation(cstring, length);
-    }
-
     ASSERT(Utf8View(AK::StringView(cstring, length)).validate());
     return AK::String::from_utf8_without_validation({ cstring, length });
 }

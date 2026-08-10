@@ -1,3 +1,11 @@
+#import <CSS/ElementCSSInlineStyle.idl>
+#import <DOM/Element.idl>
+#import <DOM/EventHandler.idl>
+#import <HTML/HTMLOrSVGElement.idl>
+#import <HTML/DOMStringMap.idl>
+#import <SVG/SVGAnimatedString.idl>
+#import <SVG/SVGSVGElement.idl>
+
 // https://svgwg.org/svg2-draft/types.html#InterfaceSVGElement
 [Exposed=Window]
 interface SVGElement : Element {
@@ -9,5 +17,5 @@ interface SVGElement : Element {
 };
 
 SVGElement includes GlobalEventHandlers;
-SVGElement includes HTMLOrSVGOrMathMLElement;
+SVGElement includes HTMLOrSVGElement;
 SVGElement includes ElementCSSInlineStyle;

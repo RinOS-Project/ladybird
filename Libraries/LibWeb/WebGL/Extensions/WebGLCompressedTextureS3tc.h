@@ -6,19 +6,20 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 
-namespace Web::WebGL {
+namespace Web::WebGL::Extensions {
 
-class WebGLCompressedTextureS3tc : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(WebGLCompressedTextureS3tc, Bindings::GCAllocatedWrappable);
+class WebGLCompressedTextureS3tc : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(WebGLCompressedTextureS3tc, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(WebGLCompressedTextureS3tc);
 
 public:
-    static GC::Ref<Bindings::Wrappable> create(GC::Ref<WebGLRenderingContextBase>);
+    static JS::ThrowCompletionOr<GC::Ref<JS::Object>> create(JS::Realm&, GC::Ref<WebGLRenderingContextBase>);
 
 protected:
+    void initialize(JS::Realm&) override;
     void visit_edges(Visitor&) override;
 
 private:

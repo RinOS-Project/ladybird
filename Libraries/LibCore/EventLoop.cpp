@@ -6,9 +6,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Assertions.h>
 #include <AK/Badge.h>
-#include <AK/Platform.h>
+#include <AK/Vector.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/EventLoopImplementation.h>
 #include <LibCore/EventReceiver.h>
@@ -19,10 +18,17 @@ namespace Core {
 
 namespace {
 
-EventLoop*& current_event_loop()
+OwnPtr<Vector<EventLoop&>>& event_loop_stack_uninitialized()
 {
-    thread_local EventLoop* s_current_event_loop = nullptr;
-    return s_current_event_loop;
+    thread_local OwnPtr<Vector<EventLoop&>> s_event_loop_stack = nullptr;
+    return s_event_loop_stack;
+}
+Vector<EventLoop&>& event_loop_stack()
+{
+    auto& the_stack = event_loop_stack_uninitialized();
+    if (the_stack == nullptr)
+        the_stack = make<Vector<EventLoop&>>();
+    return *the_stack;
 }
 
 }
@@ -30,32 +36,31 @@ EventLoop*& current_event_loop()
 EventLoop::EventLoop()
     : m_impl(EventLoopManager::the().make_implementation())
 {
-    VERIFY(!current_event_loop());
-    current_event_loop() = this;
+    if (event_loop_stack().is_empty()) {
+        event_loop_stack().append(*this);
+    }
 }
 
 EventLoop::~EventLoop()
 {
     if (m_weak)
         m_weak->revoke();
-    if (current_event_loop() == this)
-        current_event_loop() = nullptr;
-}
-
-EventLoop& EventLoop::initialize_for_current_thread()
-{
-    return *new EventLoop;
+    if (!event_loop_stack().is_empty() && &event_loop_stack().last() == this) {
+        event_loop_stack().take_last();
+    }
 }
 
 bool EventLoop::is_running()
 {
-    return current_event_loop() != nullptr;
+    auto& stack = event_loop_stack_uninitialized();
+    return stack != nullptr && !stack->is_empty();
 }
 
 EventLoop& EventLoop::current()
 {
-    VERIFY(current_event_loop());
-    return *current_event_loop();
+    if (event_loop_stack().is_empty())
+        dbgln("No EventLoop is present, unable to return current one!");
+    return event_loop_stack().last();
 }
 
 NonnullRefPtr<WeakEventLoopReference> EventLoop::current_weak()
@@ -76,22 +81,33 @@ bool EventLoop::was_exit_requested()
     return m_impl->was_exit_requested();
 }
 
+struct EventLoopPusher {
+public:
+    EventLoopPusher(EventLoop& event_loop)
+    {
+        event_loop_stack().append(event_loop);
+    }
+    ~EventLoopPusher()
+    {
+        event_loop_stack().take_last();
+    }
+};
+
 int EventLoop::exec()
 {
-    VERIFY(current_event_loop() == this);
+    EventLoopPusher pusher(*this);
     return m_impl->exec();
 }
 
 void EventLoop::spin_until(Function<bool()> goal_condition)
 {
-    VERIFY(current_event_loop() == this);
+    EventLoopPusher pusher(*this);
     while (!goal_condition())
         pump();
 }
 
 size_t EventLoop::pump(WaitMode mode)
 {
-    VERIFY(current_event_loop() == this);
     return m_impl->pump(mode == WaitMode::WaitForEvents ? EventLoopImplementation::PumpMode::WaitForEvents : EventLoopImplementation::PumpMode::DontWaitForEvents);
 }
 
@@ -125,16 +141,6 @@ void EventLoop::unregister_notifier(Badge<Notifier>, Notifier& notifier)
     EventLoopManager::the().unregister_notifier(notifier);
 }
 
-void EventLoop::register_process(pid_t pid, ESCAPING Function<void(pid_t)> exit_handler)
-{
-    EventLoopManager::the().register_process(pid, move(exit_handler));
-}
-
-void EventLoop::unregister_process(pid_t pid)
-{
-    EventLoopManager::the().unregister_process(pid);
-}
-
 void EventLoop::wake()
 {
     m_impl->wake();
@@ -157,7 +163,7 @@ WeakEventLoopReference::WeakEventLoopReference(EventLoop& event_loop)
 
 void WeakEventLoopReference::revoke()
 {
-    Sync::RWLockLocker<Sync::LockMode::Write> locker { m_lock };
+    Threading::RWLockLocker<Threading::LockMode::Write> locker { m_lock };
     m_event_loop = nullptr;
 }
 

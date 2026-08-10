@@ -1,3 +1,10 @@
+#import <CSS/ElementCSSInlineStyle.idl>
+#import <HTML/DOMStringMap.idl>
+#import <HTML/ElementInternals.idl>
+#import <HTML/HTMLOrSVGElement.idl>
+#import <DOM/Element.idl>
+#import <DOM/EventHandler.idl>
+
 // https://html.spec.whatwg.org/multipage/semantics.html#htmlelement
 [Exposed=Window]
 interface HTMLElement : Element {
@@ -5,21 +12,21 @@ interface HTMLElement : Element {
     [HTMLConstructor] constructor();
 
     // metadata attributes
-    [Reflect, CEReactions] attribute Utf16DOMString title;
-    [Reflect, CEReactions] attribute Utf16DOMString lang;
+    [Reflect, CEReactions] attribute DOMString title;
+    [Reflect, CEReactions] attribute DOMString lang;
     [CEReactions] attribute boolean translate;
-    [CEReactions] attribute Utf16DOMString dir;
+    [CEReactions] attribute DOMString dir;
 
     // user interaction
-    [CEReactions] attribute (boolean or unrestricted double or Utf16DOMString)? hidden;
+    [CEReactions] attribute (boolean or unrestricted double or DOMString)? hidden;
     [Reflect, CEReactions] attribute boolean inert;
     undefined click();
-    [Reflect=accesskey, CEReactions] attribute Utf16DOMString accessKey;
-    readonly attribute Utf16DOMString accessKeyLabel;
+    [Reflect=accesskey, CEReactions] attribute DOMString accessKey;
+    readonly attribute DOMString accessKeyLabel;
     [CEReactions] attribute boolean draggable;
     [CEReactions] attribute boolean spellcheck;
-    [CEReactions] attribute Utf16DOMString writingSuggestions;
-    [CEReactions] attribute Utf16DOMString autocapitalize;
+    [CEReactions] attribute DOMString writingSuggestions;
+    [CEReactions] attribute DOMString autocapitalize;
     [CEReactions] attribute boolean autocorrect;
 
     [LegacyNullToEmptyString, CEReactions] attribute Utf16DOMString innerText;
@@ -28,7 +35,7 @@ interface HTMLElement : Element {
     ElementInternals attachInternals();
 
     // The popover API
-    undefined showPopover(optional ShowPopoverOptions options = {});
+    [ImplementedAs=show_popover_for_bindings] undefined showPopover(optional ShowPopoverOptions options = {});
     [ImplementedAs=hide_popover_for_bindings] undefined hidePopover();
     boolean togglePopover(optional (TogglePopoverOptions or boolean) options = {});
     [CEReactions] attribute DOMString? popover;
@@ -47,12 +54,6 @@ interface HTMLElement : Element {
 
 };
 
-// https://html.spec.whatwg.org/multipage/interaction.html#focusoptions
-dictionary FocusOptions {
-    boolean preventScroll = false;
-    boolean focusVisible;
-};
-
 // https://html.spec.whatwg.org/multipage/dom.html#showpopoveroptions
 dictionary ShowPopoverOptions {
     HTMLElement source;
@@ -65,7 +66,7 @@ dictionary TogglePopoverOptions : ShowPopoverOptions {
 
 HTMLElement includes GlobalEventHandlers;
 HTMLElement includes ElementContentEditable;
-HTMLElement includes HTMLOrSVGOrMathMLElement;
+HTMLElement includes HTMLOrSVGElement;
 
 // https://html.spec.whatwg.org/multipage/interaction.html#attr-enterkeyhint
 enum EnterKeyHint {
@@ -92,10 +93,10 @@ enum InputMode {
 
 // https://html.spec.whatwg.org/multipage/interaction.html#elementcontenteditable
 interface mixin ElementContentEditable {
-    [CEReactions] attribute [Utf16FlyString] Utf16DOMString contentEditable;
-    [Reflect=enterkeyhint, Enumerated=EnterKeyHint, CEReactions] attribute Utf16DOMString enterKeyHint;
+    [CEReactions] attribute DOMString contentEditable;
+    [Reflect=enterkeyhint, Enumerated=EnterKeyHint, CEReactions] attribute DOMString enterKeyHint;
     readonly attribute boolean isContentEditable;
-    [Reflect=inputmode, Enumerated=InputMode, CEReactions] attribute Utf16DOMString inputMode;
+    [Reflect=inputmode, Enumerated=InputMode, CEReactions] attribute DOMString inputMode;
 };
 
 HTMLElement includes ElementCSSInlineStyle;

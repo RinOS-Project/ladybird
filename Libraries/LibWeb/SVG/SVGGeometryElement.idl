@@ -1,3 +1,7 @@
+#import <Geometry/DOMPoint.idl>
+#import <SVG/SVGGraphicsElement.idl>
+#import <SVG/SVGAnimatedNumber.idl>
+
 // https://svgwg.org/svg2-draft/types.html#InterfaceSVGGeometryElement
 [Exposed=Window]
 interface SVGGeometryElement : SVGGraphicsElement {

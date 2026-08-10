@@ -6,13 +6,13 @@
 
 #pragma once
 
-#include <LibWeb/Forward.h>
-#include <LibWeb/HTML/Canvas/AbstractCanvasMixin.h>
+#include <LibWeb/HTML/Canvas/CanvasState.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/canvas.html#canvaspathdrawingstyles
-class CanvasPathDrawingStyles : protected virtual AbstractCanvasMixin {
+template<typename IncludingClass>
+class CanvasPathDrawingStyles {
 public:
     ~CanvasPathDrawingStyles() = default;
 
@@ -23,36 +23,36 @@ public:
         if (line_width <= 0 || !isfinite(line_width))
             return;
         // other values must change the current value to the new value.
-        drawing_state().line_width = line_width;
+        my_drawing_state().line_width = line_width;
     }
     float line_width() const
     {
         // On getting, it must return the current value.
-        return drawing_state().line_width;
+        return my_drawing_state().line_width;
     }
 
     // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-linecap
-    void set_line_cap(CanvasLineCap line_cap)
+    void set_line_cap(Bindings::CanvasLineCap line_cap)
     {
         // On setting, the current value must be changed to the new value.
-        drawing_state().line_cap = line_cap;
+        my_drawing_state().line_cap = line_cap;
     }
-    CanvasLineCap line_cap() const
+    Bindings::CanvasLineCap line_cap() const
     {
         // On getting, it must return the current value.
-        return drawing_state().line_cap;
+        return my_drawing_state().line_cap;
     }
 
     // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-linejoin
-    void set_line_join(CanvasLineJoin line_join)
+    void set_line_join(Bindings::CanvasLineJoin line_join)
     {
         // On setting, the current value must be changed to the new value.
-        drawing_state().line_join = line_join;
+        my_drawing_state().line_join = line_join;
     }
-    CanvasLineJoin line_join() const
+    Bindings::CanvasLineJoin line_join() const
     {
         // On getting, it must return the current value.
-        return drawing_state().line_join;
+        return my_drawing_state().line_join;
     }
 
     // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-miterlimit
@@ -62,12 +62,12 @@ public:
         if (miter_limit <= 0 || !isfinite(miter_limit))
             return;
         // other values must change the current value to the new value.
-        drawing_state().miter_limit = miter_limit;
+        my_drawing_state().miter_limit = miter_limit;
     }
     float miter_limit() const
     {
         // On getting, it must return the current value.
-        return drawing_state().miter_limit;
+        return my_drawing_state().miter_limit;
     }
 
     // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-setlinedash
@@ -87,14 +87,14 @@ public:
             segments.extend(segments);
 
         // 3. Set the object's dash list to segments.
-        drawing_state().dash_list = move(segments);
+        my_drawing_state().dash_list = move(segments);
     }
 
     // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-getlinedash
     Vector<double> get_line_dash()
     {
         // When the getLineDash() method is invoked, it must return a sequence whose values are the values of the object's dash list, in the same order.
-        return drawing_state().dash_list;
+        return my_drawing_state().dash_list;
     }
 
     // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-linedashoffset
@@ -104,16 +104,20 @@ public:
         if (!isfinite(line_dash_offset))
             return;
         // other values must change the current value to the new value.
-        drawing_state().line_dash_offset = line_dash_offset;
+        my_drawing_state().line_dash_offset = line_dash_offset;
     }
     float line_dash_offset() const
     {
         // On getting, it must return the current value.
-        return drawing_state().line_dash_offset;
+        return my_drawing_state().line_dash_offset;
     }
 
 protected:
     CanvasPathDrawingStyles() = default;
+
+private:
+    CanvasState::DrawingState& my_drawing_state() { return static_cast<IncludingClass&>(*this).drawing_state(); }
+    CanvasState::DrawingState const& my_drawing_state() const { return static_cast<IncludingClass const&>(*this).drawing_state(); }
 };
 
 }

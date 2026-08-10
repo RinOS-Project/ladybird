@@ -10,9 +10,7 @@
 #include <AK/Forward.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
-#include <AK/Utf16String.h>
 #include <AK/Variant.h>
-#include <LibCore/ImmutableBytes.h>
 #include <LibGC/Ptr.h>
 #include <LibGC/Root.h>
 #include <LibWeb/Export.h>
@@ -23,16 +21,14 @@
 
 namespace Web::Fetch::Infrastructure {
 
-// https://mimesniff.spec.whatwg.org/#reading-the-resource-header
-static constexpr size_t MAX_SNIFF_BYTES = 1445;
-
 // https://fetch.spec.whatwg.org/#concept-body
 class WEB_API Body final : public JS::Cell {
     GC_CELL(Body, JS::Cell);
     GC_DECLARE_ALLOCATOR(Body);
 
 public:
-    using SourceType = Variant<Empty, ByteBuffer, Core::ImmutableBytes, GC::Ref<FileAPI::Blob>>;
+    using SourceType = Variant<Empty, ByteBuffer, GC::Root<FileAPI::Blob>>;
+    using SourceTypeInternal = Variant<Empty, ByteBuffer, GC::Ref<FileAPI::Blob>>;
     // processBody must be an algorithm accepting a byte sequence.
     using ProcessBodyCallback = GC::Ref<GC::Function<void(ByteBuffer)>>;
     // processBodyError must be an algorithm optionally accepting an exception.
@@ -42,13 +38,13 @@ public:
     // processEndOfBody must be an algorithm accepting no arguments
     using ProcessEndOfBodyCallback = GC::Ref<GC::Function<void()>>;
 
-    [[nodiscard]] static GC::Ref<Body> create(GC::Ref<Streams::ReadableStream>);
-    [[nodiscard]] static GC::Ref<Body> create(GC::Ref<Streams::ReadableStream>, SourceType, Optional<u64>);
+    [[nodiscard]] static GC::Ref<Body> create(JS::VM&, GC::Ref<Streams::ReadableStream>);
+    [[nodiscard]] static GC::Ref<Body> create(JS::VM&, GC::Ref<Streams::ReadableStream>, SourceType, Optional<u64>);
+    [[nodiscard]] static GC::Ref<Body> create(JS::VM&, GC::Ref<Streams::ReadableStream>, SourceTypeInternal, Optional<u64>);
 
     [[nodiscard]] GC::Ref<Streams::ReadableStream> stream() const { return *m_stream; }
     void set_stream(GC::Ref<Streams::ReadableStream> value) { m_stream = value; }
-    [[nodiscard]] SourceType const& source() const { return m_source; }
-    void set_source(Core::ImmutableBytes, Optional<u64> length);
+    [[nodiscard]] SourceTypeInternal const& source() const { return m_source; }
     [[nodiscard]] Optional<u64> const& length() const { return m_length; }
 
     // https://mimesniff.spec.whatwg.org/#reading-the-resource-header
@@ -67,16 +63,15 @@ public:
 
     [[nodiscard]] GC::Ref<Body> clone(JS::Realm&);
 
-    void fully_read(JS::Realm&, ProcessBodyCallback process_body, ProcessBodyErrorCallback process_body_error, TaskDestination) const;
-    void incrementally_read(JS::Realm&, ProcessBodyChunkCallback process_body_chunk, ProcessEndOfBodyCallback process_end_of_body, ProcessBodyErrorCallback process_body_error, TaskDestination);
-    void incrementally_read(ProcessBodyChunkCallback process_body_chunk, ProcessEndOfBodyCallback process_end_of_body, ProcessBodyErrorCallback process_body_error, TaskDestination);
-    void incrementally_read_loop(Streams::ReadableStreamDefaultReader& reader, TaskDestination, ProcessBodyChunkCallback process_body_chunk, ProcessEndOfBodyCallback process_end_of_body, ProcessBodyErrorCallback process_body_error);
+    void fully_read(JS::Realm&, ProcessBodyCallback process_body, ProcessBodyErrorCallback process_body_error, TaskDestination, GC::Ptr<JS::Cell> extra_root = {}) const;
+    void incrementally_read(ProcessBodyChunkCallback process_body_chunk, ProcessEndOfBodyCallback process_end_of_body, ProcessBodyErrorCallback process_body_error, TaskDestination, GC::Ptr<JS::Cell> extra_root = {});
+    void incrementally_read_loop(Streams::ReadableStreamDefaultReader& reader, TaskDestination, ProcessBodyChunkCallback process_body_chunk, ProcessEndOfBodyCallback process_end_of_body, ProcessBodyErrorCallback process_body_error, GC::Ptr<JS::Cell> extra_root = {});
 
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
 private:
     explicit Body(GC::Ref<Streams::ReadableStream>);
-    Body(GC::Ref<Streams::ReadableStream>, SourceType, Optional<u64>);
+    Body(GC::Ref<Streams::ReadableStream>, SourceTypeInternal, Optional<u64>);
 
     // https://fetch.spec.whatwg.org/#concept-body-stream
     // A stream (a ReadableStream object).
@@ -84,7 +79,7 @@ private:
 
     // https://fetch.spec.whatwg.org/#concept-body-source
     // A source (null, a byte sequence, a Blob object, or a FormData object), initially null.
-    SourceType m_source;
+    SourceTypeInternal m_source;
 
     // https://fetch.spec.whatwg.org/#concept-body-total-bytes
     // A length (null or an integer), initially null.
@@ -101,10 +96,9 @@ private:
 // A body with type is a tuple that consists of a body (a body) and a type (a header value or null).
 struct BodyWithType {
     GC::Ref<Body> body;
-    Optional<Utf16String> type;
+    Optional<ByteString> type;
 };
 
 WEB_API GC::Ref<Body> byte_sequence_as_body(JS::Realm&, ReadonlyBytes);
-WEB_API void cancel_incremental_read(Streams::ReadableStreamDefaultReader&);
 
 }

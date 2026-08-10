@@ -6,8 +6,6 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16View.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
 
@@ -30,19 +28,19 @@ public:
     };
     AutofillMantle get_autofill_mantle() const;
 
-    Vector<Utf16String> autocomplete_tokens() const;
-    Utf16String autocomplete() const;
-    void set_autocomplete(Utf16View);
+    Vector<String> autocomplete_tokens() const;
+    String autocomplete() const;
+    void set_autocomplete(String const&);
 
     // Each input element to which the autocomplete attribute applies [...] has
     // an autofill hint set, an autofill scope, an autofill field name,
     // a non-autofill credential type, and an IDL-exposed autofill value.
     struct AttributeDetails {
-        Vector<Utf16FlyString> hint_set;
-        Vector<Utf16String> scope;
-        Utf16String field_name;
-        Optional<Utf16FlyString> credential_type;
-        Utf16String value;
+        Vector<String> hint_set;
+        Vector<String> scope;
+        String field_name;
+        Optional<String> credential_type;
+        String value;
     };
     AttributeDetails parse_autocomplete_attribute() const;
 

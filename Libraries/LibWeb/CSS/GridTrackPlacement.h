@@ -8,9 +8,8 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
-#include <LibWeb/CSS/StyleValues/StyleValue.h>
-#include <LibWeb/Forward.h>
+#include <AK/String.h>
+#include <LibWeb/CSS/CalculatedOr.h>
 
 namespace Web::CSS {
 
@@ -21,12 +20,12 @@ public:
         return GridTrackPlacement();
     }
 
-    static GridTrackPlacement make_line(RefPtr<StyleValue const> line_number, Optional<Utf16FlyString> name)
+    static GridTrackPlacement make_line(Optional<IntegerOrCalculated> line_number, Optional<String> name)
     {
         return GridTrackPlacement(AreaOrLine { .line_number = move(line_number), .name = move(name) });
     }
 
-    static GridTrackPlacement make_span(NonnullRefPtr<StyleValue const> value, Optional<Utf16FlyString> name)
+    static GridTrackPlacement make_span(IntegerOrCalculated value, Optional<String> name)
     {
         return GridTrackPlacement(Span { .value = move(value), .name = move(name) });
     }
@@ -38,7 +37,7 @@ public:
     bool is_auto_positioned() const { return is_auto() || is_span(); }
     bool is_positioned() const { return !is_auto_positioned(); }
 
-    bool is_custom_ident() const { return is_area_or_line() && !m_value.get<AreaOrLine>().line_number; }
+    bool is_custom_ident() const { return is_area_or_line() && !m_value.get<AreaOrLine>().line_number.has_value(); }
 
     bool has_identifier() const
     {
@@ -47,37 +46,44 @@ public:
 
     bool has_line_number() const
     {
-        return is_area_or_line() && m_value.get<AreaOrLine>().line_number;
+        return is_area_or_line() && m_value.get<AreaOrLine>().line_number.has_value();
     }
 
-    Utf16FlyString const& identifier() const { return *m_value.get<AreaOrLine>().name; }
+    String identifier() const { return *m_value.get<AreaOrLine>().name; }
 
-    NonnullRefPtr<StyleValue const> line_number() const { return *m_value.get<AreaOrLine>().line_number; }
-    NonnullRefPtr<StyleValue const> span() const { return *m_value.get<Span>().value; }
-    Optional<Utf16FlyString> const& span_name() const { return m_value.get<Span>().name; }
+    IntegerOrCalculated line_number() const { return *m_value.get<AreaOrLine>().line_number; }
+    IntegerOrCalculated span() const { return m_value.get<Span>().value; }
 
     void serialize(StringBuilder&, SerializationMode) const;
     String to_string(SerializationMode mode) const;
 
     GridTrackPlacement absolutized(ComputationContext const&) const;
 
+    bool is_computationally_independent() const
+    {
+        return m_value.visit([](auto const& value) { return value.is_computationally_independent(); });
+    }
+
     bool operator==(GridTrackPlacement const& other) const = default;
 
 private:
     struct Auto {
         bool operator==(Auto const&) const = default;
+        bool is_computationally_independent() const { return true; }
     };
 
     struct AreaOrLine {
-        ValueComparingRefPtr<StyleValue const> line_number;
-        Optional<Utf16FlyString> name;
+        Optional<IntegerOrCalculated> line_number;
+        Optional<String> name;
         bool operator==(AreaOrLine const& other) const = default;
+        bool is_computationally_independent() const { return !line_number.has_value() || line_number->is_computationally_independent(); }
     };
 
     struct Span {
-        ValueComparingNonnullRefPtr<StyleValue const> value;
-        Optional<Utf16FlyString> name;
+        IntegerOrCalculated value;
+        Optional<String> name;
         bool operator==(Span const& other) const = default;
+        bool is_computationally_independent() const { return value.is_computationally_independent(); }
     };
 
     GridTrackPlacement()

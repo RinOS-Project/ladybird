@@ -1,3 +1,5 @@
+#import <HTML/CanvasRenderingContext2D.idl>
+
 // https://html.spec.whatwg.org/multipage/canvas.html#canvastextalign
 // enum CanvasTextAlign { "start", "end", "left", "right", "center" };
 // enum CanvasTextBaseline { "top", "hanging", "middle", "alphabetic", "ideographic", "bottom" };
@@ -20,5 +22,5 @@ interface mixin CanvasTextDrawingStyles {
     [FIXME] attribute CanvasFontStretch fontStretch; // (default: "normal")
     [FIXME] attribute CanvasFontVariantCaps fontVariantCaps; // (default: "normal")
     [FIXME] attribute CanvasTextRendering textRendering; // (default: "auto")
-    [FIXME] attribute Utf16DOMString wordSpacing; // (default: "0px")
+    [FIXME] attribute DOMString wordSpacing; // (default: "0px")
 };

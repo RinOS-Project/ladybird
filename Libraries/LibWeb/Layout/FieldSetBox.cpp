@@ -10,16 +10,11 @@
 
 namespace Web::Layout {
 
-FieldSetBox::FieldSetBox(DOM::Document& document, DOM::Element& element, NonnullRefPtr<CSS::ComputedValues const> style)
+GC_DEFINE_ALLOCATOR(FieldSetBox);
+
+FieldSetBox::FieldSetBox(DOM::Document& document, DOM::Element& element, GC::Ref<CSS::ComputedProperties> style)
     : BlockContainer(document, &element, style)
 {
-    // https://html.spec.whatwg.org/multipage/rendering.html#the-fieldset-and-legend-elements
-    // If the computed outer display type is inline, the fieldset is expected to behave as inline-block. Otherwise, it
-    // is expected to behave as flow-root. This does not change the computed value.
-    if (display().is_flow_inside())
-        modify_computed_values([&](auto& values) {
-            values.set_display(CSS::Display { display().outside(), CSS::DisplayInside::FlowRoot });
-        });
 }
 
 FieldSetBox::~FieldSetBox() = default;
@@ -42,7 +37,7 @@ GC::Ptr<LegendBox const> FieldSetBox::rendered_legend() const
     return legend;
 }
 
-RefPtr<Painting::Paintable> FieldSetBox::create_paintable() const
+GC::Ptr<Painting::Paintable> FieldSetBox::create_paintable() const
 {
     return Painting::FieldSetPaintable::create(*this);
 }

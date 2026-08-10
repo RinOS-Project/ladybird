@@ -14,17 +14,20 @@ namespace Web::HTML {
 //       There is discussion about bringing it back:
 //       https://github.com/whatwg/html/issues/4792
 //       https://github.com/whatwg/dom/issues/221
-class WEB_API HTMLDocument final : public DOM::Document {
-    WEB_WRAPPABLE(HTMLDocument, DOM::Document);
+class HTMLDocument final : public DOM::Document {
+    WEB_PLATFORM_OBJECT(HTMLDocument, DOM::Document);
     GC_DECLARE_ALLOCATOR(HTMLDocument);
 
 public:
     virtual ~HTMLDocument() override;
 
-    [[nodiscard]] static GC::Ref<HTMLDocument> create(Page&, GC::Ref<DOM::EventTarget> relevant_global_event_target, URL::URL const& url = URL::about_blank());
+    [[nodiscard]] static GC::Ref<HTMLDocument> create(JS::Realm&, URL::URL const& url = URL::about_blank());
+    WebIDL::ExceptionOr<GC::Ref<HTMLDocument>> construct_impl(JS::Realm&);
 
 private:
-    HTMLDocument(Page&, GC::Ref<DOM::EventTarget> relevant_global_event_target, URL::URL const&);
+    virtual void initialize(JS::Realm&) override;
+
+    HTMLDocument(JS::Realm&, URL::URL const&);
 };
 
 }

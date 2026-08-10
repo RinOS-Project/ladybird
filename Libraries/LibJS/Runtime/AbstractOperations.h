@@ -11,14 +11,12 @@
 #include <AK/HashTable.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Utf16FlyString.h>
-#include <AK/Utf16View.h>
 #include <LibCrypto/Forward.h>
 #include <LibGC/RootVector.h>
 #include <LibJS/Export.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/CanonicalIndex.h>
 #include <LibJS/Runtime/Environment.h>
-#include <LibJS/Runtime/ErrorTypes.h>
 #include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Iterator.h>
@@ -81,16 +79,12 @@ bool all_import_attributes_supported(VM& vm, Vector<ImportAttribute> const& attr
 
 ThrowCompletionOr<Value> perform_import_call(VM&, Value specifier, Value options_value);
 
-size_t max_js_string_length();
-ThrowCompletionOr<size_t> checked_js_string_length_sum(VM&, size_t, size_t, ErrorType const&);
-ThrowCompletionOr<size_t> checked_js_string_length_product(VM&, size_t, size_t, ErrorType const&);
-
 enum class CanonicalIndexMode {
     DetectNumericRoundtrip,
     IgnoreNumericRoundtrip,
 };
 [[nodiscard]] CanonicalIndex canonical_numeric_index_string(PropertyKey const&, CanonicalIndexMode needs_numeric);
-ThrowCompletionOr<Utf16String> get_substitution(VM&, Utf16View const& matched, Utf16View const& str, size_t position, Span<Value> captures, Value named_captures, Utf16View const& replacement);
+ThrowCompletionOr<String> get_substitution(VM&, Utf16View const& matched, Utf16View const& str, size_t position, Span<Value> captures, Value named_captures, Value replacement);
 
 enum class CallerMode {
     Strict,
@@ -119,7 +113,7 @@ struct EvalDeclarationData {
     };
     Vector<LexicalBinding> lexical_bindings;
 
-    Vector<Utf16FlyString> referenced_private_names;
+    static EvalDeclarationData create(VM&, Program const&, bool strict);
 };
 
 ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, EvalDeclarationData&, Environment* variable_environment, Environment* lexical_environment, PrivateEnvironment* private_environment, bool strict);
@@ -209,7 +203,7 @@ ALWAYS_INLINE ThrowCompletionOr<GC::Ref<T>> ordinary_create_from_constructor(VM&
 
 // 7.3.35 AddValueToKeyedGroup ( groups, key, value ), https://tc39.es/ecma262/#sec-add-value-to-keyed-group
 template<typename GroupsType, typename KeyType>
-void add_value_to_keyed_group(GroupsType& groups, KeyType key, Value value)
+void add_value_to_keyed_group(VM& vm, GroupsType& groups, KeyType key, Value value)
 {
     // 1. For each Record { [[Key]], [[Elements]] } g of groups, do
     //      a. If SameValue(g.[[Key]], key) is true, then
@@ -227,7 +221,7 @@ void add_value_to_keyed_group(GroupsType& groups, KeyType key, Value value)
     }
 
     // 2. Let group be the Record { [[Key]]: key, [[Elements]]: « value » }.
-    GC::RootVector<Value> new_elements;
+    GC::RootVector<Value> new_elements { vm.heap() };
     new_elements.append(value);
 
     // 3. Append group as the last element of groups.
@@ -290,7 +284,7 @@ ThrowCompletionOr<GroupsType> group_by(VM& vm, Value items, Value callback_funct
             // ii. IfAbruptCloseIterator(key, iteratorRecord).
             auto property_key = TRY_OR_CLOSE_ITERATOR(vm, iterator_record, key.to_property_key(vm));
 
-            add_value_to_keyed_group(groups, move(property_key), value);
+            add_value_to_keyed_group(vm, groups, move(property_key), value);
         }
         // h. Else,
         else {
@@ -300,7 +294,7 @@ ThrowCompletionOr<GroupsType> group_by(VM& vm, Value items, Value callback_funct
             // ii. Set key to CanonicalizeKeyedCollectionKey(key).
             key = canonicalize_keyed_collection_key(key);
 
-            add_value_to_keyed_group(groups, make_root(key), value);
+            add_value_to_keyed_group(vm, groups, make_root(key), value);
         }
 
         // i. Perform AddValueToKeyedGroup(groups, key, value).
@@ -378,7 +372,7 @@ enum class OptionType {
 };
 
 struct Required { };
-using OptionDefault = Variant<Required, Empty, bool, Utf16View, double>;
+using OptionDefault = Variant<Required, Empty, bool, StringView, double>;
 
 ThrowCompletionOr<GC::Ref<Object>> get_options_object(VM&, Value options);
 ThrowCompletionOr<Value> get_option(VM&, Object const& options, PropertyKey const& property, OptionType type, ReadonlySpan<StringView> values, OptionDefault const&);

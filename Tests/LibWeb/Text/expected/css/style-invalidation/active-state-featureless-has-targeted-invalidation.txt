@@ -1,2 +1,0 @@
-active color: rgb(1, 2, 3)
-PASS: :active state change stayed targeted

@@ -12,43 +12,37 @@
 #include <LibCompress/Forward.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/CompressionStreamPrototype.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Streams/GenericTransformStream.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
-
-namespace Web::Bindings {
-
-enum class CompressionFormat : u8;
-
-}
 
 namespace Web::Compression {
 
 using Compressor = Variant<
-    NonnullOwnPtr<Compress::BrotliCompressor>,
     NonnullOwnPtr<Compress::ZlibCompressor>,
     NonnullOwnPtr<Compress::DeflateCompressor>,
     NonnullOwnPtr<Compress::GzipCompressor>>;
 
 // https://compression.spec.whatwg.org/#compressionstream
 class CompressionStream final
-    : public Bindings::GCAllocatedWrappable
+    : public Bindings::PlatformObject
     , public Streams::GenericTransformStreamMixin {
-    WEB_WRAPPABLE(CompressionStream, Bindings::GCAllocatedWrappable);
+    WEB_PLATFORM_OBJECT(CompressionStream, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(CompressionStream);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<CompressionStream>> create(JS::Object& relevant_global_object, Compressor, NonnullOwnPtr<AllocatingMemoryStream>);
-    static WebIDL::ExceptionOr<GC::Ref<CompressionStream>> create_for_constructor(JS::Object&, Bindings::CompressionFormat);
+    static WebIDL::ExceptionOr<GC::Ref<CompressionStream>> construct_impl(JS::Realm&, Bindings::CompressionFormat);
     virtual ~CompressionStream() override;
 
 private:
-    CompressionStream(GC::Ref<Streams::TransformStream>, Compressor, NonnullOwnPtr<AllocatingMemoryStream>);
+    CompressionStream(JS::Realm&, GC::Ref<Streams::TransformStream>, Compressor, NonnullOwnPtr<AllocatingMemoryStream>);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    WebIDL::ExceptionOr<void> compress_and_enqueue_chunk(JS::Realm&, JS::Value);
-    WebIDL::ExceptionOr<void> compress_flush_and_enqueue(JS::Realm&);
+    WebIDL::ExceptionOr<void> compress_and_enqueue_chunk(JS::Value);
+    WebIDL::ExceptionOr<void> compress_flush_and_enqueue();
 
     enum class Finish {
         No,

@@ -1,3 +1,5 @@
+#import <SVG/SVGGraphicsElement.idl>
+
 // https://svgwg.org/svg2-draft/text.html#InterfaceSVGTextContentElement
 [Exposed=Window]
 interface SVGTextContentElement : SVGGraphicsElement {

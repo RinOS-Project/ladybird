@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibWeb/SVG/AttributeParser.h>
 #include <LibWeb/SVG/SVGAnimatedString.h>
@@ -22,9 +21,9 @@ public:
     Optional<PreserveAspectRatio> preserve_aspect_ratio() const { return m_preserve_aspect_ratio; }
 
 protected:
-    void initialize_fit_to_view_box();
+    void initialize(JS::Realm&);
     void visit_edges(JS::Cell::Visitor&);
-    void attribute_changed(DOM::Element& element, Utf16FlyString const& name, Optional<Utf16String> const& value);
+    void attribute_changed(DOM::Element& element, FlyString const& name, Optional<String> const& value);
 
 private:
     Optional<ViewBox> m_view_box;

@@ -6,25 +6,26 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/WebGL/Types.h>
 
-namespace Web::WebGL {
+namespace Web::WebGL::Extensions {
 
-class OESVertexArrayObject : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(OESVertexArrayObject, Bindings::GCAllocatedWrappable);
+class OESVertexArrayObject : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(OESVertexArrayObject, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(OESVertexArrayObject);
 
 public:
-    static GC::Ref<Bindings::Wrappable> create(GC::Ref<WebGLRenderingContextBase>);
+    static JS::ThrowCompletionOr<GC::Ref<JS::Object>> create(JS::Realm&, GC::Ref<WebGLRenderingContextBase>);
 
     GC::Ref<WebGLVertexArrayObjectOES> create_vertex_array_oes();
-    void delete_vertex_array_oes(GC::Ptr<WebGLVertexArrayObjectOES> array_object);
-    bool is_vertex_array_oes(GC::Ptr<WebGLVertexArrayObjectOES> array_object);
-    void bind_vertex_array_oes(GC::Ptr<WebGLVertexArrayObjectOES> array_object);
+    void delete_vertex_array_oes(GC::Root<WebGLVertexArrayObjectOES> array_object);
+    bool is_vertex_array_oes(GC::Root<WebGLVertexArrayObjectOES> array_object);
+    void bind_vertex_array_oes(GC::Root<WebGLVertexArrayObjectOES> array_object);
 
 protected:
+    void initialize(JS::Realm&) override;
     void visit_edges(Visitor&) override;
 
 private:

@@ -1,6 +1,9 @@
+#import <CSS/CSSRule.idl>
+#import <CSS/CSSFontFeatureValuesMap.idl>
+
 [Exposed=Window]
 interface CSSFontFeatureValuesRule : CSSRule {
-    attribute Utf16CSSOMString fontFamily;
+    attribute CSSOMString fontFamily;
     readonly attribute CSSFontFeatureValuesMap annotation;
     readonly attribute CSSFontFeatureValuesMap ornaments;
     readonly attribute CSSFontFeatureValuesMap stylistic;

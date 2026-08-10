@@ -11,15 +11,11 @@
 #include <AK/Forward.h>
 #include <AK/Optional.h>
 #include <AK/Time.h>
-#include <AK/Utf16String.h>
 #include <AK/Vector.h>
-#include <LibCore/ImmutableBytes.h>
 #include <LibGC/Ptr.h>
 #include <LibHTTP/HeaderList.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Cell.h>
-#include <LibRequests/Forward.h>
-#include <LibRequests/Request.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP.h>
@@ -57,24 +53,15 @@ public:
         u64 decoded_size { 0 };
 
         // https://fetch.spec.whatwg.org/#response-body-info-content-type
-        Utf16String content_type {};
+        String content_type {};
 
         bool operator==(BodyInfo const&) const = default;
     };
 
-    // RequestServer bookkeeping is transport state, not JS-visible response data.
-    struct RequestServerRequest {
-        int client_id { -1 };
-        u64 request_id { 0 };
-        RefPtr<Requests::Request> request;
-    };
-
-    [[nodiscard]] static GC::Ref<Response> create();
     [[nodiscard]] static GC::Ref<Response> create(JS::VM&);
-    [[nodiscard]] static GC::Ref<Response> aborted_network_error();
-    [[nodiscard]] static GC::Ref<Response> network_error(String message);
+    [[nodiscard]] static GC::Ref<Response> aborted_network_error(JS::VM&);
     [[nodiscard]] static GC::Ref<Response> network_error(JS::VM&, String message);
-    [[nodiscard]] static GC::Ref<Response> appropriate_network_error(FetchParams const&);
+    [[nodiscard]] static GC::Ref<Response> appropriate_network_error(JS::VM&, FetchParams const&);
 
     virtual ~Response() = default;
 
@@ -118,13 +105,6 @@ public:
     [[nodiscard]] virtual BodyInfo const& body_info() const { return m_body_info; }
     virtual void set_body_info(BodyInfo body_info) { m_body_info = move(body_info); }
 
-    [[nodiscard]] Optional<Core::ImmutableBytes> const& javascript_bytecode_cache() const { return m_javascript_bytecode_cache; }
-    void set_javascript_bytecode_cache(Optional<Core::ImmutableBytes> javascript_bytecode_cache) { m_javascript_bytecode_cache = move(javascript_bytecode_cache); }
-    [[nodiscard]] Optional<u64> javascript_bytecode_cache_vary_key() const { return m_javascript_bytecode_cache_vary_key; }
-    void set_javascript_bytecode_cache_vary_key(Optional<u64> javascript_bytecode_cache_vary_key) { m_javascript_bytecode_cache_vary_key = javascript_bytecode_cache_vary_key; }
-    [[nodiscard]] Optional<NonnullRefPtr<HTTP::HeaderList>> const& javascript_bytecode_cache_memory_cache_request_headers() const { return m_javascript_bytecode_cache_memory_cache_request_headers; }
-    void set_javascript_bytecode_cache_memory_cache_request_headers(Optional<NonnullRefPtr<HTTP::HeaderList>> request_headers) { m_javascript_bytecode_cache_memory_cache_request_headers = move(request_headers); }
-
     [[nodiscard]] RedirectTaint redirect_taint() const { return m_redirect_taint; }
     void set_redirect_taint(RedirectTaint redirect_taint) { m_redirect_taint = redirect_taint; }
 
@@ -144,11 +124,6 @@ public:
     // Non-standard
     [[nodiscard]] Optional<String> const& network_error_message() const { return m_network_error_message; }
     MonotonicTime monotonic_response_time() const { return m_monotonic_response_time; }
-    [[nodiscard]] virtual Optional<RequestServerRequest> const& request_server_request() const { return m_request_server_request; }
-    virtual void set_request_server_request(RequestServerRequest request) { m_request_server_request = move(request); }
-    virtual void release_request_for_transfer() const;
-    virtual void resume_body_delivery() const;
-    virtual void resume_body_delivery_up_to(size_t) const;
 
 protected:
     explicit Response(NonnullRefPtr<HTTP::HeaderList>);
@@ -220,10 +195,6 @@ private:
     MonotonicTime m_monotonic_response_time;
 
     Optional<String> m_network_error_message;
-    Optional<Core::ImmutableBytes> m_javascript_bytecode_cache;
-    Optional<u64> m_javascript_bytecode_cache_vary_key;
-    Optional<NonnullRefPtr<HTTP::HeaderList>> m_javascript_bytecode_cache_memory_cache_request_headers;
-    Optional<RequestServerRequest> m_request_server_request;
 
 public:
     [[nodiscard]] ByteString const& method() const { return m_method; }
@@ -274,13 +245,8 @@ public:
     [[nodiscard]] virtual bool timing_allow_passed() const override { return has_internal_response() ? m_internal_response->timing_allow_passed() : false; }
     virtual void set_timing_allow_passed(bool timing_allow_passed) override { if (has_internal_response()) m_internal_response->set_timing_allow_passed(timing_allow_passed); }
 
-    [[nodiscard]] virtual BodyInfo const& body_info() const override { return m_internal_response->body_info(); }
-    virtual void set_body_info(BodyInfo body_info) override { m_internal_response->set_body_info(move(body_info)); }
-    [[nodiscard]] virtual Optional<RequestServerRequest> const& request_server_request() const override { return m_internal_response->request_server_request(); }
-    virtual void set_request_server_request(RequestServerRequest request) override { m_internal_response->set_request_server_request(move(request)); }
-    virtual void release_request_for_transfer() const override { m_internal_response->release_request_for_transfer(); }
-    virtual void resume_body_delivery() const override { m_internal_response->resume_body_delivery(); }
-    virtual void resume_body_delivery_up_to(size_t byte_count) const override { m_internal_response->resume_body_delivery_up_to(byte_count); }
+    [[nodiscard]] virtual BodyInfo const& body_info() const override { return has_internal_response() ? m_internal_response->body_info() : Response::body_info(); }
+    virtual void set_body_info(BodyInfo body_info) override { if (has_internal_response()) m_internal_response->set_body_info(move(body_info)); }
 
     [[nodiscard]] GC::Ref<Response> internal_response() const;
     [[nodiscard]] bool has_internal_response() const;
@@ -299,7 +265,7 @@ class WEB_API BasicFilteredResponse final : public FilteredResponse {
     GC_DECLARE_ALLOCATOR(BasicFilteredResponse);
 
 public:
-    [[nodiscard]] static GC::Ref<BasicFilteredResponse> create(GC::Ref<Response>);
+    [[nodiscard]] static GC::Ref<BasicFilteredResponse> create(JS::VM&, GC::Ref<Response>);
 
     [[nodiscard]] virtual Type type() const override { return Type::Basic; }
     virtual NonnullRefPtr<HTTP::HeaderList> const& header_list() const override { return m_header_list; }
@@ -316,7 +282,7 @@ class WEB_API CORSFilteredResponse final : public FilteredResponse {
     GC_DECLARE_ALLOCATOR(CORSFilteredResponse);
 
 public:
-    [[nodiscard]] static GC::Ref<CORSFilteredResponse> create(GC::Ref<Response>);
+    [[nodiscard]] static GC::Ref<CORSFilteredResponse> create(JS::VM&, GC::Ref<Response>);
 
     [[nodiscard]] virtual Type type() const override { return Type::CORS; }
     virtual NonnullRefPtr<HTTP::HeaderList> const& header_list() const override { return m_header_list; }
@@ -333,7 +299,7 @@ class WEB_API OpaqueFilteredResponse final : public FilteredResponse {
     GC_DECLARE_ALLOCATOR(OpaqueFilteredResponse);
 
 public:
-    [[nodiscard]] static GC::Ref<OpaqueFilteredResponse> create(GC::Ref<Response>);
+    [[nodiscard]] static GC::Ref<OpaqueFilteredResponse> create(JS::VM&, GC::Ref<Response>);
 
     [[nodiscard]] virtual Type type() const override { return Type::Opaque; }
     [[nodiscard]] virtual Vector<URL::URL> const& url_list() const override { return m_url_list; }
@@ -357,7 +323,7 @@ class WEB_API OpaqueRedirectFilteredResponse final : public FilteredResponse {
     GC_DECLARE_ALLOCATOR(OpaqueRedirectFilteredResponse);
 
 public:
-    [[nodiscard]] static GC::Ref<OpaqueRedirectFilteredResponse> create(GC::Ref<Response>);
+    [[nodiscard]] static GC::Ref<OpaqueRedirectFilteredResponse> create(JS::VM&, GC::Ref<Response>);
 
     [[nodiscard]] virtual Type type() const override { return Type::OpaqueRedirect; }
     [[nodiscard]] virtual Status status() const override { return 0; }

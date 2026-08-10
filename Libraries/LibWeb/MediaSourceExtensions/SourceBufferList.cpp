@@ -4,65 +4,26 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
-#include <LibWeb/DOM/Event.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SourceBufferListPrototype.h>
 #include <LibWeb/MediaSourceExtensions/EventNames.h>
-#include <LibWeb/MediaSourceExtensions/MediaSource.h>
-#include <LibWeb/MediaSourceExtensions/SourceBuffer.h>
 #include <LibWeb/MediaSourceExtensions/SourceBufferList.h>
 
 namespace Web::MediaSourceExtensions {
 
 GC_DEFINE_ALLOCATOR(SourceBufferList);
 
-SourceBufferList::SourceBufferList(MediaSource& media_source)
-    : DOM::EventTarget()
-    , m_media_source(media_source)
+SourceBufferList::SourceBufferList(JS::Realm& realm)
+    : DOM::EventTarget(realm)
 {
 }
 
 SourceBufferList::~SourceBufferList() = default;
 
-GC::Ptr<Bindings::Wrappable> SourceBufferList::relevant_global_impl() const
+void SourceBufferList::initialize(JS::Realm& realm)
 {
-    return static_cast<Bindings::Wrappable&>(*m_media_source).relevant_global_impl();
-}
-
-void SourceBufferList::visit_edges(Cell::Visitor& visitor)
-{
-    Base::visit_edges(visitor);
-    visitor.visit(m_media_source);
-    visitor.visit(m_buffers);
-}
-
-void SourceBufferList::append(GC::Ref<SourceBuffer> buffer)
-{
-    // From https://w3c.github.io/media-source/#addsourcebuffer-method
-    // 8. Append buffer to this's sourceBuffers.
-    m_buffers.append(buffer);
-
-    // 9. Queue a task to fire an event named addsourcebuffer at this's sourceBuffers.
-    // FIXME: Should this have a task source? An event loop? A document?
-    HTML::queue_a_task(HTML::Task::Source::Unspecified, nullptr, nullptr, GC::create_function(GC::Heap::the(), [weak_self = GC::Weak(*this)] {
-        if (!weak_self)
-            return;
-        weak_self->dispatch_event(weak_self->m_media_source->create_associated_event(EventNames::addsourcebuffer));
-    }));
-}
-
-void SourceBufferList::remove_all_buffers(Badge<MediaSource>)
-{
-    m_buffers.clear();
-}
-
-size_t SourceBufferList::length() const
-{
-    return m_buffers.size();
-}
-
-GC::Ref<SourceBuffer> const& SourceBufferList::item(u32 index) const
-{
-    return m_buffers[index];
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SourceBufferList);
+    Base::initialize(realm);
 }
 
 // https://w3c.github.io/media-source/#dom-sourcebufferlist-onaddsourcebuffer
@@ -87,11 +48,6 @@ void SourceBufferList::set_onremovesourcebuffer(GC::Ptr<WebIDL::CallbackType> ev
 GC::Ptr<WebIDL::CallbackType> SourceBufferList::onremovesourcebuffer()
 {
     return event_handler_attribute(EventNames::removesourcebuffer);
-}
-
-bool SourceBufferList::contains(SourceBuffer const& source_buffer) const
-{
-    return m_buffers.contains([&](GC::Ref<SourceBuffer> const& contained_buffer) { return contained_buffer == &source_buffer; });
 }
 
 }

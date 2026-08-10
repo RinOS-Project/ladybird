@@ -6,31 +6,24 @@
 
 #pragma once
 
-#include <LibGC/Ptr.h>
-#include <LibJS/Forward.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::Internals {
 
-class WEB_API InternalsBase : public Bindings::GCAllocatedWrappable {
-    WEB_NON_IDL_WRAPPABLE(InternalsBase, Bindings::GCAllocatedWrappable);
+class WEB_API InternalsBase : public Bindings::PlatformObject {
+    WEB_NON_IDL_PLATFORM_OBJECT(InternalsBase, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(InternalsBase);
 
 public:
     virtual ~InternalsBase() override;
 
 protected:
-    explicit InternalsBase(HTML::Window&);
+    explicit InternalsBase(JS::Realm&);
 
     HTML::Window& window() const;
     Page& page() const;
-
-    virtual void visit_edges(GC::Cell::Visitor&) override;
-
-private:
-    GC::Ref<HTML::Window> m_window;
 };
 
 }

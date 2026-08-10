@@ -4,518 +4,221 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Atomic.h>
-#include <AK/NumericLimits.h>
 #include <AK/TemporaryChange.h>
 #include <LibGfx/PaintingSurface.h>
-#include <LibIPC/Decoder.h>
-#include <LibIPC/Encoder.h>
 #include <LibWeb/Painting/DisplayList.h>
 
 namespace Web::Painting {
 
-static Atomic<u64> s_next_id { 1 };
-
-static void set_command_sequence_visual_context(Bytes command_bytes, VisualContextIndex context_index)
+bool DisplayList::append(DisplayListCommand&& command, VisualContextIndex context_index)
 {
-    for (size_t offset = 0; offset < command_bytes.size();) {
-        VERIFY(offset + sizeof(DisplayListCommandHeader) <= command_bytes.size());
-        auto* header_data = command_bytes.data() + offset;
-        auto header = read_display_list_object<DisplayListCommandHeader>({ header_data, command_bytes.size() - offset });
-        header.context_index = context_index;
-        write_display_list_object(Bytes { header_data, sizeof(header) }, header);
-        offset += sizeof(header) + header.payload_size;
-        VERIFY(offset <= command_bytes.size());
-    }
-}
-
-DisplayList::DisplayList(u64 compatible_visual_context_tree_version)
-    : m_compatible_visual_context_tree_version(compatible_visual_context_tree_version)
-    , m_id(s_next_id.fetch_add(1, AK::MemoryOrder::memory_order_relaxed))
-{
-}
-
-DisplayList::DisplayList(u64 compatible_visual_context_tree_version, u64 id, ByteBuffer&& command_bytes, Optional<Gfx::Color> surface_clear_color, Optional<AsyncScrollingMetadata> async_scrolling_metadata, HashMap<VisualContextIndex, DisplayListResourceId>&& mask_display_lists)
-    : m_compatible_visual_context_tree_version(compatible_visual_context_tree_version)
-    , m_id(id)
-    , m_command_bytes(move(command_bytes))
-    , m_surface_clear_color(surface_clear_color)
-    , m_async_scrolling_metadata(move(async_scrolling_metadata))
-    , m_mask_display_lists(move(mask_display_lists))
-{
-}
-
-bool DisplayList::append_bytes(
-    DisplayListCommandType type,
-    ReadonlyBytes payload,
-    ReadonlyBytes inline_data,
-    AccumulatedVisualContextTree const& visual_context_tree,
-    VisualContextIndex context_index,
-    bool context_geometry_only,
-    Optional<Gfx::IntRect> bounding_rect,
-    bool is_clip)
-{
-    VERIFY(visual_context_tree.version() == m_compatible_visual_context_tree_version);
-    // Geometry-only commands ignore the chain's clips, so an empty effective clip doesn't make them invisible.
-    if (!context_geometry_only && visual_context_tree.has_empty_effective_clip(context_index))
+    if (context_index.value() && m_visual_context_tree->has_empty_effective_clip(context_index))
         return false;
-    VERIFY(m_command_bytes.size() % DisplayList::command_alignment == 0);
-    VERIFY(payload.size() <= NumericLimits<u32>::max());
-    VERIFY(inline_data.size() <= NumericLimits<u32>::max() - payload.size());
-    auto payload_size = payload.size() + inline_data.size();
-    auto record_size = sizeof(DisplayListCommandHeader) + payload_size;
-    constexpr auto command_alignment = DisplayList::command_alignment;
-    auto trailing_padding = align_up_to(record_size, command_alignment) - record_size;
-    VERIFY(trailing_padding <= NumericLimits<u32>::max() - payload_size);
-    DisplayListCommandHeader header {
-        .type = type,
-        .payload_size = static_cast<u32>(payload_size + trailing_padding),
-        .context_index = context_index,
-        .context_geometry_only = context_geometry_only,
-        .has_bounding_rect = bounding_rect.has_value(),
-        .is_clip = is_clip,
-        .bounding_rect = bounding_rect.value_or({}),
-    };
-    auto header_bytes = display_list_object_bytes(header);
-    m_command_bytes.append(header_bytes.data(), header_bytes.size());
-    m_command_bytes.append(payload.data(), payload.size());
-    if (!inline_data.is_empty())
-        m_command_bytes.append(inline_data.data(), inline_data.size());
-    m_command_bytes.resize(m_command_bytes.size() + trailing_padding, ByteBuffer::ZeroFillNewElements::Yes);
+    m_commands.append({ context_index, move(command) });
     return true;
 }
 
-u32 DisplayList::append_command_range_from(
-    DisplayList const& source_display_list,
-    DisplayListCommandRange source_range,
-    AccumulatedVisualContextTree const& visual_context_tree,
-    VisualContextIndex recorded_context_index,
-    VisualContextIndex current_context_index)
+static Optional<Gfx::IntRect> command_bounding_rectangle(DisplayListCommand const& command)
 {
-    VERIFY(&source_display_list != this);
-    VERIFY(visual_context_tree.version() == m_compatible_visual_context_tree_version);
-    VERIFY(m_command_bytes.size() % DisplayList::command_alignment == 0);
-    VERIFY(source_range.size % DisplayList::command_alignment == 0);
-    VERIFY(static_cast<size_t>(source_range.offset) + source_range.size <= source_display_list.m_command_bytes.size());
-
-    auto destination_offset = m_command_bytes.size();
-    VERIFY(destination_offset + source_range.size <= NumericLimits<u32>::max());
-    if (source_range.is_empty())
-        return static_cast<u32>(destination_offset);
-
-    m_command_bytes.append(source_display_list.m_command_bytes.data() + source_range.offset, source_range.size);
-    // The copied headers already carry the index the range was recorded under, so they only need rewriting
-    // when the paintable's context was assigned a different index since then.
-    if (recorded_context_index != current_context_index)
-        set_command_sequence_visual_context(m_command_bytes.span().slice(destination_offset, source_range.size), current_context_index);
-    return static_cast<u32>(destination_offset);
+    return command.visit(
+        [&](auto const& command) -> Optional<Gfx::IntRect> {
+            if constexpr (requires { command.bounding_rect(); })
+                return command.bounding_rect();
+            else
+                return {};
+        });
 }
 
-void DisplayListPlayer::execute(
-    DisplayList const& display_list,
-    AccumulatedVisualContextTree const& visual_context_tree,
-    DisplayListResourceStorage const& resource_storage,
-    ScrollStateSnapshot const& scroll_state_snapshot,
-    RefPtr<Gfx::PaintingSurface> surface,
-    CanvasSurfaceRegistry const* canvas_surface_registry)
+static bool command_is_clip(DisplayListCommand const& command)
 {
-    VERIFY(display_list.compatible_visual_context_tree_version() == visual_context_tree.version());
+    return command.visit(
+        [&](auto const& command) -> bool {
+            if constexpr (requires { command.is_clip(); })
+                return command.is_clip();
+            else
+                return false;
+        });
+}
+
+void DisplayListPlayer::execute(DisplayList& display_list, ScrollStateSnapshotByDisplayList&& scroll_state_snapshot_by_display_list, RefPtr<Gfx::PaintingSurface> surface)
+{
+    TemporaryChange change { m_scroll_state_snapshots_by_display_list, move(scroll_state_snapshot_by_display_list) };
+    if (surface) {
+        surface->lock_context();
+    }
     m_surface = surface;
-    m_active_display_list = &display_list;
-    m_active_visual_context_tree = &visual_context_tree;
-    m_resource_storage = &resource_storage;
-    m_canvas_surface_registry = canvas_surface_registry;
+    auto scroll_state_snapshot = m_scroll_state_snapshots_by_display_list.get(display_list).value_or({});
     execute_impl(display_list, scroll_state_snapshot);
-    m_canvas_surface_registry = nullptr;
-    m_resource_storage = nullptr;
-    m_active_visual_context_tree = nullptr;
-    m_active_display_list = nullptr;
+    if (surface)
+        flush();
     m_surface = nullptr;
+    if (surface) {
+        surface->unlock_context();
+    }
 }
 
-void DisplayListPlayer::execute_display_list_into_surface(DisplayList const& display_list, AccumulatedVisualContextTree const& visual_context_tree, Gfx::PaintingSurface& target_surface)
+void DisplayListPlayer::execute_display_list_into_surface(DisplayList& display_list, Gfx::PaintingSurface& target_surface)
 {
-    VERIFY(display_list.compatible_visual_context_tree_version() == visual_context_tree.version());
     TemporaryChange surface_change { m_surface, RefPtr<Gfx::PaintingSurface> { target_surface } };
-    TemporaryChange display_list_change { m_active_display_list, &display_list };
-    TemporaryChange visual_context_tree_change { m_active_visual_context_tree, &visual_context_tree };
-    VERIFY(m_resource_storage);
     ScrollStateSnapshot scroll_state_snapshot;
     execute_impl(display_list, scroll_state_snapshot);
 }
 
-void DisplayListPlayer::execute_nested_display_list(
-    DisplayList const& display_list,
-    AccumulatedVisualContextTree const& visual_context_tree,
-    ScrollStateSnapshot const& scroll_state_snapshot,
-    ReadonlyBytes command_bytes)
+void DisplayListPlayer::execute_impl(DisplayList& display_list, ScrollStateSnapshot const& scroll_state)
 {
-    VERIFY(display_list.compatible_visual_context_tree_version() == visual_context_tree.version());
-    TemporaryChange display_list_change { m_active_display_list, &display_list };
-    TemporaryChange visual_context_tree_change { m_active_visual_context_tree, &visual_context_tree };
-    VERIFY(m_resource_storage);
-    execute_impl(display_list, scroll_state_snapshot, command_bytes);
-}
-
-void DisplayListPlayer::execute_impl(DisplayList const& display_list, ScrollStateSnapshot const& scroll_state)
-{
-    execute_impl(display_list, scroll_state, display_list.command_bytes());
-}
-
-void DisplayListPlayer::execute_impl(
-    DisplayList const& display_list,
-    ScrollStateSnapshot const& scroll_state,
-    ReadonlyBytes commands)
-{
-    auto const& visual_context_tree = active_visual_context_tree();
-    VERIFY(display_list.compatible_visual_context_tree_version() == visual_context_tree.version());
+    auto const& commands = display_list.commands();
+    auto const& visual_context_tree = display_list.visual_context_tree();
 
     VERIFY(m_surface);
 
-    // Cumulative to-root matrices for every visual context node, resolved against the live scroll
-    // offsets and folded onto the canvas matrix at replay entry, so any node's space can be entered
-    // absolutely with a single set_matrix(). Coordinate-affecting nodes therefore never touch the
-    // canvas save stack; only clips and effects do. Clip and effect nodes inherit their parent's
-    // matrix, so the palette is defined for every node index; nearest_spatial_node canonicalizes
-    // indices whose spaces coincide onto one identity for the current-matrix cache, and
-    // nearest_frame_node links every node to its innermost clip-or-effect ancestor-or-self (root
-    // index 0 doubling as none), letting frame chains hop between frames without visiting the
-    // coordinate-affecting nodes in between. The storage lives on the player so steady-state
-    // replays reuse warm capacity; moving it out for the duration of the replay keeps re-entrant
-    // nested replays from clobbering the outer palette.
-    auto palette_storage = move(m_replay_palette_storage);
-    auto& transform_palette = palette_storage.to_root_matrices;
-    auto& nearest_spatial_node = palette_storage.nearest_spatial_nodes;
-    auto& nearest_frame_node = palette_storage.nearest_frame_nodes;
-    auto const& nodes = visual_context_tree.nodes();
-    transform_palette.clear_with_capacity();
-    transform_palette.ensure_capacity(nodes.size());
-    nearest_spatial_node.clear_with_capacity();
-    nearest_spatial_node.ensure_capacity(nodes.size());
-    nearest_frame_node.clear_with_capacity();
-    nearest_frame_node.ensure_capacity(nodes.size());
-    auto& backface_culled = palette_storage.backface_culled;
-    backface_culled.clear_with_capacity();
-    backface_culled.ensure_capacity(nodes.size());
-    auto const replay_base_matrix = canvas_matrix();
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        auto const& node = nodes[i];
-        auto append_spatial = [&](Gfx::FloatMatrix4x4 const& local_matrix, bool flattens_inherited_transform = false) {
-            auto const& parent_matrix = i == 0 ? replay_base_matrix : transform_palette[node.parent_index.value()];
-            transform_palette.unchecked_append((flattens_inherited_transform ? Gfx::flattened(parent_matrix) : parent_matrix) * local_matrix);
-            nearest_spatial_node.unchecked_append(VisualContextIndex { i });
-            nearest_frame_node.unchecked_append(i == 0 ? VISUAL_VIEWPORT_NODE_INDEX : nearest_frame_node[node.parent_index.value()]);
-            backface_culled.unchecked_append(i == 0 ? false : backface_culled[node.parent_index.value()]);
-        };
-        auto append_spatial_translation = [&](Gfx::IntPoint offset) {
-            // Whole device pixels, so scrolled content never lands on subpixel positions.
-            append_spatial(Gfx::translation_matrix(Vector3<float>(static_cast<float>(offset.x()), static_cast<float>(offset.y()), 0)));
-        };
-        auto append_non_spatial = [&] {
-            VERIFY(i != 0);
-            transform_palette.unchecked_append(transform_palette[node.parent_index.value()]);
-            nearest_spatial_node.unchecked_append(nearest_spatial_node[node.parent_index.value()]);
-            nearest_frame_node.unchecked_append(VisualContextIndex { i });
-            backface_culled.unchecked_append(backface_culled[node.parent_index.value()]);
-        };
+    auto for_each_node_from_common_ancestor_to_target = [&](this auto const& self, VisualContextIndex common_ancestor_index, VisualContextIndex target_index, auto&& callback) -> void {
+        if (!target_index.value() || target_index == common_ancestor_index)
+            return;
+        self(common_ancestor_index, visual_context_tree.node_at(target_index).parent_index, callback);
+        callback(visual_context_tree.node_at(target_index));
+    };
+
+    auto apply_accumulated_visual_context = [&](AccumulatedVisualContextNode const& node) {
         node.data.visit(
-            [&](TransformData const& transform) {
-                append_spatial(transform.matrix_including_origin(), transform.flattens_inherited_transform);
+            [&](EffectsData const& effects) {
+                apply_effects({ .opacity = effects.opacity, .compositing_and_blending_operator = effects.blend_mode, .filter = effects.gfx_filter });
             },
             [&](PerspectiveData const& perspective) {
-                append_spatial(perspective.matrix, perspective.flattens_inherited_transform);
+                save({});
+                apply_transform({ 0, 0 }, perspective.matrix);
             },
-            [&](BackfaceVisibilityData const& backface) {
-                // The flattened entry only feeds the backface test and descendant accumulation. Drawing under the
-                // marker keeps using the parent entry via nearest_spatial_node, since the element's own content
-                // belongs to its parent's plane.
-                auto const& parent_matrix = transform_palette[node.parent_index.value()];
-                transform_palette.unchecked_append(backface.flattens_inherited_transform ? Gfx::flattened(parent_matrix) : parent_matrix);
-                nearest_spatial_node.unchecked_append(nearest_spatial_node[node.parent_index.value()]);
-                nearest_frame_node.unchecked_append(nearest_frame_node[node.parent_index.value()]);
-                bool culled = backface_culled[node.parent_index.value()];
-                if (!culled) {
-                    auto const& plane_root_matrix = transform_palette[backface.plane_root_index.value()];
-                    culled = should_cull_back_face(transform_palette.last(), plane_root_matrix);
-                }
-                backface_culled.unchecked_append(culled);
+            [&](ScrollData const& scroll) {
+                save({});
+                auto offset = scroll_state.device_offset_for_index(scroll.scroll_frame_index);
+                if (!offset.is_zero())
+                    translate({ .delta = offset.to_type<int>() });
             },
-            [&](ScrollData const&) {
-                append_spatial_translation(scroll_state.device_offset_for_index(VisualContextIndex { i }).to_type<int>());
+            [&](TransformData const& transform) {
+                save({});
+                apply_transform(transform.origin, transform.matrix);
             },
-            [&](ScrollCompensation const& compensation) {
-                append_spatial_translation((-scroll_state.device_offset_for_index(compensation.scroll_node_index)).to_type<int>());
+            [&](ClipData const& clip) {
+                save({});
+                if (clip.corner_radii.has_any_radius())
+                    add_rounded_rect_clip({ .corner_radii = clip.corner_radii, .border_rect = clip.rect.to_type<int>(), .corner_clip = CornerClip::Outside });
+                else
+                    add_clip_rect({ .rect = clip.rect.to_type<int>() });
             },
-            [&](AnchorScrollShift const& shift) {
-                append_spatial_translation(shift.masked_offset(scroll_state).to_type<int>());
-            },
-            [&](ClipData const&) { append_non_spatial(); },
-            [&](ClipPathData const&) { append_non_spatial(); },
-            [&](EffectsData const&) { append_non_spatial(); },
-            [&](MaskData const&) { append_non_spatial(); });
-    }
+            [&](ClipPathData const& clip_path) {
+                save({});
+                add_clip_path(clip_path.path);
+            });
+    };
 
-    // The palette entry the canvas matrix currently equals, if known; every Restore resets the
-    // matrix to its save point, so unwinding applied frames invalidates it. Recorded streams
-    // contain no matrix-mutating commands, so playing commands never invalidates the cache.
-    Optional<VisualContextIndex> current_ctm_space;
-    auto ensure_ctm_space = [&](VisualContextIndex context_index) {
-        auto space_node_index = nearest_spatial_node[context_index.value()];
-        if (current_ctm_space == space_node_index)
+    VisualContextIndex applied_context_index;
+    size_t applied_depth = 0;
+
+    auto switch_to_context = [&](VisualContextIndex target_index) {
+        if (applied_context_index == target_index)
             return;
-        set_matrix(transform_palette[space_node_index.value()]);
-        current_ctm_space = space_node_index;
-    };
 
-    // Each applied/target frame pushes and pops the canvas state according to its node kind;
-    // geometry-only commands target an empty frame list and take their coordinates from the palette.
-    Vector<VisualContextIndex, 16> applied_frames;
-    Vector<VisualContextIndex, 16> target_frames;
-    Optional<VisualContextIndex> applied_context_index;
-    bool applied_context_geometry_only { false };
+        auto common_ancestor_index = visual_context_tree.find_common_ancestor(applied_context_index, target_index);
+        size_t common_ancestor_depth = common_ancestor_index.value() ? visual_context_tree.node_at(common_ancestor_index).depth : 0;
 
-    auto build_target_frames = [&](VisualContextIndex target_index, bool geometry_only) {
-        target_frames.clear_with_capacity();
-        if (geometry_only)
-            return;
-        for (auto index = nearest_frame_node[target_index.value()];
-            index != VISUAL_VIEWPORT_NODE_INDEX;
-            index = nearest_frame_node[visual_context_tree.node_at(index).parent_index.value()]) {
-            target_frames.append(index);
+        while (applied_depth > common_ancestor_depth) {
+            restore({});
+            applied_depth--;
         }
-        target_frames.reverse();
-    };
 
-    size_t applied_mask_frame_count = 0;
-    auto restore_to_length = [&](size_t length) {
-        while (applied_frames.size() > length) {
-            auto frame_node_index = applied_frames.take_last();
-            auto const* mask = applied_mask_frame_count > 0
-                ? visual_context_tree.node_at(frame_node_index).data.get_pointer<MaskData>()
-                : nullptr;
-            if (mask) {
-                --applied_mask_frame_count;
-                ensure_ctm_space(frame_node_index);
-                play_command(ApplyEffects {
-                                 .opacity = 1.0f,
-                                 .compositing_and_blending_operator = Gfx::CompositingAndBlendingOperator::DestinationIn,
-                                 .has_filter = false,
-                                 .filter_data = {},
-                                 .has_mask_kind = mask->kind == Gfx::MaskKind::Luminance,
-                                 .mask_kind = mask->kind,
-                             },
-                    nullptr);
-                if (auto display_list_id = display_list.mask_display_list_id(frame_node_index);
-                    display_list_id.has_value() && resource_storage().has_display_list(*display_list_id)) {
-                    play_command(PaintNestedDisplayList {
-                        .display_list_id = *display_list_id,
-                        .rect = mask->rect.to_type<int>(),
-                    });
-                }
-                play_command(Restore {}); // DstIn layer
-                play_command(Restore {}); // content layer
-                play_command(Restore {}); // clip save
-            } else {
-                play_command(Restore {});
-            }
-            current_ctm_space = {};
-        }
-    };
-
-    // OPTIMIZATION: When walking down to layer-pushing frames (effects and masks), check culling before pushing
-    //               each one. Effects don't affect clip state and a mask push only narrows it, so testing against
-    //               the pre-push clip is conservative and valid. This avoids expensive saveLayer/restore cycles
-    //               for off-screen elements.
-    enum class SwitchResult : u8 {
-        Switched,
-        CulledByEffect,
-    };
-    auto switch_to_context = [&](VisualContextIndex target_index, bool geometry_only, Optional<Gfx::IntRect> bounding_rect = {}) -> SwitchResult {
-        if (applied_context_index == target_index && applied_context_geometry_only == geometry_only)
-            return SwitchResult::Switched;
-
-        build_target_frames(target_index, geometry_only);
-
-        auto common_prefix_length = applied_frames.span().matching_prefix_length(target_frames);
-
-        restore_to_length(common_prefix_length);
-
-        for (size_t i = common_prefix_length; i < target_frames.size(); ++i) {
-            auto frame_node_index = target_frames[i];
-            auto const& frame_node = visual_context_tree.node_at(frame_node_index);
-            auto const* effects = frame_node.data.get_pointer<EffectsData>();
-            bool pushes_layer = effects || frame_node.data.has<MaskData>();
-            if (pushes_layer && bounding_rect.has_value()) {
-                bool culled_by_layer_frame = bounding_rect->is_empty();
-                if (!culled_by_layer_frame) {
-                    ensure_ctm_space(target_index);
-                    culled_by_layer_frame = would_be_fully_clipped_by_painter(*bounding_rect);
-                }
-                if (culled_by_layer_frame) {
-                    restore_to_length(common_prefix_length);
-                    // The canvas is unwound to the shared prefix; clearing the applied index
-                    // keeps the fast path from reusing the pre-cull context while the frame
-                    // vector still enables prefix reuse on the next switch.
-                    applied_context_index = {};
-                    return SwitchResult::CulledByEffect;
-                }
-            }
-            if (effects) {
-                ensure_ctm_space(frame_node_index);
-                play_command(ApplyEffects {
-                                 .opacity = effects->opacity,
-                                 .compositing_and_blending_operator = effects->blend_mode,
-                                 .has_filter = effects->gfx_filter.has_value(),
-                                 .filter_data = {},
-                             },
-                    effects->gfx_filter.has_value() ? &effects->gfx_filter.value() : nullptr);
-            } else {
-                play_command(Save {});
-                ensure_ctm_space(frame_node_index);
-                frame_node.data.visit(
-                    [&](ClipData const& clip) {
-                        if (clip.corner_radii.has_any_radius()) {
-                            play_command(AddRoundedRectClip {
-                                .corner_radii = clip.corner_radii,
-                                .border_rect = clip.rect.to_type<int>(),
-                                .corner_clip = Gfx::CornerClip::Outside,
-                            });
-                        } else {
-                            play_command(AddClipRect { .rect = clip.rect.to_type<int>() });
-                        }
-                    },
-                    [&](ClipPathData const& clip_path) {
-                        add_clip_path(clip_path.path, clip_path.fill_rule);
-                    },
-                    [&](MaskData const& mask) {
-                        play_command(AddClipRect { .rect = mask.rect.to_type<int>() });
-                        play_command(SaveLayer {});
-                        ++applied_mask_frame_count;
-                    },
-                    [&](auto const&) { VERIFY_NOT_REACHED(); });
-            }
-            applied_frames.append(frame_node_index);
-        }
+        for_each_node_from_common_ancestor_to_target(common_ancestor_index, target_index, [&](AccumulatedVisualContextNode const& node) {
+            apply_accumulated_visual_context(node);
+            applied_depth++;
+        });
 
         applied_context_index = target_index;
-        applied_context_geometry_only = geometry_only;
-        return SwitchResult::Switched;
     };
 
-    DisplayList::for_each_command_header(commands, [&](DisplayListCommandHeader const& header, ReadonlyBytes payload) {
-        if (display_list_command_is_compositor_metadata(header.type))
-            return;
+    for (size_t command_index = 0; command_index < commands.size(); command_index++) {
+        auto const& [context_index, command] = commands[command_index];
 
-        if (backface_culled[header.context_index.value()])
-            return;
+        auto bounding_rect = command_bounding_rectangle(command);
 
-        auto bounding_rect = header.has_bounding_rect
-            ? Optional<Gfx::IntRect>(header.bounding_rect)
-            : Optional<Gfx::IntRect> {};
+        // OPTIMIZATION: If the leaf context is an effect and we're switching to a new context,
+        //               check culling before applying it. Effects (opacity, filters, blend modes) don't affect
+        //               clip state, so would_be_fully_clipped_by_painter() returns the same result before and after
+        //               applying effects.
+        //               This avoids expensive saveLayer/restore cycles for off-screen elements with effects like blur.
+        // NOTE: We must not do this for consecutive commands with the same context, as that would incorrectly restore
+        //       and re-apply the effect layer, breaking blend mode compositing.
+        if (context_index.value() && applied_context_index != context_index && visual_context_tree.is_effect(context_index) && bounding_rect.has_value()) {
+            switch_to_context(visual_context_tree.node_at(context_index).parent_index);
+            if (bounding_rect->is_empty() || would_be_fully_clipped_by_painter(*bounding_rect))
+                continue;
+        }
 
-        if (switch_to_context(header.context_index, header.context_geometry_only, bounding_rect) == SwitchResult::CulledByEffect)
-            return;
+        switch_to_context(context_index);
 
-        ensure_ctm_space(header.context_index);
+        if (command.has<PaintScrollBar>()) {
+            auto translated_command = command;
+            auto& paint_scroll_bar = translated_command.get<PaintScrollBar>();
+            auto device_offset = scroll_state.device_offset_for_index(paint_scroll_bar.scroll_frame_index);
+            if (paint_scroll_bar.vertical)
+                paint_scroll_bar.thumb_rect.translate_by(0, static_cast<int>(-device_offset.y() * paint_scroll_bar.scroll_size));
+            else
+                paint_scroll_bar.thumb_rect.translate_by(static_cast<int>(-device_offset.x() * paint_scroll_bar.scroll_size), 0);
+            paint_scrollbar(paint_scroll_bar);
+            continue;
+        }
 
         if (bounding_rect.has_value() && (bounding_rect->is_empty() || would_be_fully_clipped_by_painter(*bounding_rect))) {
             // Any clip that's located outside of the visible region is equivalent to a simple clip-rect,
             // so replace it with one to avoid doing unnecessary work.
-            if (header.is_clip) {
-                if (header.type == DisplayListCommandType::AddClipRect)
-                    play_command(read_display_list_command_payload<AddClipRect>(payload));
-                else
-                    play_command(AddClipRect { bounding_rect.release_value() });
+            if (command_is_clip(command)) {
+                if (command.has<AddClipRect>()) {
+                    add_clip_rect(command.get<AddClipRect>());
+                } else {
+                    add_clip_rect({ bounding_rect.release_value() });
+                }
             }
-            return;
+            continue;
         }
 
-        TemporaryChange current_command_payload_change { m_current_command_payload, payload };
-        auto dispatch_command = [&]<DisplayListCommand Command>(auto&& callback) {
-            auto command = read_display_list_command_payload<Command>(payload);
-            if constexpr (IsSame<Command, PaintScrollBar>) {
-                auto device_offset = scroll_state.device_offset_for_index(command.scroll_node_index);
-                if (command.vertical)
-                    command.thumb_rect.translate_by(0, static_cast<int>(-device_offset.y() * command.scroll_size));
-                else
-                    command.thumb_rect.translate_by(static_cast<int>(-device_offset.x() * command.scroll_size), 0);
-            }
-            callback(command);
-        };
+#define HANDLE_COMMAND(command_type, executor_method) \
+    if (command.has<command_type>()) {                \
+        executor_method(command.get<command_type>()); \
+    }
 
-        switch (header.type) {
-#define DISPATCH_DISPLAY_LIST_COMMAND(command_type, player_method)                    \
-    case DisplayListCommandType::command_type:                                        \
-        dispatch_command.template operator()<command_type>([&](auto const& command) { \
-            play_command(command);                                                    \
-        });                                                                           \
-        break;
-            ENUMERATE_DISPLAY_LIST_COMMANDS(DISPATCH_DISPLAY_LIST_COMMAND)
-#undef DISPATCH_DISPLAY_LIST_COMMAND
-        }
-    });
+        // clang-format off
+        HANDLE_COMMAND(DrawGlyphRun, draw_glyph_run)
+        else HANDLE_COMMAND(FillRect, fill_rect)
+        else HANDLE_COMMAND(DrawScaledImmutableBitmap, draw_scaled_immutable_bitmap)
+        else HANDLE_COMMAND(DrawRepeatedImmutableBitmap, draw_repeated_immutable_bitmap)
+        else HANDLE_COMMAND(DrawExternalContent, draw_external_content)
+        else HANDLE_COMMAND(AddClipRect, add_clip_rect)
+        else HANDLE_COMMAND(Save, save)
+        else HANDLE_COMMAND(SaveLayer, save_layer)
+        else HANDLE_COMMAND(Restore, restore)
+        else HANDLE_COMMAND(Translate, translate)
+        else HANDLE_COMMAND(PaintLinearGradient, paint_linear_gradient)
+        else HANDLE_COMMAND(PaintRadialGradient, paint_radial_gradient)
+        else HANDLE_COMMAND(PaintConicGradient, paint_conic_gradient)
+        else HANDLE_COMMAND(PaintOuterBoxShadow, paint_outer_box_shadow)
+        else HANDLE_COMMAND(PaintInnerBoxShadow, paint_inner_box_shadow)
+        else HANDLE_COMMAND(PaintTextShadow, paint_text_shadow)
+        else HANDLE_COMMAND(FillRectWithRoundedCorners, fill_rect_with_rounded_corners)
+        else HANDLE_COMMAND(FillPath, fill_path)
+        else HANDLE_COMMAND(StrokePath, stroke_path)
+        else HANDLE_COMMAND(DrawEllipse, draw_ellipse)
+        else HANDLE_COMMAND(FillEllipse, fill_ellipse)
+        else HANDLE_COMMAND(DrawLine, draw_line)
+        else HANDLE_COMMAND(ApplyBackdropFilter, apply_backdrop_filter)
+        else HANDLE_COMMAND(DrawRect, draw_rect)
+        else HANDLE_COMMAND(AddRoundedRectClip, add_rounded_rect_clip)
+        else HANDLE_COMMAND(PaintNestedDisplayList, paint_nested_display_list)
+        else HANDLE_COMMAND(ApplyEffects, apply_effects)
+        else VERIFY_NOT_REACHED();
+        // clang-format on
+    }
 
-    restore_to_length(0);
-    // Node spaces were entered by setting the canvas matrix absolutely, outside any save, so the
-    // matrix the replay entered with must be handed back explicitly.
-    set_matrix(replay_base_matrix);
-
-    m_replay_palette_storage = move(palette_storage);
-}
-
-}
-
-namespace IPC {
-
-template<>
-ErrorOr<void> encode(Encoder& encoder, Web::Painting::DisplayList::AsyncScrollingMetadata const& metadata)
-{
-    TRY(encoder.encode(metadata.viewport_rect));
-    TRY(encoder.encode(metadata.wheel_event_listener_state_generation));
-    TRY(encoder.encode(metadata.has_blocking_wheel_event_listeners));
-    TRY(encoder.encode(metadata.has_blocking_wheel_event_region_covering_viewport));
-    return {};
-}
-
-template<>
-ErrorOr<Web::Painting::DisplayList::AsyncScrollingMetadata> decode(Decoder& decoder)
-{
-    return Web::Painting::DisplayList::AsyncScrollingMetadata {
-        .viewport_rect = TRY(decoder.decode<Gfx::IntRect>()),
-        .wheel_event_listener_state_generation = TRY(decoder.decode<u64>()),
-        .has_blocking_wheel_event_listeners = TRY(decoder.decode<bool>()),
-        .has_blocking_wheel_event_region_covering_viewport = TRY(decoder.decode<bool>()),
-    };
-}
-
-template<>
-ErrorOr<void> encode(Encoder& encoder, Web::Painting::DisplayList const& display_list)
-{
-    TRY(encoder.encode(display_list.m_id));
-    TRY(encoder.encode(display_list.m_command_bytes));
-    TRY(encoder.encode(display_list.m_compatible_visual_context_tree_version));
-    TRY(encoder.encode(display_list.m_surface_clear_color));
-    TRY(encoder.encode(display_list.m_async_scrolling_metadata));
-    TRY(encoder.encode(display_list.m_mask_display_lists));
-    return {};
-}
-
-template<>
-ErrorOr<void> encode(Encoder& encoder, NonnullRefPtr<Web::Painting::DisplayList> const& display_list)
-{
-    return encoder.encode(*display_list);
-}
-
-template<>
-ErrorOr<NonnullRefPtr<Web::Painting::DisplayList>> decode(Decoder& decoder)
-{
-    auto id = TRY(decoder.decode<u64>());
-    auto command_bytes = TRY(decoder.decode<ByteBuffer>());
-    auto compatible_visual_context_tree_version = TRY(decoder.decode<u64>());
-    auto surface_clear_color = TRY(decoder.decode<Optional<Gfx::Color>>());
-    auto async_scrolling_metadata = TRY(decoder.decode<Optional<Web::Painting::DisplayList::AsyncScrollingMetadata>>());
-    auto mask_display_lists = TRY(decoder.decode<HashMap<Web::Painting::VisualContextIndex, Web::Painting::DisplayListResourceId>>());
-    return adopt_ref(*new Web::Painting::DisplayList(compatible_visual_context_tree_version, id, move(command_bytes), surface_clear_color, move(async_scrolling_metadata), move(mask_display_lists)));
+    while (applied_depth > 0) {
+        restore({});
+        applied_depth--;
+    }
 }
 
 }

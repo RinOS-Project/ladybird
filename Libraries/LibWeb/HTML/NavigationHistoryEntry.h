@@ -6,28 +6,24 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
-#include <LibJS/Runtime/Value.h>
 #include <LibWeb/DOM/EventTarget.h>
-#include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#navigationhistoryentry
 class NavigationHistoryEntry : public DOM::EventTarget {
-    WEB_WRAPPABLE(NavigationHistoryEntry, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(NavigationHistoryEntry, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(NavigationHistoryEntry);
 
 public:
-    [[nodiscard]] static GC::Ref<NavigationHistoryEntry> create(Window&, NonnullRefPtr<SessionHistoryEntry>);
+    [[nodiscard]] static GC::Ref<NavigationHistoryEntry> create(JS::Realm&, GC::Ref<SessionHistoryEntry>);
 
-    Optional<Utf16String> url() const;
-    Utf16String key() const;
-    Utf16String id() const;
+    Optional<String> url() const;
+    String key() const;
+    String id() const;
     i64 index() const;
     bool same_document() const;
-    bool associated_document_is_fully_active() const;
-    WebIDL::ExceptionOr<JS::Value> get_state(JS::Realm&);
+    WebIDL::ExceptionOr<JS::Value> get_state();
 
     void set_ondispose(WebIDL::CallbackType*);
     WebIDL::CallbackType* ondispose();
@@ -39,14 +35,12 @@ public:
     virtual ~NavigationHistoryEntry() override;
 
 private:
-    NavigationHistoryEntry(GC::Ref<Window>, NonnullRefPtr<SessionHistoryEntry>);
+    NavigationHistoryEntry(JS::Realm&, GC::Ref<SessionHistoryEntry>);
 
-    Window& window() const;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(JS::Cell::Visitor&) override;
 
-    virtual void visit_edges(Cell::Visitor&) override;
-
-    NonnullRefPtr<SessionHistoryEntry> m_session_history_entry;
-    GC::Ref<Window> m_window;
+    GC::Ref<SessionHistoryEntry> m_session_history_entry;
 };
 
 }

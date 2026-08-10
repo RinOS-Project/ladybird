@@ -1,3 +1,0 @@
-hover before: block
-hover after enter: none
-hover after leave: block

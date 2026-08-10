@@ -1,3 +1,9 @@
+#import <DOM/AbortSignal.idl>
+#import <Streams/QueuingStrategy.idl>
+#import <Streams/ReadableStreamBYOBReader.idl>
+#import <Streams/ReadableStreamDefaultReader.idl>
+#import <Streams/WritableStream.idl>
+
 dictionary ReadableWritablePair {
     required ReadableStream readable;
     required WritableStream writable;
@@ -28,7 +34,7 @@ dictionary ReadableStreamIteratorOptions {
 interface ReadableStream {
     constructor(optional object underlyingSource, optional QueuingStrategy strategy = {});
 
-    [NeedsCallerRealm] static ReadableStream from(any asyncIterable);
+    static ReadableStream from(any asyncIterable);
 
     readonly attribute boolean locked;
 

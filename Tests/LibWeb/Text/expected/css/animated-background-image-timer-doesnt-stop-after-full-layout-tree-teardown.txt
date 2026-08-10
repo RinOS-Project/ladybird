@@ -1,3 +1,0 @@
-timer active before teardown: true
-timer active after teardown: true
-timer active after hiding: true

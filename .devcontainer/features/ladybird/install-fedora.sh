@@ -6,5 +6,8 @@ dnf install -y git gh
 
 # Ladybird dev dependencies
 dnf install -y autoconf-archive automake ccache cmake curl google-noto-sans-mono-fonts liberation-sans-fonts \
-    libdrm-devel libglvnd-devel libtool nasm ncurses-devel ninja-build patchelf perl-FindBin perl-IPC-Cmd perl-lib perl-Time-Piece qt6-qtbase-devel \
+    libglvnd-devel libtool nasm ninja-build patchelf perl-FindBin perl-IPC-Cmd perl-lib qt6-qtbase-devel \
     qt6-qttools-devel qt6-qtwayland-devel tar unzip zip zlib-ng-compat-static
+
+# Install Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y

@@ -13,7 +13,7 @@
 #include <LibCore/Event.h>
 #include <LibCore/Notifier.h>
 #include <LibCore/ThreadEventQueue.h>
-#include <LibSync/RWLock.h>
+#include <LibThreading/RWLock.h>
 
 #import <Cocoa/Cocoa.h>
 #import <CoreFoundation/CoreFoundation.h>
@@ -28,7 +28,7 @@ struct ThreadData;
 static thread_local OwnPtr<ThreadData> s_this_thread_data;
 static HashMap<pthread_t, ThreadData*> s_thread_data;
 static thread_local pthread_t s_thread_id;
-static Sync::RWLock s_thread_data_lock;
+static Threading::RWLock s_thread_data_lock;
 
 struct ThreadData {
     static ThreadData& the()
@@ -37,7 +37,7 @@ struct ThreadData {
             s_thread_id = pthread_self();
         if (!s_this_thread_data) {
             s_this_thread_data = make<ThreadData>();
-            Sync::RWLockLocker<Sync::LockMode::Write> locker(s_thread_data_lock);
+            Threading::RWLockLocker<Threading::LockMode::Write> locker(s_thread_data_lock);
             s_thread_data.set(s_thread_id, s_this_thread_data);
         }
         return *s_this_thread_data;
@@ -45,13 +45,13 @@ struct ThreadData {
 
     static ThreadData* for_thread(pthread_t thread_id)
     {
-        Sync::RWLockLocker<Sync::LockMode::Read> locker(s_thread_data_lock);
+        Threading::RWLockLocker<Threading::LockMode::Read> locker(s_thread_data_lock);
         return s_thread_data.get(thread_id).value_or(nullptr);
     }
 
     ~ThreadData()
     {
-        Sync::RWLockLocker<Sync::LockMode::Write> locker(s_thread_data_lock);
+        Threading::RWLockLocker<Threading::LockMode::Write> locker(s_thread_data_lock);
         s_thread_data.remove(s_thread_id);
     }
 

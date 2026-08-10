@@ -9,7 +9,6 @@
 #include <AK/Format.h>
 #include <AK/Optional.h>
 #include <AK/Types.h>
-#include <AK/Utf16View.h>
 
 namespace Web::CSS {
 
@@ -42,7 +41,7 @@ enum class ValueType : u8 {
     Length,
     LengthPercentage,
     Number,
-    OpacityValue,
+    Opacity,
     OpentypeTag,
     Paint,
     Percentage,
@@ -62,7 +61,7 @@ enum class ValueType : u8 {
 };
 
 StringView value_type_to_string(ValueType);
-Optional<ValueType> value_type_from_string(Utf16View);
+Optional<ValueType> value_type_from_string(StringView);
 
 }
 

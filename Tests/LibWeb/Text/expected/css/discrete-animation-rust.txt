@@ -1,4 +1,0 @@
-normal
-center
-auto
-10

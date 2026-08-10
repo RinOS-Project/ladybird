@@ -1,2 +1,0 @@
-window.open after estimate(): ok
-sessionStorage after estimate(): value

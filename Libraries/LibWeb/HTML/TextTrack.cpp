@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/TextTrack.h>
 #include <LibWeb/HTML/TextTrackObserver.h>
@@ -13,17 +14,23 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(TextTrack);
 
-GC::Ref<TextTrack> TextTrack::create()
+GC::Ref<TextTrack> TextTrack::create(JS::Realm& realm)
 {
-    return GC::Heap::the().allocate<TextTrack>();
+    return realm.create<TextTrack>(realm);
 }
 
-TextTrack::TextTrack()
-    : DOM::EventTarget()
+TextTrack::TextTrack(JS::Realm& realm)
+    : DOM::EventTarget(realm)
 {
 }
 
 TextTrack::~TextTrack() = default;
+
+void TextTrack::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(TextTrack);
+    Base::initialize(realm);
+}
 
 void TextTrack::visit_edges(Cell::Visitor& visitor)
 {
@@ -32,56 +39,56 @@ void TextTrack::visit_edges(Cell::Visitor& visitor)
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttrack-kind
-TextTrackKind TextTrack::kind()
+Bindings::TextTrackKind TextTrack::kind()
 {
     return m_kind;
 }
 
-void TextTrack::set_kind(TextTrackKind kind)
+void TextTrack::set_kind(Bindings::TextTrackKind kind)
 {
     m_kind = kind;
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttrack-label
-Utf16String const& TextTrack::label()
+String TextTrack::label()
 {
     return m_label;
 }
 
-void TextTrack::set_label(Utf16View label)
+void TextTrack::set_label(String label)
 {
-    m_label = Utf16String::from_utf16(label);
+    m_label = label;
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttrack-language
-Utf16String const& TextTrack::language()
+String TextTrack::language()
 {
     return m_language;
 }
 
-void TextTrack::set_language(Utf16View language)
+void TextTrack::set_language(String language)
 {
-    m_language = Utf16String::from_utf16(language);
+    m_language = language;
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttrack-id
-Utf16String const& TextTrack::id()
+String TextTrack::id()
 {
     return m_id;
 }
 
-void TextTrack::set_id(Utf16View id)
+void TextTrack::set_id(String id)
 {
-    m_id = Utf16String::from_utf16(id);
+    m_id = id;
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttrack-mode
-TextTrackMode TextTrack::mode()
+Bindings::TextTrackMode TextTrack::mode()
 {
     return m_mode;
 }
 
-void TextTrack::set_mode(TextTrackMode mode)
+void TextTrack::set_mode(Bindings::TextTrackMode mode)
 {
     m_mode = mode;
 }
@@ -120,27 +127,27 @@ void TextTrack::unregister_observer(Badge<TextTrackObserver>, TextTrackObserver&
     VERIFY(was_removed);
 }
 
-TextTrackKind text_track_kind_from_string(String value)
+Bindings::TextTrackKind text_track_kind_from_string(String value)
 {
     // https://html.spec.whatwg.org/multipage/media.html#attr-track-kind
 
     if (value.is_empty() || value.equals_ignoring_ascii_case("subtitles"sv)) {
-        return TextTrackKind::Subtitles;
+        return Bindings::TextTrackKind::Subtitles;
     }
     if (value.equals_ignoring_ascii_case("captions"sv)) {
-        return TextTrackKind::Captions;
+        return Bindings::TextTrackKind::Captions;
     }
     if (value.equals_ignoring_ascii_case("descriptions"sv)) {
-        return TextTrackKind::Descriptions;
+        return Bindings::TextTrackKind::Descriptions;
     }
     if (value.equals_ignoring_ascii_case("chapters"sv)) {
-        return TextTrackKind::Chapters;
+        return Bindings::TextTrackKind::Chapters;
     }
     if (value.equals_ignoring_ascii_case("metadata"sv)) {
-        return TextTrackKind::Metadata;
+        return Bindings::TextTrackKind::Metadata;
     }
 
-    return TextTrackKind::Metadata;
+    return Bindings::TextTrackKind::Metadata;
 }
 
 }

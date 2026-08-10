@@ -5,8 +5,8 @@
  */
 
 #include "CSSLayerStatementRule.h"
-#include <AK/Utf16StringBuilder.h>
-#include <LibWeb/Bindings/CSSLayerStatementRule.h>
+#include <LibWeb/Bindings/CSSLayerStatementRulePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSLayerBlockRule.h>
 #include <LibWeb/Dump.h>
 
@@ -14,47 +14,43 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSLayerStatementRule);
 
-GC::Ref<CSSLayerStatementRule> CSSLayerStatementRule::create(Vector<Utf16FlyString> name_list)
+GC::Ref<CSSLayerStatementRule> CSSLayerStatementRule::create(JS::Realm& realm, Vector<FlyString> name_list)
 {
-    return GC::Heap::the().allocate<CSSLayerStatementRule>(move(name_list));
+    return realm.create<CSSLayerStatementRule>(realm, move(name_list));
 }
 
-CSSLayerStatementRule::CSSLayerStatementRule(Vector<Utf16FlyString> name_list)
-    : CSSRule(Type::LayerStatement)
+CSSLayerStatementRule::CSSLayerStatementRule(JS::Realm& realm, Vector<FlyString> name_list)
+    : CSSRule(realm, Type::LayerStatement)
     , m_name_list(move(name_list))
 {
 }
 
-Utf16String CSSLayerStatementRule::serialized() const
+void CSSLayerStatementRule::initialize(JS::Realm& realm)
 {
-    // AD-HOC: No spec yet.
-    Utf16StringBuilder builder;
-    builder.append_ascii("@layer "sv);
-    for (size_t i = 0; i < m_name_list.size(); ++i) {
-        if (i > 0)
-            builder.append_ascii(", "sv);
-        builder.append(m_name_list[i]);
-    }
-    builder.append_ascii(';');
-    return builder.to_string();
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSLayerStatementRule);
+    Base::initialize(realm);
 }
 
-Vector<Utf16FlyString> CSSLayerStatementRule::internal_qualified_name_list(Badge<StyleScope>) const
+String CSSLayerStatementRule::serialized() const
 {
-    Vector<Utf16FlyString> qualified_layer_names;
+    // AD-HOC: No spec yet.
+    StringBuilder builder;
+    builder.append("@layer "sv);
+    builder.join(", "sv, m_name_list);
+    builder.append(';');
+    return builder.to_string_without_validation();
+}
+
+Vector<FlyString> CSSLayerStatementRule::internal_qualified_name_list(Badge<StyleScope>) const
+{
+    Vector<FlyString> qualified_layer_names;
 
     auto const& qualified_parent_layer_name = parent_layer_internal_qualified_name();
     if (qualified_parent_layer_name.is_empty())
         return m_name_list;
 
-    for (auto const& name : m_name_list) {
-        Utf16StringBuilder builder;
-        builder.append(qualified_parent_layer_name);
-        builder.append_ascii('.');
-        builder.append(name);
-        auto qualified_name = builder.to_string();
-        qualified_layer_names.append(Utf16FlyString::from_utf16(qualified_name.utf16_view()));
-    }
+    for (auto const& name : m_name_list)
+        qualified_layer_names.append(MUST(String::formatted("{}.{}", qualified_parent_layer_name, name)));
 
     return qualified_layer_names;
 }

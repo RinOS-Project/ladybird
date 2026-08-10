@@ -1,5 +1,8 @@
+#import <CSS/CSSRule.idl>
+#import <CSS/CSSStyleDeclaration.idl>
+
 // https://drafts.csswg.org/css-fonts/#om-fontface
 [Exposed=Window]
 interface CSSFontFaceRule : CSSRule {
-    [SameObject, PutForwards=cssText, ImplementedAs=descriptors] readonly attribute CSSFontFaceDescriptors style;
+    readonly attribute CSSStyleDeclaration style;
 };

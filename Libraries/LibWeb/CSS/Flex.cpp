@@ -7,8 +7,6 @@
 #include <LibWeb/CSS/Flex.h>
 #include <LibWeb/CSS/Percentage.h>
 #include <LibWeb/CSS/Serialize.h>
-#include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
-#include <LibWeb/CSS/StyleValues/FlexStyleValue.h>
 
 namespace Web::CSS {
 
@@ -21,17 +19,6 @@ Flex::Flex(double value, FlexUnit unit)
 Flex Flex::make_fr(double value)
 {
     return { value, FlexUnit::Fr };
-}
-
-Flex Flex::from_style_value(NonnullRefPtr<StyleValue const> const& value)
-{
-    if (value->is_flex())
-        return value->as_flex().flex();
-
-    if (value->is_calculated())
-        return value->as_calculated().resolve_flex({}).value();
-
-    VERIFY_NOT_REACHED();
 }
 
 Flex Flex::percentage_of(Percentage const& percentage) const

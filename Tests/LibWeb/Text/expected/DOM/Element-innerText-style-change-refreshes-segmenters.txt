@@ -1,3 +1,0 @@
-initial: "a b"
-after text-transform: "A B"
-after white-space: "A  B"

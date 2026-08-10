@@ -13,7 +13,7 @@ namespace Web::ContentSecurityPolicy::Directives {
 
 GC_DEFINE_ALLOCATOR(MediaSourceDirective);
 
-MediaSourceDirective::MediaSourceDirective(Utf16FlyString name, Vector<Utf16String> value)
+MediaSourceDirective::MediaSourceDirective(String name, Vector<String> value)
     : Directive(move(name), move(value))
 {
 }

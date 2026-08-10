@@ -29,6 +29,9 @@ public:
 
 protected:
     Stub() = default;
+
+private:
+    ByteString m_name;
 };
 
 }

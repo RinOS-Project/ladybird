@@ -7,7 +7,6 @@
 
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/IDNA.h>
-#include <LibUnicode/RustFFI.h>
 
 #ifndef AK_OS_RINOS
 #    include <unicode/idna.h>
@@ -100,29 +99,5 @@ ErrorOr<String> to_ascii(Utf8View domain_name, ToAsciiOptions const& options)
 }
 
 #endif // AK_OS_RINOS
-
-}
-
-namespace Unicode::FFI {
-
-extern "C" void unicode_rust_idna_to_ascii(uint8_t const* domain, size_t domain_length, ToAsciiOptions const* options, void* ctx, FfiIdnaResultFn on_success)
-{
-    Unicode::IDNA::ToAsciiOptions const cpp_options {
-        options->check_hyphens ? Unicode::IDNA::CheckHyphens::Yes : Unicode::IDNA::CheckHyphens::No,
-        options->check_bidi ? Unicode::IDNA::CheckBidi::Yes : Unicode::IDNA::CheckBidi::No,
-        options->check_joiners ? Unicode::IDNA::CheckJoiners::Yes : Unicode::IDNA::CheckJoiners::No,
-        options->use_std3_ascii_rules ? Unicode::IDNA::UseStd3AsciiRules::Yes : Unicode::IDNA::UseStd3AsciiRules::No,
-        options->transitional_processing ? Unicode::IDNA::TransitionalProcessing::Yes : Unicode::IDNA::TransitionalProcessing::No,
-        options->verify_dns_length ? Unicode::IDNA::VerifyDnsLength::Yes : Unicode::IDNA::VerifyDnsLength::No,
-        options->ignore_invalid_punycode ? Unicode::IDNA::IgnoreInvalidPunycode::Yes : Unicode::IDNA::IgnoreInvalidPunycode::No,
-    };
-
-    auto result = Unicode::IDNA::to_ascii(Utf8View { StringView { domain, domain_length } }, cpp_options);
-    if (result.is_error())
-        return;
-
-    auto const ascii_bytes = result.value().bytes_as_string_view();
-    on_success(ctx, reinterpret_cast<uint8_t const*>(ascii_bytes.characters_without_null_termination()), ascii_bytes.length());
-}
 
 }

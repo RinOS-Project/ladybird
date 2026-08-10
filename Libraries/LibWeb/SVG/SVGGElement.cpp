@@ -5,7 +5,8 @@
  */
 
 #include <AK/StringBuilder.h>
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGGElementPrototype.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/Layout/SVGGraphicsBox.h>
 #include <LibWeb/SVG/SVGGElement.h>
@@ -19,9 +20,15 @@ SVGGElement::SVGGElement(DOM::Document& document, DOM::QualifiedName qualified_n
 {
 }
 
-RefPtr<Layout::Node> SVGGElement::create_layout_node(NonnullRefPtr<CSS::ComputedValues const> style)
+void SVGGElement::initialize(JS::Realm& realm)
 {
-    return make_ref_counted<Layout::SVGGraphicsBox>(document(), *this, style);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGGElement);
+    Base::initialize(realm);
+}
+
+GC::Ptr<Layout::Node> SVGGElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+{
+    return heap().allocate<Layout::SVGGraphicsBox>(document(), *this, move(style));
 }
 
 }

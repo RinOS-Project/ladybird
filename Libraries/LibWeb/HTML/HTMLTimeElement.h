@@ -12,7 +12,7 @@
 namespace Web::HTML {
 
 class HTMLTimeElement final : public HTMLElement {
-    WEB_WRAPPABLE(HTMLTimeElement, HTMLElement);
+    WEB_PLATFORM_OBJECT(HTMLTimeElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLTimeElement);
 
 public:
@@ -23,6 +23,8 @@ public:
 
 private:
     HTMLTimeElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

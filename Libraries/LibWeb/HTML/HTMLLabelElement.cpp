@@ -5,13 +5,12 @@
  */
 
 #include <AK/ScopeGuard.h>
+#include <LibWeb/Bindings/HTMLLabelElementPrototype.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Focus.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/HTMLLabelElement.h>
-#include <LibWeb/HTML/LocalNavigable.h>
 #include <LibWeb/HTML/Navigable.h>
-#include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/Selection/Selection.h>
 #include <LibWeb/UIEvents/MouseEvent.h>
@@ -26,6 +25,12 @@ HTMLLabelElement::HTMLLabelElement(DOM::Document& document, DOM::QualifiedName q
 }
 
 HTMLLabelElement::~HTMLLabelElement() = default;
+
+void HTMLLabelElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLLabelElement);
+    Base::initialize(realm);
+}
 
 void HTMLLabelElement::set_being_activated(bool activated)
 {
@@ -75,18 +80,15 @@ void HTMLLabelElement::activation_behavior(DOM::Event const& event)
         ScopeGuard guard { [this] { m_click_in_progress = false; } };
 
         auto const& mouse_event = as<UIEvents::MouseEvent>(event);
-        auto click_event = UIEvents::MouseEvent::create_from_mouse_event(mouse_event, HighResolutionTime::current_high_resolution_time(relevant_global_object(*this)));
+        auto click_event = mouse_event.clone();
 
         // NB: Ensure layout is up to date before accessing the control's paintable.
         document().update_layout(DOM::UpdateLayoutReason::HTMLLabelElementActivationBehavior);
 
         // Recompute offsetX/offsetY relative to the control element, since the original values are relative to the label.
-        if (auto paintable = control_element->paintable(); paintable && document().navigable()) {
+        if (auto const* paintable = control_element->paintable(); paintable && document().navigable()) {
             auto scroll_offset = document().navigable()->viewport_scroll_offset();
-            auto page_position = CSSPixelPoint {
-                CSSPixels::nearest_value_for(mouse_event.client_x() + scroll_offset.x().to_double()),
-                CSSPixels::nearest_value_for(mouse_event.client_y() + scroll_offset.y().to_double())
-            };
+            auto page_position = CSSPixelPoint { CSSPixels(mouse_event.client_x()) + scroll_offset.x(), CSSPixels(mouse_event.client_y()) + scroll_offset.y() };
             auto box_position = paintable->box_type_agnostic_position();
             click_event->set_offset_x(AK::round((page_position.x() - box_position.x()).to_double()));
             click_event->set_offset_y(AK::round((page_position.y() - box_position.y()).to_double()));
@@ -99,7 +101,8 @@ void HTMLLabelElement::activation_behavior(DOM::Event const& event)
         control_element->dispatch_event(click_event);
     }
 
-    HTML::run_focusing_steps(control_element);
+    if (control_element->is_focusable())
+        HTML::run_focusing_steps(control_element);
 }
 
 // https://html.spec.whatwg.org/multipage/forms.html#labeled-control
@@ -113,11 +116,9 @@ GC::Ptr<HTMLElement> HTMLLabelElement::control() const
     // and there is an element in the tree whose ID is equal to the value of the for attribute,
     // and the first such element in tree order is a labelable element, then that element is the
     // label element's labeled control.
-    if (auto for_attribute = for_(); for_attribute.has_value()) {
+    if (for_().has_value()) {
         root().for_each_in_inclusive_subtree_of_type<HTMLElement>([&](auto& element) {
-            if (element.id().has_value()
-                && element.id()->view() == for_attribute->utf16_view()
-                && element.is_labelable()) {
+            if (element.id() == *for_() && element.is_labelable()) {
                 control = &const_cast<HTMLElement&>(element);
                 return TraversalDecision::Break;
             }

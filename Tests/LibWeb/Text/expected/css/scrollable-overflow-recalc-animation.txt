@@ -1,4 +1,0 @@
-initial scrollHeight: 100
-scrollHeight at animation end: 550
-scrollHeight at animation start: 100
-relayouts performed: 0

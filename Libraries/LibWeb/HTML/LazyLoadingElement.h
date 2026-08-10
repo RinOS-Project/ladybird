@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <LibGC/Heap.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/AttributeNames.h>
 
@@ -37,7 +36,7 @@ public:
         auto& element = static_cast<T const&>(*this);
 
         auto value = element.attribute(HTML::AttributeNames::loading);
-        if (value.has_value() && value->equals_ignoring_ascii_case(u"lazy"sv))
+        if (value.has_value() && value->equals_ignoring_ascii_case("lazy"sv))
             return LazyLoading::Lazy;
         return LazyLoading::Eager;
     }
@@ -60,11 +59,11 @@ public:
         return lazy_loading_attribute() == LazyLoading::Lazy;
     }
 
-    [[nodiscard]] bool has_lazy_load_resumption_steps() const { return m_lazy_load_resumption_steps; }
-
     void set_lazy_load_resumption_steps(Function<void()> steps)
     {
-        m_lazy_load_resumption_steps = GC::create_function(GC::Heap::the(), move(steps));
+        auto& element = static_cast<T&>(*this);
+
+        m_lazy_load_resumption_steps = GC::create_function(element.vm().heap(), move(steps));
     }
 
     void visit_lazy_loading_element(JS::Cell::Visitor& visitor)

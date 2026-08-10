@@ -11,7 +11,7 @@
 namespace Web::MathML {
 
 class MathMLMspaceElement final : public MathMLElement {
-    WEB_NON_IDL_WRAPPABLE(MathMLMspaceElement, MathMLElement);
+    WEB_NON_IDL_PLATFORM_OBJECT(MathMLMspaceElement, MathMLElement);
     GC_DECLARE_ALLOCATOR(MathMLMspaceElement);
 
 public:
@@ -20,8 +20,8 @@ public:
 private:
     MathMLMspaceElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual bool is_presentational_hint(Utf16FlyString const&) const override;
-    virtual void apply_presentational_hints(Vector<CSS::StyleProperty>&) const override;
+    virtual bool is_presentational_hint(FlyString const&) const override;
+    virtual void apply_presentational_hints(GC::Ref<CSS::CascadedProperties>) const override;
 };
 
 }

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGDefsElementPrototype.h>
 #include <LibWeb/Layout/SVGBox.h>
 #include <LibWeb/SVG/SVGDefsElement.h>
 
@@ -18,6 +20,12 @@ SVGDefsElement::SVGDefsElement(DOM::Document& document, DOM::QualifiedName quali
 
 SVGDefsElement::~SVGDefsElement()
 {
+}
+
+void SVGDefsElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGDefsElement);
+    Base::initialize(realm);
 }
 
 }

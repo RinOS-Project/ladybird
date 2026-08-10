@@ -1,3 +1,5 @@
+#import <UIEvents/UIEvent.idl>
+
 dictionary EventModifierInit : UIEventInit {
     boolean ctrlKey = false;
     boolean shiftKey = false;

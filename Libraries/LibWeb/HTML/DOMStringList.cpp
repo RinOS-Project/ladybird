@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/DOMStringListPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/DOMStringList.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
@@ -12,14 +13,22 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(DOMStringList);
 
-GC::Ref<DOMStringList> DOMStringList::create(Vector<String> list)
+GC::Ref<DOMStringList> DOMStringList::create(JS::Realm& realm, Vector<String> list)
 {
-    return GC::Heap::the().allocate<DOMStringList>(move(list));
+    return realm.create<DOMStringList>(realm, list);
 }
 
-DOMStringList::DOMStringList(Vector<String> list)
-    : m_list(move(list))
+DOMStringList::DOMStringList(JS::Realm& realm, Vector<String> list)
+    : Bindings::PlatformObject(realm)
+    , m_list(move(list))
 {
+    m_legacy_platform_object_flags = LegacyPlatformObjectFlags { .supports_indexed_properties = true };
+}
+
+void DOMStringList::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(DOMStringList);
+    Base::initialize(realm);
 }
 
 // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#dom-domstringlist-length
@@ -30,24 +39,29 @@ u32 DOMStringList::length() const
 }
 
 // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#dom-domstringlist-item
-Optional<Utf16String> DOMStringList::item(u32 index) const
+Optional<String> DOMStringList::item(u32 index) const
 {
     // The item(index) method steps are to return the indexth item in this's associated list, or null if index plus one
     // is greater than this's associated list's size.
     if (index >= m_list.size())
         return {};
 
-    return Utf16String::from_utf8(m_list.at(index));
+    return m_list.at(index);
 }
 
 // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#dom-domstringlist-contains
-bool DOMStringList::contains(Utf16View string)
+bool DOMStringList::contains(StringView string)
 {
     // The contains(string) method steps are to return true if this's associated list contains string, and false otherwise.
-    return any_of(m_list, [&](auto const& item) {
-        auto item_utf16 = Utf16String::from_utf8(item);
-        return item_utf16.utf16_view() == string;
-    });
+    return m_list.contains_slow(string);
+}
+
+Optional<JS::Value> DOMStringList::item_value(size_t index) const
+{
+    if (index >= m_list.size())
+        return {};
+
+    return JS::PrimitiveString::create(vm(), m_list.at(index));
 }
 
 }

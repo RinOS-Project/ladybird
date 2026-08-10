@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/HashMap.h>
 #include <LibJS/Module.h>
 #include <LibJS/Runtime/DeclarativeEnvironment.h>
 #include <LibJS/Runtime/Environment.h>
@@ -14,7 +13,7 @@
 namespace JS {
 
 // 9.1.1.5 Module Environment Records, https://tc39.es/ecma262/#sec-module-environment-records
-class JS_API ModuleEnvironment final : public DeclarativeEnvironment {
+class ModuleEnvironment final : public DeclarativeEnvironment {
     JS_ENVIRONMENT(ModuleEnvironment, DeclarativeEnvironment);
     GC_DECLARE_ALLOCATOR(ModuleEnvironment);
 
@@ -33,9 +32,9 @@ private:
     explicit ModuleEnvironment(Environment* outer_environment);
 
     virtual void visit_edges(Visitor&) override;
-    virtual size_t external_memory_size() const override;
 
     struct IndirectBinding {
+        Utf16FlyString name;
         GC::Ptr<Module> module;
         Utf16FlyString binding_name;
     };
@@ -43,7 +42,8 @@ private:
 
     virtual Optional<BindingAndIndex> find_binding_and_index(Utf16FlyString const& name) const override;
 
-    HashMap<Utf16FlyString, IndirectBinding> m_indirect_bindings;
+    // FIXME: Since we always access this via the name this could be a map.
+    Vector<IndirectBinding> m_indirect_bindings;
 };
 
 }

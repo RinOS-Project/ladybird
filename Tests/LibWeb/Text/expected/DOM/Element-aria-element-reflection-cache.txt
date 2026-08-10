@@ -1,3 +1,0 @@
-first === second: true
-length: 1
-element id: target

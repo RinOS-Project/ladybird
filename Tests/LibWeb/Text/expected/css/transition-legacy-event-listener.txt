@@ -1,3 +1,0 @@
-legacy transitionend event count: 1
-legacy transitionend event type: webkitTransitionEnd
-legacy transitionend property name: opacity

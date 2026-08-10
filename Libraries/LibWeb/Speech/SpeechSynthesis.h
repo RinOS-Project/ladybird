@@ -15,11 +15,11 @@
 namespace Web::Speech {
 
 class SpeechSynthesis final : public DOM::EventTarget {
-    WEB_WRAPPABLE(SpeechSynthesis, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(SpeechSynthesis, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(SpeechSynthesis);
 
 public:
-    [[nodiscard]] static GC::Ref<SpeechSynthesis> create();
+    [[nodiscard]] static GC::Ref<SpeechSynthesis> create(JS::Realm&);
     virtual ~SpeechSynthesis() override;
 
     // https://wicg.github.io/speech-api/#dom-speechsynthesis-pending
@@ -39,8 +39,9 @@ public:
     Vector<GC::Ref<SpeechSynthesisVoice>> const& get_voices() const;
 
 private:
-    explicit SpeechSynthesis();
+    explicit SpeechSynthesis(JS::Realm&);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     bool m_pending { false };

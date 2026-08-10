@@ -1,3 +1,6 @@
+#import <CSS/FontFace.idl>
+#import <DOM/Event.idl>
+
 // https://drafts.csswg.org/css-font-loading/#fontfacesetloadevent
 dictionary FontFaceSetLoadEventInit : EventInit {
     sequence<FontFace> fontfaces = [];
@@ -7,6 +10,6 @@ dictionary FontFaceSetLoadEventInit : EventInit {
 // https://drafts.csswg.org/css-font-loading/#fontfacesetloadevent
 [Exposed=(Window,Worker)]
 interface FontFaceSetLoadEvent : Event {
-    constructor([Utf16FlyString] Utf16CSSOMString type, optional FontFaceSetLoadEventInit eventInitDict = {});
+    constructor(CSSOMString type, optional FontFaceSetLoadEventInit eventInitDict = {});
     [SameObject] readonly attribute FrozenArray<FontFace> fontfaces;
 };

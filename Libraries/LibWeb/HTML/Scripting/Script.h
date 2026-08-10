@@ -6,18 +6,16 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibJS/Script.h>
-#include <LibJS/SourceCode.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
-#include <LibWeb/HTML/Scripting/ScriptRegistry.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#concept-script
+// https://whatpr.org/html/9893/webappapis.html#concept-script
 class WEB_API Script
     : public JS::Cell
     , public JS::Script::HostDefined {
@@ -29,8 +27,8 @@ public:
 
     Optional<URL::URL> const& base_url() const { return m_base_url; }
     ByteString const& filename() const { return m_filename; }
-    Utf16String const& display_filename() const { return m_display_filename; }
 
+    JS::Realm& realm() { return m_realm; }
     EnvironmentSettingsObject& settings_object();
 
     [[nodiscard]] JS::Value error_to_rethrow() const { return m_error_to_rethrow; }
@@ -40,8 +38,7 @@ public:
     void set_parse_error(JS::Value value) { m_parse_error = value; }
 
 protected:
-    Script(Optional<URL::URL> base_url, ByteString filename, EnvironmentSettingsObject&);
-    Script(Optional<URL::URL> base_url, ByteString filename, Utf16String display_filename, EnvironmentSettingsObject&);
+    Script(Optional<URL::URL> base_url, ByteString filename, JS::Realm&);
 
     virtual void visit_edges(Visitor&) override;
 
@@ -51,11 +48,7 @@ private:
 
     Optional<URL::URL> m_base_url;
     ByteString m_filename;
-    Utf16String m_display_filename;
-
-    // https://html.spec.whatwg.org/multipage/webappapis.html#settings-object
-    // An environment settings object, containing various settings that are shared with other scripts in the same context.
-    GC::Ref<EnvironmentSettingsObject> m_settings;
+    GC::Ref<JS::Realm> m_realm;
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#concept-script-parse-error
     JS::Value m_parse_error;
@@ -63,8 +56,6 @@ private:
     // https://html.spec.whatwg.org/multipage/webappapis.html#concept-script-error-to-rethrow
     JS::Value m_error_to_rethrow;
 };
-
-void register_javascript_source(Script&, NonnullRefPtr<JS::SourceCode const>, ScriptRegistry::IsInlineSource, size_t source_line_number);
 
 }
 

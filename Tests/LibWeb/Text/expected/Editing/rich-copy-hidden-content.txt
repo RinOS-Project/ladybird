@@ -1,4 +1,0 @@
-PASS: plain text omits hidden content
-PASS: styled markup omits hidden subtree
-PASS: styled markup retains rendered content
-PASS: styled markup retains display-contents wrapper

@@ -9,6 +9,6 @@ contact_links:
   - name: Read our documentation
     url: https://github.com/LadybirdBrowser/ladybird/blob/master/Documentation/README.md
     about: Read the docs about building Ladybird, and about configuring your Ladybird development environment.
-  - name: Get involved with Ladybird
+  - name: Contribute to Ladybird
     url: https://github.com/LadybirdBrowser/ladybird/blob/master/CONTRIBUTING.md
-    about: Read the project participation guidelines.
+    about: Read about how you can get started contributing to Ladybird.

@@ -7,8 +7,9 @@
 
 #pragma once
 
-#include <AK/AtomicRefCounted.h>
+#include <AK/ByteString.h>
 #include <AK/Error.h>
+#include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
 #include <AK/Types.h>
 #include <LibCore/Export.h>
@@ -16,7 +17,7 @@
 namespace Core {
 
 // TODO: Hide the implementation from ABI
-class CORE_API AnonymousBufferImpl final : public AtomicRefCounted<AnonymousBufferImpl> {
+class CORE_API AnonymousBufferImpl final : public RefCounted<AnonymousBufferImpl> {
 public:
     static ErrorOr<NonnullRefPtr<AnonymousBufferImpl>> create(size_t);
     static ErrorOr<NonnullRefPtr<AnonymousBufferImpl>> create(int fd, size_t);

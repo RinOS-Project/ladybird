@@ -10,7 +10,6 @@
 
 #include <AK/Forward.h>
 #include <AK/Queue.h>
-#include <AK/ThreadID.h>
 #include <LibCore/EventReceiver.h>
 #include <LibIPC/Attachment.h>
 #include <LibIPC/Forward.h>
@@ -49,8 +48,6 @@ protected:
     PeerEOF drain_messages_from_peer();
 
     void handle_messages();
-
-    AK::ThreadID m_owner_thread_id { AK::ThreadID::current() };
 
     IPC::Stub& m_local_stub;
 

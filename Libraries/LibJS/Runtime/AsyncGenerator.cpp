@@ -5,10 +5,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/AsyncGenerator.h>
 #include <LibJS/Runtime/AsyncGeneratorPrototype.h>
 #include <LibJS/Runtime/AsyncGeneratorRequest.h>
+#include <LibJS/Runtime/CompletionCell.h>
 #include <LibJS/Runtime/ECMAScriptFunctionObject.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/NativeJavaScriptBackedFunction.h>
@@ -21,11 +21,14 @@ GC_DEFINE_ALLOCATOR(AsyncGenerator);
 GC::Ref<AsyncGenerator> AsyncGenerator::create(Realm& realm, [[maybe_unused]] Value initial_value, Variant<GC::Ref<ECMAScriptFunctionObject>, GC::Ref<NativeJavaScriptBackedFunction>> generating_function, NonnullOwnPtr<ExecutionContext> execution_context)
 {
     auto& vm = realm.vm();
-    // 2. Let _generator_ be ? OrdinaryCreateFromConstructor(_functionObject_, *"%AsyncGeneratorPrototype%"*,
-    //    « [[AsyncGeneratorState]], [[AsyncGeneratorContext]], [[AsyncGeneratorQueue]], [[GeneratorBrand]] »).
-    auto* generating_function_prototype_object = MUST(generating_function.visit([&vm](auto function) -> ThrowCompletionOr<Object*> {
-        return get_prototype_from_constructor(vm, *function, &Intrinsics::async_generator_prototype);
+    // This is "g1.prototype" in figure-2 (https://tc39.es/ecma262/img/figure-2.png)
+    auto generating_function_prototype = MUST(generating_function.visit([&vm](auto function) {
+        static Bytecode::StaticPropertyLookupCache cache;
+        return function->get(vm.names.prototype, cache);
     }));
+    GC::Ptr<Object> generating_function_prototype_object = nullptr;
+    if (!generating_function_prototype.is_nullish())
+        generating_function_prototype_object = MUST(generating_function_prototype.to_object(vm));
 
     auto generating_executable = generating_function.visit(
         [](GC::Ref<ECMAScriptFunctionObject> function) -> GC::Ref<Bytecode::Executable> {
@@ -57,7 +60,6 @@ void AsyncGenerator::visit_edges(Cell::Visitor& visitor)
     }
     visitor.visit(m_generating_executable);
     visitor.visit(m_current_promise);
-    visitor.visit(m_pending_completion_value);
     m_async_generator_context->visit_edges(visitor);
 }
 
@@ -163,7 +165,9 @@ ThrowCompletionOr<void> AsyncGenerator::await(Value value)
 void AsyncGenerator::execute(VM& vm, Completion completion)
 {
     while (true) {
-        set_pending_completion(completion);
+        auto completion_cell = heap().allocate<CompletionCell>(completion);
+
+        auto& bytecode_interpreter = vm.bytecode_interpreter();
 
         // We should never enter `execute` again after the generator is complete.
         VERIFY(m_yield_continuation != ExecutionContext::no_yield_continuation);
@@ -171,8 +175,7 @@ void AsyncGenerator::execute(VM& vm, Completion completion)
         // Clear yield state so that a normal return (no yield) is detected as done.
         m_async_generator_context->yield_continuation = ExecutionContext::no_yield_continuation;
 
-        auto result_value = vm.run_executable(vm.running_execution_context(), m_generating_executable, m_yield_continuation, Value(this));
-        clear_pending_completion();
+        auto result_value = bytecode_interpreter.run_executable(vm.running_execution_context(), m_generating_executable, m_yield_continuation, completion_cell);
 
         if (result_value.is_throw_completion()) {
             m_yield_continuation = ExecutionContext::no_yield_continuation;
@@ -217,10 +220,11 @@ void AsyncGenerator::execute(VM& vm, Completion completion)
             auto yield_completion = normal_completion(value);
 
             // 6. Assert: The execution context stack has at least two elements.
-            auto* previous_context = vm.previous_execution_context();
-            VERIFY(previous_context);
+            VERIFY(vm.execution_context_stack().size() >= 2);
 
             // 7. Let previousContext be the second to top element of the execution context stack.
+            auto& previous_context = vm.execution_context_stack().at(vm.execution_context_stack().size() - 2);
+
             // 8. Let previousRealm be previousContext's Realm.
             auto previous_realm = previous_context->realm;
 

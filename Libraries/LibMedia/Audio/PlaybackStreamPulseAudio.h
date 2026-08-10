@@ -9,8 +9,8 @@
 #include "PlaybackStream.h"
 #include "PulseAudioWrappers.h"
 #include <AK/Queue.h>
-#include <LibSync/ConditionVariable.h>
-#include <LibSync/Mutex.h>
+#include <LibThreading/ConditionVariable.h>
+#include <LibThreading/Mutex.h>
 
 namespace Audio {
 
@@ -21,11 +21,11 @@ public:
 
     virtual SampleSpecification sample_specification() const override;
 
+    virtual void set_underrun_callback(Function<void()>) override;
+
     virtual NonnullRefPtr<Core::ThreadedPromise<AK::Duration>> resume() override;
     virtual NonnullRefPtr<Core::ThreadedPromise<void>> drain_buffer_and_suspend() override;
     virtual NonnullRefPtr<Core::ThreadedPromise<void>> discard_buffer_and_suspend() override;
-
-    virtual void notify_data_available() override;
 
     virtual AK::Duration total_time_played() const override;
 
@@ -37,7 +37,7 @@ private:
     class InternalState : public AtomicRefCounted<InternalState> {
     public:
         void set_stream(NonnullRefPtr<PulseAudioStream>&&);
-        RefPtr<PulseAudioStream> const& stream();
+        RefPtr<PulseAudioStream> stream();
 
         void enqueue(Function<void()>&&);
         void thread_loop();
@@ -48,8 +48,8 @@ private:
         RefPtr<PulseAudioStream> m_stream { nullptr };
 
         Queue<Function<void()>> m_tasks;
-        Sync::Mutex m_mutex;
-        Sync::ConditionVariable m_wake_condition { m_mutex };
+        Threading::Mutex m_mutex;
+        Threading::ConditionVariable m_wake_condition { m_mutex };
 
         Atomic<bool> m_exit { false };
     };

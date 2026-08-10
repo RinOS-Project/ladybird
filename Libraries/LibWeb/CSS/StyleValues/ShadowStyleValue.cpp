@@ -16,58 +16,57 @@ namespace Web::CSS {
 
 void ShadowStyleValue::serialize(StringBuilder& builder, SerializationMode mode) const
 {
-    if (color_or_null()) {
-        color_or_null()->serialize(builder, mode);
+    if (m_properties.color) {
+        m_properties.color->serialize(builder, mode);
         builder.append(' ');
     }
 
-    offset_x()->serialize(builder, mode);
+    m_properties.offset_x->serialize(builder, mode);
     builder.append(' ');
-    offset_y()->serialize(builder, mode);
+    m_properties.offset_y->serialize(builder, mode);
 
-    if (blur_radius_or_null()) {
+    if (m_properties.blur_radius) {
         builder.append(' ');
-        blur_radius_or_null()->serialize(builder, mode);
+        m_properties.blur_radius->serialize(builder, mode);
     }
 
-    if (spread_distance_or_null() && shadow_type() == ShadowType::Normal) {
+    if (m_properties.spread_distance && m_properties.shadow_type == ShadowType::Normal) {
         builder.append(' ');
-        spread_distance_or_null()->serialize(builder, mode);
+        m_properties.spread_distance->serialize(builder, mode);
     }
 
-    if (placement() == ShadowPlacement::Inner)
+    if (m_properties.placement == ShadowPlacement::Inner)
         builder.append(" inset"sv);
 }
 
 ValueComparingNonnullRefPtr<StyleValue const> ShadowStyleValue::color() const
 {
-    if (!color_or_null())
+    if (!m_properties.color)
         return KeywordStyleValue::create(Keyword::Currentcolor);
-    return *color_or_null();
+    return *m_properties.color;
 }
 
 ValueComparingNonnullRefPtr<StyleValue const> ShadowStyleValue::blur_radius() const
 {
-    if (!blur_radius_or_null())
+    if (!m_properties.blur_radius)
         return LengthStyleValue::create(Length::make_px(0));
-    return *blur_radius_or_null();
+    return *m_properties.blur_radius;
 }
 
 ValueComparingNonnullRefPtr<StyleValue const> ShadowStyleValue::spread_distance() const
 {
-    if (!spread_distance_or_null())
+    if (!m_properties.spread_distance)
         return LengthStyleValue::create(Length::make_px(0));
-    return *spread_distance_or_null();
+    return *m_properties.spread_distance;
 }
 
 ValueComparingNonnullRefPtr<StyleValue const> ShadowStyleValue::absolutized(ComputationContext const& computation_context) const
 {
-    auto absolutized_color = color()->absolutized(computation_context);
     auto absolutized_offset_x = offset_x()->absolutized(computation_context);
     auto absolutized_offset_y = offset_y()->absolutized(computation_context);
     auto absolutized_blur_radius = blur_radius()->absolutized(computation_context);
     auto absolutized_spread_distance = spread_distance()->absolutized(computation_context);
-    return create(shadow_type(), absolutized_color, absolutized_offset_x, absolutized_offset_y, absolutized_blur_radius, absolutized_spread_distance, placement());
+    return create(m_properties.shadow_type, color(), absolutized_offset_x, absolutized_offset_y, absolutized_blur_radius, absolutized_spread_distance, placement());
 }
 
 }

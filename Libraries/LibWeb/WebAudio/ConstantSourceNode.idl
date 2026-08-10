@@ -1,3 +1,7 @@
+#import <WebAudio/AudioNode.idl>
+#import <WebAudio/AudioParam.idl>
+#import <WebAudio/BaseAudioContext.idl>
+
 // https://webaudio.github.io/web-audio-api/#ConstantSourceOptions
 dictionary ConstantSourceOptions {
     float offset = 1;

@@ -9,11 +9,9 @@
 #pragma once
 
 #include <AK/Time.h>
-#include <AK/Utf16View.h>
 #include <LibWeb/ARIA/Roles.h>
+#include <LibWeb/Bindings/NavigationPrototype.h>
 #include <LibWeb/HTML/HTMLElement.h>
-#include <LibWeb/HTML/HistoryHandlingBehavior.h>
-#include <LibWeb/HTML/POSTResource.h>
 #include <LibWeb/HTML/UserNavigationInvolvement.h>
 
 namespace Web::HTML {
@@ -31,13 +29,13 @@ namespace Web::HTML {
     __ENUMERATE_FORM_METHOD_ENCODING_TYPE("text/plain", PlainText)
 
 class HTMLFormElement final : public HTMLElement {
-    WEB_WRAPPABLE(HTMLFormElement, HTMLElement);
+    WEB_PLATFORM_OBJECT(HTMLFormElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLFormElement);
 
 public:
     virtual ~HTMLFormElement() override;
 
-    Utf16String action_from_form_element(GC::Ref<HTMLElement> element) const;
+    String action_from_form_element(GC::Ref<HTMLElement> element) const;
 
     enum class MethodAttributeState {
 #define __ENUMERATE_FORM_METHOD_ATTRIBUTE(_, state) state,
@@ -80,8 +78,6 @@ public:
 
     GC::Ref<HTMLFormControlsCollection> elements() const;
     unsigned length() const;
-    GC::Ptr<DOM::Element> item(size_t index) const;
-    Variant<Empty, GC::Ref<DOM::Node>, GC::Ref<RadioNodeList>> named_item_or_radio_node_list(Utf16FlyString const& name) const;
 
     struct StaticValidationResult {
         bool result;
@@ -100,12 +96,12 @@ public:
     bool constructing_entry_list() const { return m_constructing_entry_list; }
     void set_constructing_entry_list(bool value) { m_constructing_entry_list = value; }
 
-    void set_method(Utf16View);
+    void set_method(String const&);
 
     GC::Ref<DOM::DOMTokenList> rel_list();
 
-    Utf16String action() const;
-    void set_action(Utf16View);
+    String action() const;
+    void set_action(String const&);
 
     FormAssociatedElement* default_button() const;
 
@@ -113,22 +109,25 @@ private:
     HTMLFormElement(DOM::Document&, DOM::QualifiedName);
 
     virtual bool is_html_form_element() const override { return true; }
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     // ^PlatformObject
-    virtual bool is_supported_property_name(Utf16FlyString const&) const override;
-    virtual Vector<Utf16FlyString> supported_property_names() const override;
+    virtual Optional<JS::Value> item_value(size_t index) const override;
+    virtual JS::Value named_item_value(FlyString const& name) const override;
+    virtual Vector<FlyString> supported_property_names() const override;
 
-    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
+    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
 
-    ErrorOr<Utf16String> pick_an_encoding() const;
+    ErrorOr<String> pick_an_encoding() const;
 
-    ErrorOr<void> mutate_action_url(URL::URL parsed_action, GC::ConservativeVector<XHR::FormDataEntry> entry_list, Utf16String encoding, GC::Ref<Navigable> target_navigable, NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
-    ErrorOr<void> submit_as_entity_body(URL::URL parsed_action, GC::ConservativeVector<XHR::FormDataEntry> entry_list, EncodingTypeAttributeState encoding_type, Utf16String encoding, GC::Ref<Navigable> target_navigable, NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
-    void get_action_url(URL::URL parsed_action, GC::ConservativeVector<XHR::FormDataEntry> entry_list, GC::Ref<Navigable> target_navigable, NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
-    ErrorOr<void> mail_with_headers(URL::URL parsed_action, GC::ConservativeVector<XHR::FormDataEntry> entry_list, Utf16String encoding, GC::Ref<Navigable> target_navigable, NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
-    ErrorOr<void> mail_as_body(URL::URL parsed_action, GC::ConservativeVector<XHR::FormDataEntry> entry_list, EncodingTypeAttributeState encoding_type, Utf16String encoding, GC::Ref<Navigable> target_navigable, NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
-    void plan_to_navigate_to(URL::URL url, DocumentResource post_resource, GC::ConservativeVector<XHR::FormDataEntry> entry_list, GC::Ref<Navigable> target_navigable, NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
+    ErrorOr<void> mutate_action_url(URL::URL parsed_action, GC::ConservativeVector<XHR::FormDataEntry> entry_list, String encoding, GC::Ref<Navigable> target_navigable, Bindings::NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
+    ErrorOr<void> submit_as_entity_body(URL::URL parsed_action, GC::ConservativeVector<XHR::FormDataEntry> entry_list, EncodingTypeAttributeState encoding_type, String encoding, GC::Ref<Navigable> target_navigable, Bindings::NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
+    void get_action_url(URL::URL parsed_action, GC::ConservativeVector<XHR::FormDataEntry> entry_list, GC::Ref<Navigable> target_navigable, Bindings::NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
+    ErrorOr<void> mail_with_headers(URL::URL parsed_action, GC::ConservativeVector<XHR::FormDataEntry> entry_list, String encoding, GC::Ref<Navigable> target_navigable, Bindings::NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
+    ErrorOr<void> mail_as_body(URL::URL parsed_action, GC::ConservativeVector<XHR::FormDataEntry> entry_list, EncodingTypeAttributeState encoding_type, String encoding, GC::Ref<Navigable> target_navigable, Bindings::NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
+    void plan_to_navigate_to(URL::URL url, Variant<Empty, String, POSTResource> post_resource, GC::ConservativeVector<XHR::FormDataEntry> entry_list, GC::Ref<Navigable> target_navigable, Bindings::NavigationHistoryBehavior history_handling, UserNavigationInvolvement user_involvement);
 
     size_t number_of_fields_blocking_implicit_submission() const;
 
@@ -149,7 +148,7 @@ private:
             visitor.visit(node);
         }
     };
-    HashMap<Utf16FlyString, PastNameEntry> mutable m_past_names_map;
+    HashMap<FlyString, PastNameEntry> mutable m_past_names_map;
 
     GC::Ptr<HTMLFormControlsCollection> mutable m_elements;
 

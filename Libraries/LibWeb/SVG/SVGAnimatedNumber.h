@@ -7,15 +7,14 @@
 
 #pragma once
 
-#include <AK/StringView.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/SVG/SVGElement.h>
 
 namespace Web::SVG {
 
 // https://svgwg.org/svg2-draft/types.html#InterfaceSVGAnimatedNumber
-class SVGAnimatedNumber final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(SVGAnimatedNumber, Bindings::GCAllocatedWrappable);
+class SVGAnimatedNumber final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(SVGAnimatedNumber, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(SVGAnimatedNumber);
 
 public:
@@ -29,6 +28,7 @@ public:
     };
 
     [[nodiscard]] static GC::Ref<SVGAnimatedNumber> create(
+        JS::Realm&,
         GC::Ref<SVGElement>,
         DOM::QualifiedName reflected_attribute,
         float initial_value,
@@ -42,11 +42,12 @@ public:
     float anim_val() const;
 
 private:
-    SVGAnimatedNumber(GC::Ref<SVGElement>, DOM::QualifiedName, float, SupportsSecondValue, ValueRepresented);
+    SVGAnimatedNumber(JS::Realm&, GC::Ref<SVGElement>, DOM::QualifiedName, float, SupportsSecondValue, ValueRepresented);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
-    float parse_value_or_initial(Utf16View) const;
+    float parse_value_or_initial(StringView) const;
     float get_base_or_anim_value() const;
 
     GC::Ref<SVGElement> m_element;

@@ -6,32 +6,34 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
+#include <AK/String.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::Speech {
 
-class SpeechRecognitionAlternative final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(SpeechRecognitionAlternative, Bindings::GCAllocatedWrappable);
+class SpeechRecognitionAlternative final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(SpeechRecognitionAlternative, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(SpeechRecognitionAlternative);
 
 public:
-    [[nodiscard]] static GC::Ref<SpeechRecognitionAlternative> create();
+    [[nodiscard]] static GC::Ref<SpeechRecognitionAlternative> create(JS::Realm&);
     virtual ~SpeechRecognitionAlternative() override;
 
     // https://wicg.github.io/speech-api/#dom-speechrecognitionalternative-transcript
-    Utf16String const& transcript() const { return m_transcript; }
+    String const& transcript() const { return m_transcript; }
 
     // https://wicg.github.io/speech-api/#dom-speechrecognitionalternative-confidence
     float confidence() const { return m_confidence; }
 
 private:
-    explicit SpeechRecognitionAlternative();
+    explicit SpeechRecognitionAlternative(JS::Realm&);
 
-    Utf16String m_transcript;
+    virtual void initialize(JS::Realm&) override;
+
+    String m_transcript;
     float m_confidence { 0.f };
 };
 

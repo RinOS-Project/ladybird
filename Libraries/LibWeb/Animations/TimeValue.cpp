@@ -7,17 +7,16 @@
 #include "TimeValue.h"
 #include <LibWeb/Animations/AnimationTimeline.h>
 #include <LibWeb/CSS/CSSUnitValue.h>
-#include <LibWeb/CSS/CalculationResolutionContext.h>
 #include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
 
 namespace Web::Animations {
 
-TimeValue TimeValue::from_css_numberish(CSS::CSSNumberish const& time, CSS::ComputationContext const& computation_context)
+TimeValue TimeValue::from_css_numberish(CSS::CSSNumberish const& time, DOM::AbstractElement const& abstract_element)
 {
     if (time.has<double>())
         return { Type::Milliseconds, time.get<double>() };
 
-    auto const& numeric_value = time.get<GC::Ref<CSS::CSSNumericValue>>();
+    auto const& numeric_value = time.get<GC::Root<CSS::CSSNumericValue>>();
 
     // NB: Skip creating a calculation node for simple unit values
     if (auto const* unit_value = as_if<CSS::CSSUnitValue>(*numeric_value)) {
@@ -25,7 +24,7 @@ TimeValue TimeValue::from_css_numberish(CSS::CSSNumberish const& time, CSS::Comp
             return { Type::Milliseconds, unit_value->value() };
 
         if (unit_value->type().matches_time({}))
-            return { Type::Milliseconds, MUST(unit_value->to("ms"_utf16_fly_string))->value() };
+            return { Type::Milliseconds, MUST(unit_value->to("ms"_fly_string))->value() };
 
         if (unit_value->type().matches_percentage())
             return { Type::Percentage, unit_value->value() };
@@ -33,14 +32,16 @@ TimeValue TimeValue::from_css_numberish(CSS::CSSNumberish const& time, CSS::Comp
         VERIFY_NOT_REACHED();
     }
 
-    auto calculation_node = MUST(numeric_value->create_calculation_node({}));
+    auto const& calculation_node = MUST(numeric_value->create_calculation_node({}));
 
-    auto numeric_type = calculation_node.determine_type({});
-    VERIFY(numeric_type.has_value());
+    VERIFY(calculation_node->numeric_type().has_value());
 
-    auto style_value = CSS::CalculatedStyleValue::create(move(calculation_node), numeric_type.release_value(), {});
+    auto style_value = CSS::CalculatedStyleValue::create(calculation_node, calculation_node->numeric_type().value(), {});
 
-    auto calculation_resolution_context = CSS::CalculationResolutionContext::from_computation_context(computation_context);
+    CSS::CalculationResolutionContext calculation_resolution_context {
+        .length_resolution_context = CSS::Length::ResolutionContext::for_element(abstract_element),
+        .abstract_element = abstract_element,
+    };
 
     if (style_value->resolves_to_number())
         return { Type::Milliseconds, style_value->resolve_number(calculation_resolution_context).value() };
@@ -62,14 +63,14 @@ TimeValue TimeValue::create_zero(GC::Ptr<AnimationTimeline> const& timeline)
     return TimeValue { Type::Milliseconds, 0.0 };
 }
 
-CSS::CSSNumberish TimeValue::as_css_numberish() const
+CSS::CSSNumberish TimeValue::as_css_numberish(JS::Realm& realm) const
 {
     switch (type) {
     case Type::Milliseconds:
         return value;
     case Type::Percentage:
-        GC::Ref<CSS::CSSNumericValue> numeric_value = CSS::CSSUnitValue::create(value, "percent"_utf16_fly_string);
-        return numeric_value;
+        GC::Ref<CSS::CSSNumericValue> numeric_value = CSS::CSSUnitValue::create(realm, value, "percent"_fly_string);
+        return GC::Root { numeric_value };
     }
 
     VERIFY_NOT_REACHED();

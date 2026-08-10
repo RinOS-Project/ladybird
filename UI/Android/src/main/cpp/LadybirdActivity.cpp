@@ -32,9 +32,6 @@ class Application : public WebView::Application {
 
 public:
     explicit Application();
-
-private:
-    virtual bool should_coordinate_browser_process() const override { return false; }
 };
 
 Application::Application() = default;

@@ -27,7 +27,7 @@
 #include <LibWeb/CSS/CSSStyleRule.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/CSSSupportsRule.h>
-#include <LibWeb/CSS/ComputedValues.h>
+#include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/CSS/PseudoClass.h>
 #include <LibWeb/DOM/Document.h>
@@ -39,19 +39,19 @@
 #include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/HTML/HTMLTemplateElement.h>
 #include <LibWeb/HTML/ImageRequest.h>
-#include <LibWeb/HTML/LocalTraversableNavigable.h>
 #include <LibWeb/HTML/SessionHistoryEntry.h>
+#include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Layout/BlockContainer.h>
+#include <LibWeb/Layout/FormattingContext.h>
 #include <LibWeb/Layout/InlineNode.h>
-#include <LibWeb/Layout/LayoutRustBridge.h>
 #include <LibWeb/Layout/NavigableContainerViewport.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/SVGBox.h>
 #include <LibWeb/Layout/TextNode.h>
 #include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Namespace.h>
-#include <LibWeb/Painting/InlinePaintable.h>
 #include <LibWeb/Painting/PaintableWithLines.h>
+#include <LibWeb/Painting/TextPaintable.h>
 #include <LibWeb/SVG/SVGDecodedImageData.h>
 
 namespace Web {
@@ -59,12 +59,8 @@ namespace Web {
 static void dump_session_history_entry(StringBuilder& builder, HTML::SessionHistoryEntry const& session_history_entry, int indent_levels)
 {
     dump_indent(builder, indent_levels);
-    builder.appendff("step=({}) url=({})", session_history_entry.step().get<int>(), session_history_entry.url());
-    if (session_history_entry.scroll_position_data().viewport_scroll_position.has_value()) {
-        auto const& viewport_scroll_position = *session_history_entry.scroll_position_data().viewport_scroll_position;
-        builder.appendff(" viewport-scroll=({}, {})", viewport_scroll_position.x(), viewport_scroll_position.y());
-    }
-    builder.append('\n');
+    auto const& document = session_history_entry.document();
+    builder.appendff("step=({}) url=({}) is-active=({})\n", session_history_entry.step().get<int>(), session_history_entry.url(), document && document->is_active());
     for (auto const& nested_history : session_history_entry.document_state()->nested_histories()) {
         for (auto const& nested_she : nested_history.entries) {
             dump_session_history_entry(builder, *nested_she, indent_levels + 1);
@@ -72,7 +68,7 @@ static void dump_session_history_entry(StringBuilder& builder, HTML::SessionHist
     }
 }
 
-void dump_tree(HTML::LocalTraversableNavigable& traversable)
+void dump_tree(HTML::TraversableNavigable& traversable)
 {
     StringBuilder builder;
     for (auto const& she : traversable.session_history_entries()) {
@@ -94,28 +90,28 @@ void dump_tree(StringBuilder& builder, DOM::Node const& node)
     for (int i = 0; i < indent; ++i)
         builder.append("  "sv);
     if (auto const* element = as_if<DOM::Element>(node)) {
-        auto namespace_prefix = [&] -> Utf16FlyString {
+        auto namespace_prefix = [&] -> FlyString {
             auto const& namespace_uri = element->namespace_uri();
-            if (!namespace_uri.has_value() || node.document().is_default_namespace(namespace_uri->view()))
-                return ""_utf16_fly_string;
+            if (!namespace_uri.has_value() || node.document().is_default_namespace(namespace_uri.value().to_string()))
+                return ""_fly_string;
             if (namespace_uri == Namespace::HTML)
-                return "html:"_utf16_fly_string;
+                return "html:"_fly_string;
             if (namespace_uri == Namespace::SVG)
-                return "svg:"_utf16_fly_string;
+                return "svg:"_fly_string;
             if (namespace_uri == Namespace::MathML)
-                return "mathml:"_utf16_fly_string;
+                return "mathml:"_fly_string;
             return *namespace_uri;
         }();
 
         builder.appendff("<{}{}", namespace_prefix, element->local_name());
-        element->for_each_attribute([&](Utf16FlyString const& name, Utf16View value) {
+        element->for_each_attribute([&](auto& name, auto& value) {
             builder.appendff(" {}={}", name, value);
         });
         builder.append(">\n"sv);
-        if (element->associated_shadow_host_pseudo_element().has_value()) {
+        if (element->use_pseudo_element().has_value()) {
             for (int i = 0; i < indent; ++i)
                 builder.append("  "sv);
-            builder.appendff("  (pseudo-element: {})\n", CSS::pseudo_element_name(element->associated_shadow_host_pseudo_element().value()));
+            builder.appendff("  (pseudo-element: {})\n", CSS::pseudo_element_name(element->use_pseudo_element().value()));
         }
     } else if (auto const* text = as_if<DOM::Text>(node)) {
         builder.appendff("\"{}\"\n", text->data());
@@ -151,21 +147,21 @@ void dump_tree(StringBuilder& builder, DOM::Node const& node)
     --indent;
 }
 
-void dump_tree(Layout::Node const& layout_node, bool show_computed_properties)
+void dump_tree(Layout::Node const& layout_node, bool show_cascaded_properties)
 {
     StringBuilder builder;
-    dump_tree(builder, layout_node, show_computed_properties, true);
+    dump_tree(builder, layout_node, show_cascaded_properties, true);
     dbgln("{}", builder.string_view());
 }
 
-void dump_tree(StringBuilder& builder, Layout::Node const& layout_node, bool show_computed_properties, bool interactive)
+void dump_tree(StringBuilder& builder, Layout::Node const& layout_node, bool show_cascaded_properties, bool interactive)
 {
     static size_t indent = 0;
     builder.append_repeated("  "sv, indent);
 
-    Utf16FlyString tag_name;
+    FlyString tag_name;
     if (layout_node.is_anonymous())
-        tag_name = "(anonymous)"_utf16_fly_string;
+        tag_name = "(anonymous)"_fly_string;
     else if (is<DOM::Element>(layout_node.dom_node()))
         tag_name = as<DOM::Element>(*layout_node.dom_node()).local_name();
     else
@@ -177,13 +173,11 @@ void dump_tree(StringBuilder& builder, Layout::Node const& layout_node, bool sho
         StringBuilder identifier_builder;
         if (element.id().has_value() && !element.id()->is_empty()) {
             identifier_builder.append('#');
-            for (auto code_point : element.id()->view())
-                identifier_builder.append_code_point(code_point);
+            identifier_builder.append(*element.id());
         }
         for (auto& class_name : element.class_names()) {
             identifier_builder.append('.');
-            for (auto code_point : class_name.view())
-                identifier_builder.append_code_point(code_point);
+            identifier_builder.append(class_name);
         }
         identifier = MUST(identifier_builder.to_string());
     }
@@ -215,13 +209,13 @@ void dump_tree(StringBuilder& builder, Layout::Node const& layout_node, bool sho
     }
 
     auto dump_position = [&] {
-        if (auto paintable = layout_node.paintable(); auto const* paintable_box = paintable.ptr())
+        if (auto* paintable_box = as_if<Painting::PaintableBox>(layout_node.first_paintable()))
             builder.appendff("at {}", paintable_box->absolute_rect().location());
         else
             builder.appendff("(not painted)");
     };
     auto dump_box_model = [&] {
-        if (auto paintable = layout_node.paintable(); auto const* paintable_box = paintable.ptr()) {
+        if (auto const* paintable_box = as_if<Painting::PaintableBox>(layout_node.first_paintable())) {
             auto const& box_model = paintable_box->box_model();
             // Dump the horizontal box properties
             builder.appendff(" [{}+{}+{} {} {}+{}+{}]",
@@ -317,14 +311,14 @@ void dump_tree(StringBuilder& builder, Layout::Node const& layout_node, bool sho
 
         dump_box_model();
 
-        if (auto formatting_context_type = Layout::formatting_context_type_created_by_box(box); formatting_context_type.has_value()) {
+        if (auto formatting_context_type = Layout::FormattingContext::formatting_context_type_created_by_box(box); formatting_context_type.has_value()) {
             switch (formatting_context_type.value()) {
-            case Layout::RustFFI::FfiFormattingContextType::Block:
-            case Layout::RustFFI::FfiFormattingContextType::Flex:
-            case Layout::RustFFI::FfiFormattingContextType::Grid:
-            case Layout::RustFFI::FfiFormattingContextType::Table:
-            case Layout::RustFFI::FfiFormattingContextType::Svg:
-                builder.appendff(" [{}{}{}]", formatting_context_color_on, Layout::formatting_context_type_name(formatting_context_type.value()), color_off);
+            case Layout::FormattingContext::Type::Block:
+            case Layout::FormattingContext::Type::Flex:
+            case Layout::FormattingContext::Type::Grid:
+            case Layout::FormattingContext::Type::Table:
+            case Layout::FormattingContext::Type::SVG:
+                builder.appendff(" [{}{}{}]", formatting_context_color_on, Layout::FormattingContext::type_name(formatting_context_type.value()), color_off);
                 break;
             default:
                 break;
@@ -340,12 +334,16 @@ void dump_tree(StringBuilder& builder, Layout::Node const& layout_node, bool sho
                 builder.append("\n"sv);
                 if (auto const* nested_layout_root = document->layout_node()) {
                     ++indent;
-                    dump_tree(builder, *nested_layout_root, show_computed_properties, interactive);
+                    dump_tree(builder, *nested_layout_root, show_cascaded_properties, interactive);
                     --indent;
                 }
             }
         }
     }
+
+    if (auto const* potential_continuation_node = as_if<Layout::NodeWithStyleAndBoxModelMetrics>(layout_node);
+        potential_continuation_node && potential_continuation_node->continuation_of_node())
+        builder.append(" continuation"sv);
 
     builder.append("\n"sv);
 
@@ -360,7 +358,7 @@ void dump_tree(StringBuilder& builder, Layout::Node const& layout_node, bool sho
                         builder.append("  "sv);
                     builder.append("(SVG-as-image isolated context)\n"sv);
 
-                    dump_tree(builder, *svg_data.svg_document().unsafe_layout_node(), show_computed_properties, interactive);
+                    dump_tree(builder, *svg_data.svg_document().unsafe_layout_node(), show_cascaded_properties, interactive);
                     --indent;
                 }
             }
@@ -388,42 +386,31 @@ void dump_tree(StringBuilder& builder, Layout::Node const& layout_node, bool sho
     if (auto const* block_container = as_if<Layout::BlockContainer>(layout_node);
         block_container && block_container->children_are_inline() && block_container->paintable_with_lines()) {
         size_t fragment_index = 0;
-        auto paintable_with_lines = block_container->paintable_with_lines();
-        for (auto const& fragment : paintable_with_lines->fragments()) {
-            // Fragments inside inline boxes are dumped under their box's layout node below.
-            if (fragment.layout_node().nearest_fragmented_inline_ancestor())
-                continue;
+        for (auto const& fragment : block_container->paintable_with_lines()->fragments())
             dump_fragment(fragment, fragment_index++);
+    }
+
+    if (is<Layout::InlineNode>(layout_node) && layout_node.first_paintable()) {
+        auto const& inline_node = static_cast<Layout::InlineNode const&>(layout_node);
+        for (auto const& paintable : inline_node.paintables()) {
+            auto const& paintable_with_lines = static_cast<Painting::PaintableWithLines const&>(paintable);
+            auto const& fragments = paintable_with_lines.fragments();
+            for (size_t fragment_index = 0; fragment_index < fragments.size(); ++fragment_index) {
+                auto const& fragment = fragments[fragment_index];
+                dump_fragment(fragment, fragment_index);
+            }
         }
     }
 
-    if (auto const* inline_paintable = as_if<Painting::InlinePaintable>(layout_node.paintable().ptr())) {
-        Painting::InlineBoxPiece const* current_piece = nullptr;
-        size_t fragment_index_within_piece = 0;
-        inline_paintable->for_each_piece_fragment([&](Painting::InlineBoxPiece const& piece, Painting::PaintableFragment const& fragment) {
-            if (&piece != current_piece) {
-                current_piece = &piece;
-                fragment_index_within_piece = 0;
-            }
-            // Fragments of nested inline boxes are dumped under their own box.
-            if (fragment.layout_node().nearest_fragmented_inline_ancestor() != &layout_node)
-                return;
-            dump_fragment(fragment, fragment_index_within_piece++);
-        });
-    }
-
-    if (show_computed_properties && layout_node.dom_node() && layout_node.dom_node()->is_element() && as<DOM::Element>(layout_node.dom_node())->computed_values()) {
+    if (show_cascaded_properties && layout_node.dom_node() && layout_node.dom_node()->is_element() && as<DOM::Element>(layout_node.dom_node())->computed_properties()) {
         struct NameAndValue {
-            Utf16FlyString name;
+            FlyString name;
             String value;
         };
         Vector<NameAndValue> properties;
-        auto computed_values = as<DOM::Element>(*layout_node.dom_node()).computed_values();
-        for (auto i = to_underlying(CSS::first_longhand_property_id); i <= to_underlying(CSS::last_longhand_property_id); ++i) {
-            auto property_id = static_cast<CSS::PropertyID>(i);
-            auto value = computed_values->computed_style_value(property_id);
-            properties.append({ CSS::string_from_property_id(property_id), value->to_string(CSS::SerializationMode::Normal) });
-        }
+        as<DOM::Element>(*layout_node.dom_node()).computed_properties()->for_each_property([&](auto property_id, auto& value) {
+            properties.append({ CSS::string_from_property_id(property_id), value.to_string(CSS::SerializationMode::Normal) });
+        });
         quick_sort(properties, [](auto& a, auto& b) { return a.name < b.name; });
 
         for (auto& property : properties) {
@@ -434,7 +421,7 @@ void dump_tree(StringBuilder& builder, Layout::Node const& layout_node, bool sho
 
     ++indent;
     layout_node.for_each_child([&](auto& child) {
-        dump_tree(builder, child, show_computed_properties, interactive);
+        dump_tree(builder, child, show_cascaded_properties, interactive);
         return IterationDecision::Continue;
     });
     --indent;
@@ -495,16 +482,10 @@ void dump_selector(StringBuilder& builder, CSS::Selector const& selector, int in
         case CSS::Selector::Combinator::Column:
             relation_description = "Column";
             break;
-        case CSS::Selector::Combinator::PseudoElement:
-            relation_description = "PseudoElement";
-            break;
         }
 
         if (*relation_description)
             builder.appendff("{{{}}} ", relation_description);
-
-        if (relative_selector.is_implicit_universal_anchor)
-            builder.append("(implicit-universal) "sv);
 
         for (size_t i = 0; i < relative_selector.simple_selectors.size(); ++i) {
             auto& simple_selector = relative_selector.simple_selectors[i];
@@ -735,37 +716,56 @@ void dump_tree(Painting::Paintable const& paintable)
 
 void dump_tree(StringBuilder& builder, Painting::Paintable const& paintable, bool colorize, int indent)
 {
+    // Dump all paintables attached to this layout node at every level.
+    // This makes detached/disconnected paintables visible across the full subtree.
     StringView paintable_with_lines_color_on = ""sv;
     StringView paintable_box_color_on = ""sv;
+    StringView text_paintable_color_on = ""sv;
+    StringView paintable_color_on = ""sv;
     StringView color_off = ""sv;
 
     if (colorize) {
         paintable_with_lines_color_on = "\033[34m"sv;
         paintable_box_color_on = "\033[33m"sv;
+        text_paintable_color_on = "\033[35m"sv;
+        paintable_color_on = "\033[32m"sv;
         color_off = "\033[0m"sv;
     }
 
-    for (int i = 0; i < indent; ++i)
-        builder.append("  "sv);
+    bool dumped_any = false;
+    for (auto const& node_paintable : paintable.layout_node().paintables()) {
+        if (dumped_any)
+            builder.append("\n"sv);
 
-    if (is<Painting::PaintableWithLines>(paintable))
-        builder.append(paintable_with_lines_color_on);
-    else
-        builder.append(paintable_box_color_on);
+        for (int i = 0; i < indent; ++i)
+            builder.append("  "sv);
 
-    builder.appendff("{}{} ({})", paintable.class_name(), color_off, paintable.layout_node().debug_description());
+        if (is<Painting::PaintableWithLines>(node_paintable))
+            builder.append(paintable_with_lines_color_on);
+        else if (is<Painting::PaintableBox>(node_paintable))
+            builder.append(paintable_box_color_on);
+        else if (is<Painting::TextPaintable>(node_paintable))
+            builder.append(text_paintable_color_on);
+        else
+            builder.append(paintable_color_on);
 
-    builder.appendff(" {}", paintable.absolute_border_box_rect());
+        builder.appendff("{}{} ({})", node_paintable.class_name(), color_off, node_paintable.layout_node().debug_description());
 
-    if (paintable.has_scrollable_overflow())
-        builder.appendff(" overflow: {}", paintable.scrollable_overflow_rect());
+        if (auto const* paintable_box = as_if<Painting::PaintableBox>(node_paintable)) {
+            builder.appendff(" {}", paintable_box->absolute_border_box_rect());
 
-    if (!paintable.scroll_offset().is_zero())
-        builder.appendff(" scroll-offset: {}", paintable.scroll_offset());
-    builder.append("\n"sv);
+            if (paintable_box->has_scrollable_overflow())
+                builder.appendff(" overflow: {}", paintable_box->scrollable_overflow_rect());
 
-    for (auto child = paintable.first_child(); child; child = child->next_sibling())
-        dump_tree(builder, *child, colorize, indent + 1);
+            if (!paintable_box->scroll_offset().is_zero())
+                builder.appendff(" scroll-offset: {}", paintable_box->scroll_offset());
+        }
+        builder.append("\n"sv);
+
+        for (auto const* child = node_paintable.first_child(); child; child = child->next_sibling())
+            dump_tree(builder, *child, colorize, indent + 1);
+        dumped_any = true;
+    }
 }
 
 }

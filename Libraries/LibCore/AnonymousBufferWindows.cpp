@@ -31,10 +31,7 @@ AnonymousBufferImpl::~AnonymousBufferImpl()
 
 ErrorOr<NonnullRefPtr<AnonymousBufferImpl>> AnonymousBufferImpl::create(size_t size)
 {
-    // CreateFileMapping rejects a zero-size mapping backed by INVALID_HANDLE_VALUE, so allocate at least one byte and
-    // track the logical size separately.
-    auto map_size = max(size, 1uz);
-    HANDLE map_handle = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, map_size >> 32, map_size & 0xFFFFFFFF, NULL);
+    HANDLE map_handle = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, size >> 32, size & 0xFFFFFFFF, NULL);
     if (!map_handle)
         return Error::from_windows_error();
 
@@ -43,15 +40,9 @@ ErrorOr<NonnullRefPtr<AnonymousBufferImpl>> AnonymousBufferImpl::create(size_t s
 
 ErrorOr<NonnullRefPtr<AnonymousBufferImpl>> AnonymousBufferImpl::create(int fd, size_t size)
 {
-    void* ptr = nullptr;
-    if (size > 0) {
-        ptr = MapViewOfFile(to_handle(fd), FILE_MAP_ALL_ACCESS, 0, 0, size);
-        if (!ptr) {
-            auto error = Error::from_windows_error();
-            CloseHandle(to_handle(fd));
-            return error;
-        }
-    }
+    void* ptr = MapViewOfFile(to_handle(fd), FILE_MAP_ALL_ACCESS, 0, 0, size);
+    if (!ptr)
+        return Error::from_windows_error();
 
     return adopt_ref(*new AnonymousBufferImpl(fd, size, ptr));
 }

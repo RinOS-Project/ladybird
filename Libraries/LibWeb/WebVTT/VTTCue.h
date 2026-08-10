@@ -6,23 +6,16 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
-#include <LibWeb/Bindings/VTTCue.h>
+#include <LibWeb/Bindings/VTTCuePrototype.h>
 #include <LibWeb/HTML/TextTrackCue.h>
 #include <LibWeb/WebIDL/Types.h>
 #include <LibWeb/WebVTT/VTTRegion.h>
 
 namespace Web::WebVTT {
 
-using AutoKeyword = Bindings::AutoKeyword;
-using DirectionSetting = Bindings::DirectionSetting;
-using LineAlignSetting = Bindings::LineAlignSetting;
-using PositionAlignSetting = Bindings::PositionAlignSetting;
-using AlignSetting = Bindings::AlignSetting;
-
 // https://w3c.github.io/webvtt/#vttcue
 class VTTCue final : public HTML::TextTrackCue {
-    WEB_WRAPPABLE(VTTCue, HTML::TextTrackCue);
+    WEB_PLATFORM_OBJECT(VTTCue, HTML::TextTrackCue);
     GC_DECLARE_ALLOCATOR(VTTCue);
 
 public:
@@ -37,53 +30,54 @@ public:
         VerticalGrowingRight,
     };
 
-    using LineAndPositionSetting = Variant<double, AutoKeyword>;
+    using LineAndPositionSetting = Variant<double, Bindings::AutoKeyword>;
 
-    static WebIDL::ExceptionOr<GC::Ref<VTTCue>> create(double start_time, double end_time, Utf16String const& text);
+    static WebIDL::ExceptionOr<GC::Ref<VTTCue>> construct_impl(JS::Realm&, double start_time, double end_time, String const& text);
     virtual ~VTTCue() override = default;
 
     GC::Ptr<VTTRegion> region() const { return m_region; }
     void set_region(GC::Ptr<VTTRegion> region) { m_region = region; }
 
-    DirectionSetting vertical() const;
-    void set_vertical(DirectionSetting);
+    Bindings::DirectionSetting vertical() const;
+    void set_vertical(Bindings::DirectionSetting);
 
     bool snap_to_lines() const { return m_snap_to_lines; }
     void set_snap_to_lines(bool snap_to_lines) { m_snap_to_lines = snap_to_lines; }
 
-    LineAndPositionSetting line() const;
-    void set_line(LineAndPositionSetting);
+    LineAndPositionSetting line() const { return m_line; }
+    void set_line(LineAndPositionSetting line) { m_line = line; }
 
-    LineAlignSetting line_align() const;
-    void set_line_align(LineAlignSetting);
+    Bindings::LineAlignSetting line_align() const { return m_line_alignment; }
+    void set_line_align(Bindings::LineAlignSetting line_align) { m_line_alignment = line_align; }
 
-    LineAndPositionSetting position() const;
-    void set_position(LineAndPositionSetting);
+    LineAndPositionSetting position() const { return m_position; }
+    void set_position(LineAndPositionSetting position) { m_position = position; }
 
-    PositionAlignSetting position_align() const;
-    void set_position_align(PositionAlignSetting);
+    Bindings::PositionAlignSetting position_align() const { return m_position_alignment; }
+    void set_position_align(Bindings::PositionAlignSetting position_align) { m_position_alignment = position_align; }
 
     double size() const { return m_size; }
     void set_size(double size) { m_size = size; }
 
-    AlignSetting align() const;
-    void set_align(AlignSetting);
+    Bindings::AlignSetting align() const { return m_text_alignment; }
+    void set_align(Bindings::AlignSetting align) { m_text_alignment = align; }
 
-    Utf16String const& text() const { return m_text; }
-    void set_text(Utf16String const& text) { m_text = text; }
+    String const& text() const { return m_text; }
+    void set_text(String const& text) { m_text = text; }
 
 protected:
     double computed_line();
     double computed_position();
-    PositionAlignSetting computed_position_alignment();
+    Bindings::PositionAlignSetting computed_position_alignment();
 
 private:
-    VTTCue(GC::Ptr<HTML::TextTrack>);
+    VTTCue(JS::Realm&, GC::Ptr<HTML::TextTrack>);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Visitor&) override;
 
     // https://w3c.github.io/webvtt/#cue-text
-    Utf16String m_text;
+    String m_text;
 
     // https://w3c.github.io/webvtt/#webvtt-cue-writing-direction
     WritingDirection m_writing_direction { WritingDirection::Horizontal };
@@ -92,22 +86,22 @@ private:
     bool m_snap_to_lines { true };
 
     // https://w3c.github.io/webvtt/#webvtt-cue-line
-    LineAndPositionSetting m_line { AutoKeyword::Auto };
+    LineAndPositionSetting m_line { Bindings::AutoKeyword::Auto };
 
     // https://w3c.github.io/webvtt/#webvtt-cue-line-alignment
-    LineAlignSetting m_line_alignment { LineAlignSetting::Start };
+    Bindings::LineAlignSetting m_line_alignment { Bindings::LineAlignSetting::Start };
 
     // https://w3c.github.io/webvtt/#webvtt-cue-position
-    LineAndPositionSetting m_position { AutoKeyword::Auto };
+    LineAndPositionSetting m_position { Bindings::AutoKeyword::Auto };
 
     // https://w3c.github.io/webvtt/#webvtt-cue-position-alignment
-    PositionAlignSetting m_position_alignment { PositionAlignSetting::Auto };
+    Bindings::PositionAlignSetting m_position_alignment { Bindings::PositionAlignSetting::Auto };
 
     // https://w3c.github.io/webvtt/#webvtt-cue-size
     double m_size { 100 };
 
     // https://w3c.github.io/webvtt/#webvtt-cue-text-alignment
-    AlignSetting m_text_alignment { AlignSetting::Center };
+    Bindings::AlignSetting m_text_alignment { Bindings::AlignSetting::Center };
 
     // https://w3c.github.io/webvtt/#webvtt-cue-region
     GC::Ptr<VTTRegion> m_region;

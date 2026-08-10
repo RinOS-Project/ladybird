@@ -24,11 +24,25 @@ static constexpr bool is_not_ascii_digit(u32 code_point)
     return !is_ascii_digit(code_point);
 }
 
-DigitalFormat digital_format(Utf16View locale)
+#ifdef AK_OS_RINOS
+
+DigitalFormat digital_format(StringView)
+{
+    // RinOS: Return standard digital format separators (":" for both)
+    DigitalFormat format;
+    format.uses_two_digit_hours = false;
+    format.hours_minutes_separator = Utf16String::from_utf8(":"sv);
+    format.minutes_seconds_separator = Utf16String::from_utf8(":"sv);
+    return format;
+}
+
+#else
+
+DigitalFormat digital_format(StringView locale)
 {
     UErrorCode status = U_ZERO_ERROR;
 
-    auto locale_data = LocaleData::for_locale(locale.bytes());
+    auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
         return {};
 

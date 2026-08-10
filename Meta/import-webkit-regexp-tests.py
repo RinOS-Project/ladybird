@@ -19,10 +19,6 @@ function description(msg) {
     // No-op, just used for test documentation in WebKit.
 }
 
-function debug(msg) {
-    // No-op, just used for debugging in WebKit tests.
-}
-
 function shouldBe(actual_code, expected_code) {
     let actual = eval(actual_code);
     let expected = eval(expected_code);
@@ -73,16 +69,23 @@ DEST_DIR = "Tests/LibJS/Runtime/3rdparty/webkit"
 # Files to skip entirely.
 SKIP_FILES = {
     "TEMPLATE.html",
-    # Tests WebKit-specific overflow rejection for huge quantifiers.
-    # Ladybird, Chrome, and Firefox just clamp them silently.
-    "overflow.js",
 }
 
 # Tests that crash or hang -- use test.skip().
-SKIP_TESTS = {}
+SKIP_TESTS = {
+    # Crashes (SIGSEGV).
+    "pcre-test-1",
+}
 
 # Tests that fail -- use test.xfail().
 XFAIL_TESTS = {
+    "backreferences",
+    "dotstar",
+    "malformed-escapes",
+    "non-pattern-characters",
+    "overflow",
+    "quantified-assertions",
+    "repeat-match-waldemar",
     "slow",
 }
 

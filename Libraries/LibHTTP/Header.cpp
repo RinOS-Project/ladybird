@@ -10,7 +10,6 @@
 #include <AK/AnyOf.h>
 #include <AK/GenericLexer.h>
 #include <AK/QuickSort.h>
-#include <AK/Utf16View.h>
 #include <LibHTTP/HTTP.h>
 #include <LibHTTP/Header.h>
 #include <LibHTTP/Method.h>
@@ -22,11 +21,6 @@
 namespace HTTP {
 
 Header Header::isomorphic_encode(StringView name, StringView value)
-{
-    return { TextCodec::isomorphic_encode(name), TextCodec::isomorphic_encode(value) };
-}
-
-Header Header::isomorphic_encode(StringView name, Utf16View value)
 {
     return { TextCodec::isomorphic_encode(name), TextCodec::isomorphic_encode(value) };
 }
@@ -89,7 +83,7 @@ Optional<Vector<ByteString>> Header::extract_header_values() const
 bool is_header_name(StringView header_name)
 {
     // A header name is a byte sequence that matches the field-name token production.
-    return is_token(header_name);
+    return !header_name.is_empty() && all_of(header_name, is_http_token_code_point);
 }
 
 // https://fetch.spec.whatwg.org/#header-value

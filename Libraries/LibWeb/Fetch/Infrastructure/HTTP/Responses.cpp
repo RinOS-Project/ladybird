@@ -11,6 +11,7 @@
 #include <LibGC/Root.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/VM.h>
+#include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Fetch/Infrastructure/FetchParams.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Bodies.h>
@@ -26,14 +27,9 @@ GC_DEFINE_ALLOCATOR(CORSFilteredResponse);
 GC_DEFINE_ALLOCATOR(OpaqueFilteredResponse);
 GC_DEFINE_ALLOCATOR(OpaqueRedirectFilteredResponse);
 
-GC::Ref<Response> Response::create()
+GC::Ref<Response> Response::create(JS::VM& vm)
 {
-    return GC::Heap::the().allocate<Response>(HTTP::HeaderList::create());
-}
-
-GC::Ref<Response> Response::create(JS::VM&)
-{
-    return create();
+    return vm.heap().allocate<Response>(HTTP::HeaderList::create());
 }
 
 Response::Response(NonnullRefPtr<HTTP::HeaderList> header_list)
@@ -52,17 +48,17 @@ void Response::visit_edges(JS::Cell::Visitor& visitor)
 // A network error is a response whose status is always 0, status message is always
 // the empty byte sequence, header list is always empty, and body is always null.
 
-GC::Ref<Response> Response::aborted_network_error()
+GC::Ref<Response> Response::aborted_network_error(JS::VM& vm)
 {
-    auto response = network_error("Fetch has been aborted"_string);
+    auto response = network_error(vm, "Fetch has been aborted"_string);
     response->set_aborted(true);
     return response;
 }
 
-GC::Ref<Response> Response::network_error(String message)
+GC::Ref<Response> Response::network_error(JS::VM& vm, String message)
 {
     dbgln_if(WEB_FETCH_DEBUG, "Fetch: Creating network error response with message: {}", message);
-    auto response = Response::create();
+    auto response = Response::create(vm);
     response->set_status(0);
     response->set_type(Type::Error);
     VERIFY(!response->body());
@@ -70,21 +66,16 @@ GC::Ref<Response> Response::network_error(String message)
     return response;
 }
 
-GC::Ref<Response> Response::network_error(JS::VM&, String message)
-{
-    return network_error(move(message));
-}
-
 // https://fetch.spec.whatwg.org/#appropriate-network-error
-GC::Ref<Response> Response::appropriate_network_error(FetchParams const& fetch_params)
+GC::Ref<Response> Response::appropriate_network_error(JS::VM& vm, FetchParams const& fetch_params)
 {
     // 1. Assert: fetchParams is canceled.
     VERIFY(fetch_params.is_canceled());
 
     // 2. Return an aborted network error if fetchParams is aborted; otherwise return a network error.
     return fetch_params.is_aborted()
-        ? aborted_network_error()
-        : network_error("Fetch has been terminated"_string);
+        ? aborted_network_error(vm)
+        : network_error(vm, "Fetch has been terminated"_string);
 }
 
 // https://fetch.spec.whatwg.org/#concept-aborted-network-error
@@ -116,29 +107,6 @@ bool Response::is_network_error() const
     return true;
 }
 
-void Response::release_request_for_transfer() const
-{
-    if (m_request_server_request.has_value() && m_request_server_request->request)
-        m_request_server_request->request->release_for_transfer();
-}
-
-void Response::resume_body_delivery() const
-{
-    release_request_for_transfer();
-    if (m_request_server_request.has_value()) {
-        if (m_request_server_request->request)
-            m_request_server_request->request->resume_body_delivery();
-    }
-}
-
-void Response::resume_body_delivery_up_to(size_t byte_count) const
-{
-    if (m_request_server_request.has_value()) {
-        if (m_request_server_request->request)
-            m_request_server_request->request->resume_body_delivery_up_to(byte_count);
-    }
-}
-
 // https://fetch.spec.whatwg.org/#concept-response-url
 Optional<URL::URL const&> Response::url() const
 {
@@ -167,7 +135,7 @@ ErrorOr<Optional<URL::URL>> Response::location_url(Optional<String> const& reque
         return OptionalNone {};
 
     // 3. If location is a header value, then set location to the result of parsing location with response’s URL.
-    auto location = DOMURL::parse_from_byte_string(location_values->first(), url());
+    auto location = DOMURL::parse(location_values->first(), url());
     if (!location.has_value())
         return Error::from_string_literal("Invalid 'Location' header URL");
 
@@ -183,22 +151,24 @@ ErrorOr<Optional<URL::URL>> Response::location_url(Optional<String> const& reque
 GC::Ref<Response> Response::clone(JS::Realm& realm) const
 {
     // To clone a response response, run these steps:
+    auto& vm = realm.vm();
+
     // 1. If response is a filtered response, then return a new identical filtered response whose internal response is a clone of response’s internal response.
     if (is<FilteredResponse>(*this)) {
         auto internal_response = GC::make_root(static_cast<FilteredResponse const&>(*this).internal_response()->clone(realm));
         if (is<BasicFilteredResponse>(*this))
-            return BasicFilteredResponse::create(internal_response);
+            return BasicFilteredResponse::create(vm, *internal_response);
         if (is<CORSFilteredResponse>(*this))
-            return CORSFilteredResponse::create(internal_response);
+            return CORSFilteredResponse::create(vm, *internal_response);
         if (is<OpaqueFilteredResponse>(*this))
-            return OpaqueFilteredResponse::create(internal_response);
+            return OpaqueFilteredResponse::create(vm, *internal_response);
         if (is<OpaqueRedirectFilteredResponse>(*this))
-            return OpaqueRedirectFilteredResponse::create(internal_response);
+            return OpaqueRedirectFilteredResponse::create(vm, *internal_response);
         VERIFY_NOT_REACHED();
     }
 
     // 2. Let newResponse be a copy of response, except for its body.
-    auto new_response = Infrastructure::Response::create();
+    auto new_response = Infrastructure::Response::create(vm);
     new_response->set_type(m_type);
     new_response->set_aborted(m_aborted);
     new_response->set_url_list(m_url_list);
@@ -212,12 +182,6 @@ GC::Ref<Response> Response::clone(JS::Realm& realm) const
     new_response->set_request_includes_credentials(m_request_includes_credentials);
     new_response->set_timing_allow_passed(m_timing_allow_passed);
     new_response->set_body_info(m_body_info);
-    new_response->set_javascript_bytecode_cache(m_javascript_bytecode_cache);
-    new_response->set_javascript_bytecode_cache_vary_key(m_javascript_bytecode_cache_vary_key);
-    if (m_request_server_request.has_value())
-        new_response->set_request_server_request(*m_request_server_request);
-    if (m_javascript_bytecode_cache_memory_cache_request_headers.has_value())
-        new_response->set_javascript_bytecode_cache_memory_cache_request_headers(HTTP::HeaderList::create((*m_javascript_bytecode_cache_memory_cache_request_headers)->headers()));
     // FIXME: service worker timing info
 
     // 3. If response’s body is non-null, then set newResponse’s body to the result of cloning response’s body.
@@ -290,7 +254,7 @@ void FilteredResponse::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_internal_response);
 }
 
-GC::Ref<BasicFilteredResponse> BasicFilteredResponse::create(GC::Ref<Response> internal_response)
+GC::Ref<BasicFilteredResponse> BasicFilteredResponse::create(JS::VM& vm, GC::Ref<Response> internal_response)
 {
     auto rooted_internal_response = GC::make_root(internal_response);
 
@@ -303,7 +267,7 @@ GC::Ref<BasicFilteredResponse> BasicFilteredResponse::create(GC::Ref<Response> i
             header_list->append(header);
     }
 
-    return GC::Heap::the().allocate<BasicFilteredResponse>(internal_response, move(header_list));
+    return vm.heap().allocate<BasicFilteredResponse>(*rooted_internal_response, move(header_list));
 }
 
 BasicFilteredResponse::BasicFilteredResponse(GC::Ref<Response> internal_response, NonnullRefPtr<HTTP::HeaderList> header_list)
@@ -312,7 +276,7 @@ BasicFilteredResponse::BasicFilteredResponse(GC::Ref<Response> internal_response
 {
 }
 
-GC::Ref<CORSFilteredResponse> CORSFilteredResponse::create(GC::Ref<Response> internal_response)
+GC::Ref<CORSFilteredResponse> CORSFilteredResponse::create(JS::VM& vm, GC::Ref<Response> internal_response)
 {
     auto rooted_internal_response = GC::make_root(internal_response);
 
@@ -331,7 +295,7 @@ GC::Ref<CORSFilteredResponse> CORSFilteredResponse::create(GC::Ref<Response> int
             header_list->append(header);
     }
 
-    return GC::Heap::the().allocate<CORSFilteredResponse>(internal_response, header_list);
+    return vm.heap().allocate<CORSFilteredResponse>(*rooted_internal_response, header_list);
 }
 
 CORSFilteredResponse::CORSFilteredResponse(GC::Ref<Response> internal_response, NonnullRefPtr<HTTP::HeaderList> header_list)
@@ -340,13 +304,13 @@ CORSFilteredResponse::CORSFilteredResponse(GC::Ref<Response> internal_response, 
 {
 }
 
-GC::Ref<OpaqueFilteredResponse> OpaqueFilteredResponse::create(GC::Ref<Response> internal_response)
+GC::Ref<OpaqueFilteredResponse> OpaqueFilteredResponse::create(JS::VM& vm, GC::Ref<Response> internal_response)
 {
     auto rooted_internal_response = GC::make_root(internal_response);
 
     // An opaque filtered response is a filtered response whose type is "opaque", URL list is the empty list,
     // status is 0, status message is the empty byte sequence, header list is empty, and body is null.
-    return GC::Heap::the().allocate<OpaqueFilteredResponse>(internal_response, HTTP::HeaderList::create());
+    return vm.heap().allocate<OpaqueFilteredResponse>(*rooted_internal_response, HTTP::HeaderList::create());
 }
 
 OpaqueFilteredResponse::OpaqueFilteredResponse(GC::Ref<Response> internal_response, NonnullRefPtr<HTTP::HeaderList> header_list)
@@ -355,13 +319,13 @@ OpaqueFilteredResponse::OpaqueFilteredResponse(GC::Ref<Response> internal_respon
 {
 }
 
-GC::Ref<OpaqueRedirectFilteredResponse> OpaqueRedirectFilteredResponse::create(GC::Ref<Response> internal_response)
+GC::Ref<OpaqueRedirectFilteredResponse> OpaqueRedirectFilteredResponse::create(JS::VM& vm, GC::Ref<Response> internal_response)
 {
     auto rooted_internal_response = GC::make_root(internal_response);
 
     // An opaque-redirect filtered response is a filtered response whose type is "opaqueredirect",
     // status is 0, status message is the empty byte sequence, header list is empty, and body is null.
-    return GC::Heap::the().allocate<OpaqueRedirectFilteredResponse>(internal_response, HTTP::HeaderList::create());
+    return vm.heap().allocate<OpaqueRedirectFilteredResponse>(*rooted_internal_response, HTTP::HeaderList::create());
 }
 
 OpaqueRedirectFilteredResponse::OpaqueRedirectFilteredResponse(GC::Ref<Response> internal_response, NonnullRefPtr<HTTP::HeaderList> header_list)

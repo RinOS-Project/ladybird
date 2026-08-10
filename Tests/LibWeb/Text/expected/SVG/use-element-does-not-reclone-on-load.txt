@@ -1,4 +1,0 @@
-Had resolved instance root before load: true
-Had forward instance root before load: false
-Kept resolved instance root after load: true
-Has forward instance root after load: true

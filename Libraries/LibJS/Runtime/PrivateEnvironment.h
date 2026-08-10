@@ -34,7 +34,6 @@ class PrivateEnvironment : public Cell {
 
 public:
     PrivateName resolve_private_identifier(Utf16FlyString const& identifier) const;
-    bool contains_private_identifier(Utf16FlyString const& identifier) const;
 
     void add_private_name(Utf16FlyString description);
 
@@ -45,7 +44,6 @@ private:
     explicit PrivateEnvironment(PrivateEnvironment* parent);
 
     virtual void visit_edges(Visitor&) override;
-    virtual size_t external_memory_size() const override;
 
     auto find_private_name(Utf16FlyString const& description) const
     {

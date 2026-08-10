@@ -1,9 +1,6 @@
 name: CI
 
-on:
-  push:
-    branches: [master]
-  pull_request:
+on: [push, pull_request]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || format('{0}-{1}', github.ref, github.run_number) }}
@@ -20,11 +17,10 @@ jobs:
       matrix:
         os_name: ['Linux']
         arch: ['x86_64']
-        build_preset: ['Release']
+        build_preset: ['Sanitizer']
         toolchain: ['GNU']
         clang_plugins: [false]
         runner_labels: ['["blacksmith-16vcpu-ubuntu-2404"]']
-        container: [&ci_container '{"image":"ghcr.io/ladybirdbrowser/ladybird-ci:2026.07.29"}']
 
         include:
           - os_name: 'Linux'
@@ -33,15 +29,13 @@ jobs:
             toolchain: 'Clang'
             clang_plugins: true
             runner_labels: '["blacksmith-16vcpu-ubuntu-2404"]'
-            container: *ci_container
 
           - os_name: 'macOS'
             arch: 'arm64'
             build_preset: 'Sanitizer'
             toolchain: 'Clang'
             clang_plugins: false
-            runner_labels: '["macos-26", "self-hosted"]'
-            container: 'null'
+            runner_labels: '["macos-15", "self-hosted"]'
 
           - os_name: 'Linux'
             arch: 'arm64'
@@ -49,7 +43,6 @@ jobs:
             toolchain: 'Clang'
             clang_plugins: false
             runner_labels: '["blacksmith-16vcpu-ubuntu-2404-arm"]'
-            container: *ci_container
 
           - os_name: 'Linux'
             arch: 'x86_64'
@@ -57,7 +50,6 @@ jobs:
             toolchain: 'Clang'
             clang_plugins: false
             runner_labels: '["blacksmith-16vcpu-ubuntu-2404"]'
-            container: *ci_container
 
           - os_name: 'Linux'
             arch: 'x86_64'
@@ -65,7 +57,6 @@ jobs:
             toolchain: 'Clang'
             clang_plugins: false
             runner_labels: '["blacksmith-16vcpu-ubuntu-2404"]'
-            container: *ci_container
 
           - os_name: 'Windows'
             arch: 'x86_64'
@@ -73,7 +64,6 @@ jobs:
             toolchain: 'ClangCL'
             clang_plugins: false
             runner_labels: '["blacksmith-16vcpu-windows-2025"]'
-            container: 'null'
 
     secrets: inherit
     uses: ./.github/workflows/lagom-template.yml
@@ -84,4 +74,3 @@ jobs:
       arch: ${{ matrix.arch }}
       build_preset: ${{ matrix.build_preset }}
       clang_plugins: ${{ matrix.clang_plugins }}
-      container: ${{ matrix.container }}

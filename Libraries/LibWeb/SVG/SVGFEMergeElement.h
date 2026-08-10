@@ -15,7 +15,7 @@ namespace Web::SVG {
 class SVGFEMergeElement final
     : public SVGElement
     , public SVGFilterPrimitiveStandardAttributes<SVGFEMergeElement> {
-    WEB_WRAPPABLE(SVGFEMergeElement, SVGElement);
+    WEB_PLATFORM_OBJECT(SVGFEMergeElement, SVGElement);
     GC_DECLARE_ALLOCATOR(SVGFEMergeElement);
 
 public:
@@ -23,6 +23,8 @@ public:
 
 private:
     SVGFEMergeElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 };
 

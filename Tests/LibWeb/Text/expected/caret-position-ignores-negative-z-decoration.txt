@@ -1,1 +1,0 @@
-caret below heading moves to following text: true

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibURL/Parser.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Bodies.h>
@@ -16,24 +18,25 @@
 namespace Web::HTML {
 
 // https://w3c.github.io/beacon/#sendbeacon-method
-WebIDL::ExceptionOr<bool> NavigatorBeaconPartial::send_beacon(Utf16View url, Fetch::NullableBodyInit const& data)
+WebIDL::ExceptionOr<bool> NavigatorBeaconPartial::send_beacon(String const& url, Fetch::NullableBodyInit const& data)
 {
     auto& navigator = as<Navigator>(*this);
-    auto& realm = navigator.window().principal_realm();
-    auto& relevant_settings_object = HTML::relevant_settings_object(navigator.window());
+    auto& realm = navigator.realm();
+    auto& vm = realm.vm();
+    auto& relevant_settings_object = HTML::relevant_settings_object(navigator);
 
     // 1. Set base to this's relevant settings object's API base URL.
-    // NB: This is handled by the encoding_parse_url() call below.
+    auto base_url = relevant_settings_object.api_base_url();
 
     // 2. Set origin to this's relevant settings object's origin.
     auto origin = relevant_settings_object.origin();
 
     // 3. Set parsedUrl to the result of the URL parser steps with url and base. If the algorithm returns an error, or if parsedUrl's scheme is not "http" or "https", throw a "TypeError" exception and terminate these steps.
-    auto parsed_url = relevant_settings_object.encoding_parse_url(url);
+    auto parsed_url = URL::Parser::basic_parse(url, base_url);
     if (!parsed_url.has_value())
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, Utf16String::formatted("Beacon URL {} is invalid.", url) };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, MUST(String::formatted("Beacon URL {} is invalid.", url)) };
     if (parsed_url->scheme() != "http" && parsed_url->scheme() != "https")
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, Utf16String::formatted("Beacon URL {} must be either http:// or https://.", url) };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, MUST(String::formatted("Beacon URL {} must be either http:// or https://.", url)) };
 
     // 4. Let headerList be an empty list.
     auto header_list = HTTP::HeaderList::create();
@@ -45,7 +48,7 @@ WebIDL::ExceptionOr<bool> NavigatorBeaconPartial::send_beacon(Utf16View url, Fet
     GC::Ptr<Fetch::Infrastructure::Body> transmitted_data;
     if (!data.has<Empty>()) {
         // 6.1 Set transmittedData and contentType to the result of extracting data's byte stream with the keepalive flag set.
-        auto body_with_type = TRY(Fetch::extract_body(realm, data.downcast<Fetch::BodyInit>(), true));
+        auto body_with_type = TRY(Fetch::extract_body(realm, data.downcast<GC::Root<Streams::ReadableStream>, GC::Root<FileAPI::Blob>, GC::Root<WebIDL::BufferSource>, GC::Root<XHR::FormData>, GC::Root<DOMURL::URLSearchParams>, String>(), true));
         transmitted_data = body_with_type.body;
         auto& content_type = body_with_type.type;
 
@@ -71,7 +74,7 @@ WebIDL::ExceptionOr<bool> NavigatorBeaconPartial::send_beacon(Utf16View url, Fet
     // FIXME: 7. Set the return value to true, return the sendBeacon() call, and continue to run the following steps in parallel:
 
     // 7.1 Let req be a new request, initialized as follows:
-    auto req = Fetch::Infrastructure::Request::create();
+    auto req = Fetch::Infrastructure::Request::create(vm);
     req->set_method("POST"sv);                         // method: POST
     req->set_client(&relevant_settings_object);        // client: this's relevant settings object
     req->set_url_list({ parsed_url.release_value() }); // url: parsedUrl
@@ -85,7 +88,7 @@ WebIDL::ExceptionOr<bool> NavigatorBeaconPartial::send_beacon(Utf16View url, Fet
     req->set_initiator_type(Fetch::Infrastructure::Request::InitiatorType::Beacon);      // initiator type: "beacon"
 
     // 7.2 Fetch req.
-    (void)Fetch::Fetching::fetch(realm, req, Fetch::Infrastructure::FetchAlgorithms::create({}));
+    (void)Fetch::Fetching::fetch(realm, req, Fetch::Infrastructure::FetchAlgorithms::create(vm, {}));
 
     return true;
 }

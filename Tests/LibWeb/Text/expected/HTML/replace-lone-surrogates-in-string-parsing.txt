@@ -1,4 +1,0 @@
-DOMParser text: length=7, codePoints=feff,fffd,41,fffd,42,1f600
-innerHTML text: length=7, codePoints=feff,fffd,41,fffd,42,1f600
-DOMParser attribute: length=7, codePoints=feff,fffd,41,fffd,42,1f600
-innerHTML attribute: length=7, codePoints=feff,fffd,41,fffd,42,1f600

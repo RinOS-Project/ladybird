@@ -43,8 +43,6 @@ ErrorOr<Bytes> PosixSocketHelper::read(Bytes buffer, int flags)
     if (WSARecv(m_fd, &buf, 1, &nread, &fl, NULL, NULL) == SOCKET_ERROR) {
         if (GetLastError() == WSAECONNRESET)
             return Error::from_errno(ECONNRESET);
-        if (GetLastError() == WSAEWOULDBLOCK)
-            return Error::from_errno(EWOULDBLOCK);
         return Error::from_windows_error();
     }
 
@@ -75,11 +73,8 @@ ErrorOr<size_t> PosixSocketHelper::write(ReadonlyBytes buffer, int flags)
     WSABUF buf = make_wsa_buf(buffer);
     DWORD nwritten = 0;
 
-    if (WSASend(m_fd, &buf, 1, &nwritten, 0, NULL, NULL) == SOCKET_ERROR) {
-        if (GetLastError() == WSAEWOULDBLOCK)
-            return Error::from_errno(EWOULDBLOCK);
+    if (WSASend(m_fd, &buf, 1, &nwritten, 0, NULL, NULL) == SOCKET_ERROR)
         return Error::from_windows_error();
-    }
 
     return nwritten;
 }
@@ -123,8 +118,7 @@ ErrorOr<size_t> PosixSocketHelper::pending_bytes() const
     }
 
     u_long value = 0;
-    if (::ioctlsocket(m_fd, FIONREAD, &value) == SOCKET_ERROR)
-        return Error::from_windows_error();
+    TRY(System::ioctl(m_fd, FIONREAD, &value));
     return value;
 }
 
@@ -229,7 +223,7 @@ ErrorOr<int> Socket::create_fd(SocketDomain domain, SocketType type)
     return fd;
 }
 
-ErrorOr<Vector<Variant<IPv4Address, IPv6Address>>> Socket::resolve_host(ByteString const& host, SocketType type, AddressFamily address_family)
+ErrorOr<Vector<Variant<IPv4Address, IPv6Address>>> Socket::resolve_host(ByteString const& host, SocketType type)
 {
     int socket_type;
     switch (type) {
@@ -243,23 +237,8 @@ ErrorOr<Vector<Variant<IPv4Address, IPv6Address>>> Socket::resolve_host(ByteStri
         VERIFY_NOT_REACHED();
     }
 
-    int ai_family;
-    switch (address_family) {
-    case AddressFamily::Unspecified:
-        ai_family = AF_UNSPEC;
-        break;
-    case AddressFamily::IPv4Only:
-        ai_family = AF_INET;
-        break;
-    case AddressFamily::IPv6Only:
-        ai_family = AF_INET6;
-        break;
-    default:
-        VERIFY_NOT_REACHED();
-    }
-
     struct addrinfo hints = {};
-    hints.ai_family = ai_family;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = socket_type;
     hints.ai_flags = 0;
     hints.ai_protocol = 0;

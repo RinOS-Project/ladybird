@@ -86,6 +86,7 @@ namespace Gfx {
     C(RulerBorder)                 \
     C(RulerInactiveText)           \
     C(Selection)                   \
+    C(SelectionText)               \
     C(SyntaxComment)               \
     C(SyntaxControlKeyword)        \
     C(SyntaxIdentifier)            \

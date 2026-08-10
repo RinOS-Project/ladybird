@@ -11,9 +11,11 @@
 #include <AK/NonnullOwnPtr.h>
 #include <AK/RefCounted.h>
 
+#define OWNPTR_SCRUB_BYTE 0xf0
+
 namespace AK {
 
-template<typename T>
+template<typename T, typename TDeleter>
 class [[nodiscard]] OwnPtr {
 public:
     OwnPtr() = default;
@@ -40,7 +42,10 @@ public:
     }
     ~OwnPtr()
     {
-        delete m_ptr;
+        clear();
+#ifdef SANITIZE_PTRS
+        m_ptr = (T*)(explode_byte(OWNPTR_SCRUB_BYTE));
+#endif
     }
 
     OwnPtr(OwnPtr const&) = delete;
@@ -102,7 +107,7 @@ public:
     void clear()
     {
         auto* ptr = exchange(m_ptr, nullptr);
-        delete ptr;
+        TDeleter {}(ptr);
     }
 
     bool operator!() const { return !m_ptr; }

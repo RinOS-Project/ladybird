@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-
-# Copyright (c) 2026-present, the Ladybird developers.
-#
+# Copyright (c) 2026, Ladybird developers
 # SPDX-License-Identifier: BSD-2-Clause
 
 # Generate cargo-sources.json for Flatpak builds from Cargo.lock.
@@ -11,7 +9,6 @@ import json
 import re
 
 from pathlib import Path
-from typing import Any
 
 script_dir = Path(__file__).parent
 repo_root = script_dir / ".." / ".." / ".."
@@ -26,7 +23,7 @@ for m in re.finditer(
 ):
     crates.append((m.group(1), m.group(2), m.group(3)))
 
-sources: list[dict[str, Any]] = [
+sources = [
     {
         "type": "git",
         "url": "https://github.com/corrosion-rs/corrosion.git",

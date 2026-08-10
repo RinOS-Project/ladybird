@@ -6,36 +6,35 @@
 
 #pragma once
 
-#include <AK/Optional.h>
-#include <AK/String.h>
-#include <AK/Utf16String.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <AK/FlyString.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/DOM/QualifiedName.h>
 #include <LibWeb/Export.h>
 
 namespace Web::SVG {
 
 // https://svgwg.org/svg2-draft/types.html#InterfaceSVGAnimatedString
-class WEB_API SVGAnimatedString final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(SVGAnimatedString, Bindings::GCAllocatedWrappable);
+class WEB_API SVGAnimatedString final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(SVGAnimatedString, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(SVGAnimatedString);
 
 public:
-    [[nodiscard]] static GC::Ref<SVGAnimatedString> create(GC::Ref<SVGElement> element, DOM::QualifiedName reflected_attribute, Optional<DOM::QualifiedName> deprecated_reflected_attribute = {}, Optional<Utf16String> initial_value = {});
+    [[nodiscard]] static GC::Ref<SVGAnimatedString> create(JS::Realm&, GC::Ref<SVGElement> element, DOM::QualifiedName reflected_attribute, Optional<DOM::QualifiedName> deprecated_reflected_attribute = {}, Optional<FlyString> initial_value = {});
     virtual ~SVGAnimatedString() override;
 
-    Utf16String base_val() const;
-    void set_base_val(Utf16String const& base_val);
+    String base_val() const;
+    void set_base_val(String const& base_val);
 
 private:
-    SVGAnimatedString(GC::Ref<SVGElement> element, DOM::QualifiedName reflected_attribute, Optional<DOM::QualifiedName> deprecated_reflected_attribute, Optional<Utf16String> initial_value);
+    SVGAnimatedString(JS::Realm&, GC::Ref<SVGElement> element, DOM::QualifiedName reflected_attribute, Optional<DOM::QualifiedName> deprecated_reflected_attribute, Optional<FlyString> initial_value);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     GC::Ref<SVGElement> m_element;
     DOM::QualifiedName m_reflected_attribute;
     Optional<DOM::QualifiedName> m_deprecated_reflected_attribute;
-    Optional<Utf16String> m_initial_value;
+    Optional<FlyString> m_initial_value;
 };
 
 }

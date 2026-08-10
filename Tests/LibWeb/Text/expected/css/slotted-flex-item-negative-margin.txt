@@ -1,3 +1,0 @@
-wrapper width: 16
-slotted offset: -12
-field offset: 24

@@ -6,24 +6,24 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::NavigationTiming {
 
-class PerformanceNavigation final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(PerformanceNavigation, Bindings::GCAllocatedWrappable);
+class PerformanceNavigation final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(PerformanceNavigation, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(PerformanceNavigation);
 
 public:
-    static GC::Ref<PerformanceNavigation> create(u16 type, u16 redirect_count);
-
     ~PerformanceNavigation();
 
     u16 type() const;
     u16 redirect_count() const;
 
 private:
-    PerformanceNavigation(u16 type, u16 redirect_count);
+    explicit PerformanceNavigation(JS::Realm&, u16 type, u16 redirect_count);
+
+    void initialize(JS::Realm&) override;
 
     u16 m_type;
     u16 m_redirect_count;

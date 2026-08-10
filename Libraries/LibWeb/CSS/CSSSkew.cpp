@@ -5,7 +5,8 @@
  */
 
 #include "CSSSkew.h"
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/CSSSkewPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSNumericValue.h>
 #include <LibWeb/CSS/CSSUnitValue.h>
 #include <LibWeb/CSS/PropertyNameAndID.h>
@@ -17,29 +18,29 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSSkew);
 
-GC::Ref<CSSSkew> CSSSkew::create(GC::Ref<CSSNumericValue> ax, GC::Ref<CSSNumericValue> ay)
+GC::Ref<CSSSkew> CSSSkew::create(JS::Realm& realm, GC::Ref<CSSNumericValue> ax, GC::Ref<CSSNumericValue> ay)
 {
-    return GC::Heap::the().allocate<CSSSkew>(ax, ay);
+    return realm.create<CSSSkew>(realm, ax, ay);
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-cssskew-cssskew
-WebIDL::ExceptionOr<GC::Ref<CSSSkew>> CSSSkew::create_for_constructor(GC::Ref<CSSNumericValue> ax, GC::Ref<CSSNumericValue> ay)
+WebIDL::ExceptionOr<GC::Ref<CSSSkew>> CSSSkew::construct_impl(JS::Realm& realm, GC::Ref<CSSNumericValue> ax, GC::Ref<CSSNumericValue> ay)
 {
     // The CSSSkew(ax, ay) constructor must, when invoked, perform the following steps:
 
     // 1. If ax or ay do not match <angle>, throw a TypeError.
     if (!ax->type().matches_angle({}))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkew ax component doesn't match <angle>"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkew ax component doesn't match <angle>"sv };
     if (!ay->type().matches_angle({}))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkew ay component doesn't match <angle>"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkew ay component doesn't match <angle>"sv };
 
     // 2. Return a new CSSSkew object with its ax and ay internal slots set to ax and ay, and its is2D internal slot
     //    set to true.
-    return CSSSkew::create(ax, ay);
+    return CSSSkew::create(realm, ax, ay);
 }
 
-CSSSkew::CSSSkew(GC::Ref<CSSNumericValue> ax, GC::Ref<CSSNumericValue> ay)
-    : CSSTransformComponent(Is2D::Yes)
+CSSSkew::CSSSkew(JS::Realm& realm, GC::Ref<CSSNumericValue> ax, GC::Ref<CSSNumericValue> ay)
+    : CSSTransformComponent(realm, Is2D::Yes)
     , m_ax(ax)
     , m_ay(ay)
 {
@@ -47,7 +48,13 @@ CSSSkew::CSSSkew(GC::Ref<CSSNumericValue> ax, GC::Ref<CSSNumericValue> ay)
 
 CSSSkew::~CSSSkew() = default;
 
-void CSSSkew::visit_edges(GC::Cell::Visitor& visitor)
+void CSSSkew::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSSkew);
+    Base::initialize(realm);
+}
+
+void CSSSkew::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_ax);
@@ -58,27 +65,27 @@ void CSSSkew::visit_edges(GC::Cell::Visitor& visitor)
 WebIDL::ExceptionOr<Utf16String> CSSSkew::to_string() const
 {
     // 1. Let s initially be "skew(".
-    Utf16StringBuilder builder;
-    builder.append_ascii("skew("sv);
+    StringBuilder builder { StringBuilder::Mode::UTF16 };
+    builder.append("skew("sv);
 
     // 2. Serialize this’s ax internal slot, and append it to s.
     m_ax->serialize(builder, {});
 
     // 3. If this’s ay internal slot is a CSSUnitValue with a value of 0, then append ")" to s and return s.
     if (auto* ay_unit_value = as_if<CSSUnitValue>(*m_ay); ay_unit_value && ay_unit_value->value() == 0) {
-        builder.append_ascii(')');
-        return builder.to_string();
+        builder.append(")"sv);
+        return builder.to_utf16_string();
     }
 
     // 4. Otherwise, append ", " to s.
-    builder.append_ascii(", "sv);
+    builder.append(", "sv);
 
     // 5. Serialize this’s ay internal slot, and append it to s.
     m_ay->serialize(builder, {});
 
     // 6. Append ")" to s, and return s.
-    builder.append_ascii(')');
-    return builder.to_string();
+    builder.append(")"sv);
+    return builder.to_utf16_string();
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-csstransformcomponent-tomatrix
@@ -92,11 +99,11 @@ WebIDL::ExceptionOr<GC::Ref<Geometry::DOMMatrix>> CSSSkew::to_matrix() const
     //    As the entries of such a matrix are defined relative to the px unit, if any <length>s in this involved in
     //    generating the matrix are not compatible units with px (such as relative lengths or percentages), throw a
     //    TypeError.
-    auto matrix = Geometry::DOMMatrix::create();
+    auto matrix = Geometry::DOMMatrix::create(realm());
 
     // NB: to() throws a TypeError if the conversion can't be done.
-    auto ax_rad = TRY(m_ax->to("rad"_utf16_fly_string))->value();
-    auto ay_rad = TRY(m_ay->to("rad"_utf16_fly_string))->value();
+    auto ax_rad = TRY(m_ax->to("rad"_fly_string))->value();
+    auto ay_rad = TRY(m_ay->to("rad"_fly_string))->value();
 
     matrix->set_m21(tanf(ax_rad));
     matrix->set_m12(tanf(ay_rad));
@@ -110,7 +117,7 @@ WebIDL::ExceptionOr<void> CSSSkew::set_ax(GC::Ref<CSSNumericValue> ax)
     // AD-HOC: Not specced. https://github.com/w3c/css-houdini-drafts/issues/1153
     //         WPT expects this to throw for invalid values.
     if (!ax->type().matches_angle({}))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkew ax component doesn't match <angle>"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkew ax component doesn't match <angle>"sv };
     m_ax = ax;
     return {};
 }
@@ -120,7 +127,7 @@ WebIDL::ExceptionOr<void> CSSSkew::set_ay(GC::Ref<CSSNumericValue> ay)
     // AD-HOC: Not specced. https://github.com/w3c/css-houdini-drafts/issues/1153
     //         WPT expects this to throw for invalid values.
     if (!ay->type().matches_angle({}))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkew ay component doesn't match <angle>"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "CSSSkew ay component doesn't match <angle>"sv };
     m_ay = ay;
     return {};
 }

@@ -1,3 +1,0 @@
-type: hashchange
-oldURL: https://example.com/old#🐞
-newURL: https://example.com/new#🐞

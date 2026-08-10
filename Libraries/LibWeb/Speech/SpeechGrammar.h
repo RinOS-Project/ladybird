@@ -6,34 +6,37 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
+#include <AK/String.h>
 #include <LibGC/Ptr.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibJS/Forward.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::Speech {
 
-class SpeechGrammar final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(SpeechGrammar, Bindings::GCAllocatedWrappable);
+class SpeechGrammar final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(SpeechGrammar, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(SpeechGrammar);
 
 public:
-    static GC::Ref<SpeechGrammar> create();
+    static WebIDL::ExceptionOr<GC::Ref<SpeechGrammar>> construct_impl(JS::Realm&);
     virtual ~SpeechGrammar() override;
 
     // https://wicg.github.io/speech-api/#dom-speechgrammar-src
-    Utf16String const& src() const { return m_src; }
-    void set_src(Utf16String const& src) { m_src = src; }
+    String const& src() const { return m_src; }
+    void set_src(String const& src) { m_src = src; }
 
     // https://wicg.github.io/speech-api/#dom-speechgrammar-weight
     float weight() const { return m_weight; }
     void set_weight(float weight) { m_weight = weight; }
 
 private:
-    explicit SpeechGrammar();
+    explicit SpeechGrammar(JS::Realm&);
 
-    Utf16String m_src;
+    virtual void initialize(JS::Realm&) override;
+
+    String m_src;
     float m_weight { 1.f };
 };
 

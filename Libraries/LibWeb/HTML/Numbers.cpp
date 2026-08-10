@@ -4,88 +4,71 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/GenericLexer.h>
 #include <AK/StringConversions.h>
-#include <AK/Utf16View.h>
+#include <AK/Utf16String.h>
 #include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 #include <math.h>
 
 namespace Web::HTML {
 
-static size_t code_unit_length(Utf16View string)
-{
-    return string.length_in_code_units();
-}
-
-static u32 code_unit_at(Utf16View string, size_t index)
-{
-    return string.code_unit_at(index);
-}
-
-template<typename StringType>
-static bool is_eof(StringType string, size_t position)
-{
-    return position >= code_unit_length(string);
-}
-
-template<typename StringType>
-static Optional<StringType> parse_integer_digits_impl(StringType string)
+// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-integers
+Optional<StringView> parse_integer_digits(StringView string)
 {
     // 1. Let input be the string being parsed.
     // 2. Let position be a pointer into input, initially pointing at the start of the string.
-    size_t position = 0;
+    GenericLexer lexer { string };
 
     // 3. Let sign have the value "positive".
     // NOTE: Skipped, see comment on step 6.
 
     // 4. Skip ASCII whitespace within input given position.
-    while (!is_eof(string, position) && Web::Infra::is_ascii_whitespace(code_unit_at(string, position)))
-        ++position;
+    lexer.ignore_while(Web::Infra::is_ascii_whitespace);
 
     // 5. If position is past the end of input, return an error.
-    if (is_eof(string, position))
-        return {};
+    if (lexer.is_eof()) {
+        return OptionalNone {};
+    }
 
     // 6. If the character indicated by position (the first character) is a U+002D HYPHEN-MINUS character (-):
     //
     // If we parse a signed integer, then we include the sign character (if present) in the collect step
     // (step 8) and lean on `AK::StringUtils::convert_to_int` to handle it for us.
-    size_t start_index = position;
-    if (code_unit_at(string, position) == '-' || code_unit_at(string, position) == '+')
-        ++position;
+    size_t start_index = lexer.tell();
+    if (lexer.peek() == '-' || lexer.peek() == '+') {
+        lexer.consume();
+    }
 
     // 7. If the character indicated by position is not an ASCII digit, then return an error.
-    if (is_eof(string, position) || !is_ascii_digit(code_unit_at(string, position)))
-        return {};
+    if (!lexer.next_is(is_ascii_digit)) {
+        return OptionalNone {};
+    }
 
     // 8. Collect a sequence of code points that are ASCII digits from input given position, and interpret the resulting sequence as a base-ten integer. Let value be that integer.
     // NOTE: Integer conversion is performed by the caller.
-    while (!is_eof(string, position) && is_ascii_digit(code_unit_at(string, position)))
-        ++position;
+    lexer.consume_while(is_ascii_digit);
+    size_t end_index = lexer.tell();
+    auto digits = lexer.input().substring_view(start_index, end_index - start_index);
 
     // 9. If sign is "positive", return value, otherwise return the result of subtracting value from zero.
     // NOTE: Skipped, see comment on step 6.
 
-    return string.substring_view(start_index, position - start_index);
+    return digits;
 }
 
 // https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-integers
-Optional<Utf16View> parse_integer_digits(Utf16View string)
+Optional<i32> parse_integer(StringView string)
 {
-    return parse_integer_digits_impl(string);
-}
-
-Optional<i32> parse_integer(Utf16View string)
-{
-    auto optional_digits = parse_integer_digits_impl(string);
+    auto optional_digits = parse_integer_digits(string);
     if (!optional_digits.has_value())
         return {};
 
     return optional_digits->to_number<i32>(TrimWhitespace::No);
 }
 
-template<typename StringType>
-static Optional<StringType> parse_non_negative_integer_digits_impl(StringType string)
+// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-non-negative-integers
+Optional<StringView> parse_non_negative_integer_digits(StringView string)
 {
     // 1. Let input be the string being parsed.
     // 2. Let value be the result of parsing input using the rules for parsing integers.
@@ -93,14 +76,15 @@ static Optional<StringType> parse_non_negative_integer_digits_impl(StringType st
     // NOTE: Because we call `parse_integer`, we parse all integers as signed. If we need the extra
     //       size that an unsigned integer offers, then this would need to be improved. That said,
     //       I don't think we need to support such large integers at the moment.
-    auto optional_integer_digits = parse_integer_digits_impl(string);
+
+    auto optional_integer_digits = parse_integer_digits(string);
     // 3. If value is an error, return an error.
     if (!optional_integer_digits.has_value())
-        return {};
+        return OptionalNone {};
 
     // 4. If value is less than zero, return an error.
-    if (code_unit_length(*optional_integer_digits) > 1 && code_unit_at(*optional_integer_digits, 0) == '-' && code_unit_at(*optional_integer_digits, 1) != '0')
-        return {};
+    if (optional_integer_digits->length() > 1 && optional_integer_digits->starts_with('-') && optional_integer_digits->bytes().at(1) != '0')
+        return OptionalNone {};
 
     // 5. Return value.
     // NOTE: Integer conversion is performed by the caller.
@@ -108,31 +92,25 @@ static Optional<StringType> parse_non_negative_integer_digits_impl(StringType st
 }
 
 // https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-non-negative-integers
-Optional<Utf16View> parse_non_negative_integer_digits(Utf16View string)
+Optional<u32> parse_non_negative_integer(StringView string)
 {
-    return parse_non_negative_integer_digits_impl(string);
-}
-
-// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-non-negative-integers
-Optional<u32> parse_non_negative_integer(Utf16View string)
-{
-    auto optional_digits = parse_non_negative_integer_digits_impl(string);
+    auto optional_digits = parse_non_negative_integer_digits(string);
     if (!optional_digits.has_value())
         return {};
 
-    auto optional_value = optional_digits->template to_number<i64>(TrimWhitespace::No);
+    auto optional_value = optional_digits->to_number<i64>(TrimWhitespace::No);
     if (!optional_value.has_value() || *optional_value > NumericLimits<u32>::max())
         return {};
 
     return static_cast<u32>(optional_value.value());
 }
 
-template<typename StringType>
-static Optional<double> parse_floating_point_number_impl(StringType string)
+// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-floating-point-number-values
+Optional<double> parse_floating_point_number(StringView string)
 {
     // 1. Let input be the string being parsed.
     // 2. Let position be a pointer into input, initially pointing at the start of the string.
-    size_t position = 0;
+    GenericLexer lexer { string };
 
     // 3. Let value have the value 1.
     double value = 1;
@@ -144,35 +122,34 @@ static Optional<double> parse_floating_point_number_impl(StringType string)
     i16 exponent = 1;
 
     // 6. Skip ASCII whitespace within input given position.
-    while (!is_eof(string, position) && Web::Infra::is_ascii_whitespace(code_unit_at(string, position)))
-        ++position;
+    lexer.ignore_while(Web::Infra::is_ascii_whitespace);
 
     // 7. If position is past the end of input, return an error.
-    if (is_eof(string, position)) {
+    if (lexer.is_eof()) {
         return {};
     }
 
     // 8. If the character indicated by position is a U+002D HYPHEN-MINUS character (-):
-    if (code_unit_at(string, position) == '-') {
+    if (lexer.next_is('-')) {
         // 8.1. Change value and divisor to −1.
         value = -1;
         divisor = -1;
 
         // 8.2. Advance position to the next character.
-        ++position;
+        lexer.consume();
 
         // 8.3. If position is past the end of input, return an error.
-        if (is_eof(string, position)) {
+        if (lexer.is_eof()) {
             return {};
         }
     }
     // Otherwise, if the character indicated by position (the first character) is a U+002B PLUS SIGN character (+):
-    else if (code_unit_at(string, position) == '+') {
+    else if (lexer.next_is('+')) {
         // 8.1. Advance position to the next character. (The "+" is ignored, but it is not conforming.)
-        ++position;
+        lexer.consume();
 
         // 8.2. If position is past the end of input, return an error.
-        if (is_eof(string, position)) {
+        if (lexer.is_eof()) {
             return {};
         }
     }
@@ -181,49 +158,49 @@ static Optional<double> parse_floating_point_number_impl(StringType string)
     //    and that is not the last character in input,
     //    and the character after the character indicated by position is an ASCII digit,
     //    then set value to zero and jump to the step labeled fraction.
-    if (code_unit_at(string, position) == '.' && code_unit_length(string) - position > 1 && is_ascii_digit(code_unit_at(string, position + 1))) {
+    if (lexer.next_is('.') && (lexer.tell_remaining() > 1) && is_ascii_digit(lexer.peek(1))) {
         value = 0;
         goto fraction;
     }
 
     // 10. If the character indicated by position is not an ASCII digit, then return an error.
-    if (!is_ascii_digit(code_unit_at(string, position))) {
+    if (!lexer.next_is(is_ascii_digit)) {
         return {};
     }
 
     // 11. Collect a sequence of code points that are ASCII digits from input given position, and interpret the resulting sequence as a base-ten integer.
     //     Multiply value by that integer.
     {
-        size_t start_index = position;
-        while (!is_eof(string, position) && is_ascii_digit(code_unit_at(string, position)))
-            ++position;
-        auto digits = string.substring_view(start_index, position - start_index);
-        auto optional_value = digits.template to_number<double>(TrimWhitespace::No);
+        size_t start_index = lexer.tell();
+        lexer.consume_while(is_ascii_digit);
+        size_t end_index = lexer.tell();
+        auto digits = lexer.input().substring_view(start_index, end_index - start_index);
+        auto optional_value = digits.to_number<double>(TrimWhitespace::No);
         value *= optional_value.value();
     }
 
     // 12. If position is past the end of input, jump to the step labeled conversion.
-    if (is_eof(string, position)) {
+    if (lexer.is_eof()) {
         goto conversion;
     }
 
 fraction: {
     // 13. Fraction: If the character indicated by position is a U+002E FULL STOP (.), run these substeps:
-    if (code_unit_at(string, position) == '.') {
+    if (lexer.next_is('.')) {
         // 13.1. Advance position to the next character.
-        ++position;
+        lexer.consume();
 
         // 13.2. If position is past the end of input,
         //       or if the character indicated by position is not an ASCII digit,
         //       U+0065 LATIN SMALL LETTER E (e), or U+0045 LATIN CAPITAL LETTER E (E),
         //       then jump to the step labeled conversion.
-        if (is_eof(string, position) || (!is_ascii_digit(code_unit_at(string, position)) && code_unit_at(string, position) != 'e' && code_unit_at(string, position) != 'E')) {
+        if (lexer.is_eof() || (!lexer.next_is(is_ascii_digit) && !lexer.next_is('e') && !lexer.next_is('E'))) {
             goto conversion;
         }
 
         // 13.3. If the character indicated by position is a U+0065 LATIN SMALL LETTER E character (e) or a U+0045 LATIN CAPITAL LETTER E character (E),
         //       skip the remainder of these substeps.
-        if (code_unit_at(string, position) == 'e' || code_unit_at(string, position) == 'E') {
+        if (lexer.next_is('e') || lexer.next_is('E')) {
             goto fraction_exit;
         }
 
@@ -233,18 +210,18 @@ fraction: {
             divisor *= 10;
 
             // 13.5. Add the value of the character indicated by position, interpreted as a base-ten digit (0..9) and divided by divisor, to value.
-            value += (code_unit_at(string, position) - '0') / divisor;
+            value += (lexer.peek() - '0') / divisor;
 
             // 13.6. Advance position to the next character.
-            ++position;
+            lexer.consume();
 
             // 13.7. If position is past the end of input, then jump to the step labeled conversion.
-            if (is_eof(string, position)) {
+            if (lexer.is_eof()) {
                 goto conversion;
             }
 
             // 13.8. If the character indicated by position is an ASCII digit, jump back to the step labeled fraction loop in these substeps.
-            if (!is_ascii_digit(code_unit_at(string, position))) {
+            if (!lexer.next_is(is_ascii_digit)) {
                 break;
             }
         }
@@ -254,52 +231,52 @@ fraction_exit:
 }
 
     // 14. If the character indicated by position is U+0065 (e) or a U+0045 (E), then:
-    if (code_unit_at(string, position) == 'e' || code_unit_at(string, position) == 'E') {
+    if (lexer.next_is('e') || lexer.next_is('E')) {
         // 14.1. Advance position to the next character.
-        ++position;
+        lexer.consume();
 
         // 14.2. If position is past the end of input, then jump to the step labeled conversion.
-        if (is_eof(string, position)) {
+        if (lexer.is_eof()) {
             goto conversion;
         }
 
         // 14.3. If the character indicated by position is a U+002D HYPHEN-MINUS character (-):
-        if (code_unit_at(string, position) == '-') {
+        if (lexer.next_is('-')) {
             // 14.3.1. Change exponent to −1.
             exponent = -1;
 
             // 14.3.2. Advance position to the next character.
-            ++position;
+            lexer.consume();
 
             // 14.3.3. If position is past the end of input, then jump to the step labeled conversion.
-            if (is_eof(string, position)) {
+            if (lexer.is_eof()) {
                 goto conversion;
             }
         }
         // Otherwise, if the character indicated by position is a U+002B PLUS SIGN character (+):
-        else if (code_unit_at(string, position) == '+') {
+        else if (lexer.next_is('+')) {
             // 14.3.1. Advance position to the next character.
-            ++position;
+            lexer.consume();
 
             // 14.3.2. If position is past the end of input, then jump to the step labeled conversion.
-            if (is_eof(string, position)) {
+            if (lexer.is_eof()) {
                 goto conversion;
             }
         }
 
         // 14.4. If the character indicated by position is not an ASCII digit, then jump to the step labeled conversion.
-        if (!is_ascii_digit(code_unit_at(string, position))) {
+        if (!lexer.next_is(is_ascii_digit)) {
             goto conversion;
         }
 
         // 14.5. Collect a sequence of code points that are ASCII digits from input given position, and interpret the resulting sequence as a base-ten integer.
         //       Multiply exponent by that integer.
         {
-            size_t start_index = position;
-            while (!is_eof(string, position) && is_ascii_digit(code_unit_at(string, position)))
-                ++position;
-            auto digits = string.substring_view(start_index, position - start_index);
-            auto optional_value = digits.template to_number<i32>();
+            size_t start_index = lexer.tell();
+            lexer.consume_while(is_ascii_digit);
+            size_t end_index = lexer.tell();
+            auto digits = lexer.input().substring_view(start_index, end_index - start_index);
+            auto optional_value = digits.to_number<i32>();
             exponent *= optional_value.value();
         }
 
@@ -331,36 +308,28 @@ conversion:
 }
 
 // https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-floating-point-number-values
-Optional<double> parse_floating_point_number(Utf16View string)
+Optional<double> parse_floating_point_number(Utf16String const& string)
 {
-    return parse_floating_point_number_impl(string);
+    // FIXME: Implement a UTF-16 GenericLexer.
+    if (!string.has_ascii_storage())
+        return {};
+    return parse_floating_point_number(string.ascii_view());
 }
 
-template<typename StringType>
-static bool is_valid_floating_point_number_impl(StringType string)
+// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#valid-floating-point-number
+bool is_valid_floating_point_number(StringView string)
 {
-    size_t position = 0;
-
+    GenericLexer lexer { string };
     // 1. Optionally, a U+002D HYPHEN-MINUS character (-).
-    if (!is_eof(string, position) && code_unit_at(string, position) == '-')
-        ++position;
-
+    lexer.consume_specific('-');
     // 2. One or both of the following, in the given order:
     // 2.1. A series of one or more ASCII digits.
-    auto leading_digits_start = position;
-    while (!is_eof(string, position) && is_ascii_digit(code_unit_at(string, position)))
-        ++position;
-    bool has_leading_digits = position != leading_digits_start;
-
+    bool has_leading_digits = !lexer.consume_while(is_ascii_digit).is_empty();
     // 2.2. Both of the following, in the given order:
     // 2.2.1. A single U+002E FULL STOP character (.).
-    if (!is_eof(string, position) && code_unit_at(string, position) == '.') {
-        ++position;
+    if (lexer.consume_specific('.')) {
         // 2.2.2. A series of one or more ASCII digits.
-        auto fraction_digits_start = position;
-        while (!is_eof(string, position) && is_ascii_digit(code_unit_at(string, position)))
-            ++position;
-        if (position == fraction_digits_start)
+        if (lexer.consume_while(is_ascii_digit).is_empty())
             return false;
     } else if (!has_leading_digits) {
         // Doesn’t begin with digits, doesn’t begin with a full stop followed by digits.
@@ -369,33 +338,30 @@ static bool is_valid_floating_point_number_impl(StringType string)
     // 3. Optionally:
     // 3.1. Either a U+0065 LATIN SMALL LETTER E character (e) or a U+0045 LATIN CAPITAL
     //      LETTER E character (E).
-    if (!is_eof(string, position) && (code_unit_at(string, position) == 'e' || code_unit_at(string, position) == 'E')) {
-        ++position;
+    if (lexer.consume_specific('e') || lexer.consume_specific('E')) {
         // 3.2. Optionally, a U+002D HYPHEN-MINUS character (-) or U+002B PLUS SIGN
         //      character (+).
-        if (!is_eof(string, position) && (code_unit_at(string, position) == '-' || code_unit_at(string, position) == '+'))
-            ++position;
-
+        lexer.consume_specific('-') || lexer.consume_specific('+');
         // 3.3. A series of one or more ASCII digits.
-        auto exponent_digits_start = position;
-        while (!is_eof(string, position) && is_ascii_digit(code_unit_at(string, position)))
-            ++position;
-        if (position == exponent_digits_start)
+        if (lexer.consume_while(is_ascii_digit).is_empty())
             return false;
     }
-    return is_eof(string, position);
+    return lexer.tell_remaining() == 0;
 }
 
 // https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#valid-floating-point-number
-bool is_valid_floating_point_number(Utf16View string)
+bool is_valid_floating_point_number(Utf16String const& string)
 {
-    return is_valid_floating_point_number_impl(string);
+    // FIXME: Implement a UTF-16 GenericLexer.
+    if (!string.has_ascii_storage())
+        return false;
+    return is_valid_floating_point_number(string.ascii_view());
 }
 
-WebIDL::ExceptionOr<String> convert_non_negative_integer_to_string(WebIDL::Long value)
+WebIDL::ExceptionOr<String> convert_non_negative_integer_to_string(JS::Realm& realm, WebIDL::Long value)
 {
     if (value < 0)
-        return WebIDL::IndexSizeError::create("The attribute is limited to only non-negative numbers"_utf16);
+        return WebIDL::IndexSizeError::create(realm, "The attribute is limited to only non-negative numbers"_utf16);
     return String::number(value);
 }
 

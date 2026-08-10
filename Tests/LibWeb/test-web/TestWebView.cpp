@@ -6,9 +6,6 @@
 
 #include "TestWebView.h"
 
-#include "Application.h"
-
-#include <LibCore/AnonymousBuffer.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ShareableBitmap.h>
 
@@ -28,14 +25,9 @@ TestWebView::TestWebView(Core::AnonymousBuffer theme, Web::DevicePixelSize viewp
 {
 }
 
-void TestWebView::clear_content_blockers()
+void TestWebView::clear_content_filters()
 {
-    client().async_set_content_blockers(m_client_state.page_index, MUST(Core::AnonymousBuffer::create_with_size(0)));
-}
-
-NonnullRefPtr<Core::Promise<Empty>> TestWebView::reset_session_history()
-{
-    return WebView::ViewImplementation::reset_session_history_for_testing();
+    client().async_set_content_filters(m_client_state.page_index, {});
 }
 
 pid_t TestWebView::web_content_pid() const
@@ -43,24 +35,12 @@ pid_t TestWebView::web_content_pid() const
     return client().pid();
 }
 
-void TestWebView::insert_clipboard_item(Web::Clipboard::SystemClipboardItem item)
-{
-    m_clipboard_item = move(item);
-}
-
-Vector<Web::Clipboard::SystemClipboardRepresentation> TestWebView::clipboard_entries() const
-{
-    if (!m_clipboard_item.has_value())
-        return {};
-    return m_clipboard_item->system_clipboard_representations;
-}
-
 NonnullRefPtr<Core::Promise<RefPtr<Gfx::Bitmap const>>> TestWebView::take_screenshot()
 {
     VERIFY(!m_pending_screenshot);
 
     m_pending_screenshot = Core::Promise<RefPtr<Gfx::Bitmap const>>::construct();
-    client().async_take_document_screenshot(page_id());
+    client().async_take_document_screenshot(0);
 
     return *m_pending_screenshot;
 }

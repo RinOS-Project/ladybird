@@ -11,11 +11,13 @@
 namespace Web::HTML {
 
 class HTMLAudioElement final : public HTMLMediaElement {
-    WEB_WRAPPABLE(HTMLAudioElement, HTMLMediaElement);
+    WEB_PLATFORM_OBJECT(HTMLAudioElement, HTMLMediaElement);
     GC_DECLARE_ALLOCATOR(HTMLAudioElement);
 
 public:
     virtual ~HTMLAudioElement() override;
+
+    virtual void adjust_computed_style(CSS::ComputedProperties& style) override;
 
     Layout::AudioBox* layout_node();
     Layout::AudioBox const* layout_node() const;
@@ -25,7 +27,9 @@ public:
 private:
     HTMLAudioElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual RefPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::ComputedValues const>) override;
+    virtual void initialize(JS::Realm&) override;
+
+    virtual GC::Ptr<Layout::Node> create_layout_node(GC::Ref<CSS::ComputedProperties>) override;
 };
 
 }

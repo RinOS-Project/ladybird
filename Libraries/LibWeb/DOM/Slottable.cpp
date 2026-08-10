@@ -5,9 +5,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/CSS/Invalidation/SlotInvalidator.h>
+#include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/DOM/Element.h>
-#include <LibWeb/DOM/MutationObserver.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Slottable.h>
@@ -70,12 +69,12 @@ GC::Ptr<HTML::HTMLSlotElement> find_a_slot(Slottable const& slottable, OpenFlag 
         return nullptr;
 
     // 4. If the open flag is set and shadow’s mode is not "open", then return null.
-    if (open_flag == OpenFlag::Set && shadow->mode() != Web::DOM::ShadowRootMode::Open)
+    if (open_flag == OpenFlag::Set && shadow->mode() != Bindings::ShadowRootMode::Open)
         return nullptr;
 
     // 5. If shadow’s slot assignment is "manual", then return the slot in shadow’s descendants whose manually assigned
     //    nodes contains slottable, if any; otherwise null.
-    if (shadow->slot_assignment() == Web::DOM::SlotAssignmentMode::Manual) {
+    if (shadow->slot_assignment() == Bindings::SlotAssignmentMode::Manual) {
         GC::Ptr<HTML::HTMLSlotElement> slot;
 
         shadow->for_each_in_subtree_of_type<HTML::HTMLSlotElement>([&](auto& child) {
@@ -91,7 +90,7 @@ GC::Ptr<HTML::HTMLSlotElement> find_a_slot(Slottable const& slottable, OpenFlag 
 
     // 6. Return the first slot in tree order in shadow’s descendants whose name is slottable’s name, if any; otherwise null.
     auto const& slottable_name = slottable.visit([](auto const& node) { return node->slottable_name(); });
-    return shadow->first_slot_with_name(slottable_name.view());
+    return shadow->first_slot_with_name(slottable_name);
 }
 
 // https://dom.spec.whatwg.org/#find-slotables
@@ -112,7 +111,7 @@ Vector<Slottable> find_slottables(GC::Ref<HTML::HTMLSlotElement> slot)
     auto* host = shadow_root.host();
 
     // 5. If root’s slot assignment is "manual", then:
-    if (shadow_root.slot_assignment() == Web::DOM::SlotAssignmentMode::Manual) {
+    if (shadow_root.slot_assignment() == Bindings::SlotAssignmentMode::Manual) {
         // 1. Let result be « ».
         // 2. For each slottable slottable of slot’s manually assigned nodes, if slottable’s parent is host, append slottable to result.
         for (auto const& slottable : slot->manually_assigned_nodes()) {
@@ -210,9 +209,6 @@ void assign_slottables(GC::Ref<HTML::HTMLSlotElement> slot)
         old_slottable.visit([&](auto const& node) {
             node->set_assigned_slot(nullptr);
         });
-        // ::slotted(...) rules in the slot's shadow scope no longer apply to a slottable that just lost its
-        // assignment, so its style must be recomputed.
-        CSS::Invalidation::invalidate_style_after_slottable_assignment_change(old_slottable);
     }
 
     // 4. For each slottable in slottables, set slottable’s assigned slot to slot.
@@ -220,9 +216,6 @@ void assign_slottables(GC::Ref<HTML::HTMLSlotElement> slot)
         slottable.visit([&](auto& node) {
             node->set_assigned_slot(slot);
         });
-        // Newly-assigned slottables become subject to ::slotted(...) rules in the slot's shadow scope, so their style
-        // needs to be recomputed.
-        CSS::Invalidation::invalidate_style_after_slottable_assignment_change(slottable);
     }
 
     // 3. Set slot’s assigned nodes to slottables.
@@ -275,7 +268,7 @@ void signal_a_slot_change(GC::Ref<HTML::HTMLSlotElement> slottable)
         signal_slots.append(slottable);
 
     // 2. Queue a mutation observer microtask.
-    queue_mutation_observer_microtask(HTML::relevant_similar_origin_window_agent(slottable));
+    Bindings::queue_mutation_observer_microtask();
 }
 
 }

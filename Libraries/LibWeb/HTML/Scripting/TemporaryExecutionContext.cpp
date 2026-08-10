@@ -10,24 +10,19 @@
 namespace Web::HTML {
 
 TemporaryExecutionContext::TemporaryExecutionContext(JS::Realm& realm, CallbacksEnabled callbacks_enabled)
-    : TemporaryExecutionContext(principal_realm_settings_object(realm), callbacks_enabled)
-{
-}
-
-TemporaryExecutionContext::TemporaryExecutionContext(EnvironmentSettingsObject& settings, CallbacksEnabled callbacks_enabled)
-    : m_settings(settings)
+    : m_realm(realm)
     , m_callbacks_enabled(callbacks_enabled)
 {
-    prepare_to_run_script(m_settings);
+    prepare_to_run_script(m_realm);
     if (m_callbacks_enabled == CallbacksEnabled::Yes)
-        prepare_to_run_callback(m_settings);
+        prepare_to_run_callback(m_realm);
 }
 
 TemporaryExecutionContext::~TemporaryExecutionContext()
 {
-    clean_up_after_running_script(m_settings);
+    clean_up_after_running_script(m_realm);
     if (m_callbacks_enabled == CallbacksEnabled::Yes)
-        clean_up_after_running_callback(m_settings);
+        clean_up_after_running_callback(m_realm);
 }
 
 }

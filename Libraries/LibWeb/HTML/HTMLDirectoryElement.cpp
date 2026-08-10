@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLDirectoryElementPrototype.h>
 #include <LibWeb/HTML/HTMLDirectoryElement.h>
 #include <LibWeb/HTML/Window.h>
 
@@ -17,5 +18,11 @@ HTMLDirectoryElement::HTMLDirectoryElement(DOM::Document& document, DOM::Qualifi
 }
 
 HTMLDirectoryElement::~HTMLDirectoryElement() = default;
+
+void HTMLDirectoryElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLDirectoryElement);
+    Base::initialize(realm);
+}
 
 }

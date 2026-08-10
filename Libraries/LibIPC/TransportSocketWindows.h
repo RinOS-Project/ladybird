@@ -7,20 +7,16 @@
 
 #pragma once
 
-#include <AK/Atomic.h>
 #include <AK/Queue.h>
 #include <LibCore/Socket.h>
 #include <LibIPC/Attachment.h>
-#include <LibIPC/Forward.h>
-#include <LibIPC/ReceivedMessageBytes.h>
 #include <LibIPC/TransportHandle.h>
-#include <LibSync/Mutex.h>
 
 namespace IPC {
 
 class TransportSocketWindows {
     AK_MAKE_NONCOPYABLE(TransportSocketWindows);
-    AK_MAKE_NONMOVABLE(TransportSocketWindows);
+    AK_MAKE_DEFAULT_MOVABLE(TransportSocketWindows);
 
 public:
     struct Paired {
@@ -31,10 +27,8 @@ public:
     static ErrorOr<NonnullOwnPtr<TransportSocketWindows>> from_socket(NonnullOwnPtr<Core::LocalSocket> socket);
 
     explicit TransportSocketWindows(NonnullOwnPtr<Core::LocalSocket> socket);
-    ~TransportSocketWindows();
 
     void set_peer_pid(int pid);
-    int peer_pid() const { return m_peer_pid; }
     void set_up_read_hook(Function<void()>);
     bool is_open() const;
     void close();
@@ -42,29 +36,26 @@ public:
 
     void wait_until_readable();
 
-    ErrorOr<void> post_message(MessageDataType, Vector<Attachment>& attachments);
+    ErrorOr<void> transfer_message(ReadonlyBytes, Vector<size_t> const& handle_offsets);
 
     enum class ShouldShutdown {
         No,
         Yes,
     };
     struct Message {
-        ReceivedMessageBytes bytes;
-        Queue<Attachment> attachments;
+        Vector<u8> bytes;
+        Queue<Attachment> attachments; // always empty, present to avoid OS #ifdefs in Connection.cpp
     };
     ShouldShutdown read_as_many_messages_as_possible_without_blocking(Function<void(Message&&)>&&);
 
     ErrorOr<TransportHandle> release_for_transfer();
 
 private:
-    ErrorOr<Vector<u8>> serialize_attachments(Vector<Attachment>&);
-    Attachment deserialize_attachment(ReadonlyBytes&);
+    ErrorOr<void> duplicate_handles(Bytes, Vector<size_t> const& handle_offsets);
     ErrorOr<void> transfer(ReadonlyBytes);
 
 private:
     NonnullOwnPtr<Core::LocalSocket> m_socket;
-    Atomic<bool> m_socket_is_open { true };
-    Sync::Mutex m_send_mutex;
     ByteBuffer m_unprocessed_bytes;
     int m_peer_pid = -1;
 };

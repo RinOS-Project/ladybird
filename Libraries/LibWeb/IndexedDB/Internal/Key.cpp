@@ -5,7 +5,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
 #include <LibWeb/IndexedDB/Internal/Key.h>
 #include <LibWeb/Infra/ByteSequences.h>
 #include <LibWeb/Infra/Strings.h>
@@ -31,9 +30,9 @@ Key::Key(KeyType type, KeyValue value)
 
 Key::~Key() = default;
 
-GC::Ref<Key> Key::create(KeyType key, KeyValue value)
+GC::Ref<Key> Key::create(JS::Realm& realm, KeyType key, KeyValue value)
 {
-    return GC::Heap::the().allocate<Key>(key, value);
+    return realm.create<Key>(key, value);
 }
 
 Key::KeyValue Key::value()
@@ -92,10 +91,10 @@ i8 Key::compare_two_keys(GC::Ref<Key> a, GC::Ref<Key> b)
     }
 
     // 4. Let va be the value of a.
-    auto const& va = a->m_value;
+    auto va = a->value();
 
     // 5. Let vb be the value of b.
-    auto const& vb = b->m_value;
+    auto vb = b->value();
 
     // 6. Switch on ta:
     switch (ta) {
@@ -121,15 +120,15 @@ i8 Key::compare_two_keys(GC::Ref<Key> a, GC::Ref<Key> b)
     }
     // string
     case KeyType::String: {
-        auto const& a_value = va.get<Utf16String>();
-        auto const& b_value = vb.get<Utf16String>();
+        auto a_value = va.get<AK::String>();
+        auto b_value = vb.get<AK::String>();
 
         // 1. If va is code unit less than vb, then return -1.
-        if (Infra::code_unit_less_than(a_value.utf16_view(), b_value.utf16_view()))
+        if (Infra::code_unit_less_than(a_value, b_value))
             return -1;
 
         // 2. If vb is code unit less than va, then return 1.
-        if (Infra::code_unit_less_than(b_value.utf16_view(), a_value.utf16_view()))
+        if (Infra::code_unit_less_than(b_value, a_value))
             return 1;
 
         // 3. Return 0.
@@ -137,8 +136,8 @@ i8 Key::compare_two_keys(GC::Ref<Key> a, GC::Ref<Key> b)
     }
     // binary
     case KeyType::Binary: {
-        auto const& a_value = va.get<ByteBuffer>();
-        auto const& b_value = vb.get<ByteBuffer>();
+        auto a_value = va.get<ByteBuffer>();
+        auto b_value = vb.get<ByteBuffer>();
 
         // 1. If va is byte less than vb, then return -1.
         if (Infra::is_byte_less_than(a_value, b_value))
@@ -153,8 +152,8 @@ i8 Key::compare_two_keys(GC::Ref<Key> a, GC::Ref<Key> b)
     }
     // array
     case KeyType::Array: {
-        auto const& a_value = va.get<GC::Ref<GC::HeapVector<GC::Ref<Key>>>>()->elements();
-        auto const& b_value = vb.get<GC::Ref<GC::HeapVector<GC::Ref<Key>>>>()->elements();
+        auto const& a_value = va.get<GC::Root<GC::HeapVector<GC::Ref<Key>>>>()->elements();
+        auto const& b_value = vb.get<GC::Root<GC::HeapVector<GC::Ref<Key>>>>()->elements();
 
         // 1. Let length be the lesser of va’s size and vb’s size.
         auto length = min(a_value.size(), b_value.size());
@@ -206,9 +205,6 @@ String Key::dump() const
         },
         [](ByteBuffer const& value) {
             return MUST(String::formatted("{}", value.span()));
-        },
-        [](Utf16String const& value) {
-            return value.to_utf8();
         },
         [](auto const& value) {
             return MUST(String::formatted("{}", value));

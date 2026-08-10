@@ -13,16 +13,20 @@
 namespace Web::Layout {
 
 class SVGTextBox final : public SVGGraphicsBox {
-    LAYOUT_NODE(SVGTextBox, SVGGraphicsBox);
+    GC_CELL(SVGTextBox, SVGGraphicsBox);
+    GC_DECLARE_ALLOCATOR(SVGTextBox);
 
 public:
-    SVGTextBox(DOM::Document&, SVG::SVGTextPositioningElement&, NonnullRefPtr<CSS::ComputedValues const>);
+    SVGTextBox(DOM::Document&, SVG::SVGTextPositioningElement&, GC::Ref<CSS::ComputedProperties>);
     virtual ~SVGTextBox() override = default;
 
     SVG::SVGTextPositioningElement& dom_node() { return static_cast<SVG::SVGTextPositioningElement&>(SVGGraphicsBox::dom_node()); }
     SVG::SVGTextPositioningElement const& dom_node() const { return static_cast<SVG::SVGTextPositioningElement const&>(SVGGraphicsBox::dom_node()); }
 
-    virtual RefPtr<Painting::Paintable> create_paintable() const override;
+    virtual GC::Ptr<Painting::Paintable> create_paintable() const override;
+
+private:
+    CSSPixelPoint viewbox_origin() const;
 };
 
 }

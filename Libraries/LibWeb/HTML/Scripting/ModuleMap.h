@@ -6,8 +6,6 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
 #include <LibGC/Function.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibURL/URL.h>
@@ -18,14 +16,14 @@ namespace Web::HTML {
 
 class ModuleLocationTuple {
 public:
-    ModuleLocationTuple(URL::URL url, Utf16View type)
+    ModuleLocationTuple(URL::URL url, ByteString type)
         : m_url(move(url))
-        , m_type(Utf16String::from_utf16(type))
+        , m_type(move(type))
     {
     }
 
     URL::URL const& url() const { return m_url; }
-    Utf16String const& type() const { return m_type; }
+    ByteString const& type() const { return m_type; }
 
     bool operator==(ModuleLocationTuple const& other) const
     {
@@ -34,7 +32,7 @@ public:
 
 private:
     URL::URL m_url;
-    Utf16String m_type;
+    ByteString m_type;
 };
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#module-map
@@ -54,21 +52,21 @@ public:
 
     struct Entry {
         EntryType type;
-        GC::Ptr<ModuleScript> module_script;
+        GC::Ptr<JavaScriptModuleScript> module_script;
     };
 
     using CallbackFunction = GC::Ref<GC::Function<void(Entry)>>;
 
-    bool is_fetching(URL::URL const& url, Utf16View type) const;
-    bool is_failed(URL::URL const& url, Utf16View type) const;
+    bool is_fetching(URL::URL const& url, ByteString const& type) const;
+    bool is_failed(URL::URL const& url, ByteString const& type) const;
 
-    bool is(URL::URL const& url, Utf16View type, EntryType) const;
+    bool is(URL::URL const& url, ByteString const& type, EntryType) const;
 
-    Optional<Entry> get(URL::URL const& url, Utf16View type) const;
+    Optional<Entry> get(URL::URL const& url, ByteString const& type) const;
 
-    AK::HashSetResult set(URL::URL const& url, Utf16View type, Entry);
+    AK::HashSetResult set(URL::URL const& url, ByteString const& type, Entry);
 
-    void wait_for_change(GC::Heap&, URL::URL const& url, Utf16View type, Function<void(Entry)> callback);
+    void wait_for_change(GC::Heap&, URL::URL const& url, ByteString const& type, Function<void(Entry)> callback);
 
 private:
     virtual void visit_edges(JS::Cell::Visitor&) override;

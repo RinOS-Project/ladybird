@@ -6,22 +6,18 @@
 
 #pragma once
 
-#include <LibGfx/CornerRadii.h>
 #include <LibWeb/Export.h>
-#include <LibWeb/PixelUnits.h>
-
-namespace Web {
-
-class DisplayListRecordingContext;
-
-}
+#include <LibWeb/Painting/BorderPainting.h>
 
 namespace Web::Painting {
 
-struct BorderRadiiData;
+enum class CornerClip {
+    Outside,
+    Inside
+};
 
 struct WEB_API ScopedCornerRadiusClip {
-    ScopedCornerRadiusClip(DisplayListRecordingContext& context, DevicePixelRect const& border_rect, BorderRadiiData const& border_radii, Gfx::CornerClip corner_clip = Gfx::CornerClip::Outside, bool do_apply = true);
+    ScopedCornerRadiusClip(DisplayListRecordingContext& context, DevicePixelRect const& border_rect, BorderRadiiData const& border_radii, CornerClip corner_clip = CornerClip::Outside, bool do_apply = true);
 
     ~ScopedCornerRadiusClip();
 

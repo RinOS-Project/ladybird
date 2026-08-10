@@ -16,8 +16,7 @@ class ConstrainedStream : public Stream {
 public:
     ConstrainedStream(MaybeOwned<Stream>, u64 limit);
 
-    // NOTE: See the note on FixedMemoryStream::read_some() for why this needs explicit default visibility.
-    [[gnu::visibility("default")]] virtual ErrorOr<Bytes> read_some(Bytes bytes) override
+    virtual ErrorOr<Bytes> read_some(Bytes bytes) override
     {
         auto result = TRY(m_stream->read_some(bytes.trim(m_limit)));
         m_limit -= result.size();

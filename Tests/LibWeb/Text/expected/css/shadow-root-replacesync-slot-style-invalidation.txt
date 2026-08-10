@@ -1,3 +1,0 @@
-before replaceSync: rgb(0, 0, 0)
-after slot replaceSync: rgb(255, 0, 0)
-after slot replaceSync removal: rgb(0, 0, 0)

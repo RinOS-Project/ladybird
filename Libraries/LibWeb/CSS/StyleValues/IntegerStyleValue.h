@@ -7,58 +7,40 @@
 #pragma once
 
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
-#include <LibWeb/Export.h>
 
 namespace Web::CSS {
 
-class WEB_API IntegerStyleValue final : public StyleValue {
+class IntegerStyleValue final : public StyleValue {
 public:
     static ValueComparingNonnullRefPtr<IntegerStyleValue const> create(i32 value)
     {
-        // Small integers are common enough (z-index, column counts, spans) that they are
-        // interned, making repeated creations allocation-free.
-        static constexpr i32 first_interned_value = -1;
-        static constexpr i32 last_interned_value = 255;
-        if (value >= first_interned_value && value <= last_interned_value) {
-            static auto const& instances = *[] {
-                auto* instances = new (nothrow) Vector<NonnullRefPtr<IntegerStyleValue const>>();
-                instances->ensure_capacity(last_interned_value - first_interned_value + 1);
-                for (i32 interned_value = first_interned_value; interned_value <= last_interned_value; ++interned_value)
-                    instances->unchecked_append(adopt_ref(*new (nothrow) IntegerStyleValue(interned_value)));
-                return instances;
-            }();
-            return instances[value - first_interned_value];
-        }
         return adopt_ref(*new (nothrow) IntegerStyleValue(value));
     }
 
-    i32 integer() const { return m_value->integer.value; }
+    i32 integer() const { return m_value; }
 
-    void serialize(StringBuilder&, SerializationMode) const;
-    void serialize(Utf16StringBuilder&, SerializationMode) const;
-    Vector<Parser::ComponentValue> tokenize() const;
-    GC::Ref<CSSStyleValue> reify(Utf16FlyString const& associated_property) const;
+    virtual void serialize(StringBuilder&, SerializationMode) const override;
+    virtual Vector<Parser::ComponentValue> tokenize() const override;
+    virtual GC::Ref<CSSStyleValue> reify(JS::Realm&, FlyString const& associated_property) const override;
 
-    bool equals(StyleValue const& other) const
+    bool equals(StyleValue const& other) const override
     {
         if (type() != other.type())
             return false;
         auto const& other_integer = other.as_integer();
-        return integer() == other_integer.integer();
+        return m_value == other_integer.m_value;
     }
+
+    virtual bool is_computationally_independent() const override { return true; }
 
 private:
-    friend class StyleValue;
-
-    explicit IntegerStyleValue(StyleValueFFI::StyleValueData const* data)
-        : StyleValue(Type::Integer, data)
-    {
-    }
-
     explicit IntegerStyleValue(i32 value)
-        : StyleValue(Type::Integer, StyleValueFFI::rust_style_value_create_integer(value))
+        : StyleValue(Type::Integer)
+        , m_value(value)
     {
     }
+
+    i32 m_value { 0 };
 };
 
 }

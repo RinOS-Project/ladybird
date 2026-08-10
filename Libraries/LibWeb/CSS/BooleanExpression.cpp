@@ -9,9 +9,9 @@
 
 namespace Web::CSS {
 
-bool BooleanExpression::evaluate_to_boolean(BooleanExpressionEvaluationContext const& context) const
+bool BooleanExpression::evaluate_to_boolean(DOM::Document const* document) const
 {
-    return evaluate(context) == MatchResult::True;
+    return evaluate(document) == MatchResult::True;
 }
 
 void BooleanExpression::indent(StringBuilder& builder, int levels)
@@ -19,34 +19,17 @@ void BooleanExpression::indent(StringBuilder& builder, int levels)
     builder.append_repeated("  "sv, levels);
 }
 
-Utf16String BooleanExpression::to_string() const
-{
-    Utf16StringBuilder builder;
-    serialize_to(builder);
-    return builder.to_string();
-}
-
-void GeneralEnclosed::collect_container_query_feature_requirements(ContainerQueryFeatureRequirements& requirements) const
-{
-    requirements.has_unknown_or_unsupported_feature = true;
-}
-
-void GeneralEnclosed::serialize_to(Utf16StringBuilder& builder) const
-{
-    builder.append(m_serialized_contents.utf16_view());
-}
-
 void GeneralEnclosed::dump(StringBuilder& builder, int indent_levels) const
 {
     indent(builder, indent_levels);
-    builder.appendff("GeneralEnclosed: {}\n", to_string().to_utf8());
+    builder.appendff("GeneralEnclosed: {}\n", to_string());
 }
 
-MatchResult BooleanNotExpression::evaluate(BooleanExpressionEvaluationContext const& context) const
+MatchResult BooleanNotExpression::evaluate(DOM::Document const* document) const
 {
     // https://drafts.csswg.org/css-values-5/#boolean-logic
     // `not test` evaluates to true if its contained test is false, false if it’s true, and unknown if it’s unknown.
-    switch (m_child->evaluate(context)) {
+    switch (m_child->evaluate(document)) {
     case MatchResult::False:
         return MatchResult::True;
     case MatchResult::True:
@@ -57,15 +40,9 @@ MatchResult BooleanNotExpression::evaluate(BooleanExpressionEvaluationContext co
     VERIFY_NOT_REACHED();
 }
 
-void BooleanNotExpression::collect_container_query_feature_requirements(ContainerQueryFeatureRequirements& requirements) const
+String BooleanNotExpression::to_string() const
 {
-    m_child->collect_container_query_feature_requirements(requirements);
-}
-
-void BooleanNotExpression::serialize_to(Utf16StringBuilder& builder) const
-{
-    builder.append_ascii("not "sv);
-    m_child->serialize_to(builder);
+    return MUST(String::formatted("not {}", m_child->to_string()));
 }
 
 void BooleanNotExpression::dump(StringBuilder& builder, int indent_levels) const
@@ -75,21 +52,14 @@ void BooleanNotExpression::dump(StringBuilder& builder, int indent_levels) const
     m_child->dump(builder, indent_levels + 1);
 }
 
-MatchResult BooleanExpressionInParens::evaluate(BooleanExpressionEvaluationContext const& context) const
+MatchResult BooleanExpressionInParens::evaluate(DOM::Document const* document) const
 {
-    return m_child->evaluate(context);
+    return m_child->evaluate(document);
 }
 
-void BooleanExpressionInParens::collect_container_query_feature_requirements(ContainerQueryFeatureRequirements& requirements) const
+String BooleanExpressionInParens::to_string() const
 {
-    m_child->collect_container_query_feature_requirements(requirements);
-}
-
-void BooleanExpressionInParens::serialize_to(Utf16StringBuilder& builder) const
-{
-    builder.append_ascii('(');
-    m_child->serialize_to(builder);
-    builder.append_ascii(')');
+    return MUST(String::formatted("({})", m_child->to_string()));
 }
 
 void BooleanExpressionInParens::dump(StringBuilder& builder, int indent_levels) const
@@ -101,14 +71,14 @@ void BooleanExpressionInParens::dump(StringBuilder& builder, int indent_levels) 
     builder.append(")\n"sv);
 }
 
-MatchResult BooleanAndExpression::evaluate(BooleanExpressionEvaluationContext const& context) const
+MatchResult BooleanAndExpression::evaluate(DOM::Document const* document) const
 {
     // https://drafts.csswg.org/css-values-5/#boolean-logic
     // Multiple tests connected with `and` evaluate to true if all of those tests are true, false if any of them are
     // false, and unknown otherwise (i.e. if at least one unknown, but no false).
     size_t true_results = 0;
     for (auto const& child : m_children) {
-        auto child_match = child->evaluate(context);
+        auto child_match = child->evaluate(document);
         if (child_match == MatchResult::False)
             return MatchResult::False;
         if (child_match == MatchResult::True)
@@ -119,22 +89,9 @@ MatchResult BooleanAndExpression::evaluate(BooleanExpressionEvaluationContext co
     return MatchResult::Unknown;
 }
 
-void BooleanAndExpression::collect_container_query_feature_requirements(ContainerQueryFeatureRequirements& requirements) const
+String BooleanAndExpression::to_string() const
 {
-    for (auto const& child : m_children)
-        child->collect_container_query_feature_requirements(requirements);
-}
-
-void BooleanAndExpression::serialize_to(Utf16StringBuilder& builder) const
-{
-    bool first = true;
-    for (auto const& child : m_children) {
-        if (first)
-            first = false;
-        else
-            builder.append_ascii(" and "sv);
-        child->serialize_to(builder);
-    }
+    return MUST(String::join(" and "sv, m_children));
 }
 
 void BooleanAndExpression::dump(StringBuilder& builder, int indent_levels) const
@@ -145,14 +102,14 @@ void BooleanAndExpression::dump(StringBuilder& builder, int indent_levels) const
         child->dump(builder, indent_levels + 1);
 }
 
-MatchResult BooleanOrExpression::evaluate(BooleanExpressionEvaluationContext const& context) const
+MatchResult BooleanOrExpression::evaluate(DOM::Document const* document) const
 {
     // https://drafts.csswg.org/css-values-5/#boolean-logic
     // Multiple tests connected with `or` evaluate to true if any of those tests are true, false if all of them are
     // false, and unknown otherwise (i.e. at least one unknown, but no true).
     size_t false_results = 0;
     for (auto const& child : m_children) {
-        auto child_match = child->evaluate(context);
+        auto child_match = child->evaluate(document);
         if (child_match == MatchResult::True)
             return MatchResult::True;
         if (child_match == MatchResult::False)
@@ -163,22 +120,9 @@ MatchResult BooleanOrExpression::evaluate(BooleanExpressionEvaluationContext con
     return MatchResult::Unknown;
 }
 
-void BooleanOrExpression::collect_container_query_feature_requirements(ContainerQueryFeatureRequirements& requirements) const
+String BooleanOrExpression::to_string() const
 {
-    for (auto const& child : m_children)
-        child->collect_container_query_feature_requirements(requirements);
-}
-
-void BooleanOrExpression::serialize_to(Utf16StringBuilder& builder) const
-{
-    bool first = true;
-    for (auto const& child : m_children) {
-        if (first)
-            first = false;
-        else
-            builder.append_ascii(" or "sv);
-        child->serialize_to(builder);
-    }
+    return MUST(String::join(" or "sv, m_children));
 }
 
 void BooleanOrExpression::dump(StringBuilder& builder, int indent_levels) const
@@ -187,11 +131,6 @@ void BooleanOrExpression::dump(StringBuilder& builder, int indent_levels) const
     builder.append("OR:\n"sv);
     for (auto const& child : m_children)
         child->dump(builder, indent_levels + 1);
-}
-
-void ConstantBooleanExpression::serialize_to(Utf16StringBuilder& builder) const
-{
-    builder.append_ascii(CSS::to_string(m_value));
 }
 
 void ConstantBooleanExpression::dump(StringBuilder& builder, int indent_levels) const

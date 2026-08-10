@@ -1,6 +1,0 @@
-block
-block
-none
-none
-block
-block

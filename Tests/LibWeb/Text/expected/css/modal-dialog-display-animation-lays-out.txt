@@ -1,4 +1,0 @@
-modal: true
-computed display: block
-has box: true
-width: 698

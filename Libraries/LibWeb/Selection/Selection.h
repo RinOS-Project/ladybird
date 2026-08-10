@@ -6,24 +6,18 @@
 
 #pragma once
 
-#include <AK/Optional.h>
-#include <AK/String.h>
-#include <AK/Utf16String.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Export.h>
-#include <LibWeb/Forward.h>
-#include <LibWeb/PixelUnits.h>
-#include <LibWeb/TextAffinity.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::Selection {
 
-class WEB_API Selection final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(Selection, Bindings::GCAllocatedWrappable);
+class WEB_API Selection final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(Selection, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(Selection);
 
 public:
-    [[nodiscard]] static GC::Ref<Selection> create(GC::Ref<DOM::Document>);
+    [[nodiscard]] static GC::Ref<Selection> create(GC::Ref<JS::Realm>, GC::Ref<DOM::Document>);
 
     virtual ~Selection() override;
 
@@ -39,8 +33,8 @@ public:
     unsigned focus_offset() const;
     bool is_collapsed() const;
     unsigned range_count() const;
-    Utf16String type() const;
-    Utf16String direction() const;
+    String type() const;
+    String direction() const;
     WebIDL::ExceptionOr<GC::Ptr<DOM::Range>> get_range_at(unsigned index);
     void add_range(GC::Ref<DOM::Range>);
     WebIDL::ExceptionOr<void> remove_range(GC::Ref<DOM::Range>);
@@ -53,7 +47,7 @@ public:
     WebIDL::ExceptionOr<void> extend(GC::Ref<DOM::Node>, unsigned offset);
     WebIDL::ExceptionOr<void> set_base_and_extent(GC::Ref<DOM::Node> anchor_node, unsigned anchor_offset, GC::Ref<DOM::Node> focus_node, unsigned focus_offset);
     WebIDL::ExceptionOr<void> select_all_children(GC::Ref<DOM::Node>);
-    WebIDL::ExceptionOr<void> modify(Optional<Utf16String> alter, Optional<Utf16String> direction, Optional<Utf16String> granularity);
+    WebIDL::ExceptionOr<void> modify(Optional<String> alter, Optional<String> direction, Optional<String> granularity);
     WebIDL::ExceptionOr<void>
     delete_from_document();
     bool contains_node(GC::Ref<DOM::Node>, bool allow_partial_containment) const;
@@ -70,11 +64,6 @@ public:
     // Non-standard
     GC::Ptr<DOM::Position> cursor_position() const;
 
-    // Non-standard: which visual line the focus renders on when it sits at a soft wrap boundary. Reset to
-    // Downstream by every selection mutation; internal caret navigation assigns it after moving.
-    TextAffinity focus_affinity() const { return m_focus_affinity; }
-    void set_focus_affinity(TextAffinity affinity) { m_focus_affinity = affinity; }
-
     // Non-standard
     void scroll_focus_into_view();
     void move_offset_to_next_character(bool collapse_selection);
@@ -85,12 +74,12 @@ public:
     void move_offset_to_previous_line(bool collapse_selection);
 
 private:
-    friend class SelectionModifier;
-    explicit Selection(GC::Ref<DOM::Document>);
+    Selection(GC::Ref<JS::Realm>, GC::Ref<DOM::Document>);
 
     [[nodiscard]] bool is_empty() const;
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     void set_range(GC::Ptr<DOM::Range>);
 
@@ -99,10 +88,6 @@ private:
 
     GC::Ref<DOM::Document> m_document;
     Direction m_direction { Direction::Directionless };
-    TextAffinity m_focus_affinity { TextAffinity::Downstream };
-    // Repeated vertical moves preserve the inline-axis coordinate chosen by the first move. A non-vertical move
-    // clears it so the next vertical sequence starts from the caret's new visual position.
-    Optional<CSSPixels> m_preferred_inline_coordinate;
 };
 
 }

@@ -7,29 +7,52 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <AK/Utf16String.h>
+#include <AK/String.h>
 #include <AK/Variant.h>
-#include <LibGC/ConservativeHashMap.h>
-#include <LibGC/ConservativeVector.h>
 #include <LibWeb/Animations/TimeValue.h>
-#include <LibWeb/Bindings/AnimationEffect.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/AnimationEffectPrototype.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CSS/EasingFunction.h>
-
-namespace Web::CSS {
-
-class AnimatedProperties;
-
-}
 
 namespace Web::Animations {
 
-using FillMode = Bindings::FillMode;
-using PlaybackDirection = Bindings::PlaybackDirection;
-using EffectTiming = Bindings::EffectTiming;
-using ComputedEffectTiming = Bindings::ComputedEffectTiming;
-using OptionalEffectTiming = Bindings::OptionalEffectTiming;
-using EffectTimingDuration = Variant<double, Utf16String>;
+// https://www.w3.org/TR/web-animations-1/#the-effecttiming-dictionaries
+// https://drafts.csswg.org/web-animations-2/#the-effecttiming-dictionaries
+struct OptionalEffectTiming {
+    Optional<double> delay {};
+    Optional<double> end_delay {};
+    Optional<Bindings::FillMode> fill {};
+    Optional<double> iteration_start {};
+    Optional<double> iterations {};
+    Optional<Variant<double, String>> duration;
+    Optional<Bindings::PlaybackDirection> direction {};
+    Optional<String> easing {};
+};
+
+// https://www.w3.org/TR/web-animations-1/#the-effecttiming-dictionaries
+// https://drafts.csswg.org/web-animations-2/#the-effecttiming-dictionaries
+struct EffectTiming {
+    double delay { 0 };
+    double end_delay { 0 };
+    Bindings::FillMode fill { Bindings::FillMode::Auto };
+    double iteration_start { 0.0 };
+    double iterations { 1.0 };
+    FlattenVariant<CSS::CSSNumberish, Variant<String>> duration { "auto"_string };
+    Bindings::PlaybackDirection direction { Bindings::PlaybackDirection::Normal };
+    String easing { "linear"_string };
+
+    OptionalEffectTiming to_optional_effect_timing() const;
+};
+
+// https://www.w3.org/TR/web-animations-1/#the-computedeffecttiming-dictionary
+// https://drafts.csswg.org/web-animations-2/#the-computedeffecttiming-dictionary
+struct ComputedEffectTiming : public EffectTiming {
+    CSS::CSSNumberish end_time;
+    CSS::CSSNumberish active_duration;
+    Optional<NullableCSSNumberish> local_time;
+    Optional<double> progress;
+    Optional<double> current_iteration;
+};
 
 enum class AnimationDirection {
     Forwards,
@@ -38,40 +61,32 @@ enum class AnimationDirection {
 
 Bindings::FillMode css_fill_mode_to_bindings_fill_mode(CSS::AnimationFillMode mode);
 Bindings::PlaybackDirection css_animation_direction_to_bindings_playback_direction(CSS::AnimationDirection direction);
-Bindings::OptionalEffectTiming to_optional_effect_timing(Bindings::EffectTiming const&);
 
 // This object lives for the duration of an animation update, and is used to store per-element data about animated CSS properties.
 struct AnimationUpdateContext {
     struct ElementData {
-        ElementData();
-        ElementData(RefPtr<CSS::AnimatedProperties const>, RefPtr<CSS::ComputedProperties>);
-        ElementData(ElementData&&);
-        ElementData& operator=(ElementData&&);
-        ~ElementData();
-
-        RefPtr<CSS::AnimatedProperties const> animated_properties_before_update;
-        RefPtr<CSS::ComputedProperties> target_style;
-        GC::ConservativeVector<GC::Ref<KeyframeEffect>> effects;
+        using PropertyMap = HashMap<CSS::PropertyID, NonnullRefPtr<CSS::StyleValue const>>;
+        PropertyMap animated_properties_before_update;
+        GC::Ptr<CSS::ComputedProperties> target_style;
     };
 
-    AnimationUpdateContext();
     ~AnimationUpdateContext();
 
     // NOTE: This is lazily populated by KeyframeEffects as their respective animations are applied to an element.
-    GC::ConservativeHashMap<DOM::AbstractElement, ElementData> elements;
+    HashMap<DOM::AbstractElement, NonnullOwnPtr<ElementData>> elements;
 };
 
 // https://www.w3.org/TR/web-animations-1/#the-animationeffect-interface
-class AnimationEffect : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(AnimationEffect, Bindings::GCAllocatedWrappable);
+class AnimationEffect : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(AnimationEffect, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(AnimationEffect);
 
 public:
-    static Optional<CSS::EasingFunction> parse_easing_string(Utf16View value);
+    static Optional<CSS::EasingFunction> parse_easing_string(StringView value);
 
-    Bindings::EffectTiming get_timing() const;
-    Bindings::ComputedEffectTiming get_computed_timing() const;
-    WebIDL::ExceptionOr<void> update_timing(Bindings::OptionalEffectTiming const& timing = {});
+    EffectTiming get_timing() const;
+    ComputedEffectTiming get_computed_timing() const;
+    WebIDL::ExceptionOr<void> update_timing(OptionalEffectTiming timing = {});
 
     TimeValue start_delay() const { return m_start_delay; }
     void set_specified_start_delay(double start_delay) { m_specified_start_delay = start_delay; }
@@ -89,7 +104,7 @@ public:
     void set_iteration_count(double iteration_count) { m_iteration_count = iteration_count; }
 
     TimeValue const& iteration_duration() const { return m_iteration_duration; }
-    void set_specified_iteration_duration(Variant<double, Utf16String> iteration_duration) { m_specified_iteration_duration = move(iteration_duration); }
+    void set_specified_iteration_duration(Variant<double, String> iteration_duration) { m_specified_iteration_duration = move(iteration_duration); }
 
     Bindings::PlaybackDirection playback_direction() const { return m_playback_direction; }
     void set_playback_direction(Bindings::PlaybackDirection playback_direction) { m_playback_direction = playback_direction; }
@@ -151,14 +166,12 @@ public:
     virtual void update_computed_properties(AnimationUpdateContext&) = 0;
 
 protected:
-    AnimationEffect();
+    AnimationEffect(JS::Realm&);
     virtual ~AnimationEffect() = default;
 
-    void update_style_if_needed() const;
-    void invalidate_effect();
+    virtual void visit_edges(Visitor&) override;
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
-    virtual GC::Ptr<Bindings::Wrappable> relevant_global_impl() const override;
+    virtual void initialize(JS::Realm&) override;
 
     TimeValue intrinsic_iteration_duration() const;
     void convert_a_time_based_animation_to_a_proportional_animation();
@@ -187,7 +200,7 @@ protected:
     double m_iteration_count { 1.0 };
 
     // https://drafts.csswg.org/web-animations-2/#specified-iteration-duration
-    Variant<double, Utf16String> m_specified_iteration_duration { "auto"_utf16 };
+    Variant<double, String> m_specified_iteration_duration { "auto"_string };
 
     // https://www.w3.org/TR/web-animations-1/#iteration-duration
     // https://drafts.csswg.org/web-animations-2/#iteration-intervals

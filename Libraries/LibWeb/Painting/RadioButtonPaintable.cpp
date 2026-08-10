@@ -15,13 +15,15 @@
 
 namespace Web::Painting {
 
-NonnullRefPtr<RadioButtonPaintable> RadioButtonPaintable::create(Layout::RadioButton const& layout_box)
+GC_DEFINE_ALLOCATOR(RadioButtonPaintable);
+
+GC::Ref<RadioButtonPaintable> RadioButtonPaintable::create(Layout::RadioButton const& layout_box)
 {
-    return adopt_ref(*new RadioButtonPaintable(layout_box));
+    return layout_box.heap().allocate<RadioButtonPaintable>(layout_box);
 }
 
 RadioButtonPaintable::RadioButtonPaintable(Layout::RadioButton const& layout_box)
-    : Paintable(layout_box)
+    : PaintableBox(layout_box)
 {
 }
 
@@ -30,7 +32,7 @@ void RadioButtonPaintable::paint(DisplayListRecordingContext& context, PaintPhas
     if (!is_visible())
         return;
 
-    Paintable::paint(context, phase);
+    PaintableBox::paint(context, phase);
 
     if (phase != PaintPhase::Foreground)
         return;
@@ -73,12 +75,8 @@ void RadioButtonPaintable::paint(DisplayListRecordingContext& context, PaintPhas
         return color;
     }();
 
-    // Keep radio buttons painted as circles, centered within the space they occupy.
-    auto outer_rect = absolute_rect();
-    auto radio_button_size = min(outer_rect.width(), outer_rect.height());
-
     // This is based on a 1px outer border and 2px inner border when drawn at 13x13.
-    auto radio_button_rect = context.enclosing_device_rect(CSSPixelRect { 0, 0, radio_button_size, radio_button_size }.centered_within(outer_rect)).to_type<int>();
+    auto radio_button_rect = context.enclosing_device_rect(absolute_rect()).to_type<int>();
     auto outer_border_width = max(1, static_cast<int>(ceilf(radio_button_rect.width() / 13.0f)));
     auto inner_border_width = max(2, static_cast<int>(ceilf(radio_button_rect.width() / 4.0f)));
 

@@ -7,13 +7,12 @@
 #include "CounterStyleSystemStyleValue.h"
 #include <LibWeb/CSS/Enums.h>
 #include <LibWeb/CSS/Serialize.h>
-#include <LibWeb/CSS/StyleValues/IntegerStyleValue.h>
 
 namespace Web::CSS {
 
 void CounterStyleSystemStyleValue::serialize(StringBuilder& builder, SerializationMode mode) const
 {
-    value().visit(
+    m_value.visit(
         [&](CounterStyleSystem const& system) {
             builder.append(CSS::to_string(system));
         },
@@ -32,7 +31,7 @@ void CounterStyleSystemStyleValue::serialize(StringBuilder& builder, Serializati
 
 ValueComparingNonnullRefPtr<StyleValue const> CounterStyleSystemStyleValue::absolutized(ComputationContext const& context) const
 {
-    return value().visit(
+    return m_value.visit(
         [&](CounterStyleSystem const&) -> ValueComparingNonnullRefPtr<StyleValue const> {
             return *this;
         },
@@ -54,37 +53,26 @@ ValueComparingNonnullRefPtr<StyleValue const> CounterStyleSystemStyleValue::abso
 
 bool CounterStyleSystemStyleValue::algorithm_differs_from(CounterStyleSystemStyleValue const& other) const
 {
-    if (value().index() != other.value().index())
+    if (m_value.index() != other.m_value.index())
         return true;
 
-    return value().visit(
+    return m_value.visit(
         [&](CounterStyleSystem const& system) -> bool {
-            return system != other.value().get<CounterStyleSystem>();
+            return system != other.m_value.get<CounterStyleSystem>();
         },
-        [&](Fixed const& fixed) -> bool {
-            auto other_fixed = other.value().get<Fixed>();
-
-            if (fixed.first_symbol && other_fixed.first_symbol)
-                return fixed.first_symbol != other_fixed.first_symbol;
-
-            auto default_first_symbol = IntegerStyleValue::create(1);
-            if (fixed.first_symbol)
-                return fixed.first_symbol != default_first_symbol;
-            if (other_fixed.first_symbol)
-                return other_fixed.first_symbol != default_first_symbol;
-
+        [&](Fixed const&) -> bool {
             return false;
         },
         [&](Extends const& extends) -> bool {
             // FIXME: We don't know which counter style the 'extends' refers to here, so we have to assume it might
             //        differ if the names differ. Is this correct?
-            return extends.name != other.value().get<Extends>().name;
+            return extends.name != other.m_value.get<Extends>().name;
         });
 }
 
 bool CounterStyleSystemStyleValue::is_valid_symbol_count(size_t count) const
 {
-    return value().visit(
+    return m_value.visit(
         [&](CounterStyleSystem const& system) -> bool {
             switch (system) {
             // https://drafts.csswg.org/css-counter-styles-3/#cyclic-system
@@ -128,7 +116,7 @@ bool CounterStyleSystemStyleValue::is_valid_symbol_count(size_t count) const
 
 bool CounterStyleSystemStyleValue::is_valid_additive_symbol_count(size_t count) const
 {
-    return value().visit(
+    return m_value.visit(
         [&](CounterStyleSystem const& system) -> bool {
             // https://drafts.csswg.org/css-counter-styles-3/#additive-system
             // If the system is additive, the additive-symbols descriptor must contain at least one additive tuple,

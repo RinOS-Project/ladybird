@@ -21,69 +21,115 @@
 
 namespace Web::CSS {
 
-// FIXME: This should probably instead be CSSPixelsPercentage since it is only used after computation where we resolve
-//        all relative lengths.
-
-class LengthPercentage {
+template<typename T>
+class PercentageOr {
 public:
-    LengthPercentage(Length t)
-        : m_value(StyleValueFFI::rust_style_value_create_length(t.raw_value(), to_underlying(t.unit())))
+    PercentageOr(T t)
+        : m_value(move(t))
     {
     }
 
-    LengthPercentage(Percentage percentage)
-        : m_value(StyleValueFFI::rust_style_value_create_percentage(percentage.value()))
+    PercentageOr(Percentage percentage)
+        : m_value(move(percentage))
     {
     }
 
-    LengthPercentage(NonnullRefPtr<CalculatedStyleValue const> calculated)
-        : m_value(StyleValueFFI::rust_style_value_retain(calculated->rust_style_value_data()))
+    PercentageOr(NonnullRefPtr<CalculatedStyleValue const> calculated)
+        : m_value(move(calculated))
     {
     }
+
+    ~PercentageOr() = default;
+
+    PercentageOr<T>& operator=(T t)
+    {
+        m_value = move(t);
+        return *this;
+    }
+
+    PercentageOr<T>& operator=(Percentage percentage)
+    {
+        m_value = move(percentage);
+        return *this;
+    }
+
+    bool is_percentage() const { return m_value.template has<Percentage>(); }
+    bool is_calculated() const { return m_value.template has<NonnullRefPtr<CalculatedStyleValue const>>(); }
 
     bool contains_percentage() const
     {
-        if (is_percentage())
-            return true;
-        if (is_calculated())
-            return calculated()->contains_percentage();
-        return false;
+        return m_value.visit(
+            [&](T const&) {
+                return false;
+            },
+            [&](Percentage const&) {
+                return true;
+            },
+            [&](NonnullRefPtr<CalculatedStyleValue const> const& calculated) {
+                return calculated->contains_percentage();
+            });
     }
 
-    Percentage percentage() const
+    Percentage const& percentage() const
     {
         VERIFY(is_percentage());
-        return Percentage(m_value->percentage.value);
+        return m_value.template get<Percentage>();
     }
 
-    ValueComparingNonnullRefPtr<CalculatedStyleValue const> calculated() const
+    NonnullRefPtr<CalculatedStyleValue const> const& calculated() const
     {
         VERIFY(is_calculated());
-        return StyleValue::adopt_rust_style_value_data(StyleValueFFI::rust_style_value_retain(m_value.data()))->as_calculated();
+        return m_value.template get<NonnullRefPtr<CalculatedStyleValue const>>();
     }
 
-    CSSPixels to_px(CSSPixels reference_value) const
+    CSSPixels to_px(Layout::Node const& layout_node, CSSPixels reference_value) const
     {
-        return resolved(reference_value).absolute_length_to_px();
+        if constexpr (IsSame<T, Length>) {
+            if (auto const* length = m_value.template get_pointer<Length>()) {
+                if (length->is_absolute())
+                    return length->absolute_length_to_px();
+            }
+        }
+        return resolved(layout_node, reference_value).to_px(layout_node);
     }
 
-    Length resolved(CSSPixels reference_value) const
+    T resolved(Layout::Node const& layout_node, T reference_value) const
+    requires(!IsSame<T, Length>)
     {
-        if (is_length())
-            return length();
-        if (is_percentage())
-            return Length::make_px(CSSPixels::truncated_value_for(reference_value.to_double() * percentage().as_fraction()));
-        return calculated()->resolve_length({ .percentage_basis = Length::make_px(reference_value) }).value();
+        return m_value.visit(
+            [&](T const& t) {
+                return t;
+            },
+            [&](Percentage const& percentage) {
+                return reference_value.percentage_of(percentage);
+            },
+            [&](NonnullRefPtr<CalculatedStyleValue const> const& calculated) {
+                return T::resolve_calculated(calculated, layout_node, reference_value);
+            });
+    }
+
+    T resolved(Layout::Node const& layout_node, CSSPixels reference_value) const
+    {
+        return m_value.visit(
+            [&](T const& t) {
+                return t;
+            },
+            [&](Percentage const& percentage) {
+                return Length::make_px(CSSPixels(percentage.value() * reference_value) / 100);
+            },
+            [&](NonnullRefPtr<CalculatedStyleValue const> const& calculated) {
+                return T::resolve_calculated(calculated, layout_node, reference_value);
+            });
     }
 
     void serialize(StringBuilder& builder, SerializationMode mode) const
     {
         if (is_calculated()) {
-            calculated()->serialize(builder, mode);
+            m_value.template get<NonnullRefPtr<CalculatedStyleValue const>>()->serialize(builder, mode);
         } else if (is_percentage()) {
-            percentage().serialize(builder, mode);
+            m_value.template get<Percentage>().serialize(builder, mode);
         } else {
-            length().serialize(builder, mode);
+            m_value.template get<T>().serialize(builder, mode);
         }
     }
 
@@ -94,56 +140,99 @@ public:
         return builder.to_string_without_validation();
     }
 
-    static LengthPercentage from_style_value(NonnullRefPtr<StyleValue const> const& style_value)
+    bool operator==(PercentageOr<T> const& other) const
     {
-        VERIFY(style_value->is_percentage() || style_value->is_length() || (style_value->is_calculated() && style_value->as_calculated().resolves_to_length()));
-        return from_retained_data(StyleValueFFI::rust_style_value_retain(style_value->rust_style_value_data()));
+        if (is_calculated() != other.is_calculated())
+            return false;
+        if (is_percentage() != other.is_percentage())
+            return false;
+        if (is_calculated())
+            return (*m_value.template get<NonnullRefPtr<CalculatedStyleValue const>>() == *other.m_value.template get<NonnullRefPtr<CalculatedStyleValue const>>());
+        if (is_percentage())
+            return (m_value.template get<Percentage>() == other.m_value.template get<Percentage>());
+        return (m_value.template get<T>() == other.m_value.template get<T>());
     }
 
-    bool is_percentage() const { return m_value->tag == StyleValueFFI::StyleValueData::Tag::Percentage; }
-    bool is_calculated() const { return m_value->tag == StyleValueFFI::StyleValueData::Tag::Calculated; }
-    bool is_length() const { return m_value->tag == StyleValueFFI::StyleValueData::Tag::Length; }
-    Length length() const
+    // FIXME: We can remove this once all StyleValue classes are migrated over to storing sub-values as StyleValues
+    bool is_computationally_independent() const
     {
-        VERIFY(is_length());
-        return Length(m_value->length.value, static_cast<LengthUnit>(m_value->length.unit));
+        return m_value.visit(
+            [](T const& value) {
+                if constexpr (IsSame<T, Length>)
+                    return value.is_computationally_independent();
+
+                return true;
+            },
+            [](Percentage const&) { return true; },
+            [](NonnullRefPtr<CalculatedStyleValue const> const& calculated) { return calculated->is_computationally_independent(); });
     }
 
-    bool operator==(LengthPercentage const& other) const
-    {
-        if (m_value.data() == other.m_value.data())
-            return true;
-        if (is_length() && other.is_length())
-            return length() == other.length();
-        if (is_percentage() && other.is_percentage())
-            return percentage() == other.percentage();
-        if (is_calculated() && other.is_calculated())
-            return calculated()->equals(*other.calculated());
-        return false;
-    }
-
-    template<typename Handle>
-    static LengthPercentage const& view(Handle const& value)
-    {
-        static_assert(sizeof(LengthPercentage) == sizeof(value));
-        static_assert(requires { value.pointer; });
-        return reinterpret_cast<LengthPercentage const&>(value);
-    }
-
-    StyleValueFFI::StyleValueData const* leak_data() { return m_value.leak_data(); }
+protected:
+    bool is_t() const { return m_value.template has<T>(); }
+    T const& get_t() const { return m_value.template get<T>(); }
 
 private:
-    explicit LengthPercentage(StyleValueFFI::StyleValueData const* data)
-        : m_value(data)
+    Variant<T, Percentage, NonnullRefPtr<CalculatedStyleValue const>> m_value;
+};
+
+template<typename T>
+bool operator==(PercentageOr<T> const& percentage_or, T const& t)
+{
+    return percentage_or == PercentageOr<T> { t };
+}
+
+template<typename T>
+bool operator==(T const& t, PercentageOr<T> const& percentage_or)
+{
+    return t == percentage_or;
+}
+
+template<typename T>
+bool operator==(PercentageOr<T> const& percentage_or, Percentage const& percentage)
+{
+    return percentage_or == PercentageOr<T> { percentage };
+}
+
+template<typename T>
+bool operator==(Percentage const& percentage, PercentageOr<T> const& percentage_or)
+{
+    return percentage == percentage_or;
+}
+
+class AnglePercentage : public PercentageOr<Angle> {
+public:
+    using PercentageOr<Angle>::PercentageOr;
+
+    bool is_angle() const { return is_t(); }
+    Angle const& angle() const { return get_t(); }
+};
+
+class FrequencyPercentage : public PercentageOr<Frequency> {
+public:
+    using PercentageOr<Frequency>::PercentageOr;
+
+    bool is_frequency() const { return is_t(); }
+    Frequency const& frequency() const { return get_t(); }
+};
+
+class LengthPercentage : public PercentageOr<Length> {
+public:
+    using PercentageOr<Length>::PercentageOr;
+
+    static LengthPercentage from_style_value(NonnullRefPtr<StyleValue const> const& style_value)
     {
+        if (style_value->is_percentage())
+            return LengthPercentage { style_value->as_percentage().percentage() };
+        if (style_value->is_length())
+            return LengthPercentage { style_value->as_length().length() };
+        if (style_value->is_calculated())
+            return LengthPercentage { style_value->as_calculated() };
+
+        VERIFY_NOT_REACHED();
     }
 
-    static LengthPercentage from_retained_data(StyleValueFFI::StyleValueData const* data)
-    {
-        return LengthPercentage(data);
-    }
-
-    RustStyleValueHandle m_value;
+    bool is_length() const { return is_t(); }
+    Length const& length() const { return get_t(); }
 };
 
 class LengthPercentageOrAuto {
@@ -184,22 +273,22 @@ public:
     bool contains_percentage() const { return m_length_percentage.has_value() && m_length_percentage->contains_percentage(); }
 
     LengthPercentage const& length_percentage() const { return m_length_percentage.value(); }
-    Length length() const { return m_length_percentage->length(); }
-    Percentage percentage() const { return m_length_percentage->percentage(); }
-    ValueComparingNonnullRefPtr<CalculatedStyleValue const> calculated() const { return m_length_percentage->calculated(); }
+    Length const& length() const { return m_length_percentage->length(); }
+    Percentage const& percentage() const { return m_length_percentage->percentage(); }
+    NonnullRefPtr<CalculatedStyleValue const> const& calculated() const { return m_length_percentage->calculated(); }
 
-    LengthOrAuto resolved_or_auto(CSSPixels reference_value) const
+    LengthOrAuto resolved_or_auto(Layout::Node const& layout_node, CSSPixels reference_value) const
     {
         if (is_auto())
             return LengthOrAuto::make_auto();
-        return length_percentage().resolved(reference_value);
+        return length_percentage().resolved(layout_node, reference_value);
     }
 
-    CSSPixels to_px_or_zero(CSSPixels reference_value) const
+    CSSPixels to_px_or_zero(Layout::Node const& layout_node, CSSPixels reference_value) const
     {
         if (is_auto())
             return 0;
-        return length_percentage().to_px(reference_value);
+        return length_percentage().to_px(layout_node, reference_value);
     }
 
     void serialize(StringBuilder& builder, SerializationMode mode) const
@@ -225,7 +314,39 @@ private:
     Optional<LengthPercentage> m_length_percentage;
 };
 
+class TimePercentage : public PercentageOr<Time> {
+public:
+    using PercentageOr<Time>::PercentageOr;
+
+    bool is_time() const { return is_t(); }
+    Time const& time() const { return get_t(); }
+};
+
+struct NumberPercentage : public PercentageOr<Number> {
+public:
+    using PercentageOr<Number>::PercentageOr;
+
+    bool is_number() const { return is_t(); }
+    Number const& number() const { return get_t(); }
+};
+
 }
+
+template<>
+struct AK::Formatter<Web::CSS::AnglePercentage> : Formatter<StringView> {
+    ErrorOr<void> format(FormatBuilder& builder, Web::CSS::AnglePercentage const& angle_percentage)
+    {
+        return Formatter<StringView>::format(builder, angle_percentage.to_string(Web::CSS::SerializationMode::Normal));
+    }
+};
+
+template<>
+struct AK::Formatter<Web::CSS::FrequencyPercentage> : Formatter<StringView> {
+    ErrorOr<void> format(FormatBuilder& builder, Web::CSS::FrequencyPercentage const& frequency_percentage)
+    {
+        return Formatter<StringView>::format(builder, frequency_percentage.to_string(Web::CSS::SerializationMode::Normal));
+    }
+};
 
 template<>
 struct AK::Formatter<Web::CSS::LengthPercentage> : Formatter<StringView> {
@@ -240,5 +361,13 @@ struct AK::Formatter<Web::CSS::LengthPercentageOrAuto> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder& builder, Web::CSS::LengthPercentageOrAuto const& length_percentage_or_auto)
     {
         return Formatter<StringView>::format(builder, length_percentage_or_auto.to_string(Web::CSS::SerializationMode::Normal));
+    }
+};
+
+template<>
+struct AK::Formatter<Web::CSS::TimePercentage> : Formatter<StringView> {
+    ErrorOr<void> format(FormatBuilder& builder, Web::CSS::TimePercentage const& time_percentage)
+    {
+        return Formatter<StringView>::format(builder, time_percentage.to_string(Web::CSS::SerializationMode::Normal));
     }
 };

@@ -21,7 +21,7 @@ namespace Web::XHR {
     E(onloadend, XHR::EventNames::loadend)
 
 class XMLHttpRequestEventTarget : public DOM::EventTarget {
-    WEB_WRAPPABLE(XMLHttpRequestEventTarget, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(XMLHttpRequestEventTarget, DOM::EventTarget);
 
 public:
     virtual ~XMLHttpRequestEventTarget() override { }
@@ -34,8 +34,8 @@ public:
 #undef __ENUMERATE
 
 protected:
-    XMLHttpRequestEventTarget()
-        : DOM::EventTarget()
+    XMLHttpRequestEventTarget(JS::Realm& realm)
+        : DOM::EventTarget(realm)
     {
     }
 };

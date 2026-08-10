@@ -1,3 +1,6 @@
+#import <Geometry/DOMRectReadOnly.idl>
+#import <DOM/Element.idl>
+
 // https://drafts.csswg.org/resize-observer-1/#resize-observer-entry-interface
 [Exposed=Window]
 interface ResizeObserverEntry {

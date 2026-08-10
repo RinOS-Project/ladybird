@@ -39,7 +39,6 @@ private:
     PromiseValueList() = default;
 
     virtual void visit_edges(Visitor&) override;
-    virtual size_t external_memory_size() const override;
 
     Vector<Value> m_values;
 };

@@ -13,14 +13,12 @@
 #include <LibGC/Function.h>
 #include <LibHTTP/Cookie/Cookie.h>
 #include <LibHTTP/Cookie/ParsedCookie.h>
-#include <LibHTTP/HSTS/ParsedHSTSPolicy.h>
-#include <LibHTTP/HSTSPreloadData.h>
 #include <LibRequests/Request.h>
 #include <LibRequests/RequestClient.h>
 #include <LibURL/Parser.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/Fetch/Infrastructure/URL.h>
-#include <LibWeb/Loader/ContentBlocker.h>
+#include <LibWeb/Loader/ContentFilter.h>
 #include <LibWeb/Loader/GeneratedPagesLoader.h>
 #include <LibWeb/Loader/LoadRequest.h>
 #include <LibWeb/Loader/ProxyMappings.h>
@@ -32,29 +30,25 @@
 
 namespace Web {
 
-static RefPtr<ResourceLoader>& resource_loader()
-{
-    static RefPtr<ResourceLoader>& resource_loader = *new RefPtr<ResourceLoader>;
-    return resource_loader;
-}
+static RefPtr<ResourceLoader> s_resource_loader;
 
 void ResourceLoader::initialize(GC::Heap& heap, NonnullRefPtr<Requests::RequestClient> request_client)
 {
-    resource_loader() = adopt_ref(*new ResourceLoader(heap, move(request_client)));
+    s_resource_loader = adopt_ref(*new ResourceLoader(heap, move(request_client)));
 }
 
 bool ResourceLoader::is_initialized()
 {
-    return resource_loader() != nullptr;
+    return s_resource_loader != nullptr;
 }
 
 ResourceLoader& ResourceLoader::the()
 {
-    if (!resource_loader()) {
+    if (!s_resource_loader) {
         dbgln("Web::ResourceLoader was not initialized");
         VERIFY_NOT_REACHED();
     }
-    return *resource_loader();
+    return *s_resource_loader;
 }
 
 ResourceLoader::ResourceLoader(GC::Heap& heap, NonnullRefPtr<Requests::RequestClient> request_client)
@@ -78,12 +72,12 @@ void ResourceLoader::set_client(NonnullRefPtr<Requests::RequestClient> request_c
     };
 }
 
-void ResourceLoader::prefetch_dns(URL::URL const& url, URL::URL const& source_url)
+void ResourceLoader::prefetch_dns(URL::URL const& url)
 {
     if (url.scheme().is_one_of("file"sv, "data"sv))
         return;
 
-    if (ContentBlocker::the().is_filtered(url, source_url, ContentBlocker::ResourceType::Other)) {
+    if (ContentFilter::the().is_filtered(url)) {
         dbgln("ResourceLoader: Refusing to prefetch DNS for '{}': \033[31;1mURL was filtered\033[0m", url);
         return;
     }
@@ -93,12 +87,12 @@ void ResourceLoader::prefetch_dns(URL::URL const& url, URL::URL const& source_ur
         m_request_client->ensure_connection(url, RequestServer::CacheLevel::ResolveOnly);
 }
 
-void ResourceLoader::preconnect(URL::URL const& url, URL::URL const& source_url)
+void ResourceLoader::preconnect(URL::URL const& url)
 {
     if (url.scheme().is_one_of("file"sv, "data"sv))
         return;
 
-    if (ContentBlocker::the().is_filtered(url, source_url, ContentBlocker::ResourceType::Other)) {
+    if (ContentFilter::the().is_filtered(url)) {
         dbgln("ResourceLoader: Refusing to pre-connect to '{}': \033[31;1mURL was filtered\033[0m", url);
         return;
     }
@@ -126,31 +120,6 @@ static void store_response_cookies(Page& page, URL::URL const& url, StringView s
         return;
 
     page.client().page_did_set_cookie(url, cookie.value(), HTTP::Cookie::Source::Http);
-}
-
-void ResourceLoader::try_store_hsts_policy_for_url(Page& page, URL::URL const& url, StringView header_value)
-{
-    // https://www.rfc-editor.org/rfc/rfc6797#section-8.1
-    // If the substring matching the host production from the Request-URI (of the message to which the host responded)
-    // syntactically matches the IP-literal or IPv4address productions from Section 3.2.2 of [RFC3986], then the UA
-    // MUST NOT note this host as a Known HSTS Host.
-    if (!url.host().has_value() || !url.host()->is_domain())
-        return;
-
-    auto parsed_policy = HTTP::HSTS::parse_header(header_value);
-    if (!parsed_policy.has_value())
-        return;
-
-    page.client().page_did_store_hsts_policy(url.host()->get<String>(), parsed_policy.value());
-}
-
-// https://www.rfc-editor.org/rfc/rfc6797#section-8.2
-bool ResourceLoader::is_known_hsts_host(Page& page, String const& host)
-{
-    if (HTTP::HSTSPreloadData::the().is_known_preloaded_hsts_host(host.to_ascii_lowercase()))
-        return true;
-
-    return page.client().page_did_is_known_hsts_host(host);
 }
 
 static NonnullRefPtr<HTTP::HeaderList> response_headers_for_file(StringView path, Optional<time_t> const& modified_time)
@@ -220,8 +189,7 @@ static bool should_block_request(LoadRequest const& request)
         return true;
     }
 
-    auto source_url = request.source_url().value_or(url);
-    if (ContentBlocker::the().is_filtered(url, source_url, request.destination(), request.initiator_type(), request.request_mode())) {
+    if (ContentFilter::the().is_filtered(url)) {
         log_filtered_request(request);
         return true;
     }
@@ -271,6 +239,12 @@ void ResourceLoader::handle_file_load_request(LoadRequest& request, FileHandler 
             return;
         }
 
+        auto st_or_error = Core::System::fstat(fd);
+        if (st_or_error.is_error()) {
+            on_error(ByteString::formatted("{}", st_or_error.error()));
+            return;
+        }
+
         auto maybe_file = Core::File::adopt_fd(fd, Core::File::OpenMode::Read);
         if (maybe_file.is_error()) {
             on_error(ByteString::formatted("{}", maybe_file.error()));
@@ -278,12 +252,6 @@ void ResourceLoader::handle_file_load_request(LoadRequest& request, FileHandler 
         }
 
         auto file = maybe_file.release_value();
-
-        auto st_or_error = file->stat();
-        if (st_or_error.is_error()) {
-            on_error(ByteString::formatted("{}", st_or_error.error()));
-            return;
-        }
         auto maybe_data = file->read_until_eof();
         if (maybe_data.is_error()) {
             on_error(ByteString::formatted("{}", maybe_data.error()));
@@ -304,8 +272,8 @@ void ResourceLoader::handle_file_load_request(LoadRequest& request, FileHandler 
         on_load_counter_change();
 }
 
-template<typename ResourceHandler, typename ErrorHandler>
-void ResourceLoader::handle_about_load_request(LoadRequest const& request, ResourceHandler on_resource, ErrorHandler on_error)
+template<typename Callback>
+void ResourceLoader::handle_about_load_request(LoadRequest const& request, Callback callback)
 {
     auto const& url = request.url().value();
 
@@ -319,6 +287,15 @@ void ResourceLoader::handle_about_load_request(LoadRequest const& request, Resou
     Requests::RequestTimingInfo timing_info {};
 
     auto serialized_path = URL::percent_decode(url.serialize_path());
+
+    // About version page
+    if (serialized_path == "version") {
+        auto version_page = MUST(load_about_version_page());
+        callback(version_page.bytes(), timing_info, response_headers);
+        return;
+    }
+
+    // Other about static HTML pages
     auto target_file = ByteString::formatted("{}.html", serialized_path);
 
     auto about_directory = MUST(Core::Resource::load_from_uri("resource://ladybird/about-pages"_string));
@@ -327,15 +304,16 @@ void ResourceLoader::handle_about_load_request(LoadRequest const& request, Resou
         if (!resource.is_error()) {
             auto const& buffer = resource.value()->data();
             ReadonlyBytes data(buffer.data(), buffer.size());
-            on_resource(data, timing_info, response_headers);
+            callback(data, timing_info, response_headers);
             return;
         }
     }
 
     Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(
         m_heap,
-        [on_error, error_message = ByteString::formatted("No such about page: {}", serialized_path)]() {
-            on_error(error_message);
+        [callback, timing_info, response_headers = move(response_headers)]() mutable {
+            auto buffer = ByteString::empty().to_byte_buffer();
+            callback(buffer.bytes(), timing_info, response_headers);
         }));
 }
 
@@ -382,7 +360,7 @@ void ResourceLoader::handle_resource_load_request(LoadRequest const& request, Re
     on_resource(load_result);
 }
 
-RefPtr<Requests::Request> ResourceLoader::load(LoadRequest& request, GC::Root<OnHeadersReceived> on_headers_received, GC::Root<OnDataReceived> on_data_received, GC::Root<OnCachedBodyAvailable> on_cached_body_available, GC::Root<OnComplete> on_complete, Requests::RequestClient::KeepAliveForTransfer keep_alive_for_transfer)
+RefPtr<Requests::Request> ResourceLoader::load(LoadRequest& request, GC::Root<OnHeadersReceived> on_headers_received, GC::Root<OnDataReceived> on_data_received, GC::Root<OnComplete> on_complete)
 {
     auto const& url = request.url().value();
 
@@ -397,16 +375,11 @@ RefPtr<Requests::Request> ResourceLoader::load(LoadRequest& request, GC::Root<On
     if (url.scheme() == "about"sv) {
         handle_about_load_request(
             request,
-            [on_headers_received = move(on_headers_received), on_data_received = move(on_data_received), on_complete, request](ReadonlyBytes data, Requests::RequestTimingInfo const& timing_info, HTTP::HeaderList const& response_headers) {
+            [on_headers_received = move(on_headers_received), on_data_received = move(on_data_received), on_complete = move(on_complete), request](ReadonlyBytes data, Requests::RequestTimingInfo const& timing_info, HTTP::HeaderList const& response_headers) {
                 log_success(request);
-                on_headers_received->function()(nullptr, response_headers, {}, {}, {}, {}, Requests::CameFromCache::No);
-                on_data_received->function()(Requests::ResponseData::from_bytes(data));
+                on_headers_received->function()(response_headers, {}, {});
+                on_data_received->function()(data);
                 on_complete->function()(true, timing_info, {});
-            },
-            [on_complete, request](ByteString const& message) {
-                log_failure(request, message);
-                Requests::RequestTimingInfo fixme_implement_timing_info {};
-                on_complete->function()(false, fixme_implement_timing_info, StringView(message));
             });
         return nullptr;
     }
@@ -415,8 +388,8 @@ RefPtr<Requests::Request> ResourceLoader::load(LoadRequest& request, GC::Root<On
         handle_resource_load_request(
             request,
             [on_headers_received = move(on_headers_received), on_data_received = move(on_data_received), on_complete](FileLoadResult const& load_result) {
-                on_headers_received->function()(nullptr, load_result.response_headers, {}, {}, {}, {}, Requests::CameFromCache::No);
-                on_data_received->function()(Requests::ResponseData::from_bytes(load_result.data));
+                on_headers_received->function()(load_result.response_headers, {}, {});
+                on_data_received->function()(load_result.data);
                 on_complete->function()(true, load_result.timing_info, {});
             },
             [on_complete](ByteString const& message) {
@@ -431,8 +404,8 @@ RefPtr<Requests::Request> ResourceLoader::load(LoadRequest& request, GC::Root<On
             request,
             [request, on_headers_received = move(on_headers_received), on_data_received = move(on_data_received), on_complete](FileLoadResult const& load_result) {
                 log_success(request);
-                on_headers_received->function()(nullptr, load_result.response_headers, {}, {}, {}, {}, Requests::CameFromCache::No);
-                on_data_received->function()(Requests::ResponseData::from_bytes(load_result.data));
+                on_headers_received->function()(load_result.response_headers, {}, {});
+                on_data_received->function()(load_result.data);
                 on_complete->function()(true, load_result.timing_info, {});
             },
             [on_complete, request](ByteString const& message) {
@@ -450,25 +423,25 @@ RefPtr<Requests::Request> ResourceLoader::load(LoadRequest& request, GC::Root<On
         return nullptr;
     }
 
-    auto protocol_request = start_network_request(request, keep_alive_for_transfer);
+    auto protocol_request = start_network_request(request);
     if (!protocol_request) {
         on_complete->function()(false, {}, "Failed to start network request"sv);
         return nullptr;
     }
 
-    auto protocol_headers_received = [this, on_headers_received = move(on_headers_received), request, &protocol_request = *protocol_request](auto const& response_headers, auto status_code, auto const& reason_phrase, auto javascript_bytecode, auto javascript_bytecode_cache_vary_key, auto came_from_cache) {
+    auto protocol_headers_received = [this, on_headers_received = move(on_headers_received), request, request_id = protocol_request->id()](auto const& response_headers, auto status_code, auto const& reason_phrase) {
         handle_network_response_headers(request, response_headers);
 
         if (auto page = request.page())
-            page->client().page_did_receive_network_response_headers(protocol_request.id(), status_code.value_or(0), reason_phrase, response_headers->headers(), came_from_cache);
+            page->client().page_did_receive_network_response_headers(request_id, status_code.value_or(0), reason_phrase, response_headers->headers());
 
-        on_headers_received->function()(&protocol_request, response_headers, move(status_code), reason_phrase, move(javascript_bytecode), javascript_bytecode_cache_vary_key, came_from_cache);
+        on_headers_received->function()(response_headers, move(status_code), reason_phrase);
     };
 
     auto protocol_data_received = [on_data_received = move(on_data_received), request, request_id = protocol_request->id()](auto data) {
         if (auto page = request.page())
-            page->client().page_did_receive_network_response_body(request_id, data.bytes());
-        on_data_received->function()(move(data));
+            page->client().page_did_receive_network_response_body(request_id, data);
+        on_data_received->function()(data);
     };
 
     auto protocol_complete = [this, on_complete = move(on_complete), request, &protocol_request = *protocol_request](u64 total_size, Requests::RequestTimingInfo const& timing_info, Optional<Requests::NetworkError> const& network_error) {
@@ -489,18 +462,11 @@ RefPtr<Requests::Request> ResourceLoader::load(LoadRequest& request, GC::Root<On
         }
     };
 
-    auto protocol_cached_body_available = [on_cached_body_available = move(on_cached_body_available)](auto data) {
-        on_cached_body_available->function()(move(data));
-    };
-
-    protocol_request->set_unbuffered_request_callbacks(move(protocol_headers_received), move(protocol_data_received), move(protocol_cached_body_available), move(protocol_complete));
-    protocol_request->set_stop_callback([this, &protocol_request = *protocol_request] {
-        finish_network_request(protocol_request);
-    });
+    protocol_request->set_unbuffered_request_callbacks(move(protocol_headers_received), move(protocol_data_received), move(protocol_complete));
     return protocol_request;
 }
 
-RefPtr<Requests::Request> ResourceLoader::start_network_request(LoadRequest const& request, Requests::RequestClient::KeepAliveForTransfer keep_alive_for_transfer)
+RefPtr<Requests::Request> ResourceLoader::start_network_request(LoadRequest const& request)
 {
     auto proxy = ProxyMappings::the().proxy_for_url(request.url().value());
 
@@ -510,7 +476,7 @@ RefPtr<Requests::Request> ResourceLoader::start_network_request(LoadRequest cons
         return nullptr;
     }
 
-    auto protocol_request = m_request_client->start_request(request.method(), request.url().value(), request.headers(), request.body(), request.cache_mode(), request.include_credentials(), proxy, keep_alive_for_transfer);
+    auto protocol_request = m_request_client->start_request(request.method(), request.url().value(), request.headers(), request.body(), request.cache_mode(), request.include_credentials(), proxy);
     if (!protocol_request) {
         log_failure(request, "Failed to initiate load"sv);
         return nullptr;
@@ -523,9 +489,8 @@ RefPtr<Requests::Request> ResourceLoader::start_network_request(LoadRequest cons
     if (auto page = request.page()) {
         Optional<String> initiator_type_string;
         if (request.initiator_type().has_value())
-            initiator_type_string = MUST(Fetch::Infrastructure::initiator_type_to_string(request.initiator_type().value()).view().to_utf8());
-        auto referrer_policy = MUST(String::from_utf8(ReferrerPolicy::to_string(request.referrer_policy())));
-        page->client().page_did_start_network_request(protocol_request->id(), request.url().value(), request.method(), request.headers().headers(), request.body(), move(initiator_type_string), referrer_policy, request.is_navigation_request(), request.priority());
+            initiator_type_string = Fetch::Infrastructure::initiator_type_to_string(request.initiator_type().value()).to_string();
+        page->client().page_did_start_network_request(protocol_request->id(), request.url().value(), request.method(), request.headers().headers(), request.body(), move(initiator_type_string));
     }
 
     ++m_pending_loads;
@@ -540,21 +505,6 @@ void ResourceLoader::handle_network_response_headers(LoadRequest const& request,
 {
     if (!request.page())
         return;
-
-    // https://www.rfc-editor.org/rfc/rfc6797#section-8.1
-    // If an HTTP response, received over a secure transport, includes an STS header field, conforming to the grammar
-    // specified in Section 6.1, and there are no underlying secure transport errors or warnings, the UA MUST either
-    // note the host as a Known HSTS Host or update the UA's cached information for the Known HSTS Host.
-    if (request.url().has_value() && request.url()->scheme() == "https"sv) {
-        // If a UA receives more than one STS header field in an HTTP response message over secure transport, then
-        // the UA MUST process only the first such header field.
-        for (auto const& [header, value] : response_headers) {
-            if (header.equals_ignoring_ascii_case("Strict-Transport-Security"sv)) {
-                try_store_hsts_policy_for_url(*request.page(), request.url().value(), value);
-                break;
-            }
-        }
-    }
 
     if (request.include_credentials() == HTTP::Cookie::IncludeCredentials::Yes) {
         // From https://fetch.spec.whatwg.org/#concept-http-network-fetch:

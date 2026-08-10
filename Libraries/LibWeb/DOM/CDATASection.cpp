@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/CDATASectionPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/CDATASection.h>
 
 namespace Web::DOM {
@@ -16,11 +17,12 @@ CDATASection::CDATASection(Document& document, Utf16String data)
 {
 }
 
-GC::Ref<CDATASection> CDATASection::create(Document& document, Utf16String data)
-{
-    return GC::Heap::the().allocate<CDATASection>(document, move(data));
-}
-
 CDATASection::~CDATASection() = default;
+
+void CDATASection::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CDATASection);
+    Base::initialize(realm);
+}
 
 }

@@ -9,13 +9,12 @@
 
 #include <AK/Forward.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/ReadableStream.h>
+#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Bindings/ReadableStreamPrototype.h>
 #include <LibWeb/Bindings/Transferable.h>
-#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Streams/Algorithms.h>
 #include <LibWeb/Streams/QueuingStrategy.h>
-#include <LibWeb/WebIDL/Buffers.h>
 
 namespace Web::Streams {
 
@@ -25,10 +24,22 @@ using ReadableStreamReader = Variant<GC::Ref<ReadableStreamDefaultReader>, GC::R
 // https://streams.spec.whatwg.org/#typedefdef-readablestreamcontroller
 using ReadableStreamController = Variant<GC::Ref<ReadableStreamDefaultController>, GC::Ref<ReadableByteStreamController>>;
 
-using ReadableWritablePair = Bindings::ReadableWritablePair;
-using StreamPipeOptions = Bindings::StreamPipeOptions;
-using ReadableStreamGetReaderOptions = Bindings::ReadableStreamGetReaderOptions;
-using ReadableStreamIteratorOptions = Bindings::ReadableStreamIteratorOptions;
+// https://streams.spec.whatwg.org/#dictdef-readablestreamgetreaderoptions
+struct ReadableStreamGetReaderOptions {
+    Optional<Bindings::ReadableStreamReaderMode> mode;
+};
+
+struct ReadableWritablePair {
+    GC::Ptr<ReadableStream> readable;
+    GC::Ptr<WritableStream> writable;
+};
+
+struct StreamPipeOptions {
+    bool prevent_close { false };
+    bool prevent_abort { false };
+    bool prevent_cancel { false };
+    GC::Ptr<DOM::AbortSignal> signal;
+};
 
 struct ReadableStreamPair {
     // Define a couple container-like methods so this type may be used as the return type of the IDL `tee` implementation.
@@ -49,9 +60,9 @@ struct ReadableStreamPair {
 
 // https://streams.spec.whatwg.org/#readablestream
 class ReadableStream final
-    : public Bindings::GCAllocatedWrappable
+    : public Bindings::PlatformObject
     , public Bindings::Transferable {
-    WEB_WRAPPABLE(ReadableStream, Bindings::GCAllocatedWrappable);
+    WEB_PLATFORM_OBJECT(ReadableStream, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(ReadableStream);
 
 public:
@@ -61,20 +72,18 @@ public:
         Errored,
     };
 
-    static WebIDL::ExceptionOr<GC::Ref<ReadableStream>> create_for_constructor(JS::Object&, GC::Ptr<JS::Object> underlying_source_object, QueuingStrategy const& = {});
-    static WebIDL::ExceptionOr<GC::Ref<ReadableStream>> create(JS::Realm&, GC::Ptr<JS::Object> underlying_source_object, UnderlyingSource const&, QueuingStrategy const& = {});
+    static WebIDL::ExceptionOr<GC::Ref<ReadableStream>> construct_impl(JS::Realm&, Optional<GC::Root<JS::Object>> const& underlying_source, QueuingStrategy const& = {});
 
-    static WebIDL::ExceptionOr<GC::Ref<ReadableStream>> from(JS::Realm&, JS::Value async_iterable);
+    static WebIDL::ExceptionOr<GC::Ref<ReadableStream>> from(JS::VM& vm, JS::Value async_iterable);
 
     virtual ~ReadableStream() override;
 
     bool locked() const;
-    GC::Ref<WebIDL::Promise> cancel(Optional<JS::Value> reason);
+    GC::Ref<WebIDL::Promise> cancel(JS::Value reason);
     WebIDL::ExceptionOr<ReadableStreamReader> get_reader(ReadableStreamGetReaderOptions const& = {});
     WebIDL::ExceptionOr<GC::Ref<ReadableStream>> pipe_through(ReadableWritablePair transform, StreamPipeOptions const& = {});
     GC::Ref<WebIDL::Promise> pipe_to(WritableStream& destination, StreamPipeOptions const& = {});
-    WebIDL::ExceptionOr<GC::Ref<ReadableStreamAsyncIterator>> values(ReadableStreamIteratorOptions);
-    WebIDL::ExceptionOr<ReadableStreamPair> tee();
+    WebIDL::ExceptionOr<ReadableStreamPair> tee(GC::Ptr<JS::Realm> target_realm = {});
 
     void close();
     void error(JS::Value);
@@ -99,31 +108,24 @@ public:
     State state() const { return m_state; }
     void set_state(State value) { m_state = value; }
 
-    JS::Realm& realm() const { return *m_realm; }
-    void set_realm(JS::Realm& realm) { m_realm = realm; }
-    GC::Ptr<JS::Realm> result_realm() const { return m_result_realm; }
-    void set_result_realm(JS::Realm& realm) { m_result_realm = realm; }
-
     WebIDL::ExceptionOr<GC::Ref<ReadableStreamDefaultReader>> get_a_reader();
     WebIDL::ExceptionOr<void> pull_from_bytes(ByteBuffer);
     WebIDL::ExceptionOr<void> enqueue(JS::Value chunk);
-    void set_up_with_byte_reading_support(JS::Realm&, GC::Ptr<PullAlgorithm> = {}, GC::Ptr<CancelAlgorithm> = {}, double high_water_mark = 0);
+    void set_up_with_byte_reading_support(GC::Ptr<PullAlgorithm> = {}, GC::Ptr<CancelAlgorithm> = {}, double high_water_mark = 0);
     GC::Ref<ReadableStream> piped_through(GC::Ref<TransformStream>, bool prevent_close = false, bool prevent_abort = false, bool prevent_cancel = false, GC::Ptr<DOM::AbortSignal> signal = {});
 
-    Optional<WebIDL::ArrayBufferView> current_byob_request_view();
+    GC::Ptr<WebIDL::ArrayBufferView> current_byob_request_view();
 
     // ^Transferable
-    virtual WebIDL::ExceptionOr<void> transfer_steps(JS::Realm&, HTML::TransferDataEncoder&) override;
-    virtual WebIDL::ExceptionOr<void> transfer_receiving_steps(JS::Realm&, HTML::TransferDataDecoder&) override;
+    virtual WebIDL::ExceptionOr<void> transfer_steps(HTML::TransferDataEncoder&) override;
+    virtual WebIDL::ExceptionOr<void> transfer_receiving_steps(HTML::TransferDataDecoder&) override;
     virtual HTML::TransferType primary_interface() const override { return HTML::TransferType::ReadableStream; }
 
 private:
-    ReadableStream();
+    explicit ReadableStream(JS::Realm&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
-
-    GC::Ptr<JS::Realm> m_realm;
-    GC::Ptr<JS::Realm> m_result_realm;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     // https://streams.spec.whatwg.org/#readablestream-controller
     // A ReadableStreamDefaultController or ReadableByteStreamController created with the ability to control the state and queue of this stream

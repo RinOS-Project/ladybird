@@ -5,8 +5,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
-#include <LibWeb/Bindings/DOMRectReadOnly.h>
+#include <LibWeb/Bindings/DOMRectReadOnlyPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Geometry/DOMRectReadOnly.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
@@ -15,34 +15,44 @@ namespace Web::Geometry {
 
 GC_DEFINE_ALLOCATOR(DOMRectReadOnly);
 
-GC::Ref<DOMRectReadOnly> DOMRectReadOnly::create(double x, double y, double width, double height)
+WebIDL::ExceptionOr<GC::Ref<DOMRectReadOnly>> DOMRectReadOnly::construct_impl(JS::Realm& realm, double x, double y, double width, double height)
 {
-    return GC::Heap::the().allocate<DOMRectReadOnly>(x, y, width, height);
+    return realm.create<DOMRectReadOnly>(realm, x, y, width, height);
 }
 
-GC::Ref<DOMRectReadOnly> DOMRectReadOnly::create()
+// https://drafts.fxtf.org/geometry/#create-a-domrect-from-the-dictionary
+GC::Ref<DOMRectReadOnly> DOMRectReadOnly::from_rect(JS::VM& vm, Geometry::DOMRectInit const& other)
 {
-    return GC::Heap::the().allocate<DOMRectReadOnly>();
+    auto& realm = *vm.current_realm();
+    return realm.create<DOMRectReadOnly>(realm, other.x, other.y, other.width, other.height);
 }
 
-GC::Ref<DOMRectReadOnly> DOMRectReadOnly::dom_rect_read_only_from_rect(Bindings::DOMRectInit const& other)
+GC::Ref<DOMRectReadOnly> DOMRectReadOnly::create(JS::Realm& realm)
 {
-    return create(other.x, other.y, other.width, other.height);
+    return realm.create<DOMRectReadOnly>(realm);
 }
 
-DOMRectReadOnly::DOMRectReadOnly(double x, double y, double width, double height)
-    : m_rect(x, y, width, height)
+DOMRectReadOnly::DOMRectReadOnly(JS::Realm& realm, double x, double y, double width, double height)
+    : PlatformObject(realm)
+    , m_rect(x, y, width, height)
 {
 }
 
-DOMRectReadOnly::DOMRectReadOnly()
+DOMRectReadOnly::DOMRectReadOnly(JS::Realm& realm)
+    : PlatformObject(realm)
 {
 }
 
 DOMRectReadOnly::~DOMRectReadOnly() = default;
 
+void DOMRectReadOnly::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(DOMRectReadOnly);
+    Base::initialize(realm);
+}
+
 // https://drafts.fxtf.org/geometry/#structured-serialization
-WebIDL::ExceptionOr<void> DOMRectReadOnly::serialization_steps(HTML::StructuredSerializeWriter& serialized, bool, HTML::SerializationMemory&)
+WebIDL::ExceptionOr<void> DOMRectReadOnly::serialization_steps(HTML::TransferDataEncoder& serialized, bool, HTML::SerializationMemory&)
 {
     // 1. Set serialized.[[X]] to value’s x coordinate.
     serialized.encode(x());
@@ -60,21 +70,21 @@ WebIDL::ExceptionOr<void> DOMRectReadOnly::serialization_steps(HTML::StructuredS
 }
 
 // https://drafts.fxtf.org/geometry/#structured-serialization
-WebIDL::ExceptionOr<void> DOMRectReadOnly::deserialization_steps(JS::Realm& realm, HTML::StructuredSerializeReader& serialized, HTML::DeserializationMemory&)
+WebIDL::ExceptionOr<void> DOMRectReadOnly::deserialization_steps(HTML::TransferDataDecoder& serialized, HTML::DeserializationMemory&)
 {
     // 1. Set value’s x coordinate to serialized.[[X]].
-    auto x = TRY(HTML::decode_or_throw_data_clone_error<double>(realm, serialized));
+    auto x = serialized.decode<double>();
 
     // 2. Set value’s y coordinate to serialized.[[Y]].
-    auto y = TRY(HTML::decode_or_throw_data_clone_error<double>(realm, serialized));
+    auto y = serialized.decode<double>();
 
     // 3. Set value’s width to serialized.[[Width]].
-    auto width = TRY(HTML::decode_or_throw_data_clone_error<double>(realm, serialized));
+    auto width = serialized.decode<double>();
 
     // 4. Set value’s height to serialized.[[Height]].
-    auto height = TRY(HTML::decode_or_throw_data_clone_error<double>(realm, serialized));
+    auto height = serialized.decode<double>();
 
-    m_rect = Gfx::DoubleRect { x, y, width, height };
+    m_rect = { x, y, width, height };
     return {};
 }
 

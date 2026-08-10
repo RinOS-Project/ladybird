@@ -1,3 +1,8 @@
+#import <DOM/Node.idl>
+#import <DOM/AbstractRange.idl>
+#import <Geometry/DOMRect.idl>
+#import <TrustedTypes/TrustedHTML.idl>
+
 // https://dom.spec.whatwg.org/#interface-range
 [Exposed=Window]
 interface Range : AbstractRange {

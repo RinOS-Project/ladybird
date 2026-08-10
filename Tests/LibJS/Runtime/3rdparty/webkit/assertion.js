@@ -5,10 +5,6 @@ test("assertion", () => {
         // No-op, just used for test documentation in WebKit.
     }
 
-    function debug(msg) {
-        // No-op, just used for debugging in WebKit tests.
-    }
-
     function shouldBe(actual_code, expected_code) {
         let actual = eval(actual_code);
         let expected = eval(expected_code);

@@ -8,16 +8,14 @@
 
 #pragma once
 
-#include <AK/StringView.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/SVG/SVGElement.h>
-#include <LibWeb/WebIDL/Types.h>
 
 namespace Web::SVG {
 
 // https://svgwg.org/svg2-draft/types.html#InterfaceSVGAnimatedInteger
-class SVGAnimatedInteger final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(SVGAnimatedInteger, Bindings::GCAllocatedWrappable);
+class SVGAnimatedInteger final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(SVGAnimatedInteger, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(SVGAnimatedInteger);
 
 public:
@@ -31,6 +29,7 @@ public:
     };
 
     [[nodiscard]] static GC::Ref<SVGAnimatedInteger> create(
+        JS::Realm&,
         GC::Ref<SVGElement>,
         DOM::QualifiedName reflected_attribute,
         WebIDL::Long initial_value,
@@ -44,11 +43,12 @@ public:
     WebIDL::Long anim_val() const;
 
 private:
-    SVGAnimatedInteger(GC::Ref<SVGElement>, DOM::QualifiedName, WebIDL::Long, SupportsSecondValue, ValueRepresented);
+    SVGAnimatedInteger(JS::Realm&, GC::Ref<SVGElement>, DOM::QualifiedName, WebIDL::Long, SupportsSecondValue, ValueRepresented);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
-    WebIDL::Long parse_value_or_initial(Utf16View) const;
+    WebIDL::Long parse_value_or_initial(StringView) const;
     WebIDL::Long get_base_or_anim_value() const;
 
     GC::Ref<SVGElement> m_element;

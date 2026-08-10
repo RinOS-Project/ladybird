@@ -8,7 +8,6 @@
 
 #include <AK/StringView.h>
 #include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
 #include <LibJS/Export.h>
 
 #define JS_ENUMERATE_ERROR_TYPES(M)                                                                                                 \
@@ -138,7 +137,6 @@
     M(OutOfMemory, "Out of memory")                                                                                                 \
     M(OverloadResolutionFailed, "Overload resolution failed")                                                                       \
     M(PrivateFieldAlreadyDeclared, "Private field '{}' has already been declared")                                                  \
-    M(PrivateFieldNotDeclared, "Reference to undeclared private field or method '{}'")                                              \
     M(PrivateFieldDoesNotExistOnObject, "Private field '{}' does not exist on object")                                              \
     M(PrivateFieldGetAccessorWithoutGetter, "Cannot get private field '{}' as accessor without getter")                             \
     M(PrivateFieldSetAccessorWithoutSetter, "Cannot set private field '{}' as accessor without setter")                             \
@@ -239,13 +237,14 @@
     M(RestrictedGlobalProperty, "Cannot declare global property '{}'")                                                              \
     M(SetLegacyRegExpStaticPropertyThisValueMismatch,                                                                               \
         "Legacy RegExp static property setter must be called with the RegExp constructor for the this value")                       \
+    M(ShadowRealmEvaluateAbruptCompletion, "The evaluated script did not complete normally")                                        \
+    M(ShadowRealmWrappedValueNonFunctionObject, "Wrapped value must be primitive or a function object, got {}")                     \
     M(SharedArrayBuffer, "The array buffer object cannot be a SharedArrayBuffer")                                                   \
     M(SpeciesConstructorDidNotCreate, "Species constructor did not create {}")                                                      \
     M(SpeciesConstructorReturned, "Species constructor returned {}")                                                                \
     M(StringNonGlobalRegExp, "RegExp argument is non-global")                                                                       \
     M(StringRepeatCountMustBe, "repeat count must be a {} number")                                                                  \
     M(StringRepeatCountMustNotOverflow, "repeat count must not overflow")                                                           \
-    M(StringSizeMustNotOverflow, "string size must not overflow")                                                                   \
     M(TemporalDifferentCalendars, "Cannot compare dates from two different calendars")                                              \
     M(TemporalDifferentTimeZones, "Cannot compare dates from two different time zones")                                             \
     M(TemporalDisambiguatePossibleEpochNSRejectMoreThanOne, "Cannot disambiguate two or more possible epoch nanoseconds")           \
@@ -289,7 +288,6 @@
     M(ToObjectNullOrUndefinedWithProperty, "Cannot access property \"{}\" on {} object")                                            \
     M(ToObjectNullOrUndefinedWithPropertyAndName, "Cannot access property \"{}\" on {} object \"{}\"")                              \
     M(TopLevelVariableAlreadyDeclared, "Redeclaration of top level variable '{}'")                                                  \
-    M(EvalVarHoistingConflict, "Cannot declare var '{}': there is already a lexical declaration with that name in scope")           \
     M(ToPrimitiveReturnedObject, "Can't convert {} to primitive with hint \"{}\", its @@toPrimitive method returned an object")     \
     M(TypedArrayContentTypeMismatch, "Can't create {} from {}")                                                                     \
     M(TypedArrayInvalidBufferLength, "Invalid buffer length for {}: must be a multiple of {}, got {}")                              \
@@ -316,22 +314,21 @@ namespace JS {
 class JS_API ErrorType {
 public:
 #define __ENUMERATE_JS_ERROR(name, message) \
-    static ErrorType const& name;
+    static const ErrorType name;
     JS_ENUMERATE_ERROR_TYPES(__ENUMERATE_JS_ERROR)
 #undef __ENUMERATE_JS_ERROR
 
     StringView format() const { return m_format; }
-    Utf16View message() const { return m_message; }
+    Utf16String const& message() const;
 
 private:
-    explicit ErrorType(StringView format, Utf16View message)
+    explicit ErrorType(StringView format)
         : m_format(format)
-        , m_message(message)
     {
     }
 
     StringView m_format;
-    Utf16View m_message;
+    mutable Utf16String m_message;
 };
 
 }

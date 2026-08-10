@@ -5,10 +5,9 @@
  */
 
 #include <AK/Debug.h>
-#include <AK/ScopeGuard.h>
 #include <LibCore/Directory.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/File.h>
+#include <LibCore/StandardPaths.h>
 #include <LibCore/System.h>
 #include <LibFileSystem/FileSystem.h>
 #include <LibHTTP/Cache/CacheRequest.h>
@@ -20,59 +19,33 @@ namespace HTTP {
 
 static constexpr auto INDEX_DATABASE = "INDEX"sv;
 
-static ErrorOr<u64> compute_associated_data_size(LexicalPath const& cache_directory, u64 cache_key, u64 vary_key)
-{
-    u64 associated_data_size = 0;
-    for (auto associated_data : CACHE_ENTRY_ASSOCIATED_DATA_TYPES) {
-        auto path = path_for_cache_entry_associated_data(cache_directory, cache_key, vary_key, associated_data);
-        auto size = FileSystem::size_from_stat(path.string());
-        if (size.is_error()) {
-            if (size.error().is_errno() && size.error().code() == ENOENT)
-                continue;
-            return size.release_error();
-        }
-
-        if (size.value() < 0)
-            return Error::from_errno(EINVAL);
-        associated_data_size += static_cast<u64>(size.value());
-    }
-    return associated_data_size;
-}
-
 static constexpr StringView cache_directory_for_mode(DiskCache::Mode mode)
 {
     switch (mode) {
     case DiskCache::Mode::Normal:
         return "Cache"sv;
+    case DiskCache::Mode::Partitioned:
+        // FIXME: Ideally, we could support multiple RequestServer processes using the same database by setting a
+        //        reasonable busy timeout. We would also have to prevent multiple processes writing to the same cache
+        //        entry file at the same time with some interprocess locking mechanism.
+        return "PartitionedCache"sv;
     case DiskCache::Mode::Testing:
         return "TestCache"sv;
     }
     VERIFY_NOT_REACHED();
 }
 
-ErrorOr<Optional<DiskCache>> DiskCache::create(Mode mode, LexicalPath const& cache_root)
+ErrorOr<DiskCache> DiskCache::create(Mode mode)
 {
-    auto cache_directory = cache_root.append(cache_directory_for_mode(mode));
-
-    // Start with a clean slate in test mode. The index is in-memory, but the cache files themselves are leftover.
-    if (mode == Mode::Testing)
-        (void)FileSystem::remove(cache_directory.string(), FileSystem::RecursionMode::Allowed);
-
+    auto cache_directory = LexicalPath::join(Core::StandardPaths::cache_directory(), "Ladybird"sv, cache_directory_for_mode(mode));
     TRY(Core::Directory::create(cache_directory, Core::Directory::CreateDirectories::Yes));
 
     auto database = mode == DiskCache::Mode::Normal
         ? TRY(Database::Database::create(cache_directory.string(), INDEX_DATABASE))
         : TRY(Database::Database::create_memory_backed());
 
-    if (TRY(CacheIndex::migrate_schema(*database)) == Database::MigrationOutcome::DatabaseTooNew) {
-        // Entry file names are derived from the cache key, so writing into the existing cache directory without its
-        // index would corrupt entries the newer build's index refers to. (A fresh memory-backed database always
-        // migrates, so this is necessarily Mode::Normal.)
-        dbgln("Disk cache index was created by a newer Ladybird version; disabling disk cache for this session");
-        return OptionalNone {};
-    }
-
     auto index = TRY(CacheIndex::create(database, cache_directory));
+
     return DiskCache { mode, move(database), move(cache_directory), move(index) };
 }
 
@@ -82,12 +55,19 @@ DiskCache::DiskCache(Mode mode, NonnullRefPtr<Database::Database> database, Lexi
     , m_cache_directory(move(cache_directory))
     , m_index(move(index))
 {
+    if (m_mode == Mode::Partitioned)
+        m_partitioned_cache_key = String::number(Core::System::getpid());
 }
 
 DiskCache::DiskCache(DiskCache&&) = default;
 DiskCache& DiskCache::operator=(DiskCache&&) = default;
 
-DiskCache::~DiskCache() = default;
+DiskCache::~DiskCache()
+{
+    // Clean up cache directories in testing modes to prevent endless growth of disk usage.
+    if (m_mode != Mode::Normal)
+        remove_entries_accessed_since(UnixDateTime::earliest());
+}
 
 Variant<Optional<CacheEntryWriter&>, DiskCache::CacheHasOpenEntry> DiskCache::create_entry(CacheRequest& request, URL::URL const& url, StringView method, HeaderList const& request_headers, UnixDateTime request_start_time)
 {
@@ -100,7 +80,7 @@ Variant<Optional<CacheEntryWriter&>, DiskCache::CacheHasOpenEntry> DiskCache::cr
     }
 
     auto serialized_url = serialize_url_for_cache_storage(url);
-    auto cache_key = create_cache_key(serialized_url, method);
+    auto cache_key = create_cache_key(serialized_url, method, m_partitioned_cache_key);
 
     if (check_if_cache_has_open_entry(request, cache_key, url, CheckReaderEntries::Yes))
         return CacheHasOpenEntry {};
@@ -130,7 +110,7 @@ Variant<Optional<CacheEntryReader&>, DiskCache::CacheHasOpenEntry> DiskCache::op
         return Optional<CacheEntryReader&> {};
 
     auto serialized_url = serialize_url_for_cache_storage(url);
-    auto cache_key = create_cache_key(serialized_url, method);
+    auto cache_key = create_cache_key(serialized_url, method, m_partitioned_cache_key);
 
     if (check_if_cache_has_open_entry(request, cache_key, url, open_mode == OpenMode::Read ? CheckReaderEntries::No : CheckReaderEntries::Yes))
         return CacheHasOpenEntry {};
@@ -220,124 +200,6 @@ Variant<Optional<CacheEntryReader&>, DiskCache::CacheHasOpenEntry> DiskCache::op
     m_open_cache_entries.ensure(cache_key).append({ cache_entry.release_value(), request });
 
     return Optional<CacheEntryReader&> { *cache_entry_pointer };
-}
-
-ErrorOr<bool> DiskCache::create_synthetic_entry(URL::URL const& url, StringView method)
-{
-    auto request_headers = HeaderList::create();
-    if (!is_cacheable(method, *request_headers))
-        return false;
-
-    auto serialized_url = serialize_url_for_cache_storage(url);
-    auto cache_key = create_cache_key(serialized_url, method);
-    constexpr u64 synthetic_vary_key = 0;
-
-    if (m_index.has_entry(cache_key, synthetic_vary_key))
-        return true;
-
-    auto response_headers = HeaderList::create();
-    auto now = UnixDateTime::now();
-    TRY(m_index.create_entry(cache_key, synthetic_vary_key, serialized_url, request_headers, response_headers, 0, now, now));
-    return true;
-}
-
-ErrorOr<bool> DiskCache::store_associated_data(URL::URL const& url, StringView method, HeaderList const& request_headers, Optional<u64> vary_key, CacheEntryAssociatedData associated_data, ReadonlyBytes data)
-{
-    if (!is_cacheable(method, request_headers))
-        return false;
-
-    auto serialized_url = serialize_url_for_cache_storage(url);
-    auto cache_key = create_cache_key(serialized_url, method);
-    if (!vary_key.has_value()) {
-        auto index_entry = m_index.find_entry(cache_key, request_headers);
-        if (!index_entry.has_value())
-            return false;
-        vary_key = index_entry->vary_key;
-    }
-
-    if (!m_index.has_entry(cache_key, *vary_key))
-        return false;
-
-    auto path = path_for_cache_entry_associated_data(m_cache_directory, cache_key, *vary_key, associated_data);
-    auto temporary_path = LexicalPath::join(m_cache_directory.string(), ByteString::formatted("{}.tmp", path.basename()));
-    ArmedScopeGuard remove_temporary_file = [&]() {
-        (void)FileSystem::remove(temporary_path.string(), FileSystem::RecursionMode::Disallowed);
-    };
-
-    {
-        auto file = TRY(Core::File::open(temporary_path.string(), Core::File::OpenMode::Write));
-        TRY(file->write_until_depleted(data));
-    }
-
-    TRY(FileSystem::move_file(path.string(), temporary_path.string()));
-    remove_temporary_file.disarm();
-    m_index.update_associated_data_size(cache_key, *vary_key, TRY(compute_associated_data_size(m_cache_directory, cache_key, *vary_key)));
-    remove_entries_exceeding_cache_limit();
-    return m_index.has_entry(cache_key, *vary_key);
-}
-
-ErrorOr<Optional<ByteBuffer>> DiskCache::retrieve_associated_data(URL::URL const& url, StringView method, HeaderList const& request_headers, Optional<u64> vary_key, CacheEntryAssociatedData associated_data)
-{
-    if (!is_cacheable(method, request_headers))
-        return Optional<ByteBuffer> {};
-
-    auto serialized_url = serialize_url_for_cache_storage(url);
-    auto cache_key = create_cache_key(serialized_url, method);
-    if (!vary_key.has_value()) {
-        auto index_entry = m_index.find_entry(cache_key, request_headers);
-        if (!index_entry.has_value())
-            return Optional<ByteBuffer> {};
-        vary_key = index_entry->vary_key;
-    }
-
-    if (!m_index.has_entry(cache_key, *vary_key))
-        return Optional<ByteBuffer> {};
-
-    auto path = path_for_cache_entry_associated_data(m_cache_directory, cache_key, *vary_key, associated_data);
-    auto file = Core::File::open(path.string(), Core::File::OpenMode::Read);
-    if (file.is_error()) {
-        if (file.error().is_errno() && file.error().code() == ENOENT)
-            return Optional<ByteBuffer> {};
-        return file.release_error();
-    }
-
-    return TRY(file.value()->read_until_eof());
-}
-
-ErrorOr<Optional<CacheEntryBodyFile>> DiskCache::retrieve_associated_data_file(URL::URL const& url, StringView method, HeaderList const& request_headers, Optional<u64> vary_key, CacheEntryAssociatedData associated_data)
-{
-    if (!is_cacheable(method, request_headers))
-        return Optional<CacheEntryBodyFile> {};
-
-    auto serialized_url = serialize_url_for_cache_storage(url);
-    auto cache_key = create_cache_key(serialized_url, method);
-    if (!vary_key.has_value()) {
-        auto index_entry = m_index.find_entry(cache_key, request_headers);
-        if (!index_entry.has_value())
-            return Optional<CacheEntryBodyFile> {};
-        vary_key = index_entry->vary_key;
-    }
-
-    if (!m_index.has_entry(cache_key, *vary_key))
-        return Optional<CacheEntryBodyFile> {};
-
-    auto path = path_for_cache_entry_associated_data(m_cache_directory, cache_key, *vary_key, associated_data);
-    auto file = Core::File::open(path.string(), Core::File::OpenMode::Read);
-    if (file.is_error()) {
-        if (file.error().is_errno() && file.error().code() == ENOENT)
-            return Optional<CacheEntryBodyFile> {};
-        return file.release_error();
-    }
-
-    auto size = TRY(file.value()->size());
-    if (!AK::is_within_range<u64>(size))
-        return Error::from_errno(EOVERFLOW);
-
-    return CacheEntryBodyFile {
-        .fd = file.value()->leak_fd(),
-        .offset = 0,
-        .size = static_cast<u64>(size),
-    };
 }
 
 bool DiskCache::check_if_cache_has_open_entry(CacheRequest& request, u64 cache_key, URL::URL const& url, CheckReaderEntries check_reader_entries)
@@ -432,8 +294,6 @@ void DiskCache::delete_entry(u64 cache_key, u64 vary_key)
 
     auto cache_path = path_for_cache_entry(m_cache_directory, cache_key, vary_key);
     (void)FileSystem::remove(cache_path.string(), FileSystem::RecursionMode::Disallowed);
-    for (auto associated_data : CACHE_ENTRY_ASSOCIATED_DATA_TYPES)
-        (void)FileSystem::remove(path_for_cache_entry_associated_data(m_cache_directory, cache_key, vary_key, associated_data).string(), FileSystem::RecursionMode::Disallowed);
 }
 
 }

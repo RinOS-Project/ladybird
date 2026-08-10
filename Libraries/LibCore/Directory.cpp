@@ -8,10 +8,6 @@
 #include <AK/StringBuilder.h>
 #include <LibCore/System.h>
 
-#ifdef AK_OS_WINDOWS
-#    include <AK/Windows.h>
-#endif
-
 namespace Core {
 
 // We assume that the fd is a valid directory.
@@ -46,7 +42,7 @@ ErrorOr<void> Directory::chown(uid_t uid, gid_t gid)
 
 ErrorOr<bool> Directory::is_valid_directory(int fd)
 {
-    auto stat = TRY(File::fstat(fd));
+    auto stat = TRY(System::fstat(fd));
     return stat.st_mode & S_IFDIR;
 }
 
@@ -67,12 +63,13 @@ ErrorOr<Directory> Directory::create(LexicalPath path, CreateDirectories create_
 {
     if (create_directories == CreateDirectories::Yes)
         TRY(ensure_directory(path, creation_mode));
-    // Validate before leaking the fd out of the File, so that failure (e.g. ENOTDIR
-    // for an existing regular file) doesn't leak it.
-    auto file = TRY(File::open(path.string(), File::OpenMode::Read));
-    if (!TRY(is_valid_directory(file->fd())))
-        return Error::from_errno(ENOTDIR);
-    return Directory { file->leak_fd(), move(path) };
+    // FIXME: doesn't work on Linux probably
+#ifdef AK_OS_RINOS
+    auto fd = TRY(System::open(path.string(), O_DIRECTORY | O_CLOEXEC));
+#else
+    auto fd = TRY(System::open(path.string(), O_CLOEXEC));
+#endif
+    return adopt_fd(fd, move(path));
 }
 
 ErrorOr<void> Directory::ensure_directory(LexicalPath const& path, mode_t creation_mode)
@@ -82,49 +79,40 @@ ErrorOr<void> Directory::ensure_directory(LexicalPath const& path, mode_t creati
 
     TRY(ensure_directory(path.parent(), creation_mode));
 
-    // We don't care if the directory already exists.
-#ifdef AK_OS_WINDOWS
-    // NOTE: Windows directories have no POSIX permission bits; creation_mode is ignored.
-    auto wide_path = TRY(to_wide_string(path.string()));
-    if (!CreateDirectoryW(wide_path.data(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
-        return Error::from_windows_error();
-#else
     auto return_value = System::mkdir(path.string(), creation_mode);
+    // We don't care if the directory already exists.
     if (return_value.is_error() && return_value.error().code() != EEXIST)
         return return_value;
-#endif
+
     return {};
 }
 
-#ifdef AK_OS_WINDOWS
 ErrorOr<NonnullOwnPtr<File>> Directory::open(StringView filename, File::OpenMode mode) const
 {
-    // Windows has no fd-relative file APIs, so open by joined path instead.
-    return File::open(LexicalPath::join(m_path.string(), filename).string(), mode);
-}
-
-ErrorOr<struct stat> Directory::stat(StringView filename) const
-{
-    return File::stat(LexicalPath::join(m_path.string(), filename).string());
-}
-#else
-ErrorOr<NonnullOwnPtr<File>> Directory::open(StringView filename, File::OpenMode mode) const
-{
-    // NOTE: openat()'s creation mode defaulted to 0, which made files created through
-    //       Directory::open() unreadable and unwritable; use the same default as File::open().
-    auto fd = TRY(System::openat(m_directory_fd, filename, File::open_mode_to_options(mode), 0644));
+    auto fd = TRY(System::openat(m_directory_fd, filename, File::open_mode_to_options(mode)));
     return File::adopt_fd(fd, mode);
 }
 
-ErrorOr<struct stat> Directory::stat(StringView filename) const
+ErrorOr<struct stat> Directory::stat(StringView filename, int flags) const
 {
-    return System::fstatat(m_directory_fd, filename, 0);
-}
+#ifdef AK_OS_RINOS
+    StringBuilder builder;
+    TRY(builder.try_append(m_path.string()));
+    if (!m_path.string().ends_with('/'))
+        TRY(builder.try_append('/'));
+    TRY(builder.try_append(filename));
+    auto full_path = builder.to_byte_string();
+    if (flags & AT_SYMLINK_NOFOLLOW)
+        return System::lstat(full_path);
+    return System::stat(full_path);
+#else
+    return System::fstatat(m_directory_fd, filename, flags);
 #endif
+}
 
 ErrorOr<struct stat> Directory::stat() const
 {
-    return File::fstat(m_directory_fd);
+    return System::fstat(m_directory_fd);
 }
 
 ErrorOr<void> Directory::for_each_entry(DirIterator::Flags flags, Core::Directory::ForEachEntryCallback callback)

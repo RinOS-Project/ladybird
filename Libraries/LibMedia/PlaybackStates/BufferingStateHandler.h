@@ -25,12 +25,15 @@ public:
     {
         return PlaybackState::Buffering;
     }
-    virtual AvailableData available_data() override
+
+    virtual void enter_buffering() override
     {
-        return AvailableData::Current;
     }
 
-    virtual void on_pipeline_status_changed(PipelineStatus) override;
+    virtual void exit_buffering() override
+    {
+        resume();
+    }
 };
 
 }

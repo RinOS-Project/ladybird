@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
+#include <AK/FlyString.h>
 #include <LibWeb/Export.h>
 
 namespace Web::HTML::EventNames {
@@ -22,7 +22,6 @@ namespace Web::HTML::EventNames {
     __ENUMERATE_HTML_EVENT(audioend)                 \
     __ENUMERATE_HTML_EVENT(audioprocess)             \
     __ENUMERATE_HTML_EVENT(audiostart)               \
-    __ENUMERATE_HTML_EVENT(begin)                    \
     __ENUMERATE_HTML_EVENT(beforeinput)              \
     __ENUMERATE_HTML_EVENT(beforematch)              \
     __ENUMERATE_HTML_EVENT(beforeprint)              \
@@ -48,7 +47,6 @@ namespace Web::HTML::EventNames {
     __ENUMERATE_HTML_EVENT(cuechange)                \
     __ENUMERATE_HTML_EVENT(currententrychange)       \
     __ENUMERATE_HTML_EVENT(cut)                      \
-    __ENUMERATE_HTML_EVENT(devicechange)             \
     __ENUMERATE_HTML_EVENT(disconnect)               \
     __ENUMERATE_HTML_EVENT(dispose)                  \
     __ENUMERATE_HTML_EVENT(DOMContentLoaded)         \
@@ -111,7 +109,6 @@ namespace Web::HTML::EventNames {
     __ENUMERATE_HTML_EVENT(rejectionhandled)         \
     __ENUMERATE_HTML_EVENT(remove)                   \
     __ENUMERATE_HTML_EVENT(removetrack)              \
-    __ENUMERATE_HTML_EVENT(repeat)                   \
     __ENUMERATE_HTML_EVENT(reset)                    \
     __ENUMERATE_HTML_EVENT(resize)                   \
     __ENUMERATE_HTML_EVENT(result)                   \
@@ -154,7 +151,7 @@ namespace Web::HTML::EventNames {
     __ENUMERATE_HTML_EVENT(webkitAnimationStart)     \
     __ENUMERATE_HTML_EVENT(webkitTransitionEnd)
 
-#define __ENUMERATE_HTML_EVENT(name) extern WEB_API Utf16FlyString const& name;
+#define __ENUMERATE_HTML_EVENT(name) extern WEB_API FlyString name;
 ENUMERATE_HTML_EVENTS
 #undef __ENUMERATE_HTML_EVENT
 

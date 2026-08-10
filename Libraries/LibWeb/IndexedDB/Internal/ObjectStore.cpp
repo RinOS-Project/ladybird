@@ -6,11 +6,9 @@
 
 #include <AK/BinarySearch.h>
 #include <AK/Math.h>
-#include <LibGC/Heap.h>
 #include <LibWeb/IndexedDB/IDBKeyRange.h>
 #include <LibWeb/IndexedDB/Internal/MutationLog.h>
 #include <LibWeb/IndexedDB/Internal/ObjectStore.h>
-#include <LibWeb/IndexedDB/Internal/RecordRange.h>
 
 namespace Web::IndexedDB {
 
@@ -18,9 +16,9 @@ GC_DEFINE_ALLOCATOR(ObjectStore);
 
 ObjectStore::~ObjectStore() = default;
 
-GC::Ref<ObjectStore> ObjectStore::create(GC::Ref<Database> database, Utf16String name, bool auto_increment, Optional<KeyPath> const& key_path)
+GC::Ref<ObjectStore> ObjectStore::create(JS::Realm& realm, GC::Ref<Database> database, String name, bool auto_increment, Optional<KeyPath> const& key_path)
 {
-    return GC::Heap::the().allocate<ObjectStore>(database, move(name), auto_increment, key_path);
+    return realm.create<ObjectStore>(database, name, auto_increment, key_path);
 }
 
 size_t ObjectStore::mutation_log_position() const
@@ -36,7 +34,7 @@ void ObjectStore::revert_mutations_from(size_t position)
         m_mutation_log->revert_from(*this, position);
 }
 
-ObjectStore::ObjectStore(GC::Ref<Database> database, Utf16String name, bool auto_increment, Optional<KeyPath> const& key_path)
+ObjectStore::ObjectStore(GC::Ref<Database> database, String name, bool auto_increment, Optional<KeyPath> const& key_path)
     : m_database(database)
     , m_name(move(name))
     , m_key_path(key_path)
@@ -65,28 +63,57 @@ void ObjectStore::remove_records_in_range(GC::Ref<IDBKeyRange> range)
         return;
 
     // Since records are sorted by key, records in range form a contiguous block.
-    auto record_range = record_range_for_key_range(m_records, range);
+    // Binary search for the first record in range.
+    size_t lo = 0;
+    size_t hi = m_records.size();
 
-    if (record_range.start < record_range.end) {
+    auto lower = range->lower_key();
+    if (lower) {
+        // Find the first record with key >= lower (or > lower if lower_open).
+        size_t l = 0, h = m_records.size();
+        while (l < h) {
+            size_t mid = l + (h - l) / 2;
+            auto cmp = Key::compare_two_keys(m_records[mid].key, *lower);
+            if (cmp < 0 || (cmp == 0 && range->lower_open()))
+                l = mid + 1;
+            else
+                h = mid;
+        }
+        lo = l;
+    }
+
+    auto upper = range->upper_key();
+    if (upper) {
+        // Find the first record with key > upper (or >= upper if upper_open).
+        size_t l = lo, h = m_records.size();
+        while (l < h) {
+            size_t mid = l + (h - l) / 2;
+            auto cmp = Key::compare_two_keys(m_records[mid].key, *upper);
+            if (cmp < 0 || (cmp == 0 && !range->upper_open()))
+                l = mid + 1;
+            else
+                h = mid;
+        }
+        hi = l;
+    }
+
+    if (lo < hi) {
         if (m_mutation_log) {
             Vector<ObjectStoreRecord> deleted;
-            deleted.ensure_capacity(record_range.end - record_range.start);
-            for (size_t i = record_range.start; i < record_range.end; ++i)
+            deleted.ensure_capacity(hi - lo);
+            for (size_t i = lo; i < hi; ++i)
                 deleted.append(move(m_records[i]));
             m_mutation_log->note_records_deleted(move(deleted));
         }
-        m_records.remove(record_range.start, record_range.end - record_range.start);
+        m_records.remove(lo, hi - lo);
     }
 }
 
 void ObjectStore::remove_record_with_key(GC::Ref<Key> key)
 {
-    size_t index = 0;
-    auto* record = AK::binary_search(m_records, key, &index, [](auto const& needle, auto const& record) {
-        return Key::compare_two_keys(needle, record.key);
+    m_records.remove_first_matching([&](auto const& record) {
+        return Key::equals(record.key, key);
     });
-    if (record)
-        m_records.remove(index);
 }
 
 bool ObjectStore::has_record_with_key(GC::Ref<Key> key)
@@ -102,26 +129,34 @@ void ObjectStore::store_a_record(ObjectStoreRecord record)
         m_mutation_log->note_record_stored(record.key);
 
     // NOTE: The record is stored in the object store’s list of records such that the list is sorted according to the key of the records in ascending order.
-    if (m_records.is_empty() || Key::compare_two_keys(m_records.last().key, record.key) <= 0) {
-        m_records.append(move(record));
-        return;
+    //       We use binary search to find the correct insertion position.
+    size_t lo = 0;
+    size_t hi = m_records.size();
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (Key::compare_two_keys(m_records[mid].key, record.key) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
     }
-
-    m_records.insert(first_record_index_with_key_at_or_after(m_records, record.key, false), move(record));
+    m_records.insert(lo, move(record));
 }
 
 u64 ObjectStore::count_records_in_range(GC::Ref<IDBKeyRange> range)
 {
-    auto record_range = record_range_for_key_range(m_records, range);
-    return record_range.end - record_range.start;
+    u64 count = 0;
+    for (auto const& record : m_records) {
+        if (range->is_in_range(record.key))
+            ++count;
+    }
+    return count;
 }
 
 Optional<ObjectStoreRecord&> ObjectStore::first_in_range(GC::Ref<IDBKeyRange> range)
 {
-    auto record_range = record_range_for_key_range(m_records, range);
-    if (record_range.start == record_range.end)
-        return {};
-    return m_records[record_range.start];
+    return m_records.first_matching([&](auto const& record) {
+        return range->is_in_range(record.key);
+    });
 }
 
 void ObjectStore::clear_records()
@@ -182,10 +217,10 @@ void ObjectStore::possibly_update_the_key_generator(GC::Ref<Key> key)
 
 GC::ConservativeVector<ObjectStoreRecord> ObjectStore::first_n_in_range(GC::Ref<IDBKeyRange> range, Optional<WebIDL::UnsignedLong> count)
 {
-    GC::ConservativeVector<ObjectStoreRecord> records;
-    auto record_range = record_range_for_key_range(m_records, range);
-    for (size_t i = record_range.start; i < record_range.end; ++i) {
-        records.append(m_records[i]);
+    GC::ConservativeVector<ObjectStoreRecord> records(range->heap());
+    for (auto const& record : m_records) {
+        if (range->is_in_range(record.key))
+            records.append(record);
 
         if (count.has_value() && records.size() >= *count)
             break;
@@ -196,11 +231,10 @@ GC::ConservativeVector<ObjectStoreRecord> ObjectStore::first_n_in_range(GC::Ref<
 
 GC::ConservativeVector<ObjectStoreRecord> ObjectStore::last_n_in_range(GC::Ref<IDBKeyRange> range, Optional<WebIDL::UnsignedLong> count)
 {
-    GC::ConservativeVector<ObjectStoreRecord> records;
-    auto record_range = record_range_for_key_range(m_records, range);
-    for (size_t i = record_range.end; i > record_range.start;) {
-        --i;
-        records.append(m_records[i]);
+    GC::ConservativeVector<ObjectStoreRecord> records(range->heap());
+    for (auto const& record : m_records.in_reverse()) {
+        if (range->is_in_range(record.key))
+            records.append(record);
 
         if (count.has_value() && records.size() >= *count)
             break;

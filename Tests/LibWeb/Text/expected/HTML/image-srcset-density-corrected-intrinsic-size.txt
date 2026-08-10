@@ -1,3 +1,0 @@
-currentSrc: 120.png?density=2
-natural size: 60x60
-layout size: 60x60

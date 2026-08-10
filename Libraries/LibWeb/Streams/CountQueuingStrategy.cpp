@@ -5,8 +5,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
+#include <LibWeb/Bindings/CountQueuingStrategyPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/UniversalGlobalScope.h>
 #include <LibWeb/Streams/CountQueuingStrategy.h>
 
@@ -15,31 +15,34 @@ namespace Web::Streams {
 GC_DEFINE_ALLOCATOR(CountQueuingStrategy);
 
 // https://streams.spec.whatwg.org/#blqs-constructor
-GC::Ref<CountQueuingStrategy> CountQueuingStrategy::create(double high_water_mark)
+GC::Ref<CountQueuingStrategy> CountQueuingStrategy::construct_impl(JS::Realm& realm, QueuingStrategyInit const& init)
 {
     // The new CountQueuingStrategy(init) constructor steps are:
     // 1. Set this.[[highWaterMark]] to init["highWaterMark"].
-    return GC::Heap::the().allocate<CountQueuingStrategy>(high_water_mark);
+    return realm.create<CountQueuingStrategy>(realm, init.high_water_mark);
 }
 
-GC::Ref<CountQueuingStrategy> CountQueuingStrategy::create_for_constructor(Bindings::QueuingStrategyInit const& init)
-{
-    return create(init.high_water_mark);
-}
-
-CountQueuingStrategy::CountQueuingStrategy(double high_water_mark)
-    : m_high_water_mark(high_water_mark)
+CountQueuingStrategy::CountQueuingStrategy(JS::Realm& realm, double high_water_mark)
+    : PlatformObject(realm)
+    , m_high_water_mark(high_water_mark)
 {
 }
 
 CountQueuingStrategy::~CountQueuingStrategy() = default;
 
 // https://streams.spec.whatwg.org/#cqs-size
-GC::Ref<WebIDL::CallbackType> CountQueuingStrategy::size(JS::Object& relevant_global_object)
+GC::Ref<WebIDL::CallbackType> CountQueuingStrategy::size()
 {
     // 1. Return this's relevant global object's count queuing strategy size function.
-    auto& global = HTML::relevant_settings_object(relevant_global_object).universal_global_scope();
-    return global.count_queuing_strategy_size_function();
+    auto* global = HTML::universal_global_scope_mixin_from(HTML::relevant_global_object(*this));
+    VERIFY(global);
+    return global->count_queuing_strategy_size_function();
+}
+
+void CountQueuingStrategy::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CountQueuingStrategy);
+    Base::initialize(realm);
 }
 
 }

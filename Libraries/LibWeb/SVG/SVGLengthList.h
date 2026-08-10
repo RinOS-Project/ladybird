@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/SVG/SVGLength.h>
 #include <LibWeb/SVG/SVGList.h>
 
@@ -14,20 +13,21 @@ namespace Web::SVG {
 
 // https://svgwg.org/svg2-draft/types.html#InterfaceSVGLengthList
 class SVGLengthList final
-    : public Bindings::GCAllocatedWrappable
+    : public Bindings::PlatformObject
     , public SVGList<GC::Ref<SVGLength>> {
-    WEB_WRAPPABLE(SVGLengthList, Bindings::GCAllocatedWrappable);
+    WEB_PLATFORM_OBJECT(SVGLengthList, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(SVGLengthList);
 
 public:
-    [[nodiscard]] static GC::Ref<SVGLengthList> create(Vector<GC::Ref<SVGLength>>, ReadOnlyList);
-    [[nodiscard]] static GC::Ref<SVGLengthList> create(ReadOnlyList);
+    [[nodiscard]] static GC::Ref<SVGLengthList> create(JS::Realm& realm, Vector<GC::Ref<SVGLength>>, ReadOnlyList);
+    [[nodiscard]] static GC::Ref<SVGLengthList> create(JS::Realm& realm, ReadOnlyList);
     virtual ~SVGLengthList() override = default;
 
 private:
-    SVGLengthList(Vector<GC::Ref<SVGLength>>, ReadOnlyList);
-    explicit SVGLengthList(ReadOnlyList);
+    SVGLengthList(JS::Realm&, Vector<GC::Ref<SVGLength>>, ReadOnlyList);
+    SVGLengthList(JS::Realm&, ReadOnlyList);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Visitor&) override;
 };
 

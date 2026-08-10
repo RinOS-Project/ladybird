@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/SVGFEBlendElementPrototype.h>
 #include <LibWeb/CSS/Enums.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/Layout/Node.h>
@@ -20,6 +21,12 @@ SVGFEBlendElement::SVGFEBlendElement(DOM::Document& document, DOM::QualifiedName
 {
 }
 
+void SVGFEBlendElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGFEBlendElement);
+    Base::initialize(realm);
+}
+
 void SVGFEBlendElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
@@ -28,51 +35,18 @@ void SVGFEBlendElement::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_in2);
 }
 
-void SVGFEBlendElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& new_value, Optional<Utf16FlyString> const& namespace_)
+void SVGFEBlendElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& new_value, Optional<FlyString> const& namespace_)
 {
     Base::attribute_changed(name, old_value, new_value, namespace_);
 
     if (name == SVG::AttributeNames::mode) {
-        auto parse_mix_blend_mode = [](Optional<Utf16String> const& value) -> Optional<CSS::MixBlendMode> {
+        auto parse_mix_blend_mode = [](Optional<String> const& value) -> Optional<CSS::MixBlendMode> {
             if (!value.has_value())
                 return {};
-            if (*value == "normal"sv)
-                return CSS::MixBlendMode::Normal;
-            if (*value == "multiply"sv)
-                return CSS::MixBlendMode::Multiply;
-            if (*value == "screen"sv)
-                return CSS::MixBlendMode::Screen;
-            if (*value == "overlay"sv)
-                return CSS::MixBlendMode::Overlay;
-            if (*value == "darken"sv)
-                return CSS::MixBlendMode::Darken;
-            if (*value == "lighten"sv)
-                return CSS::MixBlendMode::Lighten;
-            if (*value == "color-dodge"sv)
-                return CSS::MixBlendMode::ColorDodge;
-            if (*value == "color-burn"sv)
-                return CSS::MixBlendMode::ColorBurn;
-            if (*value == "hard-light"sv)
-                return CSS::MixBlendMode::HardLight;
-            if (*value == "soft-light"sv)
-                return CSS::MixBlendMode::SoftLight;
-            if (*value == "difference"sv)
-                return CSS::MixBlendMode::Difference;
-            if (*value == "exclusion"sv)
-                return CSS::MixBlendMode::Exclusion;
-            if (*value == "hue"sv)
-                return CSS::MixBlendMode::Hue;
-            if (*value == "saturation"sv)
-                return CSS::MixBlendMode::Saturation;
-            if (*value == "color"sv)
-                return CSS::MixBlendMode::Color;
-            if (*value == "luminosity"sv)
-                return CSS::MixBlendMode::Luminosity;
-            if (*value == "plus-darker"sv)
-                return CSS::MixBlendMode::PlusDarker;
-            if (*value == "plus-lighter"sv)
-                return CSS::MixBlendMode::PlusLighter;
-            return {};
+            auto keyword = CSS::keyword_from_string(*value);
+            if (!keyword.has_value())
+                return {};
+            return CSS::keyword_to_mix_blend_mode(*keyword);
         };
 
         m_mode = parse_mix_blend_mode(new_value);
@@ -82,7 +56,7 @@ void SVGFEBlendElement::attribute_changed(Utf16FlyString const& name, Optional<U
 GC::Ref<SVGAnimatedString> SVGFEBlendElement::in1()
 {
     if (!m_in1)
-        m_in1 = SVGAnimatedString::create(*this, DOM::QualifiedName { AttributeNames::in, OptionalNone {}, OptionalNone {} });
+        m_in1 = SVGAnimatedString::create(realm(), *this, DOM::QualifiedName { AttributeNames::in, OptionalNone {}, OptionalNone {} });
 
     return *m_in1;
 }
@@ -90,7 +64,7 @@ GC::Ref<SVGAnimatedString> SVGFEBlendElement::in1()
 GC::Ref<SVGAnimatedString> SVGFEBlendElement::in2()
 {
     if (!m_in2)
-        m_in2 = SVGAnimatedString::create(*this, DOM::QualifiedName { AttributeNames::in2, OptionalNone {}, OptionalNone {} });
+        m_in2 = SVGAnimatedString::create(realm(), *this, DOM::QualifiedName { AttributeNames::in2, OptionalNone {}, OptionalNone {} });
 
     return *m_in2;
 }
@@ -102,7 +76,7 @@ Gfx::CompositingAndBlendingOperator SVGFEBlendElement::mode() const
 
 GC::Ref<SVGAnimatedEnumeration> SVGFEBlendElement::mode_for_bindings() const
 {
-    return SVGAnimatedEnumeration::create(to_underlying(mode()));
+    return SVGAnimatedEnumeration::create(realm(), to_underlying(mode()));
 }
 
 }

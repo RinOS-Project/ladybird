@@ -15,31 +15,15 @@
 
 namespace Web::WebIDL {
 
-static bool is_platform_object(JS::Value value)
-{
-    if (!value.is_object())
-        return false;
-    return is<Bindings::PlatformObject>(value.as_object());
-}
-
-static bool platform_object_implements_interface(JS::Value value, StringView interface_name)
-{
-    auto const* platform_object = as_if<Bindings::PlatformObject>(&value.as_object());
-    if (!platform_object)
-        return false;
-
-    return platform_object->implements_interface(MUST(String::from_utf8(interface_name)));
-}
-
 // https://webidl.spec.whatwg.org/#dfn-convert-ecmascript-to-idl-value
-static JS::Value convert_ecmascript_type_to_idl_value(JS::Value value, Type const&)
+static JS::Value convert_ecmascript_type_to_idl_value(JS::Value value, IDL::Type const&)
 {
     // FIXME: We have this code already in the code generator, in `generate_to_cpp()`, but how do we use it here?
     return value;
 }
 
 template<typename Match>
-static bool has_overload_with_argument_type_or_subtype_matching(EffectiveOverloadSet& overloads, size_t argument_index, Match match)
+static bool has_overload_with_argument_type_or_subtype_matching(IDL::EffectiveOverloadSet& overloads, size_t argument_index, Match match)
 {
     // NOTE: This is to save some repetition.
     //       Almost every sub-step of step 12 of the overload resolution algorithm matches overloads with an argument that is:
@@ -49,7 +33,7 @@ static bool has_overload_with_argument_type_or_subtype_matching(EffectiveOverloa
     //       So, this function lets you pass in the first check, and handles the others automatically.
 
     return overloads.has_overload_with_matching_argument_at_index(argument_index,
-        [match](Type const& type, auto) {
+        [match](IDL::Type const& type, auto) {
             if (match(type))
                 return true;
 
@@ -71,9 +55,9 @@ static bool has_overload_with_argument_type_or_subtype_matching(EffectiveOverloa
 }
 
 // https://webidl.spec.whatwg.org/#es-overloads
-JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOverloadSet& overloads, ReadonlySpan<StringView> dictionary_types)
+JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, IDL::EffectiveOverloadSet& overloads, ReadonlySpan<StringView> dictionary_types)
 {
-    auto is_dictionary = [&dictionary_types](Type const& type) {
+    auto is_dictionary = [&dictionary_types](IDL::Type const& type) {
         return dictionary_types.contains_slow(type.name());
     };
 
@@ -120,7 +104,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         auto const& optionality = item.optionality_values[i];
 
         // 4. If optionality is “optional” and V is undefined, then:
-        if (optionality == Optionality::Optional && value.is_undefined()) {
+        if (optionality == IDL::Optionality::Optional && value.is_undefined()) {
             // FIXME: 1. If the argument at index i is declared with a default value, then append to values that default value.
 
             // 2. Otherwise, append to values the special value “missing”.
@@ -141,7 +125,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
 
         // 2. If V is undefined, and there is an entry in S whose list of optionality values has “optional” at index i, then remove from S all other entries.
         if (value.is_undefined()
-            && overloads.has_overload_with_matching_argument_at_index(i, [](auto&, Optionality const& optionality) { return optionality == Optionality::Optional; })) {
+            && overloads.has_overload_with_matching_argument_at_index(i, [](auto&, IDL::Optionality const& optionality) { return optionality == IDL::Optionality::Optional; })) {
             overloads.remove_all_other_entries();
         }
 
@@ -154,7 +138,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         // NOTE: This is the one case we can't use `has_overload_with_argument_type_or_subtype_matching()` because we also need to look
         //       for dictionary types in the flattened members.
         else if ((value.is_undefined() || value.is_null())
-            && overloads.has_overload_with_matching_argument_at_index(i, [&is_dictionary](Type const& type, auto) {
+            && overloads.has_overload_with_matching_argument_at_index(i, [&is_dictionary](IDL::Type const& type, auto) {
                    if (type.is_nullable())
                        return true;
                    if (is_dictionary(type))
@@ -184,10 +168,10 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //    - an annotated type whose inner type is one of the above types
         //    - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //    then remove from S all other entries.
-        else if (is_platform_object(value)
-            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [value](Type const& type) {
+        else if (value.is_object() && is<Bindings::PlatformObject>(value.as_object())
+            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [value](IDL::Type const& type) {
                    // - an interface type that V implements
-                   if (platform_object_implements_interface(value, type.name()))
+                   if (static_cast<Bindings::PlatformObject const&>(value.as_object()).implements_interface(MUST(String::from_byte_string(type.name()))))
                        return true;
 
                    // - object
@@ -207,7 +191,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //    - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //    then remove from S all other entries.
         else if (value.is_object() && is<JS::ArrayBuffer>(value.as_object())
-            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](Type const& type) {
+            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](IDL::Type const& type) {
                    if (type.is_plain() && (type.name() == "ArrayBuffer" || type.name() == "BufferSource"))
                        return true;
                    if (type.is_object())
@@ -225,7 +209,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //    - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //    then remove from S all other entries.
         else if (value.is_object() && is<JS::DataView>(value.as_object())
-            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](Type const& type) {
+            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](IDL::Type const& type) {
                    if (type.is_plain() && (type.name() == "DataView" || type.name() == "BufferSource" || type.name() == "ArrayBufferView"))
                        return true;
                    if (type.is_object())
@@ -243,7 +227,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //    - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //    then remove from S all other entries.
         else if (value.is_object() && value.as_object().is_typed_array()
-            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [&](Type const& type) {
+            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [&](IDL::Type const& type) {
                    if (type.is_plain() && (type.name() == static_cast<JS::TypedArrayBase const&>(value.as_object()).element_name() || type.name() == "BufferSource" || type.name() == "ArrayBufferView"))
                        return true;
                    if (type.is_object())
@@ -261,7 +245,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //    - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //    then remove from S all other entries.
         else if (value.is_function()
-            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](Type const& type) {
+            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](IDL::Type const& type) {
                    // FIXME: - a callback function type
                    if (type.is_object())
                        return true;
@@ -282,7 +266,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //    }
         //    method is not undefined, then remove from S all other entries.
         else if (value.is_object()
-            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [&vm, &method, &value](Type const& type) {
+            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [&vm, &method, &value](IDL::Type const& type) {
                    // - a sequence type
                    // FIXME: - a frozen array type
                    // - a nullable version of any of the above types
@@ -313,7 +297,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //     - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //     then remove from S all other entries.
         else if (value.is_object()
-            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [&is_dictionary](Type const& type) {
+            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [&is_dictionary](IDL::Type const& type) {
                    if (is_dictionary(type))
                        return true;
                    // FIXME: a callback interface type
@@ -330,7 +314,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //     - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //     then remove from S all other entries.
         else if (value.is_boolean()
-            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](Type const& type) { return type.is_boolean(); })) {
+            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](IDL::Type const& type) { return type.is_boolean(); })) {
             overloads.remove_all_other_entries();
         }
 
@@ -341,7 +325,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //     - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //     then remove from S all other entries.
         else if (value.is_number()
-            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](Type const& type) { return type.is_numeric(); })) {
+            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](IDL::Type const& type) { return type.is_numeric(); })) {
             overloads.remove_all_other_entries();
         }
 
@@ -352,7 +336,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //     - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //     then remove from S all other entries.
         else if (value.is_bigint()
-            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](Type const& type) { return type.is_bigint(); })) {
+            && has_overload_with_argument_type_or_subtype_matching(overloads, i, [](IDL::Type const& type) { return type.is_bigint(); })) {
             overloads.remove_all_other_entries();
         }
 
@@ -362,7 +346,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //     - an annotated type whose inner type is one of the above types
         //     - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //     then remove from S all other entries.
-        else if (has_overload_with_argument_type_or_subtype_matching(overloads, i, [](Type const& type) { return type.is_string(); })) {
+        else if (has_overload_with_argument_type_or_subtype_matching(overloads, i, [](IDL::Type const& type) { return type.is_string(); })) {
             overloads.remove_all_other_entries();
         }
 
@@ -372,7 +356,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //     - an annotated type whose inner type is one of the above types
         //     - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //     then remove from S all other entries.
-        else if (has_overload_with_argument_type_or_subtype_matching(overloads, i, [](Type const& type) { return type.is_numeric(); })) {
+        else if (has_overload_with_argument_type_or_subtype_matching(overloads, i, [](IDL::Type const& type) { return type.is_numeric(); })) {
             overloads.remove_all_other_entries();
         }
 
@@ -382,7 +366,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //     - an annotated type whose inner type is one of the above types
         //     - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //     then remove from S all other entries.
-        else if (has_overload_with_argument_type_or_subtype_matching(overloads, i, [](Type const& type) { return type.is_boolean(); })) {
+        else if (has_overload_with_argument_type_or_subtype_matching(overloads, i, [](IDL::Type const& type) { return type.is_boolean(); })) {
             overloads.remove_all_other_entries();
         }
 
@@ -392,7 +376,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         //     - an annotated type whose inner type is one of the above types
         //     - a union type, nullable union type, or annotated union type that has one of the above types in its flattened member types
         //     then remove from S all other entries.
-        else if (has_overload_with_argument_type_or_subtype_matching(overloads, i, [](Type const& type) { return type.is_bigint(); })) {
+        else if (has_overload_with_argument_type_or_subtype_matching(overloads, i, [](IDL::Type const& type) { return type.is_bigint(); })) {
             overloads.remove_all_other_entries();
         }
 
@@ -443,7 +427,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         auto const& optionality = entry.optionality_values[i];
 
         // 4. If optionality is “optional” and V is undefined, then:
-        if (optionality == Optionality::Optional && value.is_undefined()) {
+        if (optionality == IDL::Optionality::Optional && value.is_undefined()) {
             // FIXME: 1. If the argument at index i is declared with a default value, then append to values that default value.
 
             // 2. Otherwise, append to values the special value “missing”.
@@ -466,7 +450,7 @@ JS::ThrowCompletionOr<ResolvedOverload> resolve_overload(JS::VM& vm, EffectiveOv
         }
 
         // 2. Otherwise, if callable’s argument at index i is not variadic, then append to values the special value “missing”.
-        else if (callable.optionality_values[i] != Optionality::Variadic) {
+        else if (callable.optionality_values[i] != IDL::Optionality::Variadic) {
             values.empend(ResolvedOverload::Missing {});
         }
 

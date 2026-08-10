@@ -12,19 +12,11 @@
 #include <LibJS/Export.h>
 #include <LibJS/Runtime/Value.h>
 
-namespace AK {
-
-class Stream;
-class Utf16StringBuilder;
-
-}
-
 namespace JS {
 
 struct PrintContext {
     JS::VM& vm;
-    AK::Stream* stream { nullptr };
-    AK::Utf16StringBuilder* builder { nullptr };
+    Stream& stream;
     bool strip_ansi { false };
     bool raw_strings { false };
 };

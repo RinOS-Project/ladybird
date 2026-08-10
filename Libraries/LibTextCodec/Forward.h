@@ -10,6 +10,5 @@ namespace TextCodec {
 
 class Decoder;
 class Encoder;
-class StreamingDecoder;
 
 }

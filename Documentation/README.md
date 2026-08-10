@@ -1,7 +1,8 @@
 # Ladybird Documentation
 
-Ladybird development moves quickly, so some of these might be out of date. Please let us know if something here is wrong.
-If you have any questions that are not answered here or in the [FAQ](FAQ.md), you are welcome to ask on [Discord](../README.md#get-in-touch-and-participate).
+Ladybird development moves quickly, so some of these might be out of date. Please let us know if something here is wrong,
+or submit a PR with any additions or corrections! If you have any questions that are not answered here or in the [FAQ](FAQ.md),
+you are welcome to ask on [Discord](../README.md#get-in-touch-and-participate).
 
 ## Building and Running
 * [Build Instructions](BuildInstructionsLadybird.md)
@@ -21,8 +22,7 @@ If you have any questions that are not answered here or in the [FAQ](FAQ.md), yo
 * [VS Code](EditorConfiguration/VSCodeConfiguration.md)
 
 ## Development
-* [Project Participation](../CONTRIBUTING.md)
-* [Code Policy](CodePolicy.md)
+* [How to Contribute](../CONTRIBUTING.md)
 * [Coding Style](CodingStyle.md)
 * [Common Patterns](Patterns.md)
 * [Guidelines for Text in UI](HumanInterfaceGuidelines/Text.md)
@@ -32,11 +32,9 @@ If you have any questions that are not answered here or in the [FAQ](FAQ.md), yo
 
 ## Browser/LibWeb
 * [General Architecture](ProcessArchitecture.md)
-* [Omnibox Design](Omnibox.md)
 * [LibWeb: From Loading to Painting](LibWebFromLoadingToPainting.md)
 * [LibWeb: Browsing Contexts and Navigables](BrowsingContextsAndNavigables.md)
 * [How to Add a CSS Property](CSSProperties.md)
 * [How to Add an IDL File](AddNewIDLFile.md)
 * [LibWeb Code Style & Patterns](LibWebPatterns.md)
 * [CSS Generated Files](CSSGeneratedFiles.md)
-* [Media Pipeline Design](MediaPipelineDesign.md)

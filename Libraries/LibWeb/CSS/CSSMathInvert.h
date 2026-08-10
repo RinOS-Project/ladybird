@@ -12,26 +12,28 @@ namespace Web::CSS {
 
 // https://drafts.css-houdini.org/css-typed-om-1/#cssmathinvert
 class CSSMathInvert final : public CSSMathValue {
-    WEB_WRAPPABLE(CSSMathInvert, CSSMathValue);
+    WEB_PLATFORM_OBJECT(CSSMathInvert, CSSMathValue);
     GC_DECLARE_ALLOCATOR(CSSMathInvert);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSMathInvert> create(NumericType, GC::Ref<CSSNumericValue>);
-    static GC::Ref<CSSMathInvert> create_from_numberish(CSSNumberish);
+    [[nodiscard]] static GC::Ref<CSSMathInvert> create(JS::Realm&, NumericType, GC::Ref<CSSNumericValue>);
+    static GC::Ref<CSSMathInvert> construct_impl(JS::Realm&, CSSNumberish);
 
     virtual ~CSSMathInvert() override;
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
     GC::Ref<CSSNumericValue> value() const;
 
-    virtual void serialize_math_value(Utf16StringBuilder&, Nested, Parens) const override;
+    virtual void serialize_math_value(StringBuilder&, Nested, Parens) const override;
     virtual bool is_equal_numeric_value(GC::Ref<CSSNumericValue> other) const override;
     virtual Optional<SumValue> create_a_sum_value() const override;
 
-    virtual WebIDL::ExceptionOr<CalcNodeRef> create_calculation_node(CalculationContext const&) const override;
+    virtual WebIDL::ExceptionOr<NonnullRefPtr<CalculationNode const>> create_calculation_node(CalculationContext const&) const override;
 
 private:
-    CSSMathInvert(NumericType, GC::Ref<CSSNumericValue>);
+    CSSMathInvert(JS::Realm&, NumericType, GC::Ref<CSSNumericValue>);
     GC::Ref<CSSNumericValue> m_value;
 };
 

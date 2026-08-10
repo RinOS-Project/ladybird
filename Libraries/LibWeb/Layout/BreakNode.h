@@ -12,10 +12,11 @@
 namespace Web::Layout {
 
 class BreakNode final : public NodeWithStyleAndBoxModelMetrics {
-    LAYOUT_NODE(BreakNode, NodeWithStyleAndBoxModelMetrics);
+    GC_CELL(BreakNode, NodeWithStyleAndBoxModelMetrics);
+    GC_DECLARE_ALLOCATOR(BreakNode);
 
 public:
-    BreakNode(DOM::Document&, HTML::HTMLBRElement&, NonnullRefPtr<CSS::ComputedValues const>);
+    BreakNode(DOM::Document&, HTML::HTMLBRElement&, GC::Ref<CSS::ComputedProperties>);
     virtual ~BreakNode() override;
 
     HTML::HTMLBRElement const& dom_node() const { return as<HTML::HTMLBRElement>(*Node::dom_node()); }

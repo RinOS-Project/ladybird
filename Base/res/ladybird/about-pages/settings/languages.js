@@ -1,5 +1,3 @@
-import { registerDialogDeepLink } from "./dialog-deep-link.js";
-
 const languagesAdd = document.querySelector("#languages-add");
 const languagesClose = document.querySelector("#languages-close");
 const languagesDialog = document.querySelector("#languages-dialog");
@@ -7,7 +5,7 @@ const languagesList = document.querySelector("#languages-list");
 const languagesSelect = document.querySelector("#languages-select");
 const languagesSettings = document.querySelector("#languages-settings");
 
-let LANGUAGES = [];
+let LANGUAGES = {};
 
 function loadSettings(settings) {
     LANGUAGES = settings.languages;
@@ -139,15 +137,9 @@ languagesSelect.addEventListener("change", () => {
     languagesAdd.disabled = !languagesSelect.value;
 });
 
-registerDialogDeepLink({
-    hash: "languages",
-    tab: "general",
-    dialog: languagesDialog,
-    onOpen: showLanguages,
-});
-
-languagesSettings.addEventListener("click", () => {
-    location.hash = "languages";
+languagesSettings.addEventListener("click", event => {
+    showLanguages();
+    event.stopPropagation();
 });
 
 document.addEventListener("WebUILoaded", () => {

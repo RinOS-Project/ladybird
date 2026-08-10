@@ -8,16 +8,13 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
-#include <AK/Utf16String.h>
 #include <LibCore/EventReceiver.h>
-#include <LibGC/ActivityRoot.h>
-#include <LibJS/Forward.h>
 #include <LibRequests/Forward.h>
 #include <LibRequests/WebSocket.h>
 #include <LibURL/URL.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/Forward.h>
-#include <LibWeb/WebIDL/Buffers.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 #define ENUMERATE_WEBSOCKET_EVENT_HANDLERS(E) \
@@ -28,21 +25,19 @@
 
 namespace Web::WebSockets {
 
-using WebSocketSendData = FlattenVariant<WebIDL::BufferSourceVariant, Variant<GC::Ref<FileAPI::Blob>, Utf16String>>;
-
 class WebSocket final : public DOM::EventTarget {
-    WEB_WRAPPABLE(WebSocket, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(WebSocket, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(WebSocket);
 
 public:
     static constexpr bool OVERRIDES_FINALIZE = true;
+    static constexpr bool OVERRIDES_MUST_SURVIVE_GARBAGE_COLLECTION = true;
 
-    static WebIDL::ExceptionOr<GC::Ref<WebSocket>> create(Web::HTML::WindowOrWorkerGlobalScopeMixin&, Utf16String const& url, Optional<Variant<Utf16String, Vector<Utf16String>>> const& protocols);
-    static WebIDL::ExceptionOr<GC::Ref<WebSocket>> create_for_constructor(JS::Object&, Utf16String const& url, Optional<Variant<Utf16String, Vector<Utf16String>>> const& protocols);
+    static WebIDL::ExceptionOr<GC::Ref<WebSocket>> construct_impl(JS::Realm&, String const& url, Optional<Variant<String, Vector<String>>> const& protocols);
 
     virtual ~WebSocket() override;
 
-    Utf16String url() const { return Utf16String::from_utf8(m_url.to_string()); }
+    String url() const { return m_url.to_string(); }
     void set_url(URL::URL url) { m_url = move(url); }
 
 #undef __ENUMERATE
@@ -53,43 +48,34 @@ public:
 #undef __ENUMERATE
 
     Requests::WebSocket::ReadyState ready_state() const;
-    Utf16String extensions() const;
-    WebIDL::ExceptionOr<Utf16String> protocol() const;
+    String extensions() const;
+    WebIDL::ExceptionOr<String> protocol() const;
 
-    Utf16String const& binary_type() { return m_binary_type; }
-    void set_binary_type(Utf16String const& type) { m_binary_type = type; }
+    String const& binary_type() { return m_binary_type; }
+    void set_binary_type(String const& type) { m_binary_type = type; }
 
-    WebIDL::ExceptionOr<void> close(Optional<u16> code, Optional<Utf16String> reason);
-    WebIDL::ExceptionOr<void> send(WebSocketSendData const& data);
+    WebIDL::ExceptionOr<void> close(Optional<u16> code, Optional<String> reason);
+    WebIDL::ExceptionOr<void> send(Variant<GC::Root<WebIDL::BufferSource>, GC::Root<FileAPI::Blob>, String> const& data);
 
     void make_disappear();
-    bool has_activity_root() const { return m_activity_root.is_taken(); }
 
 private:
     void on_open();
     void on_message(ByteBuffer message, bool is_text);
     void on_error();
-    void on_close(u16 code, Utf16String reason, bool was_clean);
+    void on_close(u16 code, String reason, bool was_clean);
 
-    JS::Object& relevant_global_object() const;
+    WebSocket(JS::Realm&);
 
-    WebSocket(GC::Ref<DOM::EventTarget> relevant_global_object);
-
-    virtual void visit_edges(Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
     virtual void finalize() override;
-    virtual void event_listener_list_changed() override;
+    virtual bool must_survive_garbage_collection() const override;
 
-    HTML::WindowOrWorkerGlobalScopeMixin& relevant_global_scope() const;
-    ErrorOr<void> establish_web_socket_connection(URL::URL const& url_record, Vector<Utf16String> const& protocols, HTML::EnvironmentSettingsObject& client);
-    bool should_be_kept_alive() const;
-    void update_activity_root();
+    ErrorOr<void> establish_web_socket_connection(URL::URL const& url_record, Vector<String> const& protocols, HTML::EnvironmentSettingsObject& client);
 
     URL::URL m_url;
-    Utf16String m_binary_type { "blob"_utf16 };
+    String m_binary_type { "blob"_string };
     RefPtr<Requests::WebSocket> m_websocket;
-    GC::Ref<DOM::EventTarget> m_global_object;
-    GC::ActivityRoot m_activity_root;
-    bool m_has_disappeared { false };
 
     IntrusiveListNode<WebSocket> m_list_node;
 

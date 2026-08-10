@@ -5,7 +5,6 @@
 
 partial interface CSSRule {
     const unsigned short SUPPORTS_RULE = 12;
-
 };
 
 [Exposed=Window]

@@ -12,7 +12,7 @@ namespace Web::ContentSecurityPolicy::Directives {
 
 GC_DEFINE_ALLOCATOR(SandboxDirective);
 
-SandboxDirective::SandboxDirective(Utf16FlyString name, Vector<Utf16String> value)
+SandboxDirective::SandboxDirective(String name, Vector<String> value)
     : Directive(move(name), move(value))
 {
 }

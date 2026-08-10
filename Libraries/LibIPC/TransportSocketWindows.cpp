@@ -15,14 +15,10 @@
 #include <LibIPC/Limits.h>
 #include <LibIPC/TransportHandle.h>
 #include <LibIPC/TransportSocketWindows.h>
-#include <LibSync/Mutex.h>
 
 #include <AK/Windows.h>
 
 namespace IPC {
-
-static constexpr size_t MAX_SERIALIZED_ATTACHMENT_SIZE = sizeof(HandleType) + sizeof(WSAPROTOCOL_INFOW);
-static constexpr size_t MAX_ATTACHMENT_DATA_SIZE = MAX_MESSAGE_FD_COUNT * MAX_SERIALIZED_ATTACHMENT_SIZE;
 
 ErrorOr<NonnullOwnPtr<TransportSocketWindows>> TransportSocketWindows::from_socket(NonnullOwnPtr<Core::LocalSocket> socket)
 {
@@ -56,8 +52,6 @@ TransportSocketWindows::TransportSocketWindows(NonnullOwnPtr<Core::LocalSocket> 
 {
 }
 
-TransportSocketWindows::~TransportSocketWindows() = default;
-
 void TransportSocketWindows::set_peer_pid(int pid)
 {
     m_peer_pid = pid;
@@ -71,13 +65,11 @@ void TransportSocketWindows::set_up_read_hook(Function<void()> hook)
 
 bool TransportSocketWindows::is_open() const
 {
-    return m_socket_is_open.load(AK::MemoryOrder::memory_order_relaxed);
+    return m_socket->is_open();
 }
 
 void TransportSocketWindows::close()
 {
-    m_socket_is_open.store(false, AK::MemoryOrder::memory_order_relaxed);
-    Sync::MutexLocker locker(m_send_mutex);
     m_socket->close();
 }
 
@@ -92,136 +84,85 @@ void TransportSocketWindows::wait_until_readable()
     VERIFY(readable);
 }
 
-// Maximum size of accumulated unprocessed bytes before we disconnect the peer
-static constexpr size_t MAX_UNPROCESSED_BUFFER_SIZE = 128 * MiB;
-
-struct MessageHeader {
-    u32 payload_size { 0 };
-    u32 attachment_data_size { 0 };
-    u32 attachment_count { 0 };
-};
-
-ErrorOr<Vector<u8>> TransportSocketWindows::serialize_attachments(Vector<Attachment>& attachments)
+ErrorOr<void> TransportSocketWindows::duplicate_handles(Bytes bytes, Vector<size_t> const& handle_offsets)
 {
-    if (attachments.is_empty())
-        return Vector<u8> {};
+    if (handle_offsets.is_empty())
+        return {};
 
-    VERIFY(m_peer_pid != -1);
+    if (m_peer_pid == -1)
+        return Error::from_string_literal("Transport is not initialized");
 
     HANDLE peer_process_handle = OpenProcess(PROCESS_DUP_HANDLE, FALSE, m_peer_pid);
     if (!peer_process_handle)
         return Error::from_windows_error();
-    ScopeGuard peer_process_guard = [&] { CloseHandle(peer_process_handle); };
+    ScopeGuard guard = [&] { CloseHandle(peer_process_handle); };
 
-    Vector<u8> serialized_attachments;
-    TRY(serialized_attachments.try_ensure_capacity(attachments.size() * MAX_SERIALIZED_ATTACHMENT_SIZE));
+    for (auto offset : handle_offsets) {
 
-    for (auto& attachment : attachments) {
-        int handle = attachment.to_fd();
-        ScopeGuard close_original_handle = [&] {
-            if (handle != -1)
-                (void)Core::System::close(handle);
-        };
+        auto span = bytes.slice(offset);
+        if (span.size() < sizeof(HandleType))
+            return Error::from_string_literal("Not enough bytes");
 
-        if (Core::System::is_socket(handle)) {
-            TRY(serialized_attachments.try_append(to_underlying(HandleType::Socket)));
+        UnderlyingType<HandleType> raw_type {};
+        ByteReader::load(span.data(), raw_type);
+        auto type = static_cast<HandleType>(raw_type);
+        if (type != HandleType::Generic && type != HandleType::Socket)
+            return Error::from_string_literal("Invalid handle type");
+        span = span.slice(sizeof(HandleType));
 
-            WSAPROTOCOL_INFOW pi {};
-            if (WSADuplicateSocketW(handle, m_peer_pid, &pi))
+        if (type == HandleType::Socket) {
+            if (span.size() < sizeof(WSAPROTOCOL_INFOW))
+                return Error::from_string_literal("Not enough bytes for socket handle");
+
+            // We stashed the bytes of this process's version of the handle at the offset location
+            int handle = -1;
+            ByteReader::load(span.data(), handle);
+
+            auto* pi = reinterpret_cast<WSAPROTOCOL_INFOW*>(span.data());
+            if (WSADuplicateSocketW(handle, m_peer_pid, pi))
                 return Error::from_windows_error();
-            TRY(serialized_attachments.try_append(reinterpret_cast<u8*>(&pi), sizeof(pi)));
         } else {
-            TRY(serialized_attachments.try_append(to_underlying(HandleType::Generic)));
+            if (span.size() < sizeof(int))
+                return Error::from_string_literal("Not enough bytes for generic handle");
 
-            HANDLE duplicated_handle = INVALID_HANDLE_VALUE;
-            if (!DuplicateHandle(GetCurrentProcess(), to_handle(handle), peer_process_handle, &duplicated_handle, 0, FALSE, DUPLICATE_SAME_ACCESS))
+            int handle = -1;
+            ByteReader::load(span.data(), handle);
+
+            HANDLE new_handle = INVALID_HANDLE_VALUE;
+            if (!DuplicateHandle(GetCurrentProcess(), to_handle(handle), peer_process_handle, &new_handle, 0, FALSE, DUPLICATE_SAME_ACCESS))
                 return Error::from_windows_error();
 
-            auto duplicated_fd = to_fd(duplicated_handle);
-            TRY(serialized_attachments.try_append(reinterpret_cast<u8*>(&duplicated_fd), sizeof(duplicated_fd)));
+            ByteReader::store(span.data(), to_fd(new_handle));
         }
     }
 
-    attachments.clear();
-    return serialized_attachments;
-}
-
-Attachment TransportSocketWindows::deserialize_attachment(ReadonlyBytes& serialized_bytes)
-{
-    VERIFY(serialized_bytes.size() >= sizeof(HandleType));
-
-    UnderlyingType<HandleType> raw_type {};
-    ByteReader::load(serialized_bytes.data(), raw_type);
-    auto type = static_cast<HandleType>(raw_type);
-    serialized_bytes = serialized_bytes.slice(sizeof(HandleType));
-
-    switch (type) {
-    case HandleType::Generic: {
-        VERIFY(serialized_bytes.size() >= sizeof(int));
-
-        int handle = -1;
-        ByteReader::load(serialized_bytes.data(), handle);
-        serialized_bytes = serialized_bytes.slice(sizeof(handle));
-        return Attachment::from_fd(handle);
-    }
-    case HandleType::Socket: {
-        VERIFY(serialized_bytes.size() >= sizeof(WSAPROTOCOL_INFOW));
-
-        WSAPROTOCOL_INFOW pi {};
-        memcpy(&pi, serialized_bytes.data(), sizeof(pi));
-        serialized_bytes = serialized_bytes.slice(sizeof(pi));
-
-        auto handle = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, &pi, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
-        VERIFY(handle != INVALID_SOCKET);
-        return Attachment::from_fd(handle);
-    }
-    }
-
-    VERIFY_NOT_REACHED();
-}
-
-ErrorOr<void> TransportSocketWindows::post_message(MessageDataType bytes, Vector<Attachment>& attachments)
-{
-    VERIFY(bytes.size() <= MAX_MESSAGE_PAYLOAD_SIZE);
-    VERIFY(attachments.size() <= MAX_MESSAGE_FD_COUNT);
-
-    Sync::MutexLocker locker(m_send_mutex);
-
-    auto attachment_count = attachments.size();
-    auto serialized_attachments = TRY(serialize_attachments(attachments));
-    VERIFY(serialized_attachments.size() <= MAX_ATTACHMENT_DATA_SIZE);
-
-    Vector<u8> message_buffer;
-    TRY(message_buffer.try_resize(sizeof(MessageHeader) + serialized_attachments.size() + bytes.size()));
-
-    MessageHeader header {
-        .payload_size = static_cast<u32>(bytes.size()),
-        .attachment_data_size = static_cast<u32>(serialized_attachments.size()),
-        .attachment_count = static_cast<u32>(attachment_count),
-    };
-    memcpy(message_buffer.data(), &header, sizeof(header));
-
-    auto* serialized_attachment_storage = message_buffer.data() + sizeof(MessageHeader);
-    if (!serialized_attachments.is_empty())
-        memcpy(serialized_attachment_storage, serialized_attachments.data(), serialized_attachments.size());
-
-    auto* payload_storage = serialized_attachment_storage + serialized_attachments.size();
-    if (!bytes.is_empty())
-        memcpy(payload_storage, bytes.data(), bytes.size());
-
-    TRY(transfer(message_buffer.span()));
     return {};
+}
+
+// Maximum size of accumulated unprocessed bytes before we disconnect the peer
+static constexpr size_t MAX_UNPROCESSED_BUFFER_SIZE = 128 * MiB;
+
+struct MessageHeader {
+    u32 size { 0 };
+};
+
+ErrorOr<void> TransportSocketWindows::transfer_message(ReadonlyBytes bytes, Vector<size_t> const& handle_offsets)
+{
+    Vector<u8> message_buffer;
+    message_buffer.resize(sizeof(MessageHeader) + bytes.size());
+    MessageHeader header;
+    header.size = bytes.size();
+    memcpy(message_buffer.data(), &header, sizeof(MessageHeader));
+    memcpy(message_buffer.data() + sizeof(MessageHeader), bytes.data(), bytes.size());
+
+    TRY(duplicate_handles({ message_buffer.data() + sizeof(MessageHeader), bytes.size() }, handle_offsets));
+
+    return transfer(message_buffer.span());
 }
 
 ErrorOr<void> TransportSocketWindows::transfer(ReadonlyBytes bytes_to_write)
 {
-    // FIXME: The timeout to re-check the open flag will not be needed once sends are moved to an IO thread that
-    //        teardown stops, as TransportSocket does.
-    static constexpr int SEND_POLL_TIMEOUT_MS = 100;
-
     while (!bytes_to_write.is_empty()) {
-        if (!is_open())
-            return Error::from_string_literal("Transport closed during send");
 
         ErrorOr<size_t> maybe_nwritten = m_socket->write_some(bytes_to_write);
 
@@ -236,8 +177,8 @@ ErrorOr<void> TransportSocketWindows::transfer(ReadonlyBytes bytes_to_write)
                 .revents = 0
             };
 
-            auto result = WSAPoll(&pollfd, 1, SEND_POLL_TIMEOUT_MS);
-            if (result == 1 || result == 0)
+            auto result = WSAPoll(&pollfd, 1, -1);
+            if (result == 1)
                 continue;
             if (result == SOCKET_ERROR)
                 return Error::from_windows_error();
@@ -294,33 +235,24 @@ TransportSocketWindows::ShouldShutdown TransportSocketWindows::read_as_many_mess
     while (index + sizeof(MessageHeader) <= m_unprocessed_bytes.size()) {
         MessageHeader header;
         memcpy(&header, m_unprocessed_bytes.data() + index, sizeof(MessageHeader));
-        VERIFY(header.payload_size <= MAX_MESSAGE_PAYLOAD_SIZE);
-        VERIFY(header.attachment_count <= MAX_MESSAGE_FD_COUNT);
-        VERIFY(header.attachment_data_size <= MAX_ATTACHMENT_DATA_SIZE);
-
-        Checked<size_t> message_size = header.payload_size;
-        message_size += header.attachment_data_size;
+        if (header.size > MAX_MESSAGE_PAYLOAD_SIZE) {
+            dbgln("TransportSocketWindows: Rejecting message with size {} exceeding limit {}", header.size, MAX_MESSAGE_PAYLOAD_SIZE);
+            should_shutdown = ShouldShutdown::Yes;
+            break;
+        }
+        Checked<size_t> message_size = header.size;
         message_size += sizeof(MessageHeader);
         if (message_size.has_overflow() || message_size.value() > m_unprocessed_bytes.size() - index)
             break;
         Message message;
-        auto attachment_bytes = ReadonlyBytes { m_unprocessed_bytes.data() + index + sizeof(MessageHeader), header.attachment_data_size };
-        for (u32 attachment_index = 0; attachment_index < header.attachment_count; ++attachment_index)
-            message.attachments.enqueue(deserialize_attachment(attachment_bytes));
-        VERIFY(attachment_bytes.is_empty());
-
-        auto const* payload = m_unprocessed_bytes.data() + index + sizeof(MessageHeader) + header.attachment_data_size;
-        Vector<u8> payload_bytes;
-        if (payload_bytes.try_append(payload, header.payload_size).is_error()) {
-            dbgln("TransportSocketWindows: Failed to allocate message buffer for payload_size {}", header.payload_size);
+        if (message.bytes.try_append(m_unprocessed_bytes.data() + index + sizeof(MessageHeader), header.size).is_error()) {
+            dbgln("TransportSocketWindows: Failed to allocate message buffer for size {}", header.size);
             should_shutdown = ShouldShutdown::Yes;
             break;
         }
-        message.bytes = ReceivedMessageBytes::from_vector(move(payload_bytes));
         callback(move(message));
         Checked<size_t> new_index = index;
-        new_index += header.payload_size;
-        new_index += header.attachment_data_size;
+        new_index += header.size;
         new_index += sizeof(MessageHeader);
         if (new_index.has_overflow()) {
             dbgln("TransportSocketWindows: index would overflow");
@@ -347,8 +279,6 @@ TransportSocketWindows::ShouldShutdown TransportSocketWindows::read_as_many_mess
 
 ErrorOr<TransportHandle> TransportSocketWindows::release_for_transfer()
 {
-    m_socket_is_open.store(false, AK::MemoryOrder::memory_order_relaxed);
-    Sync::MutexLocker locker(m_send_mutex);
     auto fd = TRY(m_socket->release_fd());
     return TransportHandle { File::adopt_fd(fd) };
 }

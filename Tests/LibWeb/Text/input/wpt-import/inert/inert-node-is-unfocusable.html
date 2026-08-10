@@ -4,8 +4,6 @@
     <meta charset="utf-8" />
     <title>inert nodes are unfocusable</title>
     <link rel="author" title="Alice Boxhall" href="aboxhall@chromium.org">
-    <script src="../resources/testdriver.js"></script>
-    <script src="../resources/testdriver-vendor.js"></script>
     <script src="../resources/testharness.js"></script>
     <script src="../resources/testharnessreport.js"></script>
   </head>
@@ -45,35 +43,30 @@ function testTree(element, expectFocus, excludeCurrent) {
         testTree(childNodes[i], expectFocus);
 }
 
-promise_setup(async () => {
-    // Chrome and edge auto-focus the URL bar when the browser is launched.
-    // This is needed to ensure the 'focus' events fire below.
-    await test_driver.click(document.documentElement);
-});
 
-promise_test(async function() {
+test(function() {
     testFocus(document.getElementById('focusable'), true);
 }, "Button outside of inert container is focusable.");
 
-promise_test(async function() {
+test(function() {
     testFocus(document.getElementById('inert'), false);
 }, "Button with inert atribute is unfocusable.");
 
-promise_test(async function() {
+test(function() {
     testTree(document.getElementById('container'), false);
 }, "All focusable elements inside inert subtree are unfocusable");
 
-promise_test(async function() {
+test(function() {
     assert_false(document.getElementById("focusable").inert, "Inert not set explicitly is false")
     assert_true(document.getElementById("inert").inert, "Inert set explicitly is true");
     assert_true(document.getElementById("container").inert, "Inert set on container is true");
 }, "Can get inert via property");
 
-promise_test(async function() {
+test(function() {
     assert_false(document.getElementById("text").inert, "Elements inside of inert subtrees return false when getting inert");
 }, "Elements inside of inert subtrees return false when getting 'inert'");
 
-promise_test(async function() {
+test(function() {
     document.getElementById('focusable').inert = true;
     testFocus(document.getElementById('focusable'), false);
     document.getElementById('inert').inert = false;

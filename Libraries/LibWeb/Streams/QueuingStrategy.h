@@ -6,10 +6,16 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/QueuingStrategy.h>
+#include <AK/Optional.h>
+#include <LibGC/Ptr.h>
+#include <LibWeb/WebIDL/CallbackType.h>
 
 namespace Web::Streams {
 
-using QueuingStrategy = Bindings::QueuingStrategy;
+// https://streams.spec.whatwg.org/#dictdef-queuingstrategy
+struct QueuingStrategy {
+    Optional<double> high_water_mark;
+    GC::Ptr<WebIDL::CallbackType> size;
+};
 
 }

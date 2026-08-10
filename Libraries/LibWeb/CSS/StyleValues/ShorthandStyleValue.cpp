@@ -6,7 +6,6 @@
  */
 
 #include "ShorthandStyleValue.h"
-#include <AK/Utf16StringBuilder.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/CSS/StyleComputer.h>
@@ -18,16 +17,15 @@
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
-#include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
 
 namespace Web::CSS {
 
 ShorthandStyleValue::ShorthandStyleValue(PropertyID shorthand, Vector<PropertyID> sub_properties, Vector<ValueComparingNonnullRefPtr<StyleValue const>> values)
-    : StyleValueWithDefaultOperators(Type::Shorthand, make_shorthand_data(shorthand, sub_properties, values))
-    , m_values(move(values))
+    : StyleValueWithDefaultOperators(Type::Shorthand)
+    , m_properties { shorthand, move(sub_properties), move(values) }
 {
-    if (m_value->shorthand.sub_properties.length != m_value->shorthand.values.length) {
-        dbgln("ShorthandStyleValue: sub_properties and values must be the same size! {} != {}", m_value->shorthand.sub_properties.length, m_value->shorthand.values.length);
+    if (m_properties.sub_properties.size() != m_properties.values.size()) {
+        dbgln("ShorthandStyleValue: sub_properties and values must be the same size! {} != {}", m_properties.sub_properties.size(), m_properties.values.size());
         VERIFY_NOT_REACHED();
     }
 }
@@ -36,21 +34,19 @@ ShorthandStyleValue::~ShorthandStyleValue() = default;
 
 ValueComparingRefPtr<StyleValue const> ShorthandStyleValue::longhand(PropertyID longhand) const
 {
-    for (auto i = 0u; i < size(); ++i) {
-        if (sub_property_at(i) == longhand)
-            return value_at(i);
+    for (auto i = 0u; i < m_properties.sub_properties.size(); ++i) {
+        if (m_properties.sub_properties[i] == longhand)
+            return m_properties.values[i];
     }
     return nullptr;
 }
 
 void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mode) const
 {
-    auto sub_properties = this->sub_properties();
-
     // If all the longhands are the same CSS-wide keyword, just return that once.
     Optional<Keyword> built_in_keyword;
     bool all_same_keyword = true;
-    StyleComputer::for_each_property_expanding_shorthands(shorthand_property(), *this, [&](PropertyID, StyleValue const& value) {
+    StyleComputer::for_each_property_expanding_shorthands(m_properties.shorthand_property, *this, [&](PropertyID, StyleValue const& value) {
         if (!value.is_css_wide_keyword()) {
             all_same_keyword = false;
             return;
@@ -73,46 +69,30 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
         return;
     }
 
-    enum class AllowResolvedZeroDurationAsInitial {
-        No,
-        Yes,
-    };
-
-    auto const coordinating_value_list_shorthand_serialize = [&](StringView entry_when_all_longhands_initial, Vector<PropertyID> const& required_longhands = {}, Vector<PropertyID> const& reset_only_longhands = {}, AllowResolvedZeroDurationAsInitial allow_resolved_zero_duration_as_initial = AllowResolvedZeroDurationAsInitial::No) {
+    auto const coordinating_value_list_shorthand_serialize = [&](StringView entry_when_all_longhands_initial, Vector<PropertyID> const& required_longhands = {}, Vector<PropertyID> const& reset_only_longhands = {}) {
         for (auto reset_only_longhand : reset_only_longhands) {
             if (!longhand(reset_only_longhand)->equals(property_initial_value(reset_only_longhand)))
                 return;
         }
 
         // If any non-reset-only longhand is not a value list, we can't serialize as a coordinating-list shorthand.
-        for (auto sub_property : sub_properties) {
+        for (auto sub_property : m_properties.sub_properties) {
             if (!reset_only_longhands.contains_slow(sub_property) && !longhand(sub_property)->is_value_list())
                 return;
         }
 
-        auto entry_count = longhand(sub_properties[0])->as_value_list().size();
+        auto entry_count = longhand(m_properties.sub_properties[0])->as_value_list().size();
 
         // If we don't have the same number of values for each non-reset-only longhand, we can't serialize this shorthand.
-        if (any_of(sub_properties, [&](auto longhand_id) { return !reset_only_longhands.contains_slow(longhand_id) && longhand(longhand_id)->as_value_list().size() != entry_count; }))
+        if (any_of(m_properties.sub_properties, [&](auto longhand_id) { return !reset_only_longhands.contains_slow(longhand_id) && longhand(longhand_id)->as_value_list().size() != entry_count; }))
             return;
-
-        auto longhand_value_is_initial = [&](PropertyID longhand_id, StyleValue const& value) {
-            if (allow_resolved_zero_duration_as_initial == AllowResolvedZeroDurationAsInitial::Yes
-                && longhand_id == PropertyID::AnimationDuration
-                && value.is_time()
-                && value.as_time().time().to_seconds() == 0) {
-                return true;
-            }
-
-            return value.equals(*property_initial_value(longhand_id)->as_value_list().values()[0]);
-        };
 
         // We should serialize a longhand if it is not a reset-only longhand and one of the following is true:
         // - The longhand is required
         // - The value is not the initial value
         // - Another longhand value which will be included later in the serialization is valid for this longhand.
         auto should_serialize_longhand = [&](size_t entry_index, size_t longhand_index) {
-            auto longhand_id = sub_properties[longhand_index];
+            auto longhand_id = m_properties.sub_properties[longhand_index];
 
             if (reset_only_longhands.contains_slow(longhand_id))
                 return false;
@@ -122,11 +102,11 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
 
             auto longhand_value = longhand(longhand_id)->as_value_list().values()[entry_index];
 
-            if (!longhand_value_is_initial(longhand_id, *longhand_value))
+            if (!longhand_value->equals(property_initial_value(longhand_id)->as_value_list().values()[0]))
                 return true;
 
-            for (size_t other_longhand_index = longhand_index + 1; other_longhand_index < sub_properties.size(); other_longhand_index++) {
-                auto other_longhand_id = sub_properties[other_longhand_index];
+            for (size_t other_longhand_index = longhand_index + 1; other_longhand_index < m_properties.sub_properties.size(); other_longhand_index++) {
+                auto other_longhand_id = m_properties.sub_properties[other_longhand_index];
 
                 if (reset_only_longhands.contains_slow(other_longhand_id))
                     continue;
@@ -134,7 +114,7 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
                 auto other_longhand_value = longhand(other_longhand_id)->as_value_list().values()[entry_index];
 
                 // FIXME: This should really account for the other longhand being included in the serialization for any reason, not just because it is not the initial value.
-                if (longhand_value_is_initial(other_longhand_id, *other_longhand_value))
+                if (other_longhand_value->equals(property_initial_value(other_longhand_id)->as_value_list().values()[0]))
                     continue;
 
                 if (parse_css_value(Parser::ParsingParams {}, other_longhand_value->to_string(mode), longhand_id))
@@ -147,8 +127,8 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
         for (size_t entry_index = 0; entry_index < entry_count; entry_index++) {
             bool first = true;
 
-            for (size_t longhand_index = 0; longhand_index < sub_properties.size(); longhand_index++) {
-                auto longhand_id = sub_properties[longhand_index];
+            for (size_t longhand_index = 0; longhand_index < m_properties.sub_properties.size(); longhand_index++) {
+                auto longhand_id = m_properties.sub_properties[longhand_index];
 
                 if (!should_serialize_longhand(entry_index, longhand_index))
                     continue;
@@ -171,11 +151,10 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
     };
 
     auto default_serialize = [&]() {
-        auto values = this->values();
         auto all_properties_same_value = true;
-        auto first_property_value = values.first();
-        for (auto i = 1u; i < values.size(); ++i) {
-            if (values[i] != first_property_value) {
+        auto first_property_value = m_properties.values.first();
+        for (auto i = 1u; i < m_properties.values.size(); ++i) {
+            if (m_properties.values[i] != first_property_value) {
                 all_properties_same_value = false;
                 break;
             }
@@ -186,10 +165,10 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
         }
 
         auto first = true;
-        for (size_t i = 0; i < values.size(); ++i) {
-            auto value = values[i];
+        for (size_t i = 0; i < m_properties.values.size(); ++i) {
+            auto value = m_properties.values[i];
             auto value_string = value->to_string(mode);
-            auto initial_value_string = property_initial_value(sub_properties[i])->to_string(mode);
+            auto initial_value_string = property_initial_value(m_properties.sub_properties[i])->to_string(mode);
             if (value_string == initial_value_string)
                 continue;
             if (first)
@@ -199,21 +178,19 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
             builder.append(value_string);
         }
         if (builder.is_empty())
-            values.first()->serialize(builder, mode);
+            m_properties.values.first()->serialize(builder, mode);
     };
 
-    // FIXME: overflow-clip-margin needs a special case here for when its longhands aren't identical.
-    // Ref: https://github.com/w3c/csswg-drafts/issues/8381
-
     // Then special cases
-    switch (shorthand_property()) {
+    // FIXME: overflow-clip-margin needs a special case here for when its longhands aren't identical.
+    switch (m_properties.shorthand_property) {
     case PropertyID::All: {
         // NOTE: 'all' can only be serialized in the case all sub-properties share the same CSS-wide keyword, this is
         //       handled above, thus, if we get to here that mustn't be the case and we should return the empty string.
         return;
     }
     case PropertyID::Animation:
-        coordinating_value_list_shorthand_serialize("none"sv, {}, { PropertyID::AnimationTimeline }, AllowResolvedZeroDurationAsInitial::Yes);
+        coordinating_value_list_shorthand_serialize("none"sv, {}, { PropertyID::AnimationTimeline });
         return;
     case PropertyID::Background: {
         auto color = longhand(PropertyID::BackgroundColor);
@@ -280,17 +257,6 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
         }
         return;
     }
-    case PropertyID::Container: {
-        auto name = longhand(PropertyID::ContainerName);
-        auto type = longhand(PropertyID::ContainerType);
-        name->serialize(builder, mode);
-
-        if (!type->equals(property_initial_value(PropertyID::ContainerType))) {
-            builder.append(" / "sv);
-            type->serialize(builder, mode);
-        }
-        return;
-    }
     case Web::CSS::PropertyID::BackgroundPosition: {
         auto x_edges = longhand(PropertyID::BackgroundPositionX);
         auto y_edges = longhand(PropertyID::BackgroundPositionY);
@@ -325,7 +291,7 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
     }
     case PropertyID::Border: {
         // `border` only has a reasonable value if border-image is it's initial value (in which case it is omitted)
-        if (longhand(PropertyID::BorderImage)->to_string(mode) != property_initial_value(PropertyID::BorderImage)->to_string(mode))
+        if (!longhand(PropertyID::BorderImage)->equals(property_initial_value(PropertyID::BorderImage)))
             return;
 
         auto all_longhands_same_value = [](ValueComparingRefPtr<StyleValue const> const& shorthand) -> bool {
@@ -753,21 +719,16 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
         auto& rows = rows_value->as_grid_track_size_list();
         auto& columns = columns_value->as_grid_track_size_list();
 
-        // NB: Materialize the track lists once; each accessor call rebuilds the whole recursive list.
-        auto rows_track_list = rows.grid_track_size_list();
-        auto columns_track_list = columns.grid_track_size_list();
-
-        if (areas.row_count() == 0 && rows_track_list.is_empty() && columns_track_list.is_empty()) {
+        if (areas.row_count() == 0 && rows.grid_track_size_list().track_list().size() == 0 && columns.grid_track_size_list().track_list().size() == 0) {
             builder.append("none"sv);
             return;
         }
 
         auto construct_rows_string = [&]() {
             StringBuilder inner_builder;
-            auto grid_areas = areas.grid_areas();
             size_t area_index = 0;
-            for (size_t i = 0; i < rows_track_list.list().size(); ++i) {
-                auto track_size_or_line_names = rows_track_list.list()[i];
+            for (size_t i = 0; i < rows.grid_track_size_list().list().size(); ++i) {
+                auto track_size_or_line_names = rows.grid_track_size_list().list()[i];
                 if (auto* line_names = track_size_or_line_names.get_pointer<GridLineNames>()) {
                     if (i != 0)
                         inner_builder.append(' ');
@@ -778,14 +739,11 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
                         if (!inner_builder.is_empty())
                             inner_builder.append(' ');
                         inner_builder.append("\""sv);
-                        Utf16StringBuilder area_row_builder;
                         for (size_t y = 0; y < areas.column_count(); ++y) {
                             if (y != 0)
-                                area_row_builder.append_ascii(' ');
-                            area_row_builder.append(GridTemplateAreaStyleValue::cell_name_in(grid_areas, area_index, y).view());
+                                inner_builder.append(' ');
+                            inner_builder.append(areas.cell_name_at(area_index, y));
                         }
-                        auto area_row = area_row_builder.to_string();
-                        inner_builder.append(MUST(area_row.utf16_view().to_utf8()));
                         inner_builder.append("\""sv);
                     }
                     auto track_size_serialization = track_size->to_string(mode);
@@ -801,9 +759,9 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
         };
 
         if (areas.row_count() == 0) {
-            rows_track_list.serialize(builder, mode);
+            rows.grid_track_size_list().serialize(builder, mode);
             builder.append(" / "sv);
-            columns_track_list.serialize(builder, mode);
+            columns.grid_track_size_list().serialize(builder, mode);
             return;
         }
 
@@ -811,20 +769,19 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
         if (rows_serialization.is_empty())
             return;
 
-        if (columns_track_list.is_empty()) {
+        if (columns.grid_track_size_list().is_empty()) {
             builder.append(rows_serialization);
             return;
         }
         builder.append(rows_serialization);
         builder.append(" / "sv);
-        columns_track_list.serialize(builder, mode);
+        columns.grid_track_size_list().serialize(builder, mode);
         return;
     }
     case PropertyID::GridColumn: {
         auto start = longhand(PropertyID::GridColumnStart);
         auto end = longhand(PropertyID::GridColumnEnd);
-        if ((end->is_grid_track_placement() && end->as_grid_track_placement().grid_track_placement().is_auto())
-            || start == end) {
+        if (end->as_grid_track_placement().grid_track_placement().is_auto() || start == end) {
             start->serialize(builder, mode);
             return;
         }
@@ -836,8 +793,7 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
     case PropertyID::GridRow: {
         auto start = longhand(PropertyID::GridRowStart);
         auto end = longhand(PropertyID::GridRowEnd);
-        if ((end->is_grid_track_placement() && end->as_grid_track_placement().grid_track_placement().is_auto())
-            || start == end) {
+        if (end->as_grid_track_placement().grid_track_placement().is_auto() || start == end) {
             start->serialize(builder, mode);
             return;
         }
@@ -945,7 +901,7 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
     case PropertyID::PlaceContent:
     case PropertyID::PlaceItems:
     case PropertyID::PlaceSelf:
-        builder.append(serialize_a_positional_value_list(values(), mode));
+        builder.append(serialize_a_positional_value_list(m_properties.values, mode));
         return;
     case PropertyID::ScrollTimeline:
         // NB: We don't need to specify a value to use when the entry is empty as all values are initial since
@@ -1016,8 +972,8 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
         return;
     }
     default:
-        if (property_is_positional_value_list_shorthand(shorthand_property())) {
-            builder.append(serialize_a_positional_value_list(values(), mode));
+        if (property_is_positional_value_list_shorthand(m_properties.shorthand_property)) {
+            builder.append(serialize_a_positional_value_list(m_properties.values, mode));
             return;
         }
 
@@ -1027,7 +983,8 @@ void ShorthandStyleValue::serialize(StringBuilder& builder, SerializationMode mo
 
 void ShorthandStyleValue::set_style_sheet(GC::Ptr<CSSStyleSheet> style_sheet)
 {
-    for (auto& value : values())
+    Base::set_style_sheet(style_sheet);
+    for (auto& value : m_properties.values)
         const_cast<StyleValue&>(*value).set_style_sheet(style_sheet);
 }
 

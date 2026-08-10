@@ -6,21 +6,21 @@
 
 #pragma once
 
-#include <AK/Optional.h>
-#include <LibJS/Forward.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/HTML/WindowOrWorkerGlobalScope.h>
-#include <LibWeb/PerformanceTimeline/PerformanceEntry.h>
-#include <LibWeb/WebIDL/CallbackType.h>
-#include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::PerformanceTimeline {
 
-class PerformanceObserverEntryList;
+// https://w3c.github.io/performance-timeline/#dom-performanceobserverinit
+struct PerformanceObserverInit {
+    Optional<Vector<String>> entry_types;
+    Optional<String> type;
+    Optional<bool> buffered;
+};
 
 // https://w3c.github.io/performance-timeline/#dom-performanceobserver
-class PerformanceObserver final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(PerformanceObserver, Bindings::GCAllocatedWrappable);
+class PerformanceObserver final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(PerformanceObserver, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(PerformanceObserver);
 
 public:
@@ -30,11 +30,10 @@ public:
         Multiple,
     };
 
-    static GC::Ref<PerformanceObserver> create(GC::Ptr<WebIDL::CallbackType>, HTML::WindowOrWorkerGlobalScopeMixin&);
-    static GC::Ref<PerformanceObserver> create_for_constructor(JS::Object&, GC::Ptr<WebIDL::CallbackType>);
+    static WebIDL::ExceptionOr<GC::Ref<PerformanceObserver>> construct_impl(JS::Realm&, GC::Ptr<WebIDL::CallbackType>);
     virtual ~PerformanceObserver() override;
 
-    WebIDL::ExceptionOr<void> observe(PerformanceObserverInit options);
+    WebIDL::ExceptionOr<void> observe(PerformanceObserverInit& options);
     void disconnect();
     Vector<GC::Root<PerformanceTimeline::PerformanceEntry>> take_records();
 
@@ -42,24 +41,22 @@ public:
     void unset_requires_dropped_entries(Badge<HTML::WindowOrWorkerGlobalScopeMixin>);
 
     Vector<PerformanceObserverInit> const& options_list() const { return m_options_list; }
+
     WebIDL::CallbackType& callback() { return *m_callback; }
-    JS::Completion invoke_callback(GC::Ref<PerformanceObserverEntryList>, Optional<u64> dropped_entries_count);
-    static JS::Value supported_entry_types(JS::VM&);
 
     void append_to_observer_buffer(Badge<HTML::WindowOrWorkerGlobalScopeMixin>, GC::Ref<PerformanceTimeline::PerformanceEntry>);
 
+    static GC::Ref<JS::Object> supported_entry_types(JS::VM&);
+
 private:
-    PerformanceObserver(GC::Ptr<WebIDL::CallbackType>, HTML::WindowOrWorkerGlobalScopeMixin&);
+    PerformanceObserver(JS::Realm&, GC::Ptr<WebIDL::CallbackType>);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
-
-    HTML::WindowOrWorkerGlobalScopeMixin& relevant_global() const;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     // https://w3c.github.io/performance-timeline/#dfn-observer-callback
     // A PerformanceObserverCallback observer callback set on creation.
     GC::Ptr<WebIDL::CallbackType> m_callback;
-
-    GC::Ref<DOM::EventTarget> m_relevant_global;
 
     // https://w3c.github.io/performance-timeline/#dfn-observer-buffer
     // A PerformanceEntryList object called the observer buffer that is initially empty.
@@ -75,7 +72,7 @@ private:
 
     // https://w3c.github.io/performance-timeline/#dfn-options-list
     // A registered performance observer is a struct consisting of an observer member (a PerformanceObserver object)
-    // and an options list member (a list of PerformanceObserverInit objects).
+    // and an options list member (a list of PerformanceObserverInit dictionaries).
     // NOTE: This doesn't use a separate struct as methods such as disconnect() assume it can access an options list from `this`: a PerformanceObserver.
     Vector<PerformanceObserverInit> m_options_list;
 };

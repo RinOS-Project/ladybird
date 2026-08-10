@@ -9,7 +9,6 @@
 #include <AK/Assertions.h>
 #include <AK/Atomic.h>
 #include <AK/Checked.h>
-#include <AK/Diagnostics.h>
 #include <AK/Noncopyable.h>
 #include <AK/Platform.h>
 
@@ -74,8 +73,7 @@ public:
         if (new_ref_count == 0) {
             if constexpr (requires { that->will_be_destroyed(); })
                 that->will_be_destroyed();
-            // This GCC diagnostic gives a false positive on pointers to classes using virtual inheritance.
-            AK_IGNORE_DIAGNOSTIC("-Wfree-nonheap-object", delete that;)
+            delete that;
             return true;
         }
         return false;

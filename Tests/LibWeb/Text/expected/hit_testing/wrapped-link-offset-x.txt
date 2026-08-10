@@ -1,3 +1,0 @@
-rects: 2
-offsetX: 5
-offsetY: 25

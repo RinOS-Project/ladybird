@@ -25,7 +25,6 @@
 #include <LibWeb/Platform/FontPlugin.h>
 #include <LibWebView/Plugins/ImageCodecPlugin.h>
 #include <LibWebView/Utilities.h>
-#include <Services/RendererSandbox.h>
 #include <WebWorker/ConnectionFromClient.h>
 
 #include <openssl/thread.h>
@@ -33,14 +32,14 @@
 static ErrorOr<void> connect_to_resource_loader(GC::Heap& heap, IPC::TransportHandle const& handle);
 static ErrorOr<void> connect_to_image_decoder(IPC::TransportHandle const& handle);
 
-static ErrorOr<Web::HTML::AgentType> agent_type_from_string(StringView type)
+static ErrorOr<Web::Bindings::AgentType> agent_type_from_string(StringView type)
 {
     if (type == "dedicated"sv)
-        return Web::HTML::AgentType::DedicatedWorker;
+        return Web::Bindings::AgentType::DedicatedWorker;
     if (type == "shared"sv)
-        return Web::HTML::AgentType::SharedWorker;
+        return Web::Bindings::AgentType::SharedWorker;
     if (type == "service"sv)
-        return Web::HTML::AgentType::ServiceWorker;
+        return Web::Bindings::AgentType::ServiceWorker;
 
     return Error::from_string_literal("Invalid worker type, must be one of: 'dedicated', 'shared', or 'service'");
 }
@@ -52,13 +51,11 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     StringView serenity_resource_root;
     StringView worker_type_string;
     StringView mach_server_name;
-    StringView cache_path;
     Vector<ByteString> certificates;
     bool expose_experimental_interfaces = false;
     bool enable_http_memory_cache = false;
     bool wait_for_debugger = false;
     bool file_origins_are_tuple_origins = false;
-    bool disable_sandbox = false;
 
     Core::ArgsParser args_parser;
     args_parser.add_option(serenity_resource_root, "Absolute path to directory for serenity resources", "serenity-resource-root", 'r', "serenity-resource-root");
@@ -68,9 +65,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     args_parser.add_option(wait_for_debugger, "Wait for debugger", "wait-for-debugger");
     args_parser.add_option(worker_type_string, "Type of WebWorker to start (dedicated, shared, or service)", "type", 't', "type");
     args_parser.add_option(mach_server_name, "Mach server name", "mach-server-name", 0, "mach_server_name");
-    args_parser.add_option(cache_path, "Path to the profile cache", "cache-path", 0, "path");
     args_parser.add_option(file_origins_are_tuple_origins, "Treat file:// URLs as having tuple origins", "tuple-file-origins");
-    args_parser.add_option(disable_sandbox, "Disable process sandboxing", "disable-sandbox");
 
     args_parser.parse(arguments);
 
@@ -82,7 +77,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 
     auto worker_type = TRY(agent_type_from_string(worker_type_string));
 
-    auto& event_loop = Core::EventLoop::initialize_for_current_thread();
+    Core::EventLoop event_loop;
 
     WebView::platform_init();
 
@@ -98,9 +93,6 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     Web::Platform::FontPlugin::install(*new Web::Platform::FontPlugin(false));
 
     Web::Bindings::initialize_main_thread_vm(worker_type);
-
-    if (!disable_sandbox)
-        TRY(RendererSandbox::apply_sandbox({}, cache_path));
 
     auto client = TRY(IPC::take_over_accepted_client_from_system_server<WebWorker::ConnectionFromClient>(mach_server_name));
 

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLHeadElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/HTMLHeadElement.h>
 
 namespace Web::HTML {
@@ -16,5 +18,11 @@ HTMLHeadElement::HTMLHeadElement(DOM::Document& document, DOM::QualifiedName qua
 }
 
 HTMLHeadElement::~HTMLHeadElement() = default;
+
+void HTMLHeadElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLHeadElement);
+    Base::initialize(realm);
+}
 
 }

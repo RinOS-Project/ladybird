@@ -8,11 +8,11 @@
 #include <AK/ByteBuffer.h>
 #include <AK/Math.h>
 #include <AK/Vector.h>
-#include <LibGC/Heap.h>
+#include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/TypedArray.h>
+#include <LibWeb/Bindings/AnalyserNodePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/WebAudio/AnalyserNode.h>
-#include <LibWeb/WebAudio/BaseAudioContext.h>
-#include <LibWeb/WebAudio/Rendering/RenderNodes.h>
 #include <LibWeb/WebIDL/Buffers.h>
 #include <LibWeb/WebIDL/DOMException.h>
 
@@ -20,8 +20,8 @@ namespace Web::WebAudio {
 
 GC_DEFINE_ALLOCATOR(AnalyserNode);
 
-AnalyserNode::AnalyserNode(GC::Ref<BaseAudioContext> context, AnalyserOptions const& options)
-    : AudioNode(context)
+AnalyserNode::AnalyserNode(JS::Realm& realm, GC::Ref<BaseAudioContext> context, AnalyserOptions const& options)
+    : AudioNode(realm, context)
     , m_fft_size(options.fft_size)
     , m_max_decibels(options.max_decibels)
     , m_min_decibels(options.min_decibels)
@@ -31,25 +31,9 @@ AnalyserNode::AnalyserNode(GC::Ref<BaseAudioContext> context, AnalyserOptions co
 
 AnalyserNode::~AnalyserNode() = default;
 
-WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> AnalyserNode::create(GC::Ref<BaseAudioContext> context, AnalyserOptions const& options)
+WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> AnalyserNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, AnalyserOptions const& options)
 {
-    // When the constructor is called with a BaseAudioContext c and an option object option, the user agent
-    // MUST initialize the AudioNode this, with context and options as arguments.
-
-    auto node = GC::Heap::the().allocate<AnalyserNode>(context, options);
-    node->set_fft_size_without_validation(options.fft_size);
-
-    // Default options for channel count and interpretation
-    // https://webaudio.github.io/web-audio-api/#AnalyserNode
-    AudioNodeDefaultOptions default_options;
-    default_options.channel_count_mode = ChannelCountMode::Max;
-    default_options.channel_interpretation = ChannelInterpretation::Speakers;
-    default_options.channel_count = 2;
-    // FIXME: Set tail-time to no
-
-    TRY(node->initialize_audio_node_options(options, default_options));
-
-    return node;
+    return construct_impl(realm, context, options);
 }
 
 // https://webaudio.github.io/web-audio-api/#current-time-domain-data
@@ -151,8 +135,9 @@ Vector<f32> AnalyserNode::current_frequency_data()
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-getfloatfrequencydata
-WebIDL::ExceptionOr<void> AnalyserNode::get_float_frequency_data(GC::Ref<JS::Float32Array> array)
+WebIDL::ExceptionOr<void> AnalyserNode::get_float_frequency_data(GC::Root<WebIDL::BufferSource> const& array)
 {
+
     // Write the current frequency data into array. If array has fewer elements than the frequencyBinCount,
     // the excess elements will be dropped. If array has more elements than the frequencyBinCount, the
     // excess elements will be ignored. The most recent fftSize frames are used in computing the frequency data.
@@ -162,17 +147,22 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_float_frequency_data(GC::Ref<JS::Flo
     // quantum as a previous call, the current frequency data is not updated with the same data. Instead, the
     // previously computed data is returned.
 
-    auto record = JS::make_typed_array_with_buffer_witness_record(*array, JS::ArrayBuffer::Order::SeqCst);
-    if (JS::is_typed_array_out_of_bounds(record))
-        return {};
-    auto floats_to_write = min(static_cast<size_t>(JS::typed_array_length(record)), static_cast<size_t>(frequency_bin_count()));
-    array->viewed_array_buffer()->overwrite(array->byte_offset(), frequency_data.data(), floats_to_write * sizeof(float));
+    auto& vm = this->vm();
+
+    if (!is<JS::Float32Array>(*array->raw_object()))
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "Float32Array");
+    auto& output_array = static_cast<JS::Float32Array&>(*array->raw_object());
+
+    size_t floats_to_write = min(output_array.data().size(), frequency_bin_count());
+    for (size_t i = 0; i < floats_to_write; i++) {
+        output_array.data()[i] = frequency_data[i];
+    }
 
     return {};
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-getbytefrequencydata
-WebIDL::ExceptionOr<void> AnalyserNode::get_byte_frequency_data(GC::Ref<JS::Uint8Array> array)
+WebIDL::ExceptionOr<void> AnalyserNode::get_byte_frequency_data(GC::Root<WebIDL::BufferSource> const& array)
 {
     // FIXME: If another call to getByteFrequencyData() or getFloatFrequencyData() occurs within the same render
     // quantum as a previous call, the current frequency data is not updated with the same data. Instead,
@@ -204,17 +194,17 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_byte_frequency_data(GC::Ref<JS::Uint
     // Write the current frequency data into array. If array’s byte length is less than frequencyBinCount,
     // the excess elements will be dropped. If array’s byte length is greater than the frequencyBinCount ,
     // the excess elements will be ignored. The most recent fftSize frames are used in computing the frequency data.
-    auto record = JS::make_typed_array_with_buffer_witness_record(*array, JS::ArrayBuffer::Order::SeqCst);
-    if (JS::is_typed_array_out_of_bounds(record))
-        return {};
-    auto bytes_to_write = min(static_cast<size_t>(JS::typed_array_length(record)), static_cast<size_t>(frequency_bin_count()));
-    array->viewed_array_buffer()->overwrite(array->byte_offset(), byte_data.data(), bytes_to_write);
+    auto& output_buffer = array->viewed_array_buffer()->buffer();
+    size_t bytes_to_write = min(array->byte_length(), frequency_bin_count());
+
+    for (size_t i = 0; i < bytes_to_write; i++)
+        output_buffer[i] = byte_data[i];
 
     return {};
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-getfloattimedomaindata
-WebIDL::ExceptionOr<void> AnalyserNode::get_float_time_domain_data(GC::Ref<JS::Float32Array> array)
+WebIDL::ExceptionOr<void> AnalyserNode::get_float_time_domain_data(GC::Root<WebIDL::BufferSource> const& array)
 {
     // Write the current time-domain data (waveform data) into array. If array has fewer elements than the
     // value of fftSize, the excess elements will be dropped. If array has more elements than the value of
@@ -222,17 +212,22 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_float_time_domain_data(GC::Ref<JS::F
 
     Vector<f32> time_domain_data = current_time_domain_data();
 
-    auto record = JS::make_typed_array_with_buffer_witness_record(*array, JS::ArrayBuffer::Order::SeqCst);
-    if (JS::is_typed_array_out_of_bounds(record))
-        return {};
-    auto floats_to_write = min(static_cast<size_t>(JS::typed_array_length(record)), static_cast<size_t>(fft_size()));
-    array->viewed_array_buffer()->overwrite(array->byte_offset(), time_domain_data.data(), floats_to_write * sizeof(float));
+    auto& vm = this->vm();
+
+    if (!is<JS::Float32Array>(*array->raw_object()))
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "Float32Array");
+    auto& output_array = static_cast<JS::Float32Array&>(*array->raw_object());
+
+    size_t floats_to_write = min(output_array.data().size(), frequency_bin_count());
+    for (size_t i = 0; i < floats_to_write; i++) {
+        output_array.data()[i] = time_domain_data[i];
+    }
 
     return {};
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-getbytetimedomaindata
-WebIDL::ExceptionOr<void> AnalyserNode::get_byte_time_domain_data(GC::Ref<JS::Uint8Array> array)
+WebIDL::ExceptionOr<void> AnalyserNode::get_byte_time_domain_data(GC::Root<WebIDL::BufferSource> const& array)
 {
     // Write the current time-domain data (waveform data) into array. If array’s byte length is less than
     // fftSize, the excess elements will be dropped. If array’s byte length is greater than the fftSize,
@@ -252,31 +247,26 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_byte_time_domain_data(GC::Ref<JS::Ui
         byte_data.unchecked_append(static_cast<u8>(x));
     }
 
-    auto record = JS::make_typed_array_with_buffer_witness_record(*array, JS::ArrayBuffer::Order::SeqCst);
-    if (JS::is_typed_array_out_of_bounds(record))
-        return {};
-    auto bytes_to_write = min(static_cast<size_t>(JS::typed_array_length(record)), static_cast<size_t>(fft_size()));
-    array->viewed_array_buffer()->overwrite(array->byte_offset(), byte_data.data(), bytes_to_write);
+    auto& output_buffer = array->viewed_array_buffer()->buffer();
+    size_t bytes_to_write = min(array->byte_length(), fft_size());
+
+    for (size_t i = 0; i < bytes_to_write; i++)
+        output_buffer[i] = byte_data[i];
 
     return {};
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-fftsize
-void AnalyserNode::set_fft_size_without_validation(unsigned long fft_size)
+WebIDL::ExceptionOr<void> AnalyserNode::set_fft_size(unsigned long fft_size)
 {
+    if (fft_size < 32 || fft_size > 32768 || !is_power_of_two(fft_size))
+        return WebIDL::IndexSizeError::create(realm(), "Analyser node fftSize not a power of 2 between 32 and 32768"_utf16);
+
     // reset previous block to 0s
     m_previous_block = Vector<f32>();
     m_previous_block.resize(fft_size);
 
     m_fft_size = fft_size;
-}
-
-WebIDL::ExceptionOr<void> AnalyserNode::set_fft_size(unsigned long fft_size)
-{
-    if (fft_size < 32 || fft_size > 32768 || !is_power_of_two(fft_size))
-        return WebIDL::IndexSizeError::create("Analyser node fftSize not a power of 2 between 32 and 32768"_utf16);
-
-    set_fft_size_without_validation(fft_size);
 
     // FIXME: Check this:
     // Note that increasing fftSize does mean that the current time-domain data must be expanded
@@ -289,7 +279,7 @@ WebIDL::ExceptionOr<void> AnalyserNode::set_fft_size(unsigned long fft_size)
 WebIDL::ExceptionOr<void> AnalyserNode::set_max_decibels(double max_decibels)
 {
     if (m_min_decibels >= max_decibels)
-        return WebIDL::IndexSizeError::create("Analyser node minDecibels greater than maxDecibels"_utf16);
+        return WebIDL::IndexSizeError::create(realm(), "Analyser node minDecibels greater than maxDecibels"_utf16);
     m_max_decibels = max_decibels;
     return {};
 }
@@ -297,7 +287,7 @@ WebIDL::ExceptionOr<void> AnalyserNode::set_max_decibels(double max_decibels)
 WebIDL::ExceptionOr<void> AnalyserNode::set_min_decibels(double min_decibels)
 {
     if (min_decibels >= m_max_decibels)
-        return WebIDL::IndexSizeError::create("Analyser node minDecibels greater than maxDecibels"_utf16);
+        return WebIDL::IndexSizeError::create(realm(), "Analyser node minDecibels greater than maxDecibels"_utf16);
 
     m_min_decibels = min_decibels;
     return {};
@@ -306,30 +296,43 @@ WebIDL::ExceptionOr<void> AnalyserNode::set_min_decibels(double min_decibels)
 WebIDL::ExceptionOr<void> AnalyserNode::set_smoothing_time_constant(double smoothing_time_constant)
 {
     if (smoothing_time_constant > 1.0 || smoothing_time_constant < 0.0)
-        return WebIDL::IndexSizeError::create("Analyser node smoothingTimeConstant not between 0.0 and 1.0"_utf16);
+        return WebIDL::IndexSizeError::create(realm(), "Analyser node smoothingTimeConstant not between 0.0 and 1.0"_utf16);
 
     m_smoothing_time_constant = smoothing_time_constant;
     return {};
 }
 
-WebIDL::ExceptionOr<void> AnalyserNode::validate_options(AnalyserOptions const& options)
+WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> AnalyserNode::construct_impl(JS::Realm& realm, GC::Ref<BaseAudioContext> context, AnalyserOptions const& options)
 {
     if (options.min_decibels >= options.max_decibels)
-        return WebIDL::IndexSizeError::create("Analyser node minDecibels greater than maxDecibels"_utf16);
+        return WebIDL::IndexSizeError::create(realm, "Analyser node minDecibels greater than maxDecibels"_utf16);
 
     if (options.smoothing_time_constant > 1.0 || options.smoothing_time_constant < 0.0)
-        return WebIDL::IndexSizeError::create("Analyser node smoothingTimeConstant not between 0.0 and 1.0"_utf16);
+        return WebIDL::IndexSizeError::create(realm, "Analyser node smoothingTimeConstant not between 0.0 and 1.0"_utf16);
 
-    if (options.fft_size < 32 || options.fft_size > 32768 || !is_power_of_two(options.fft_size))
-        return WebIDL::IndexSizeError::create("Analyser node fftSize not a power of 2 between 32 and 32768"_utf16);
+    // When the constructor is called with a BaseAudioContext c and an option object option, the user agent
+    // MUST initialize the AudioNode this, with context and options as arguments.
 
-    return {};
+    auto node = realm.create<AnalyserNode>(realm, context, options);
+    TRY(node->set_fft_size(options.fft_size));
+
+    // Default options for channel count and interpretation
+    // https://webaudio.github.io/web-audio-api/#AnalyserNode
+    AudioNodeDefaultOptions default_options;
+    default_options.channel_count_mode = Bindings::ChannelCountMode::Max;
+    default_options.channel_interpretation = Bindings::ChannelInterpretation::Speakers;
+    default_options.channel_count = 2;
+    // FIXME: Set tail-time to no
+
+    TRY(node->initialize_audio_node_options(options, default_options));
+
+    return node;
 }
 
-WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> AnalyserNode::create_for_constructor(GC::Ref<BaseAudioContext> context, AnalyserOptions const& options)
+void AnalyserNode::initialize(JS::Realm& realm)
 {
-    TRY(validate_options(options));
-    return create(context, options);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(AnalyserNode);
+    Base::initialize(realm);
 }
 
 }

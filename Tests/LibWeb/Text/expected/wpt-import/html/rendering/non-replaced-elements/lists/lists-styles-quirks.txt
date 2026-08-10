@@ -2,7 +2,8 @@ Harness status: OK
 
 Found 2070 tests
 
-2070 Pass
+2064 Pass
+6 Fail
 Pass	<li> - display
 Pass	<li> - margin-top
 Pass	<li> - margin-right
@@ -1813,7 +1814,7 @@ Pass	<li value="10"> (in <ol>) - padding-right
 Pass	<li value="10"> (in <ol>) - padding-bottom
 Pass	<li value="10"> (in <ol>) - padding-left
 Pass	<li value="10"> (in <ol>) - list-style-type
-Pass	<li value="10"> (in <ol>) - counter-set
+Fail	<li value="10"> (in <ol>) - counter-set
 Pass	<li value="10"> (in <ol>) - counter-reset
 Pass	<li value="10"> (in <ol>) - counter-increment
 Pass	<li value="10"> (in <ol>) - text-align
@@ -1828,7 +1829,7 @@ Pass	<li value="10xyz"> (in <ol>) - padding-right
 Pass	<li value="10xyz"> (in <ol>) - padding-bottom
 Pass	<li value="10xyz"> (in <ol>) - padding-left
 Pass	<li value="10xyz"> (in <ol>) - list-style-type
-Pass	<li value="10xyz"> (in <ol>) - counter-set
+Fail	<li value="10xyz"> (in <ol>) - counter-set
 Pass	<li value="10xyz"> (in <ol>) - counter-reset
 Pass	<li value="10xyz"> (in <ol>) - counter-increment
 Pass	<li value="10xyz"> (in <ol>) - text-align
@@ -1843,7 +1844,7 @@ Pass	<li value="10e10"> (in <ol>) - padding-right
 Pass	<li value="10e10"> (in <ol>) - padding-bottom
 Pass	<li value="10e10"> (in <ol>) - padding-left
 Pass	<li value="10e10"> (in <ol>) - list-style-type
-Pass	<li value="10e10"> (in <ol>) - counter-set
+Fail	<li value="10e10"> (in <ol>) - counter-set
 Pass	<li value="10e10"> (in <ol>) - counter-reset
 Pass	<li value="10e10"> (in <ol>) - counter-increment
 Pass	<li value="10e10"> (in <ol>) - text-align
@@ -1874,7 +1875,7 @@ Pass	<ol start="10"><li> - padding-bottom
 Pass	<ol start="10"><li> - padding-left
 Pass	<ol start="10"><li> - list-style-type
 Pass	<ol start="10"><li> - counter-set
-Pass	<ol start="10"><li> - counter-reset
+Fail	<ol start="10"><li> - counter-reset
 Pass	<ol start="10"><li> - counter-increment
 Pass	<ol start="10"><li> - text-align
 Pass	<ol start="10"><li> - list-style-position
@@ -1904,7 +1905,7 @@ Pass	<ol start="10xyz"><li> - padding-bottom
 Pass	<ol start="10xyz"><li> - padding-left
 Pass	<ol start="10xyz"><li> - list-style-type
 Pass	<ol start="10xyz"><li> - counter-set
-Pass	<ol start="10xyz"><li> - counter-reset
+Fail	<ol start="10xyz"><li> - counter-reset
 Pass	<ol start="10xyz"><li> - counter-increment
 Pass	<ol start="10xyz"><li> - text-align
 Pass	<ol start="10xyz"><li> - list-style-position
@@ -1934,7 +1935,7 @@ Pass	<ol start="10e10"><li> - padding-bottom
 Pass	<ol start="10e10"><li> - padding-left
 Pass	<ol start="10e10"><li> - list-style-type
 Pass	<ol start="10e10"><li> - counter-set
-Pass	<ol start="10e10"><li> - counter-reset
+Fail	<ol start="10e10"><li> - counter-reset
 Pass	<ol start="10e10"><li> - counter-increment
 Pass	<ol start="10e10"><li> - text-align
 Pass	<ol start="10e10"><li> - list-style-position

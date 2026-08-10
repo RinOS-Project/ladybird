@@ -7,14 +7,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Array.h>
 #include <AK/IPv4Address.h>
 #include <AK/StringBuilder.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
 #include <LibDatabase/Database.h>
 #include <LibHTTP/Cookie/ParsedCookie.h>
-#include <LibURL/PublicSuffixData.h>
 #include <LibURL/URL.h>
 #include <LibWebView/CookieJar.h>
 #include <LibWebView/ViewImplementation.h>
@@ -26,61 +24,43 @@ namespace WebView {
 
 static constexpr auto DATABASE_SYNCHRONIZATION_TIMER = AK::Duration::from_seconds(30);
 
-static constexpr u32 COOKIES_SCHEMA_BASELINE_VERSION = 1u;
-
-static CookieStorageKey storage_key_for_cookie(HTTP::Cookie::Cookie const& cookie)
-{
-    return { cookie.name, cookie.domain, cookie.path };
-}
-
-ErrorOr<Database::MigrationOutcome> CookieJar::migrate_schema(Database::Database& database, Database::MigrationMode mode)
-{
-    // Shipped migration text is immutable, so the CHECK constraint hardcodes the largest
-    // SameSite value instead of deriving it from the enum.
-    static_assert(to_underlying(HTTP::Cookie::SameSite::Lax) == 3);
-
-    Array<Database::Migration, 1> migrations { {
-        { .version = COOKIES_SCHEMA_BASELINE_VERSION, .sql = R"#(
-            CREATE TABLE IF NOT EXISTS Cookies (
-                name TEXT,
-                value TEXT,
-                same_site INTEGER CHECK (same_site >= 0 AND same_site <= 3),
-                creation_time INTEGER,
-                last_access_time INTEGER,
-                expiry_time INTEGER,
-                domain TEXT,
-                path TEXT,
-                secure BOOLEAN,
-                http_only BOOLEAN,
-                host_only BOOLEAN,
-                persistent BOOLEAN,
-                PRIMARY KEY(name, domain, path)
-            );
-        )#"sv },
-    } };
-
-    return database.migrate("Cookies"sv, migrations, mode);
-}
-
 ErrorOr<NonnullOwnPtr<CookieJar>> CookieJar::create(Database::Database& database)
 {
     Statements statements {};
 
-    statements.insert_cookie = TRY(database.prepare_statement("INSERT OR REPLACE INTO Cookies (name, value, same_site, creation_time, last_access_time, expiry_time, domain, path, secure, http_only, host_only, persistent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"sv));
+    auto create_table = TRY(database.prepare_statement(MUST(String::formatted(R"#(
+        CREATE TABLE IF NOT EXISTS Cookies (
+            name TEXT,
+            value TEXT,
+            same_site INTEGER CHECK (same_site >= 0 AND same_site <= {}),
+            creation_time INTEGER,
+            last_access_time INTEGER,
+            expiry_time INTEGER,
+            domain TEXT,
+            path TEXT,
+            secure BOOLEAN,
+            http_only BOOLEAN,
+            host_only BOOLEAN,
+            persistent BOOLEAN,
+            PRIMARY KEY(name, domain, path)
+        );)#",
+        to_underlying(HTTP::Cookie::SameSite::Lax)))));
+    database.execute_statement(create_table, {});
+
+    statements.insert_cookie = TRY(database.prepare_statement("INSERT OR REPLACE INTO Cookies VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"sv));
     statements.expire_cookie = TRY(database.prepare_statement("DELETE FROM Cookies WHERE (expiry_time < ?);"sv));
-    statements.select_all_cookies = TRY(database.prepare_statement("SELECT name, value, same_site, creation_time, last_access_time, expiry_time, domain, path, secure, http_only, host_only, persistent FROM Cookies;"sv));
+    statements.select_all_cookies = TRY(database.prepare_statement("SELECT * FROM Cookies;"sv));
 
-    return adopt_own(*new CookieJar { PersistedStorage { database, statements }, IsPrivate::No });
+    return adopt_own(*new CookieJar { PersistedStorage { database, statements } });
 }
 
-NonnullOwnPtr<CookieJar> CookieJar::create(IsPrivate is_private)
+NonnullOwnPtr<CookieJar> CookieJar::create()
 {
-    return adopt_own(*new CookieJar { OptionalNone {}, is_private });
+    return adopt_own(*new CookieJar { OptionalNone {} });
 }
 
-CookieJar::CookieJar(Optional<PersistedStorage> persisted_storage, IsPrivate is_private)
+CookieJar::CookieJar(Optional<PersistedStorage> persisted_storage)
     : m_persisted_storage(move(persisted_storage))
-    , m_transient_storage(is_private)
 {
     if (!m_persisted_storage.has_value())
         return;
@@ -218,7 +198,7 @@ void CookieJar::set_cookie(URL::URL const& url, HTTP::Cookie::ParsedCookie const
         return;
 
     // 9. If the user agent is configured to reject "public suffixes" and the domain-attribute is a public suffix:
-    if (URL::PublicSuffixData::is_matching_public_suffix(domain_attribute, URL::PublicSuffixData::IncludeStarRule::Yes)) {
+    if (URL::is_public_suffix(domain_attribute)) {
         // 1. Let request-host-canonical be the canonicalized request-host.
         // 2. If request-host fails to be canonicalized then abort this algorithm and ignore the cookie entirely.
 
@@ -417,7 +397,7 @@ void CookieJar::set_cookie(URL::URL const& url, HTTP::Cookie::ParsedCookie const
 // This is based on store_cookie() below, however the whole ParsedCookie->Cookie conversion is skipped.
 void CookieJar::update_cookie(HTTP::Cookie::Cookie cookie)
 {
-    auto key = storage_key_for_cookie(cookie);
+    CookieStorageKey key { cookie.name, cookie.domain, cookie.path };
 
     // 23. If the cookie store contains a cookie with the same name, domain, host-only-flag, and path as the
     //     newly-created cookie:
@@ -433,31 +413,6 @@ void CookieJar::update_cookie(HTTP::Cookie::Cookie cookie)
     m_transient_storage.set_cookie(move(key), move(cookie));
 
     m_transient_storage.purge_expired_cookies();
-}
-
-ErrorOr<void> CookieJar::set_cookie_from_devtools(URL::URL const& url, Optional<CookieStorageKey> old_key, HTTP::Cookie::Cookie cookie)
-{
-    auto new_key = storage_key_for_cookie(cookie);
-    auto parsed_cookie = TRY(HTTP::Cookie::parse_cookie(cookie));
-    set_cookie(url, parsed_cookie, HTTP::Cookie::Source::Http);
-
-    if (old_key.has_value() && *old_key != new_key)
-        delete_cookie(*old_key);
-
-    return {};
-}
-
-bool CookieJar::delete_cookie(CookieStorageKey const& key)
-{
-    auto cookie = m_transient_storage.get_cookie(key);
-    if (!cookie.has_value())
-        return false;
-
-    auto expired_cookie = *cookie;
-    expired_cookie.expiry_time = UnixDateTime::earliest();
-    expired_cookie.persistent = true;
-    update_cookie(move(expired_cookie));
-    return true;
 }
 
 void CookieJar::dump_cookies()
@@ -527,14 +482,6 @@ void CookieJar::expire_cookies_with_time_offset(AK::Duration offset)
     m_transient_storage.purge_expired_cookies(offset);
 }
 
-void CookieJar::delete_all_cookies(URL::URL const& url)
-{
-    for (auto& cookie : get_all_cookies_webdriver(url)) {
-        cookie.expiry_time = UnixDateTime::earliest();
-        update_cookie(move(cookie));
-    }
-}
-
 void CookieJar::expire_cookies_accessed_since(UnixDateTime since)
 {
     m_transient_storage.expire_and_purge_cookies_accessed_since(since);
@@ -601,11 +548,6 @@ Vector<HTTP::Cookie::Cookie> CookieJar::get_matching_cookies(URL::URL const& url
     return cookie_list;
 }
 
-CookieJar::TransientStorage::TransientStorage(IsPrivate is_private)
-    : m_is_private(is_private)
-{
-}
-
 void CookieJar::TransientStorage::set_cookies(Cookies cookies)
 {
     m_cookies = move(cookies);
@@ -622,20 +564,17 @@ void CookieJar::TransientStorage::set_cookie(CookieStorageKey key, HTTP::Cookie:
     if (cookie.expiry_time < now && !m_cookies.contains(key))
         return;
 
-    auto cookie_value_changed = true;
+    // We skip notifying about updating expired cookies, as they will be notified as being expired immediately after instead
     if (cookie.expiry_time >= now) {
+        auto cookie_value_changed = true;
         if (auto old_cookie = m_cookies.get(key); old_cookie.has_value())
             cookie_value_changed = old_cookie->value != cookie.value;
+
+        send_cookie_changed_notifications({ { CookieEntry { {}, cookie } } }, cookie_value_changed);
     }
 
-    auto cookie_for_notification = cookie;
     m_cookies.set(key, cookie);
     m_dirty_cookies.set(move(key), move(cookie));
-
-    // We skip notifying about updating expired cookies, as they will be notified as being
-    // expired immediately after instead.
-    if (cookie_for_notification.expiry_time >= now)
-        send_cookie_changed_notifications({ { CookieEntry { {}, move(cookie_for_notification) } } }, cookie_value_changed);
 }
 
 Optional<HTTP::Cookie::Cookie const&> CookieJar::TransientStorage::get_cookie(CookieStorageKey const& key)
@@ -691,33 +630,22 @@ Requests::CacheSizes CookieJar::TransientStorage::estimate_storage_size_accessed
 void CookieJar::TransientStorage::send_cookie_changed_notifications(ReadonlySpan<CookieEntry> cookies, bool inform_web_view_about_changed_domains)
 {
     ViewImplementation::for_each_view([&](ViewImplementation& view) {
-        if (view.is_private() != m_is_private)
-            return IterationDecision::Continue;
-
         auto retrieval_host_canonical = HTTP::Cookie::canonicalize_domain(view.url());
         if (!retrieval_host_canonical.has_value())
             return IterationDecision::Continue;
 
         HashTable<String> changed_domains;
-        Vector<HTTP::Cookie::Cookie> page_cookies;
-        Vector<HTTP::Cookie::Cookie> host_cookies;
+        Vector<HTTP::Cookie::Cookie> matching_cookies;
 
         for (auto const& cookie : cookies) {
             if (inform_web_view_about_changed_domains)
                 changed_domains.set(cookie.value.domain);
 
             if (HTTP::Cookie::cookie_matches_url(cookie.value, view.url(), *retrieval_host_canonical))
-                page_cookies.append(cookie.value);
-
-            if (cookie.value.host_only) {
-                if (cookie.value.domain == *retrieval_host_canonical)
-                    host_cookies.append(cookie.value);
-            } else if (HTTP::Cookie::domain_matches(*retrieval_host_canonical, cookie.value.domain)) {
-                host_cookies.append(cookie.value);
-            }
+                matching_cookies.append(cookie.value);
         }
 
-        view.notify_cookies_changed(changed_domains, page_cookies, host_cookies);
+        view.notify_cookies_changed(changed_domains, matching_cookies);
         return IterationDecision::Continue;
     });
 }

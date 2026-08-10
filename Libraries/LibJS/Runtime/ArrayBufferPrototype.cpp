@@ -154,7 +154,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayBufferPrototype::resize)
         return js_undefined();
 
     // 9. Let oldBlock be O.[[ArrayBufferData]].
-    // NOTE: oldBlock is read directly in step 12.
+    auto const& old_block = array_buffer_object->buffer();
 
     // 10. Let newBlock be ? CreateByteDataBlock(newByteLength).
     auto new_block = TRY(create_byte_data_block(vm, new_byte_length));
@@ -163,7 +163,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayBufferPrototype::resize)
     auto copy_length = min(new_byte_length, array_buffer_object->byte_length());
 
     // 12. Perform CopyDataBlockBytes(newBlock, 0, oldBlock, 0, copyLength).
-    array_buffer_object->copy_data_to(new_block, 0, 0, copy_length);
+    copy_data_block_bytes(new_block.buffer(), 0, old_block, 0, copy_length);
 
     // 13. NOTE: Neither creation of the new Data Block nor copying from the old Data Block are observable. Implementations may implement this method as in-place growth or shrinkage.
 
@@ -264,8 +264,10 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayBufferPrototype::slice)
         return vm.throw_completion<TypeError>(ErrorType::DetachedArrayBuffer);
 
     // 24. Let fromBuf be O.[[ArrayBufferData]].
+    auto& from_buf = array_buffer_object->buffer();
+
     // 25. Let toBuf be new.[[ArrayBufferData]].
-    // NOTE: fromBuf and toBuf are read directly in step 27b.
+    auto& to_buf = new_array_buffer_object->buffer();
 
     // 26. Let currentLen be O.[[ArrayBufferByteLength]].
     auto current_length = array_buffer_object->byte_length();
@@ -276,7 +278,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayBufferPrototype::slice)
         auto count = min(new_length, current_length - first);
 
         // b. Perform CopyDataBlockBytes(toBuf, 0, fromBuf, first, count).
-        array_buffer_object->copy_data_to(*new_array_buffer_object, first, 0, count);
+        copy_data_block_bytes(to_buf, 0, from_buf, first, count);
     }
 
     // 28. Return new.

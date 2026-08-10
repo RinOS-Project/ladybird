@@ -1,10 +1,3 @@
-enum AddressType {
-    "i32",
-    "i64"
-};
-
-typedef any AddressValue;
-
 enum TableKind {
     "externref",
     "anyfunc"
@@ -12,20 +5,19 @@ enum TableKind {
 
 dictionary TableDescriptor {
     required TableKind element;
-    required AddressValue initial;
-    AddressValue maximum;
-    AddressType address;
+    required [EnforceRange] unsigned long initial;
+    [EnforceRange] unsigned long maximum;
 };
 
 // https://webassembly.github.io/spec/js-api/#tables
 [LegacyNamespace=WebAssembly, Exposed=*]
 interface Table {
-    [ImplementedInBindings] constructor(TableDescriptor descriptor, optional any value);
+    constructor(TableDescriptor descriptor, optional any value);
 
-    [ImplementedInBindings, NeedsCallerRealm] AddressValue grow(AddressValue delta, optional any value);
+    unsigned long grow([EnforceRange] unsigned long delta, optional any value);
 
-    [ImplementedInBindings, NeedsCallerRealm] any get(AddressValue index);
-    [ImplementedInBindings, NeedsCallerRealm] undefined set(AddressValue index, optional any value);
+    any get([EnforceRange] unsigned long index);
+    undefined set([EnforceRange] unsigned long index, optional any value);
 
-    [ImplementedInBindings, NeedsCallerRealm] readonly attribute AddressValue length;
+    readonly attribute unsigned long length;
 };

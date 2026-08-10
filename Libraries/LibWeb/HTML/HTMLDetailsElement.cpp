@@ -5,7 +5,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/CSS/Invalidation/ElementStateInvalidator.h>
+#include <LibWeb/Bindings/HTMLDetailsElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/ElementFactory.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/ShadowRoot.h>
@@ -15,7 +16,6 @@
 #include <LibWeb/HTML/HTMLSlotElement.h>
 #include <LibWeb/HTML/HTMLSummaryElement.h>
 #include <LibWeb/HTML/ToggleEvent.h>
-#include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Namespace.h>
 
@@ -37,6 +37,12 @@ void HTMLDetailsElement::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_descendants_slot);
 }
 
+void HTMLDetailsElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLDetailsElement);
+    Base::initialize(realm);
+}
+
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#the-details-element:html-element-insertion-steps
 void HTMLDetailsElement::inserted()
 {
@@ -50,7 +56,7 @@ void HTMLDetailsElement::inserted()
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#the-details-element:concept-element-attributes-change-ext
-void HTMLDetailsElement::attribute_changed(Utf16FlyString const& local_name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
+void HTMLDetailsElement::attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
 {
     Base::attribute_changed(local_name, old_value, value, namespace_);
 
@@ -66,18 +72,20 @@ void HTMLDetailsElement::attribute_changed(Utf16FlyString const& local_name, Opt
 
     // 3. If localName is open, then:
     else if (local_name == HTML::AttributeNames::open) {
-        CSS::Invalidation::invalidate_style_after_open_state_change(*this);
+        // The :open pseudo-class can affect sibling selectors (e.g., details:open + sibling),
+        // so we need full subtree + sibling invalidation, not just targeted invalidation.
+        invalidate_style(DOM::StyleInvalidationReason::HTMLDetailsOrDialogOpenAttributeChange);
 
         // 1. If one of oldValue or value is null and the other is not null, run the following steps, which are known as
         //    the details notification task steps, for this details element:
         if (old_value.has_value() != value.has_value()) {
             // 1. If oldValue is null, queue a details toggle event task given the details element, "closed", and "open".
             if (!old_value.has_value()) {
-                queue_a_details_toggle_event_task("closed"_utf16_fly_string, "open"_utf16_fly_string);
+                queue_a_details_toggle_event_task("closed"_string, "open"_string);
             }
             // 2. Otherwise, queue a details toggle event task given the details element, "open", and "closed".
             else {
-                queue_a_details_toggle_event_task("open"_utf16_fly_string, "closed"_utf16_fly_string);
+                queue_a_details_toggle_event_task("open"_string, "closed"_string);
             }
         }
 
@@ -98,7 +106,7 @@ void HTMLDetailsElement::children_changed(ChildrenChangedMetadata const& metadat
 }
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#queue-a-details-toggle-event-task
-void HTMLDetailsElement::queue_a_details_toggle_event_task(Utf16FlyString old_state, Utf16FlyString new_state)
+void HTMLDetailsElement::queue_a_details_toggle_event_task(String old_state, String new_state)
 {
     // 1. If element's details toggle task tracker is not null, then:
     if (m_details_toggle_task_tracker.has_value()) {
@@ -122,7 +130,7 @@ void HTMLDetailsElement::queue_a_details_toggle_event_task(Utf16FlyString old_st
         event_init.old_state = move(old_state);
         event_init.new_state = move(new_state);
 
-        dispatch_event(ToggleEvent::create(HTML::EventNames::toggle, move(event_init), HighResolutionTime::current_high_resolution_time(relevant_global_object(*this))));
+        dispatch_event(ToggleEvent::create(realm(), HTML::EventNames::toggle, move(event_init)));
 
         // 2. Set element's details toggle task tracker to null.
         m_details_toggle_task_tracker = {};
@@ -137,7 +145,7 @@ void HTMLDetailsElement::queue_a_details_toggle_event_task(Utf16FlyString old_st
 
 // https://html.spec.whatwg.org/multipage/interactive-elements.html#details-name-group
 template<typename Callback>
-void for_each_element_in_details_name_group(HTMLDetailsElement& details, Utf16View name, Callback&& callback)
+void for_each_element_in_details_name_group(HTMLDetailsElement& details, FlyString const& name, Callback&& callback)
 {
     // The details name group that contains a details element a also contains all the other details elements b that
     // fulfill all of the following conditions:
@@ -222,11 +230,12 @@ WebIDL::ExceptionOr<void> HTMLDetailsElement::create_shadow_tree_if_needed()
     if (shadow_root())
         return {};
 
+    auto& realm = this->realm();
+
     // The details element is expected to have an internal shadow tree with three child elements:
-    auto shadow_root = DOM::ShadowRoot::create(document(), *this, Web::DOM::ShadowRootMode::Closed);
+    auto shadow_root = realm.create<DOM::ShadowRoot>(document(), *this, Bindings::ShadowRootMode::Closed);
     shadow_root->set_user_agent_internal(true);
-    shadow_root->set_slot_assignment(Web::DOM::SlotAssignmentMode::Manual);
-    set_shadow_root(shadow_root);
+    shadow_root->set_slot_assignment(Bindings::SlotAssignmentMode::Manual);
 
     // The first child element is a slot that is expected to take the details element's first summary element child, if any.
     auto summary_slot = TRY(DOM::create_element(document(), HTML::TagNames::slot, Namespace::HTML));
@@ -234,12 +243,12 @@ WebIDL::ExceptionOr<void> HTMLDetailsElement::create_shadow_tree_if_needed()
 
     // The second child element is a slot that is expected to take the details element's remaining descendants, if any.
     auto descendants_slot = TRY(DOM::create_element(document(), HTML::TagNames::slot, Namespace::HTML));
+    descendants_slot->set_use_pseudo_element(CSS::PseudoElement::DetailsContent);
     MUST(shadow_root->append_child(descendants_slot));
-    descendants_slot->set_associated_shadow_host_pseudo_element(CSS::PseudoElement::DetailsContent);
 
     // The third child element is either a link or style element with the following styles for the default summary:
     auto style = TRY(DOM::create_element(document(), HTML::TagNames::style, Namespace::HTML));
-    auto style_text = DOM::Text::create(document(), R"~~~(
+    auto style_text = realm.create<DOM::Text>(document(), R"~~~(
         :host summary {
             display: list-item;
             counter-increment: list-item 0;
@@ -254,6 +263,7 @@ WebIDL::ExceptionOr<void> HTMLDetailsElement::create_shadow_tree_if_needed()
 
     m_summary_slot = static_cast<HTML::HTMLSlotElement&>(*summary_slot);
     m_descendants_slot = static_cast<HTML::HTMLSlotElement&>(*descendants_slot);
+    set_shadow_root(shadow_root);
 
     return {};
 }
@@ -263,12 +273,12 @@ void HTMLDetailsElement::update_shadow_tree_slots()
     if (!shadow_root())
         return;
 
-    GC::ConservativeVector<HTMLSlotElement::SlottableHandle> summary_assignment;
-    GC::ConservativeVector<HTMLSlotElement::SlottableHandle> descendants_assignment;
+    Vector<HTMLSlotElement::SlottableHandle> summary_assignment;
+    Vector<HTMLSlotElement::SlottableHandle> descendants_assignment;
 
     auto* summary = first_child_of_type<HTMLSummaryElement>();
     if (summary != nullptr)
-        summary_assignment.append(GC::Ref { static_cast<DOM::Element&>(*summary) });
+        summary_assignment.append(GC::make_root(static_cast<DOM::Element&>(*summary)));
 
     for_each_in_subtree([&](auto& child) {
         if (&child == summary)
@@ -277,7 +287,7 @@ void HTMLDetailsElement::update_shadow_tree_slots()
             return TraversalDecision::Continue;
 
         child.as_slottable().visit([&](auto& node) {
-            descendants_assignment.append(node);
+            descendants_assignment.append(GC::make_root(node));
         });
 
         return TraversalDecision::Continue;
@@ -298,12 +308,12 @@ void HTMLDetailsElement::update_shadow_tree_style()
     if (has_attribute(HTML::AttributeNames::open)) {
         m_descendants_slot->set_attribute_value(HTML::AttributeNames::style, R"~~~(
             display: block;
-        )~~~"_utf16);
+        )~~~"_string);
     } else {
         m_descendants_slot->set_attribute_value(HTML::AttributeNames::style, R"~~~(
             display: block;
             content-visibility: hidden;
-        )~~~"_utf16);
+        )~~~"_string);
     }
 
     shadow_root()->set_needs_layout_tree_update(true, DOM::SetNeedsLayoutTreeUpdateReason::DetailsElementOpenedOrClosed);

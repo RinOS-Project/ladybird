@@ -41,7 +41,6 @@ StringView::StringView(ByteBuffer const& buffer)
     : m_characters((char const*)buffer.data())
     , m_length(buffer.size())
 {
-    VERIFY(buffer.data() != nullptr);
 }
 
 Vector<StringView> StringView::split_view(char const separator, SplitBehavior split_behavior) const
@@ -165,7 +164,11 @@ bool StringView::matches(StringView mask, CaseSensitivity case_sensitivity) cons
 
 bool StringView::contains(char needle) const
 {
-    return memchr(m_characters, static_cast<unsigned char>(needle), m_length) != nullptr;
+    for (char current : *this) {
+        if (current == needle)
+            return true;
+    }
+    return false;
 }
 
 bool StringView::contains(u32 needle) const

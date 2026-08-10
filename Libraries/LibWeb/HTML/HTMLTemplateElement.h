@@ -7,13 +7,12 @@
 #pragma once
 
 #include <LibWeb/DOM/DocumentFragment.h>
-#include <LibWeb/Export.h>
 #include <LibWeb/HTML/HTMLElement.h>
 
 namespace Web::HTML {
 
-class WEB_API HTMLTemplateElement final : public HTMLElement {
-    WEB_WRAPPABLE(HTMLTemplateElement, HTMLElement);
+class HTMLTemplateElement final : public HTMLElement {
+    WEB_PLATFORM_OBJECT(HTMLTemplateElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLTemplateElement);
 
 public:
@@ -34,7 +33,7 @@ private:
 
     virtual bool is_html_template_element() const final { return true; }
 
-    virtual void initialize_element() override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     GC::Ptr<DOM::DocumentFragment> m_content;

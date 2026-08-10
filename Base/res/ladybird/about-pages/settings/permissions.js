@@ -1,23 +1,13 @@
-import { registerDialogDeepLink } from "./dialog-deep-link.js";
-
 const siteSettings = document.querySelector("#site-settings");
 const siteSettingsAdd = document.querySelector("#site-settings-add");
 const siteSettingsClose = document.querySelector("#site-settings-close");
-const siteSettingsPolicy = document.querySelector("#site-settings-policy");
+const siteSettingsGlobal = document.querySelector("#site-settings-global");
 const siteSettingsList = document.querySelector("#site-settings-list");
 const siteSettingsInput = document.querySelector("#site-settings-input");
 const siteSettingsRemoveAll = document.querySelector("#site-settings-remove-all");
 const siteSettingsTitle = document.querySelector("#site-settings-title");
 
 const autoplaySettings = document.querySelector("#autoplay-settings");
-
-const SITE_SETTING_POLICY_OPTIONS = {
-    autoplay: [
-        { value: "allow-audio-and-video", label: "Allow Audio and Video" },
-        { value: "block-audio", label: "Block Audio" },
-        { value: "block-audio-and-video", label: "Block Audio and Video" },
-    ],
-};
 
 let AUTOPLAY_SETTINGS = {};
 
@@ -50,36 +40,18 @@ function currentSiteSetting() {
 }
 
 function showSiteSettings(title, settings) {
-    const setting = title.toLowerCase();
-
     siteSettingsTitle.innerText = title;
-
-    siteSettingsPolicy.innerHTML = "";
-
-    const policyOptions = SITE_SETTING_POLICY_OPTIONS[setting] ?? [];
-
-    policyOptions.forEach(({ value, label }) => {
-        const option = document.createElement("option");
-        option.value = value;
-        option.textContent = label;
-
-        siteSettingsPolicy.appendChild(option);
-    });
-
-    siteSettingsPolicy.value = settings.policy;
+    siteSettingsGlobal.checked = settings.enabledGlobally;
     siteSettingsList.innerHTML = "";
 
-    siteSettingsPolicy.onchange = () => {
-        ladybird.sendMessage("setSiteSettingPolicy", {
+    siteSettingsGlobal.onchange = () => {
+        ladybird.sendMessage("setSiteSettingEnabledGlobally", {
             setting: currentSiteSetting(),
-            policy: siteSettingsPolicy.value,
+            enabled: siteSettingsGlobal.checked,
         });
     };
 
-    // A deep link can open this dialog before the settings have loaded, so tolerate a not-yet-populated object.
-    const siteFilters = settings.siteFilters ?? [];
-
-    if (siteFilters.length === 0) {
+    if (settings.siteFilters.length === 0) {
         const placeholder = document.createElement("div");
         placeholder.className = "dialog-list-item-placeholder";
         placeholder.textContent = "No sites added";
@@ -87,7 +59,7 @@ function showSiteSettings(title, settings) {
         siteSettingsList.appendChild(placeholder);
     }
 
-    siteFilters.forEach(site => {
+    settings.siteFilters.forEach(site => {
         const filter = document.createElement("span");
         filter.className = "dialog-list-item-label";
         filter.textContent = site;
@@ -152,15 +124,9 @@ siteSettingsRemoveAll.addEventListener("click", () => {
     });
 });
 
-registerDialogDeepLink({
-    hash: "autoplay",
-    tab: "permissions",
-    dialog: siteSettings,
-    onOpen: () => showSiteSettings("Autoplay", AUTOPLAY_SETTINGS),
-});
-
-autoplaySettings.addEventListener("click", () => {
-    location.hash = "autoplay";
+autoplaySettings.addEventListener("click", event => {
+    showSiteSettings("Autoplay", AUTOPLAY_SETTINGS);
+    event.stopPropagation();
 });
 
 document.addEventListener("WebUILoaded", () => {

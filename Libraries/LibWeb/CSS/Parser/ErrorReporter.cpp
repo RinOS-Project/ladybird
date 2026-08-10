@@ -49,8 +49,8 @@ String serialize_parsing_error(ParsingError const& error)
 
 ErrorReporter& ErrorReporter::the()
 {
-    static ErrorReporter& error_reporter = *new ErrorReporter;
-    return error_reporter;
+    static ErrorReporter s_error_reporter {};
+    return s_error_reporter;
 }
 
 void ErrorReporter::report(ParsingError&& error)

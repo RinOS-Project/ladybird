@@ -4,25 +4,29 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Debug.h>
 #include <LibWeb/DOM/Document.h>
-#include <LibWeb/HTML/LocalNavigable.h>
+#include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/NavigableContainer.h>
 #include <LibWeb/Layout/NavigableContainerViewport.h>
 #include <LibWeb/Layout/Viewport.h>
-#include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/BorderRadiusCornerClipper.h>
+#include <LibWeb/Painting/DisplayList.h>
 #include <LibWeb/Painting/DisplayListRecorder.h>
 #include <LibWeb/Painting/NavigableContainerViewportPaintable.h>
+#include <LibWeb/Painting/ViewportPaintable.h>
 
 namespace Web::Painting {
 
-NonnullRefPtr<NavigableContainerViewportPaintable> NavigableContainerViewportPaintable::create(Layout::NavigableContainerViewport const& layout_box)
+GC_DEFINE_ALLOCATOR(NavigableContainerViewportPaintable);
+
+GC::Ref<NavigableContainerViewportPaintable> NavigableContainerViewportPaintable::create(Layout::NavigableContainerViewport const& layout_box)
 {
-    return adopt_ref(*new NavigableContainerViewportPaintable(layout_box));
+    return layout_box.heap().allocate<NavigableContainerViewportPaintable>(layout_box);
 }
 
 NavigableContainerViewportPaintable::NavigableContainerViewportPaintable(Layout::NavigableContainerViewport const& layout_box)
-    : Paintable(layout_box)
+    : PaintableBox(layout_box)
 {
 }
 
@@ -31,7 +35,7 @@ void NavigableContainerViewportPaintable::paint(DisplayListRecordingContext& con
     if (!is_visible())
         return;
 
-    Paintable::paint(context, phase);
+    PaintableBox::paint(context, phase);
 
     if (phase == PaintPhase::Foreground) {
         auto absolute_rect = this->absolute_rect();
@@ -39,34 +43,33 @@ void NavigableContainerViewportPaintable::paint(DisplayListRecordingContext& con
         ScopedCornerRadiusClip corner_clip { context, clip_rect, normalized_border_radii_data(ShrinkRadiiForBorders::Yes) };
 
         auto const& navigable_container = this->navigable_container();
-        auto content_navigable = navigable_container.content_navigable();
-        VERIFY(content_navigable);
-        auto& local_navigable = as<HTML::LocalNavigable>(*content_navigable);
-        if (local_navigable.has_been_destroyed())
+        auto* hosted_document = const_cast<DOM::Document*>(navigable_container.content_document_without_origin_check());
+        if (!hosted_document)
             return;
 
-        auto context_id = document().page().client().compositor_context_id_for_remote_child_frame(content_navigable->id());
-        if (!context_id.has_value()) {
-            if (!local_navigable.has_compositor_context())
-                return;
+        // NB: The hosted document's layout may have been invalidated during the parent
+        //     document's layout (e.g., via viewport size changes in did_set_content_size).
+        //     Ensure it is up to date before painting.
+        hosted_document->update_layout(DOM::UpdateLayoutReason::HostedDocumentBeforePaint);
 
-            auto* hosted_document = const_cast<DOM::Document*>(navigable_container.content_document_without_origin_check());
-            if (hosted_document && hosted_document->is_render_blocked())
-                return;
-
-            context_id = local_navigable.compositor_context().id();
-        }
+        auto const* hosted_paint_tree = hosted_document->paintable();
+        if (!hosted_paint_tree)
+            return;
 
         context.display_list_recorder().save();
+
         context.display_list_recorder().add_clip_rect(clip_rect.to_type<int>());
-        context.display_list_recorder().draw_composited_context(
-            context.enclosing_device_rect(absolute_rect).to_type<int>(),
-            *context_id,
-            Gfx::ScalingMode::NearestNeighbor);
+
+        HTML::PaintConfig paint_config;
+        paint_config.paint_overlay = context.should_paint_overlay();
+        paint_config.should_show_line_box_borders = context.should_show_line_box_borders();
+        auto display_list = hosted_document->record_display_list(paint_config);
+        context.display_list_recorder().paint_nested_display_list(display_list, context.enclosing_device_rect(absolute_rect).to_type<int>());
+
         context.display_list_recorder().restore();
 
         if constexpr (HIGHLIGHT_FOCUSED_FRAME_DEBUG) {
-            if (local_navigable.is_focused()) {
+            if (navigable_container.content_navigable()->is_focused()) {
                 context.display_list_recorder().draw_rect(clip_rect.to_type<int>(), Color::Cyan);
             }
         }

@@ -6,36 +6,27 @@
 
 #pragma once
 
-#include <AK/String.h>
-#include <AK/Utf16String.h>
-#include <LibJS/Forward.h>
-#include <LibWeb/Bindings/ShadowRoot.h>
+#include <LibWeb/Bindings/ShadowRootPrototype.h>
 #include <LibWeb/CSS/StyleScope.h>
-#include <LibWeb/DOM/AnchorNameMap.h>
 #include <LibWeb/DOM/DocumentFragment.h>
 #include <LibWeb/DOM/ElementByIdMap.h>
 #include <LibWeb/DOM/SlotRegistry.h>
 #include <LibWeb/Export.h>
-#include <LibWeb/WebIDL/ExceptionOr.h>
 #include <LibWeb/WebIDL/ObservableArray.h>
 
 namespace Web::DOM {
 
-struct AdoptedStyleSheetsAccess;
-
 class WEB_API ShadowRoot final : public DocumentFragment {
-    WEB_WRAPPABLE(ShadowRoot, DocumentFragment);
+    WEB_PLATFORM_OBJECT(ShadowRoot, DocumentFragment);
     GC_DECLARE_ALLOCATOR(ShadowRoot);
 
 public:
     static constexpr bool OVERRIDES_FINALIZE = true;
 
-    [[nodiscard]] static GC::Ref<ShadowRoot> create(Document&, Element& host, ShadowRootMode);
+    Bindings::ShadowRootMode mode() const { return m_mode; }
 
-    ShadowRootMode mode() const { return m_mode; }
-
-    SlotAssignmentMode slot_assignment() const { return m_slot_assignment; }
-    void set_slot_assignment(SlotAssignmentMode slot_assignment) { m_slot_assignment = slot_assignment; }
+    Bindings::SlotAssignmentMode slot_assignment() const { return m_slot_assignment; }
+    void set_slot_assignment(Bindings::SlotAssignmentMode slot_assignment) { m_slot_assignment = slot_assignment; }
 
     bool delegates_focus() const { return m_delegates_focus; }
     void set_delegates_focus(bool delegates_focus) { m_delegates_focus = delegates_focus; }
@@ -64,17 +55,22 @@ public:
     // ^EventTarget
     virtual EventTarget* get_parent(Event const&) override;
 
-    WebIDL::ExceptionOr<Utf16String> inner_html() const;
-    WebIDL::ExceptionOr<void> set_inner_html(StringView);
+    WebIDL::ExceptionOr<TrustedTypes::TrustedHTMLOrString> inner_html() const;
+    WebIDL::ExceptionOr<void> set_inner_html(TrustedTypes::TrustedHTMLOrString const&);
 
-    WebIDL::ExceptionOr<void> set_html_unsafe(StringView);
+    WebIDL::ExceptionOr<void> set_html_unsafe(TrustedTypes::TrustedHTMLOrString const&);
 
-    WebIDL::ExceptionOr<Utf16String> get_html(HTMLSerializationOptions const&) const;
+    WebIDL::ExceptionOr<String> get_html(GetHTMLOptions const&) const;
 
     GC::Ptr<Element> active_element();
 
     CSS::StyleSheetList& style_sheets();
     CSS::StyleSheetList const& style_sheets() const;
+
+    CSS::StyleSheetList* style_sheets_for_bindings() { return &style_sheets(); }
+
+    GC::Ref<WebIDL::ObservableArray> adopted_style_sheets() const;
+    WebIDL::ExceptionOr<void> set_adopted_style_sheets(JS::Value);
 
     void for_each_css_style_sheet(Function<void(CSS::CSSStyleSheet&)>&& callback) const;
     void for_each_active_css_style_sheet(Function<void(CSS::CSSStyleSheet&)> const& callback) const;
@@ -82,9 +78,6 @@ public:
     WebIDL::ExceptionOr<Vector<GC::Ref<Animations::Animation>>> get_animations();
 
     ElementByIdMap& element_by_id() const;
-
-    AnchorNameMap& anchor_name_map() { return m_anchor_name_map; }
-    AnchorNameMap const& anchor_name_map() const { return m_anchor_name_map; }
 
     void register_slot(HTML::HTMLSlotElement&);
     void unregister_slot(HTML::HTMLSlotElement&);
@@ -96,12 +89,12 @@ public:
             m_slot_registry->for_each_slot(callback);
     }
 
-    GC::Ptr<HTML::HTMLSlotElement> first_slot_with_name(Utf16View name) const;
+    GC::Ptr<HTML::HTMLSlotElement> first_slot_with_name(FlyString const& name) const;
 
     CSS::StyleScope const& style_scope() const { return m_style_scope; }
     CSS::StyleScope& style_scope() { return m_style_scope; }
 
-    using PartElementMap = HashMap<Utf16FlyString, OrderedHashTable<AbstractElement>>;
+    using PartElementMap = HashMap<FlyString, OrderedHashTable<AbstractElement>>;
     PartElementMap const& part_element_map() const;
 
     GC::Ptr<HTML::CustomElementRegistry> custom_element_registry() const;
@@ -112,28 +105,24 @@ public:
 
     virtual void finalize() override;
 
-    GC::Ptr<Element> retargeted_fullscreen_element() const;
+    GC::Ptr<Element> fullscreen_element_for_bindings() const;
 
 protected:
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:
-    friend struct AdoptedStyleSheetsAccess;
-
-    GC::Ref<WebIDL::ObservableArray> adopted_style_sheets() const;
-
-    ShadowRoot(Document&, Element& host, ShadowRootMode);
+    ShadowRoot(Document&, Element& host, Bindings::ShadowRootMode);
+    virtual void initialize(JS::Realm&) override;
 
     // ^Node
-    virtual Utf16FlyString node_name() const override { return "#shadow-root"_utf16_fly_string; }
+    virtual FlyString node_name() const override { return "#shadow-root"_fly_string; }
     virtual bool is_shadow_root() const final { return true; }
-    virtual void adopted_from(Document&) override;
 
     void calculate_part_element_map();
 
     // NOTE: The specification doesn't seem to specify a default value for mode. Assuming closed for now.
-    ShadowRootMode m_mode { ShadowRootMode::Closed };
-    SlotAssignmentMode m_slot_assignment { SlotAssignmentMode::Named };
+    Bindings::ShadowRootMode m_mode { Bindings::ShadowRootMode::Closed };
+    Bindings::SlotAssignmentMode m_slot_assignment { Bindings::SlotAssignmentMode::Named };
     bool m_delegates_focus { false };
     bool m_available_to_element_internals { false };
     bool m_user_agent_internal { false };
@@ -149,8 +138,6 @@ private:
     bool m_serializable { false };
 
     mutable OwnPtr<ElementByIdMap> m_element_by_id;
-
-    AnchorNameMap m_anchor_name_map;
 
     OwnPtr<SlotRegistry> m_slot_registry;
 
@@ -193,11 +180,8 @@ inline bool Node::fast_is<ShadowRoot>() const { return node_type() == to_underly
 template<typename Callback>
 inline TraversalDecision Node::for_each_shadow_including_inclusive_descendant(Callback callback)
 {
-    auto decision = callback(*this);
-    if (decision == TraversalDecision::Break)
+    if (callback(*this) == TraversalDecision::Break)
         return TraversalDecision::Break;
-    if (decision == TraversalDecision::SkipChildrenAndContinue)
-        return TraversalDecision::Continue;
 
     if (this->for_each_shadow_including_descendant(callback) == TraversalDecision::Break)
         return TraversalDecision::Break;

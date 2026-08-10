@@ -6,24 +6,25 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16String.h>
-#include <AK/Utf16StringBuilder.h>
-#include <AK/Utf16View.h>
-#include <LibWeb/Bindings/CSSNumericValue.h>
+#include <AK/FlyString.h>
+#include <LibWeb/Bindings/CSSNumericValuePrototype.h>
 #include <LibWeb/CSS/CSSStyleValue.h>
 #include <LibWeb/CSS/NumericType.h>
-#include <LibWeb/CSS/StyleValues/CalcNodeRef.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 #include <LibWeb/WebIDL/Types.h>
 
-namespace Web::Bindings {
-
-struct CSSNumericType;
-
-}
-
 namespace Web::CSS {
+
+struct CSSNumericType {
+    Optional<WebIDL::Long> length;
+    Optional<WebIDL::Long> angle;
+    Optional<WebIDL::Long> time;
+    Optional<WebIDL::Long> frequency;
+    Optional<WebIDL::Long> resolution;
+    Optional<WebIDL::Long> flex;
+    Optional<WebIDL::Long> percent;
+    Optional<Bindings::CSSNumericBaseType> percent_hint;
+};
 
 // https://drafts.css-houdini.org/css-typed-om-1/#cssnumericvalue-sum-value
 struct SumValueItem {
@@ -34,7 +35,7 @@ using SumValue = Vector<SumValueItem>;
 
 // https://drafts.css-houdini.org/css-typed-om-1/#cssnumericvalue
 class CSSNumericValue : public CSSStyleValue {
-    WEB_WRAPPABLE(CSSNumericValue, CSSStyleValue);
+    WEB_PLATFORM_OBJECT(CSSNumericValue, CSSStyleValue);
     GC_DECLARE_ALLOCATOR(CSSNumericValue);
 
 public:
@@ -46,41 +47,42 @@ public:
     };
     virtual ~CSSNumericValue() override = default;
 
-    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> add(ReadonlySpan<CSSNumberish>);
-    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> sub(ReadonlySpan<CSSNumberish>);
-    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> mul(ReadonlySpan<CSSNumberish>);
-    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> div(ReadonlySpan<CSSNumberish>);
-    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> min(ReadonlySpan<CSSNumberish>);
-    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> max(ReadonlySpan<CSSNumberish>);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> add(Vector<CSSNumberish> const&);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> sub(Vector<CSSNumberish> const&);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> mul(Vector<CSSNumberish> const&);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> div(Vector<CSSNumberish> const&);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> min(Vector<CSSNumberish> const&);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> max(Vector<CSSNumberish> const&);
 
-    bool equals_for_bindings(ReadonlySpan<CSSNumberish>) const;
+    bool equals_for_bindings(Vector<CSSNumberish>) const;
     virtual bool is_equal_numeric_value(GC::Ref<CSSNumericValue> other) const = 0;
 
-    WebIDL::ExceptionOr<GC::Ref<CSSUnitValue>> to(Utf16String const& unit) const;
-    WebIDL::ExceptionOr<GC::Ref<CSSUnitValue>> to(Utf16FlyString const& unit) const;
+    WebIDL::ExceptionOr<GC::Ref<CSSUnitValue>> to(FlyString const& unit) const;
 
     CSSNumberish negate();
     WebIDL::ExceptionOr<CSSNumberish> invert();
 
     virtual Optional<SumValue> create_a_sum_value() const = 0;
 
-    Bindings::CSSNumericType type_for_bindings() const;
+    CSSNumericType type_for_bindings() const;
     NumericType const& type() const { return m_type; }
 
-    virtual WebIDL::ExceptionOr<Utf16String> to_string() const final override { return to_string({}); }
-    void serialize(Utf16StringBuilder&, SerializationParams const&) const;
-    Utf16String to_string(SerializationParams const&) const;
+    virtual WebIDL::ExceptionOr<String> to_string() const final override { return to_string({}); }
+    void serialize(StringBuilder&, SerializationParams const&) const;
+    String to_string(SerializationParams const&) const;
 
-    static WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> parse(JS::VM&, Utf16View css_text);
+    static WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> parse(JS::VM&, String const& css_text);
 
-    virtual WebIDL::ExceptionOr<CalcNodeRef> create_calculation_node(CalculationContext const&) const = 0;
+    virtual WebIDL::ExceptionOr<NonnullRefPtr<CalculationNode const>> create_calculation_node(CalculationContext const&) const = 0;
 
 protected:
-    explicit CSSNumericValue(NumericType);
+    explicit CSSNumericValue(JS::Realm&, NumericType);
+
+    virtual void initialize(JS::Realm&) override;
 
     NumericType m_type;
 };
 
-GC::Ref<CSSNumericValue> rectify_a_numberish_value(CSSNumberish const&, Optional<Utf16FlyString> unit = {});
+GC::Ref<CSSNumericValue> rectify_a_numberish_value(JS::Realm&, CSSNumberish const&, Optional<FlyString> unit = {});
 
 }

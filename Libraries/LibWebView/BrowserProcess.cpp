@@ -5,11 +5,9 @@
  */
 
 #include <AK/ByteString.h>
-#include <AK/NeverDestroyed.h>
 #include <LibCore/Process.h>
 #include <LibCore/Socket.h>
 #include <LibCore/System.h>
-#include <LibFileSystem/FileSystem.h>
 #include <LibIPC/ConnectionToServer.h>
 #include <LibIPC/Transport.h>
 #if defined(AK_OS_MACOS)
@@ -20,19 +18,9 @@
 #include <LibWebView/URL.h>
 #include <LibWebView/Utilities.h>
 
-#if defined(AK_OS_WINDOWS)
-#    include <AK/Windows.h>
-#else
-#    include <sys/file.h>
-#endif
-
 namespace WebView {
 
-static HashMap<int, RefPtr<UIProcessConnectionFromClient>>& connections()
-{
-    static NeverDestroyed<HashMap<int, RefPtr<UIProcessConnectionFromClient>>> connections;
-    return *connections;
-}
+static HashMap<int, RefPtr<UIProcessConnectionFromClient>> s_connections;
 
 class UIProcessClient final
     : public IPC::ConnectionToServer<UIProcessClientEndpoint, UIProcessServerEndpoint> {
@@ -42,26 +30,15 @@ private:
     explicit UIProcessClient(NonnullOwnPtr<IPC::Transport>);
 };
 
-ErrorOr<BrowserProcess::ProcessDisposition> BrowserProcess::connect(Vector<ByteString> const& raw_urls, NewWindow new_window, StringView runtime_directory, [[maybe_unused]] StringView profile_identity)
+ErrorOr<BrowserProcess::ProcessDisposition> BrowserProcess::connect(Vector<ByteString> const& raw_urls, NewWindow new_window)
 {
     static constexpr auto process_name = "Ladybird"sv;
 
-    auto startup_lock_path = LexicalPath::join(runtime_directory, "startup.lock"sv).string();
-    auto startup_lock = TRY(Core::File::open(startup_lock_path, Core::File::OpenMode::ReadWrite));
-#if defined(AK_OS_WINDOWS)
-    OVERLAPPED overlapped {};
-    if (!LockFileEx(to_handle(startup_lock->fd()), LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &overlapped))
-        return Error::from_windows_error();
-#else
-    if (flock(startup_lock->fd(), LOCK_EX) < 0)
-        return Error::from_syscall("flock"sv, errno);
-#endif
-
-    auto [socket_path, pid_path] = TRY(Process::paths_for_process(process_name, runtime_directory));
+    auto [socket_path, pid_path] = TRY(Process::paths_for_process(process_name));
 
     if (auto pid = TRY(Process::get_process_pid(process_name, pid_path)); pid.has_value()) {
 #if defined(AK_OS_MACOS)
-        TRY(connect_as_client(*pid, raw_urls, new_window, profile_identity));
+        TRY(connect_as_client(*pid, raw_urls, new_window));
 #else
         TRY(connect_as_client(socket_path, raw_urls, new_window));
 #endif
@@ -82,10 +59,9 @@ ErrorOr<BrowserProcess::ProcessDisposition> BrowserProcess::connect(Vector<ByteS
 }
 
 #if defined(AK_OS_MACOS)
-ErrorOr<void> BrowserProcess::connect_as_client(pid_t pid, Vector<ByteString> const& raw_urls, NewWindow new_window, StringView profile_identity)
+ErrorOr<void> BrowserProcess::connect_as_client(pid_t pid, Vector<ByteString> const& raw_urls, NewWindow new_window)
 {
-    auto process_name = ByteString::formatted("Ladybird-{}", profile_identity);
-    auto transport_ports = TRY(IPC::bootstrap_transport_from_mach_server(mach_server_name_for_process(process_name, pid)));
+    auto transport_ports = TRY(IPC::bootstrap_transport_from_mach_server(mach_server_name_for_process("Ladybird"sv, pid)));
     auto client = UIProcessClient::construct(make<IPC::Transport>(move(transport_ports.receive_right), move(transport_ports.send_right)));
 
     switch (new_window) {
@@ -176,15 +152,16 @@ BrowserProcess::~BrowserProcess()
     if (m_pid_file) {
         MUST(m_pid_file->truncate(0));
 #if defined(AK_OS_WINDOWS)
-        // NOTE: On Windows, be conservative and close the pid file's handle before
-        // removing the file; removal of an open file requires cooperative sharing modes.
+        // NOTE: On Windows, System::open() duplicates the underlying OS file handle,
+        // so we need to explicitly close said handle, otherwise the unlink() call fails due
+        // to permission errors and we crash on shutdown.
         m_pid_file->close();
 #endif
-        MUST(FileSystem::remove(m_pid_path, FileSystem::RecursionMode::Disallowed));
+        MUST(Core::System::unlink(m_pid_path));
     }
 
     if (!m_socket_path.is_empty())
-        MUST(FileSystem::remove(m_socket_path, FileSystem::RecursionMode::Disallowed));
+        MUST(Core::System::unlink(m_socket_path));
 }
 
 UIProcessClient::UIProcessClient(NonnullOwnPtr<IPC::Transport> transport)
@@ -195,24 +172,24 @@ UIProcessClient::UIProcessClient(NonnullOwnPtr<IPC::Transport> transport)
 UIProcessConnectionFromClient::UIProcessConnectionFromClient(NonnullOwnPtr<IPC::Transport> transport, int client_id)
     : IPC::ConnectionFromClient<UIProcessClientEndpoint, UIProcessServerEndpoint>(*this, move(transport), client_id)
 {
-    connections().set(client_id, *this);
+    s_connections.set(client_id, *this);
 }
 
 void UIProcessConnectionFromClient::die()
 {
-    connections().remove(client_id());
+    s_connections.remove(client_id());
 }
 
 void UIProcessConnectionFromClient::create_new_tab(Vector<ByteString> urls)
 {
     if (on_new_tab)
-        on_new_tab(sanitize_urls(urls));
+        on_new_tab(sanitize_urls(urls, Application::settings().new_tab_page_url()));
 }
 
 void UIProcessConnectionFromClient::create_new_window(Vector<ByteString> urls)
 {
     if (on_new_window)
-        on_new_window(sanitize_urls(urls));
+        on_new_window(sanitize_urls(urls, Application::settings().new_tab_page_url()));
 }
 
 }

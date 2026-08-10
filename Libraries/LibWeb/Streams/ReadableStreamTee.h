@@ -41,12 +41,11 @@ class ReadableStreamTeeReadRequest final : public ReadRequest {
 
 private:
     ReadableStreamTeeReadRequest(
+        JS::Realm& realm,
         GC::Ref<ReadableStream> stream,
         GC::Ref<ReadableStreamTeeParams> params,
         GC::Ref<WebIDL::Promise> cancel_promise,
         bool clone_for_branch2);
-
-    [[nodiscard]] JS::Realm& promise_realm() const;
 
     virtual void visit_edges(Visitor& visitor) override;
 
@@ -54,6 +53,7 @@ private:
     virtual void on_close() override;
     virtual void on_error(JS::Value) override;
 
+    GC::Ref<JS::Realm> m_realm;
     GC::Ref<ReadableStream> m_stream;
     GC::Ref<ReadableStreamTeeParams> m_params;
     GC::Ref<WebIDL::Promise> m_cancel_promise;
@@ -89,11 +89,10 @@ class ReadableByteStreamTeeDefaultReadRequest final : public ReadRequest {
 
 private:
     ReadableByteStreamTeeDefaultReadRequest(
+        JS::Realm& realm,
         GC::Ref<ReadableStream> stream,
         GC::Ref<ReadableByteStreamTeeParams> params,
         GC::Ref<WebIDL::Promise> cancel_promise);
-
-    [[nodiscard]] JS::Realm& promise_realm() const;
 
     virtual void visit_edges(Visitor& visitor) override;
 
@@ -101,6 +100,7 @@ private:
     virtual void on_close() override;
     virtual void on_error(JS::Value) override;
 
+    GC::Ref<JS::Realm> m_realm;
     GC::Ref<ReadableStream> m_stream;
     GC::Ref<ReadableByteStreamTeeParams> m_params;
     GC::Ref<WebIDL::Promise> m_cancel_promise;
@@ -113,6 +113,7 @@ class ReadableByteStreamTeeBYOBReadRequest final : public ReadIntoRequest {
 
 private:
     ReadableByteStreamTeeBYOBReadRequest(
+        JS::Realm& realm,
         GC::Ref<ReadableStream> stream,
         GC::Ref<ReadableByteStreamTeeParams> params,
         GC::Ref<WebIDL::Promise> cancel_promise,
@@ -120,14 +121,13 @@ private:
         GC::Ref<ReadableStream> other_branch,
         bool for_branch2);
 
-    [[nodiscard]] JS::Realm& promise_realm() const;
-
     virtual void visit_edges(Visitor& visitor) override;
 
     virtual void on_chunk(JS::Value chunk) override;
     virtual void on_close(JS::Value chunk) override;
     virtual void on_error(JS::Value) override;
 
+    GC::Ref<JS::Realm> m_realm;
     GC::Ref<ReadableStream> m_stream;
     GC::Ref<ReadableByteStreamTeeParams> m_params;
     GC::Ref<WebIDL::Promise> m_cancel_promise;

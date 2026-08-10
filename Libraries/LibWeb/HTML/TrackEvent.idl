@@ -1,3 +1,8 @@
+#import <DOM/Event.idl>
+#import <HTML/AudioTrack.idl>
+#import <HTML/TextTrack.idl>
+#import <HTML/VideoTrack.idl>
+
 // https://html.spec.whatwg.org/multipage/media.html#trackevent
 [Exposed=Window]
 interface TrackEvent : Event {

@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/Vector.h>
-#include <LibIPC/Forward.h>
 
 namespace Gfx {
 
@@ -20,16 +19,6 @@ struct ShapeFeature {
 };
 
 using ShapeFeatures = Vector<ShapeFeature, 4>;
-
-}
-
-namespace IPC {
-
-template<>
-ErrorOr<void> encode(Encoder&, Gfx::ShapeFeature const&);
-
-template<>
-ErrorOr<Gfx::ShapeFeature> decode(Decoder&);
 
 }
 

@@ -7,10 +7,9 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <AK/RefPtr.h>
 #include <AK/Utf16FlyString.h>
+#include <AK/Utf16View.h>
 #include <AK/Vector.h>
-#include <LibJS/Forward.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS::Bytecode {
@@ -38,9 +37,7 @@ struct ClassBlueprint {
     bool has_super_class;
     bool has_name;
     Utf16FlyString name;
-    RefPtr<SourceCode const> source_code;
-    size_t source_text_offset { 0 };
-    size_t source_text_length { 0 };
+    Utf16View source_text;
     Vector<ClassElementDescriptor> elements;
 };
 

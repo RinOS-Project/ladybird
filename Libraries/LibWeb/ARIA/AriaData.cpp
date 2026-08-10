@@ -15,18 +15,18 @@ AriaData::AriaData(Web::ARIA::ARIAMixin const& source)
     m_aria_active_descendant = source.aria_active_descendant();
     m_aria_atomic = AriaData::parse_optional_true_false(source.aria_atomic());
     m_aria_auto_complete = AriaData::parse_aria_autocomplete(source.aria_auto_complete());
-    m_aria_braille_label = source.aria_braille_label().value_or(Utf16String {});
-    m_aria_braille_role_description = source.aria_braille_role_description().value_or(Utf16String {});
+    m_aria_braille_label = source.aria_braille_label().value_or(String {});
+    m_aria_braille_role_description = source.aria_braille_role_description().value_or(String {});
     m_aria_busy = AriaData::parse_true_false(source.aria_busy());
     m_aria_checked = AriaData::parse_tristate(source.aria_checked());
     m_aria_col_count = AriaData::parse_integer(source.aria_col_count());
     m_aria_col_index = AriaData::parse_integer(source.aria_col_index());
-    m_aria_col_index_text = source.aria_col_index_text().value_or(Utf16String {});
+    m_aria_col_index_text = source.aria_col_index_text().value_or(String {});
     m_aria_col_span = AriaData::parse_integer(source.aria_col_span());
     m_aria_controls = source.parse_id_reference_list(source.aria_controls());
     m_aria_current = AriaData::parse_aria_current(source.aria_current());
     m_aria_described_by = source.parse_id_reference_list(source.aria_described_by());
-    m_aria_description = source.aria_description().value_or(Utf16String {});
+    m_aria_description = source.aria_description().value_or(String {});
     m_aria_details = source.parse_id_reference(source.aria_details());
     m_aria_disabled = AriaData::parse_true_false(source.aria_disabled());
     m_aria_drop_effect = AriaData::parse_aria_drop_effect(source.aria_drop_effect());
@@ -37,8 +37,8 @@ AriaData::AriaData(Web::ARIA::ARIAMixin const& source)
     m_aria_has_popup = AriaData::parse_aria_has_popup(source.aria_has_popup());
     m_aria_hidden = AriaData::parse_true_false_undefined(source.aria_hidden());
     m_aria_invalid = AriaData::parse_aria_invalid(source.aria_invalid());
-    m_aria_key_shortcuts = source.aria_key_shortcuts().value_or(Utf16String {});
-    m_aria_label = source.aria_label().value_or(Utf16String {});
+    m_aria_key_shortcuts = source.aria_key_shortcuts().value_or(String {});
+    m_aria_label = source.aria_label().value_or(String {});
     m_aria_labelled_by = source.parse_id_reference_list(source.aria_labelled_by());
     m_aria_level = AriaData::parse_integer(source.aria_level());
     m_aria_live = AriaData::parse_aria_live(source.aria_live());
@@ -47,16 +47,16 @@ AriaData::AriaData(Web::ARIA::ARIAMixin const& source)
     m_aria_multi_selectable = AriaData::parse_true_false(source.aria_multi_selectable());
     m_aria_orientation = AriaData::parse_aria_orientation(source.aria_orientation());
     m_aria_owns = source.parse_id_reference_list(source.aria_owns());
-    m_aria_placeholder = source.aria_placeholder().value_or(Utf16String {});
+    m_aria_placeholder = source.aria_placeholder().value_or(String {});
     m_aria_pos_in_set = AriaData::parse_integer(source.aria_pos_in_set());
     m_aria_pressed = AriaData::parse_tristate(source.aria_pressed());
     m_aria_read_only = AriaData::parse_true_false(source.aria_read_only());
     m_aria_relevant = AriaData::parse_aria_relevant(source.aria_relevant());
     m_aria_required = AriaData::parse_true_false(source.aria_required());
-    m_aria_role_description = source.aria_role_description().value_or(Utf16String {});
+    m_aria_role_description = source.aria_role_description().value_or(String {});
     m_aria_row_count = AriaData::parse_integer(source.aria_row_count());
     m_aria_row_index = AriaData::parse_integer(source.aria_row_index());
-    m_aria_row_index_text = source.aria_row_index_text().value_or(Utf16String {});
+    m_aria_row_index_text = source.aria_row_index_text().value_or(String {});
     m_aria_row_span = AriaData::parse_integer(source.aria_row_span());
     m_aria_selected = AriaData::parse_true_false_undefined(source.aria_selected());
     m_aria_set_size = AriaData::parse_integer(source.aria_set_size());
@@ -64,75 +64,57 @@ AriaData::AriaData(Web::ARIA::ARIAMixin const& source)
     m_aria_value_max = AriaData::parse_number(source.aria_value_max());
     m_aria_value_min = AriaData::parse_number(source.aria_value_min());
     m_aria_value_now = AriaData::parse_number(source.aria_value_now());
-    m_aria_value_text = source.aria_value_text().value_or(Utf16String {});
+    m_aria_value_text = source.aria_value_text().value_or(String {});
 }
 
-static bool value_equals(Optional<Utf16String> const& value, Utf16View expected)
+bool AriaData::parse_true_false(Optional<String> const& value)
 {
-    return value.has_value() && value->utf16_view() == expected;
-}
-
-static void for_each_ascii_whitespace_separated_token(Utf16View input, Function<IterationDecision(Utf16View)> const& callback)
-{
-    size_t start = 0;
-    for (size_t i = 0; i <= input.length_in_code_units(); ++i) {
-        if (i != input.length_in_code_units() && !Infra::is_ascii_whitespace(input.code_unit_at(i)))
-            continue;
-
-        if (i > start && callback(input.substring_view(start, i - start)) == IterationDecision::Break)
-            return;
-        start = i + 1;
-    }
-}
-
-bool AriaData::parse_true_false(Optional<Utf16String> const& value)
-{
-    if (value_equals(value, u"true"sv))
+    if (value == "true"sv)
         return true;
-    if (value_equals(value, u"false"sv))
+    if (value == "false"sv)
         return false;
     return false;
 }
 
-Tristate AriaData::parse_tristate(Optional<Utf16String> const& value)
+Tristate AriaData::parse_tristate(Optional<String> const& value)
 {
-    if (value_equals(value, u"true"sv))
+    if (value == "true"sv)
         return Tristate::True;
-    if (value_equals(value, u"false"sv))
+    if (value == "false"sv)
         return Tristate::False;
-    if (value_equals(value, u"mixed"sv))
+    if (value == "mixed"sv)
         return Tristate::Mixed;
-    if (value_equals(value, u"undefined"sv))
+    if (value == "undefined"sv)
         return Tristate::Undefined;
     return Tristate::Undefined;
 }
 
-Optional<bool> AriaData::parse_true_false_undefined(Optional<Utf16String> const& value)
+Optional<bool> AriaData::parse_true_false_undefined(Optional<String> const& value)
 {
-    if (value_equals(value, u"true"sv))
+    if (value == "true"sv)
         return true;
-    if (value_equals(value, u"false"sv))
+    if (value == "false"sv)
         return false;
-    if (value_equals(value, u"undefined"sv))
+    if (value == "undefined"sv)
         return {};
     return {};
 }
 
-Optional<i32> AriaData::parse_integer(Optional<Utf16String> const& value)
+Optional<i32> AriaData::parse_integer(Optional<String> const& value)
 {
     if (!value.has_value())
         return {};
-    return value->to_number<i32>();
+    return value->bytes_as_string_view().to_number<i32>();
 }
 
-Optional<f64> AriaData::parse_number(Optional<Utf16String> const& value)
+Optional<f64> AriaData::parse_number(Optional<String> const& value)
 {
     if (!value.has_value())
         return {};
     return value->to_number<double>(TrimWhitespace::Yes);
 }
 
-Optional<Utf16String> AriaData::aria_active_descendant_or_default() const
+Optional<String> AriaData::aria_active_descendant_or_default() const
 {
     return m_aria_active_descendant;
 }
@@ -150,12 +132,12 @@ AriaAutocomplete AriaData::aria_auto_complete_or_default() const
     return m_aria_auto_complete;
 }
 
-Utf16String AriaData::aria_braille_label_or_default() const
+String AriaData::aria_braille_label_or_default() const
 {
     return m_aria_braille_label;
 }
 
-Utf16String AriaData::aria_braille_role_description_or_default() const
+String AriaData::aria_braille_role_description_or_default() const
 {
     return m_aria_braille_role_description;
 }
@@ -180,7 +162,7 @@ Optional<i32> AriaData::aria_col_index_or_default() const
     return m_aria_col_index;
 }
 
-Utf16String AriaData::aria_col_index_text_or_default() const
+String AriaData::aria_col_index_text_or_default() const
 {
     return m_aria_col_index_text;
 }
@@ -190,7 +172,7 @@ Optional<i32> AriaData::aria_col_span_or_default() const
     return m_aria_col_span;
 }
 
-Vector<Utf16String> AriaData::aria_controls_or_default() const
+Vector<String> AriaData::aria_controls_or_default() const
 {
     return m_aria_controls;
 }
@@ -200,17 +182,17 @@ AriaCurrent AriaData::aria_current_or_default() const
     return m_aria_current;
 }
 
-Vector<Utf16String> AriaData::aria_described_by_or_default() const
+Vector<String> AriaData::aria_described_by_or_default() const
 {
     return m_aria_described_by;
 }
 
-Utf16String AriaData::aria_description_or_default() const
+String AriaData::aria_description_or_default() const
 {
     return m_aria_description;
 }
 
-Optional<Utf16String> AriaData::aria_details_or_default() const
+Optional<String> AriaData::aria_details_or_default() const
 {
     return m_aria_details;
 }
@@ -225,7 +207,7 @@ Vector<AriaDropEffect> AriaData::aria_drop_effect_or_default() const
     return m_aria_drop_effect;
 }
 
-Optional<Utf16String> AriaData::aria_error_message_or_default() const
+Optional<String> AriaData::aria_error_message_or_default() const
 {
     return m_aria_error_message;
 }
@@ -235,7 +217,7 @@ Optional<bool> AriaData::aria_expanded_or_default() const
     return m_aria_expanded;
 }
 
-Vector<Utf16String> AriaData::aria_flow_to_or_default() const
+Vector<String> AriaData::aria_flow_to_or_default() const
 {
     return m_aria_flow_to;
 }
@@ -260,17 +242,17 @@ AriaInvalid AriaData::aria_invalid_or_default() const
     return m_aria_invalid;
 }
 
-Utf16String AriaData::aria_key_shortcuts_or_default() const
+String AriaData::aria_key_shortcuts_or_default() const
 {
     return m_aria_key_shortcuts;
 }
 
-Utf16String AriaData::aria_label_or_default() const
+String AriaData::aria_label_or_default() const
 {
     return m_aria_label;
 }
 
-Vector<Utf16String> AriaData::aria_labelled_by_or_default() const
+Vector<String> AriaData::aria_labelled_by_or_default() const
 {
     return m_aria_labelled_by;
 }
@@ -313,12 +295,12 @@ AriaOrientation AriaData::aria_orientation_or_default(AriaOrientation default_va
     return value.value();
 }
 
-Vector<Utf16String> AriaData::aria_owns_or_default() const
+Vector<String> AriaData::aria_owns_or_default() const
 {
     return m_aria_owns;
 }
 
-Utf16String AriaData::aria_placeholder_or_default() const
+String AriaData::aria_placeholder_or_default() const
 {
     return m_aria_placeholder;
 }
@@ -348,7 +330,7 @@ bool AriaData::aria_required_or_default() const
     return m_aria_required;
 }
 
-Utf16String AriaData::aria_role_description_or_default() const
+String AriaData::aria_role_description_or_default() const
 {
     return m_aria_role_description;
 }
@@ -363,7 +345,7 @@ Optional<i32> AriaData::aria_row_index_or_default() const
     return m_aria_row_index;
 }
 
-Utf16String AriaData::aria_row_index_text_or_default() const
+String AriaData::aria_row_index_text_or_default() const
 {
     return m_aria_row_index_text;
 }
@@ -409,63 +391,62 @@ Optional<f64> AriaData::aria_value_now_or_default() const
     return m_aria_value_now;
 }
 
-Utf16String AriaData::aria_value_text_or_default() const
+String AriaData::aria_value_text_or_default() const
 {
     return m_aria_value_text;
 }
 
-AriaAutocomplete AriaData::parse_aria_autocomplete(Optional<Utf16String> const& value)
+AriaAutocomplete AriaData::parse_aria_autocomplete(Optional<String> const& value)
 {
-    if (value_equals(value, u"inline"sv))
+    if (value == "inline"sv)
         return AriaAutocomplete::Inline;
-    if (value_equals(value, u"list"sv))
+    if (value == "list"sv)
         return AriaAutocomplete::List;
-    if (value_equals(value, u"both"sv))
+    if (value == "both"sv)
         return AriaAutocomplete::Both;
-    if (value_equals(value, u"none"sv))
+    if (value == "none"sv)
         return AriaAutocomplete::None;
     return AriaAutocomplete::None;
 }
 
-AriaCurrent AriaData::parse_aria_current(Optional<Utf16String> const& value)
+AriaCurrent AriaData::parse_aria_current(Optional<String> const& value)
 {
-    if (value_equals(value, u"page"sv))
+    if (value == "page"sv)
         return AriaCurrent::Page;
-    if (value_equals(value, u"step"sv))
+    if (value == "step"sv)
         return AriaCurrent::Step;
-    if (value_equals(value, u"location"sv))
+    if (value == "location"sv)
         return AriaCurrent::Location;
-    if (value_equals(value, u"date"sv))
+    if (value == "date"sv)
         return AriaCurrent::Date;
-    if (value_equals(value, u"time"sv))
+    if (value == "time"sv)
         return AriaCurrent::Time;
-    if (value_equals(value, u"true"sv))
+    if (value == "true"sv)
         return AriaCurrent::True;
-    if (value_equals(value, u"false"sv))
+    if (value == "false"sv)
         return AriaCurrent::False;
     return AriaCurrent::False;
 }
 
-Vector<AriaDropEffect> AriaData::parse_aria_drop_effect(Optional<Utf16String> const& value)
+Vector<AriaDropEffect> AriaData::parse_aria_drop_effect(Optional<String> const& value)
 {
     if (!value.has_value())
         return {};
 
     Vector<AriaDropEffect> result;
 
-    for_each_ascii_whitespace_separated_token(value->utf16_view(), [&](auto token) {
-        if (token == u"copy"sv)
+    for (auto token : value->bytes_as_string_view().split_view_if(Infra::is_ascii_whitespace)) {
+        if (token == "copy"sv)
             result.append(AriaDropEffect::Copy);
-        else if (token == u"execute"sv)
+        else if (token == "execute"sv)
             result.append(AriaDropEffect::Execute);
-        else if (token == u"link"sv)
+        else if (token == "link"sv)
             result.append(AriaDropEffect::Link);
-        else if (token == u"move"sv)
+        else if (token == "move"sv)
             result.append(AriaDropEffect::Move);
-        else if (token == u"popup"sv)
+        else if (token == "popup"sv)
             result.append(AriaDropEffect::Popup);
-        return IterationDecision::Continue;
-    });
+    }
 
     // None combined with any other token value is ignored
     if (result.is_empty())
@@ -474,91 +455,87 @@ Vector<AriaDropEffect> AriaData::parse_aria_drop_effect(Optional<Utf16String> co
     return result;
 }
 
-AriaHasPopup AriaData::parse_aria_has_popup(Optional<Utf16String> const& value)
+AriaHasPopup AriaData::parse_aria_has_popup(Optional<String> const& value)
 {
-    if (value_equals(value, u"false"sv))
+    if (value == "false"sv)
         return AriaHasPopup::False;
-    if (value_equals(value, u"true"sv))
+    if (value == "true"sv)
         return AriaHasPopup::True;
-    if (value_equals(value, u"menu"sv))
+    if (value == "menu"sv)
         return AriaHasPopup::Menu;
-    if (value_equals(value, u"listbox"sv))
+    if (value == "listbox"sv)
         return AriaHasPopup::Listbox;
-    if (value_equals(value, u"tree"sv))
+    if (value == "tree"sv)
         return AriaHasPopup::Tree;
-    if (value_equals(value, u"grid"sv))
+    if (value == "grid"sv)
         return AriaHasPopup::Grid;
-    if (value_equals(value, u"dialog"sv))
+    if (value == "dialog"sv)
         return AriaHasPopup::Dialog;
     return AriaHasPopup::False;
 }
 
-AriaInvalid AriaData::parse_aria_invalid(Optional<Utf16String> const& value)
+AriaInvalid AriaData::parse_aria_invalid(Optional<String> const& value)
 {
-    if (value_equals(value, u"grammar"sv))
+    if (value == "grammar"sv)
         return AriaInvalid::Grammar;
-    if (value_equals(value, u"false"sv))
+    if (value == "false"sv)
         return AriaInvalid::False;
-    if (value_equals(value, u"spelling"sv))
+    if (value == "spelling"sv)
         return AriaInvalid::Spelling;
-    if (value_equals(value, u"true"sv))
+    if (value == "true"sv)
         return AriaInvalid::True;
     return AriaInvalid::False;
 }
 
-Optional<AriaLive> AriaData::parse_aria_live(Optional<Utf16String> const& value)
+Optional<AriaLive> AriaData::parse_aria_live(Optional<String> const& value)
 {
-    if (value_equals(value, u"assertive"sv))
+    if (value == "assertive"sv)
         return AriaLive::Assertive;
-    if (value_equals(value, u"off"sv))
+    if (value == "off"sv)
         return AriaLive::Off;
-    if (value_equals(value, u"polite"sv))
+    if (value == "polite"sv)
         return AriaLive::Polite;
     return {};
 }
 
-Optional<AriaOrientation> AriaData::parse_aria_orientation(Optional<Utf16String> const& value)
+Optional<AriaOrientation> AriaData::parse_aria_orientation(Optional<String> const& value)
 {
-    if (value_equals(value, u"horizontal"sv))
+    if (value == "horizontal"sv)
         return AriaOrientation::Horizontal;
-    if (value_equals(value, u"undefined"sv))
+    if (value == "undefined"sv)
         return AriaOrientation::Undefined;
-    if (value_equals(value, u"vertical"sv))
+    if (value == "vertical"sv)
         return AriaOrientation::Vertical;
     return {};
 }
 
-Vector<AriaRelevant> AriaData::parse_aria_relevant(Optional<Utf16String> const& value)
+Vector<AriaRelevant> AriaData::parse_aria_relevant(Optional<String> const& value)
 {
     if (!value.has_value())
         return {};
 
     Vector<AriaRelevant> result;
-    Vector<Utf16View> tokens;
-    for_each_ascii_whitespace_separated_token(value->utf16_view(), [&](auto token) {
-        tokens.append(token);
-        return IterationDecision::Continue;
-    });
+    auto tokens = value->bytes_as_string_view().split_view_if(Infra::is_ascii_whitespace);
     for (size_t i = 0; i < tokens.size(); i++) {
-        if (tokens[i] == u"additions"sv) {
+        if (tokens[i] == "additions"sv) {
             if (i + 1 < tokens.size()) {
-                if (tokens[i + 1] == u"text"sv) {
+                if (tokens[i + 1] == "text"sv) {
                     result.append(AriaRelevant::AdditionsText);
                     ++i;
                     continue;
                 }
-                if (tokens[i + 1] == u"removals"sv && i + 2 < tokens.size() && tokens[i + 2] == u"text"sv) {
+                if (tokens[i + 1] == "removals"sv && i + 2 < tokens.size() && tokens[i + 2] == "text"sv) {
                     result.append(AriaRelevant::All);
                     i += 2;
                     continue;
                 }
             }
             result.append(AriaRelevant::Additions);
-        } else if (tokens[i] == u"all"sv)
+        } else if (tokens[i] == "all"sv)
             result.append(AriaRelevant::All);
-        else if (tokens[i] == u"removals"sv)
+        else if (tokens[i] == "removals"sv)
             result.append(AriaRelevant::Removals);
-        else if (tokens[i] == u"text"sv)
+        else if (tokens[i] == "text"sv)
             result.append(AriaRelevant::Text);
     }
 
@@ -568,24 +545,24 @@ Vector<AriaRelevant> AriaData::parse_aria_relevant(Optional<Utf16String> const& 
     return result;
 }
 
-AriaSort AriaData::parse_aria_sort(Optional<Utf16String> const& value)
+AriaSort AriaData::parse_aria_sort(Optional<String> const& value)
 {
-    if (value_equals(value, u"ascending"sv))
+    if (value == "ascending"sv)
         return AriaSort::Ascending;
-    if (value_equals(value, u"descending"sv))
+    if (value == "descending"sv)
         return AriaSort::Descending;
-    if (value_equals(value, u"none"sv))
+    if (value == "none"sv)
         return AriaSort::None;
-    if (value_equals(value, u"other"sv))
+    if (value == "other"sv)
         return AriaSort::Other;
     return AriaSort::None;
 }
 
-Optional<bool> AriaData::parse_optional_true_false(Optional<Utf16String> const& value)
+Optional<bool> AriaData::parse_optional_true_false(Optional<String> const& value)
 {
-    if (value_equals(value, u"true"sv))
+    if (value == "true"sv)
         return true;
-    if (value_equals(value, u"false"sv))
+    if (value == "false"sv)
         return false;
     return {};
 }

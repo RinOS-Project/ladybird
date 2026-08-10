@@ -16,7 +16,7 @@ namespace Web::SVG {
 
 // https://svgwg.org/svg2-draft/text.html#InterfaceSVGTextContentElement
 class SVGTextContentElement : public SVGGraphicsElement {
-    WEB_WRAPPABLE(SVGTextContentElement, SVGGraphicsElement);
+    WEB_PLATFORM_OBJECT(SVGTextContentElement, SVGGraphicsElement);
 
 public:
     WebIDL::ExceptionOr<WebIDL::Long> get_number_of_chars() const;
@@ -29,13 +29,8 @@ public:
 
 protected:
     SVGTextContentElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
 };
-
-}
-
-namespace Web::DOM {
-
-template<>
-inline bool Node::fast_is<SVG::SVGTextContentElement>() const { return is_svg_text_content_element(); }
 
 }

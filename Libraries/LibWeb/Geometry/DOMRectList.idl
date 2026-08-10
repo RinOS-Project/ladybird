@@ -1,3 +1,5 @@
+#import <Geometry/DOMRect.idl>
+
 // https://drafts.fxtf.org/geometry/#domrectlist
 [Exposed=Window]
 interface DOMRectList {

@@ -1,3 +1,0 @@
-opacity before keyframes: 1
-opacity after keyframes insert: 0.25
-opacity after keyframes delete: 1

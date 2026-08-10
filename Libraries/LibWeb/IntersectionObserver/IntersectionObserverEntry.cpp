@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/IntersectionObserverEntryPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/IntersectionObserver/IntersectionObserverEntry.h>
 
@@ -12,13 +13,22 @@ namespace Web::IntersectionObserver {
 
 GC_DEFINE_ALLOCATOR(IntersectionObserverEntry);
 
-GC::Ref<IntersectionObserverEntry> IntersectionObserverEntry::create(HighResolutionTime::DOMHighResTimeStamp time, GC::Ptr<Geometry::DOMRectReadOnly> root_bounds, GC::Ref<Geometry::DOMRectReadOnly> bounding_client_rect, GC::Ref<Geometry::DOMRectReadOnly> intersection_rect, bool is_intersecting, double intersection_ratio, GC::Ref<DOM::Element> target)
+WebIDL::ExceptionOr<GC::Ref<IntersectionObserverEntry>> IntersectionObserverEntry::construct_impl(JS::Realm& realm, Web::IntersectionObserver::IntersectionObserverEntryInit const& options)
 {
-    return GC::Heap::the().allocate<IntersectionObserverEntry>(time, root_bounds, bounding_client_rect, intersection_rect, is_intersecting, intersection_ratio, target);
+    auto& vm = realm.vm();
+
+    GC::Ptr<Geometry::DOMRectReadOnly> root_bounds;
+    if (options.root_bounds.has_value())
+        root_bounds = Geometry::DOMRectReadOnly::from_rect(vm, options.root_bounds.value());
+
+    auto bounding_client_rect = Geometry::DOMRectReadOnly::from_rect(vm, options.bounding_client_rect);
+    auto intersection_rect = Geometry::DOMRectReadOnly::from_rect(vm, options.intersection_rect);
+    return realm.create<IntersectionObserverEntry>(realm, options.time, root_bounds, bounding_client_rect, intersection_rect, options.is_intersecting, options.intersection_ratio, *options.target);
 }
 
-IntersectionObserverEntry::IntersectionObserverEntry(HighResolutionTime::DOMHighResTimeStamp time, GC::Ptr<Geometry::DOMRectReadOnly> root_bounds, GC::Ref<Geometry::DOMRectReadOnly> bounding_client_rect, GC::Ref<Geometry::DOMRectReadOnly> intersection_rect, bool is_intersecting, double intersection_ratio, GC::Ref<DOM::Element> target)
-    : m_time(time)
+IntersectionObserverEntry::IntersectionObserverEntry(JS::Realm& realm, HighResolutionTime::DOMHighResTimeStamp time, GC::Ptr<Geometry::DOMRectReadOnly> root_bounds, GC::Ref<Geometry::DOMRectReadOnly> bounding_client_rect, GC::Ref<Geometry::DOMRectReadOnly> intersection_rect, bool is_intersecting, double intersection_ratio, GC::Ref<DOM::Element> target)
+    : Bindings::PlatformObject(realm)
+    , m_time(time)
     , m_root_bounds(root_bounds)
     , m_bounding_client_rect(bounding_client_rect)
     , m_intersection_rect(intersection_rect)
@@ -30,7 +40,13 @@ IntersectionObserverEntry::IntersectionObserverEntry(HighResolutionTime::DOMHigh
 
 IntersectionObserverEntry::~IntersectionObserverEntry() = default;
 
-void IntersectionObserverEntry::visit_edges(GC::Cell::Visitor& visitor)
+void IntersectionObserverEntry::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(IntersectionObserverEntry);
+    Base::initialize(realm);
+}
+
+void IntersectionObserverEntry::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_root_bounds);

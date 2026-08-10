@@ -6,9 +6,8 @@
 
 #pragma once
 
-#include <AK/ByteBuffer.h>
 #include <AK/NonnullRefPtr.h>
-#include <LibWeb/Bindings/WrapperWorld.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/EventLoop/Task.h>
@@ -18,21 +17,21 @@ namespace Web::FileAPI {
 
 // https://w3c.github.io/FileAPI/#dfn-filereader
 class FileReader : public DOM::EventTarget {
-    WEB_WRAPPABLE(FileReader, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(FileReader, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(FileReader);
 
 public:
-    using Result = Variant<Empty, Utf16String, ByteBuffer>;
+    using Result = Variant<Empty, String, GC::Ref<JS::ArrayBuffer>>;
 
     virtual ~FileReader() override;
 
-    [[nodiscard]] static GC::Ref<FileReader> create(GC::Ref<DOM::EventTarget> relevant_global_object);
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<FileReader>> create_for_constructor(JS::Object&);
+    [[nodiscard]] static GC::Ref<FileReader> create(JS::Realm&);
+    static GC::Ref<FileReader> construct_impl(JS::Realm&);
 
     // async read methods
     WebIDL::ExceptionOr<void> read_as_array_buffer(Blob&);
     WebIDL::ExceptionOr<void> read_as_binary_string(Blob&);
-    WebIDL::ExceptionOr<void> read_as_text(Blob&, Optional<Utf16String> const& encoding = {});
+    WebIDL::ExceptionOr<void> read_as_text(Blob&, Optional<String> const& encoding = {});
     WebIDL::ExceptionOr<void> read_as_data_url(Blob&);
 
     void abort();
@@ -58,7 +57,7 @@ public:
     // File or Blob data
 
     // https://w3c.github.io/FileAPI/#dom-filereader-result
-    WebIDL::ExceptionOr<JS::Value> result(JS::Object const& relevant_global_object) const;
+    Result result() const { return m_result; }
 
     // https://w3c.github.io/FileAPI/#dom-filereader-error
     GC::Ptr<WebIDL::DOMException> error() const { return m_error; }
@@ -88,18 +87,19 @@ public:
         Text,
         DataURL,
     };
-    static WebIDL::ExceptionOr<Result> blob_package_data(ByteBuffer, FileReader::Type type, Optional<Utf16String> const&, Optional<Utf16String> const& encoding_name = {});
+    static WebIDL::ExceptionOr<Result> blob_package_data(JS::Realm& realm, ByteBuffer, FileReader::Type type, Optional<String> const&, Optional<String> const& encoding_name = {});
 
 protected:
+    FileReader(JS::Realm&, ByteBuffer);
+
+    virtual void initialize(JS::Realm&) override;
+
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
 private:
-    explicit FileReader(GC::Ref<DOM::EventTarget> relevant_global_object);
+    explicit FileReader(JS::Realm&);
 
-    JS::Object& relevant_global_object() const;
-    GC::Ref<DOM::Event> create_associated_event(Utf16FlyString const&) const;
-    void set_result(Result);
-    WebIDL::ExceptionOr<void> read_operation(Blob&, Type, Optional<Utf16String> const& encoding_name = {});
+    WebIDL::ExceptionOr<void> read_operation(Blob&, Type, Optional<String> const& encoding_name = {});
 
     void queue_a_task(GC::Ref<GC::Function<void()>>);
 
@@ -115,17 +115,9 @@ private:
     // https://w3c.github.io/FileAPI/#filereader-result
     Result m_result;
 
-    // The result ArrayBuffer must keep a stable identity across accesses within a
-    // world, so it is created lazily and cached per wrapper world. The cache holds
-    // weak references (a dropped ArrayBuffer is unobservable) and is invalidated
-    // whenever the result changes. See set_result().
-    mutable Bindings::WrapperWorldWeakValueCache<JS::ArrayBuffer> m_result_array_buffers;
-
     // A FileReader has an associated error (null or a DOMException). It is initially null.
     // https://w3c.github.io/FileAPI/#filereader-error
     GC::Ptr<WebIDL::DOMException> m_error;
-
-    GC::Ref<DOM::EventTarget> m_global_object;
 };
 
 }

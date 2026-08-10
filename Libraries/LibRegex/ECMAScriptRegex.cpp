@@ -19,23 +19,63 @@ struct ECMAScriptRegex::Impl {
     Vector<ECMAScriptNamedCaptureGroup> named_groups;
 };
 
-ErrorOr<ECMAScriptRegex, String> ECMAScriptRegex::compile(Utf16View pattern, ECMAScriptCompileFlags flags)
+static ECMAScriptOptions to_regex_options(ECMAScriptCompileFlags flags)
 {
-    RustRegexFlags rust_flags {};
-    rust_flags.global = flags.global;
-    rust_flags.ignore_case = flags.ignore_case;
-    rust_flags.multiline = flags.multiline;
-    rust_flags.dot_all = flags.dot_all;
-    rust_flags.unicode = flags.unicode;
-    rust_flags.unicode_sets = flags.unicode_sets;
-    rust_flags.sticky = flags.sticky;
-    rust_flags.has_indices = flags.has_indices;
+    ECMAScriptOptions options {};
+    if (flags.ignore_case)
+        options |= ECMAScriptFlags::Insensitive;
+    if (flags.multiline)
+        options |= ECMAScriptFlags::Multiline;
+    if (flags.dot_all)
+        options |= ECMAScriptFlags::SingleLine;
+    if (flags.unicode)
+        options |= ECMAScriptFlags::Unicode;
+    if (flags.unicode_sets)
+        options |= ECMAScriptFlags::UnicodeSets;
+    if (flags.sticky)
+        options |= ECMAScriptFlags::Sticky;
+    return options;
+}
 
-    auto compiled = CompiledRustRegex::compile(pattern, rust_flags);
-    if (compiled.is_error())
-        return compiled.release_error();
+static void reset_capture_slots(Vector<int>& capture_slots, unsigned total_groups)
+{
+    capture_slots.resize(total_groups * 2);
+    for (auto& slot : capture_slots)
+        slot = -1;
+}
 
-    auto rust_regex = compiled.release_value();
+static int to_code_unit_offset(Utf16View view, size_t offset, bool unicode_mode)
+{
+    if (!unicode_mode)
+        return static_cast<int>(offset);
+    return static_cast<int>(view.code_unit_offset_of(offset));
+}
+
+static void store_match_slot(Vector<int>& capture_slots, unsigned group_index, Match const& match, Utf16View input, size_t start_pos, bool unicode_mode)
+{
+    auto start_slot = group_index * 2;
+    auto end_slot = start_slot + 1;
+    if (match.view.is_null()) {
+        capture_slots[start_slot] = -1;
+        capture_slots[end_slot] = -1;
+        return;
+    }
+
+    auto sub_input = input.substring_view(start_pos, input.length_in_code_units() - start_pos);
+    auto start = to_code_unit_offset(sub_input, match.global_offset, unicode_mode) + static_cast<int>(start_pos);
+    auto end = to_code_unit_offset(sub_input, match.global_offset + match.view.length(), unicode_mode) + static_cast<int>(start_pos);
+
+    capture_slots[start_slot] = start;
+    capture_slots[end_slot] = end;
+}
+
+ErrorOr<ECMAScriptRegex, String> ECMAScriptRegex::compile(StringView utf8_pattern, ECMAScriptCompileFlags flags)
+{
+    auto regex = Regex<ECMA262Parser> { utf8_pattern.to_byte_string(), to_regex_options(flags) };
+    if (regex.parser_result.error != Error::NoError) {
+        auto compile_error = regex.error_string();
+        return String::from_utf8(compile_error.view()).release_value_but_fixme_should_propagate_errors();
+    }
 
     Vector<ECMAScriptNamedCaptureGroup> named_groups;
     regex.parser_result.bytecode.visit([&](auto const& bytecode) {

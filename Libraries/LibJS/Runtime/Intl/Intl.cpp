@@ -5,7 +5,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/NeverDestroyed.h>
 #include <AK/QuickSort.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Date.h>
@@ -45,7 +44,7 @@ void Intl::initialize(Realm& realm)
     auto& vm = this->vm();
 
     // 8.1.1 Intl[ @@toStringTag ], https://tc39.es/ecma402/#sec-Intl-toStringTag
-    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Intl"_utf16_fly_string), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Intl"_string), Attribute::Configurable);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_intrinsic_accessor(vm.names.Collator, attr, [](auto& realm) -> Value { return realm.intrinsics().intl_collator_constructor(); });
@@ -73,20 +72,24 @@ JS_DEFINE_NATIVE_FUNCTION(Intl::get_canonical_locales)
     // 1. Let ll be ? CanonicalizeLocaleList(locales).
     auto locale_list = TRY(canonicalize_locale_list(vm, locales));
 
+    GC::RootVector<Value> marked_locale_list { vm.heap() };
+    marked_locale_list.ensure_capacity(locale_list.size());
+
+    for (auto& locale : locale_list)
+        marked_locale_list.unchecked_append(PrimitiveString::create(vm, move(locale)));
+
     // 2. Return CreateArrayFromList(ll).
-    return Array::create_from<Utf16String>(realm, locale_list, [&vm](auto const& locale) {
-        return PrimitiveString::create(vm, locale);
-    });
+    return Array::create_from(realm, marked_locale_list);
 }
 
 // 6.5.4 AvailablePrimaryTimeZoneIdentifiers ( ), https://tc39.es/ecma402/#sec-availableprimarytimezoneidentifiers
-static Vector<Utf16String> available_primary_time_zone_identifiers()
+static Vector<String> available_primary_time_zone_identifiers()
 {
     // 1. Let records be AvailableNamedTimeZoneIdentifiers().
     auto const& records = available_named_time_zone_identifiers();
 
     // 2. Let result be a new empty List.
-    Vector<Utf16String> result;
+    Vector<String> result;
 
     // 3. For each element timeZoneIdentifierRecord of records, do
     for (auto const& time_zone_identifier_record : records) {
@@ -107,9 +110,9 @@ JS_DEFINE_NATIVE_FUNCTION(Intl::supported_values_of)
     auto& realm = *vm.current_realm();
 
     // 1. Let key be ? ToString(key).
-    auto key = TRY(vm.argument(0).to_utf16_string(vm));
+    auto key = TRY(vm.argument(0).to_string(vm));
 
-    Optional<ReadonlySpan<Utf16String>> list;
+    Optional<Variant<ReadonlySpan<StringView>, ReadonlySpan<String>>> list;
 
     // 2. If key is "calendar", then
     if (key == "calendar"sv) {
@@ -134,21 +137,14 @@ JS_DEFINE_NATIVE_FUNCTION(Intl::supported_values_of)
     // 6. Else if key is "timeZone", then
     else if (key == "timeZone"sv) {
         // a. Let list be ! AvailablePrimaryTimeZoneIdentifiers( ).
-        static NeverDestroyed<Vector<Utf16String>> time_zones { available_primary_time_zone_identifiers() };
-        list = time_zones->span();
+        static auto const time_zones = available_primary_time_zone_identifiers();
+        list = time_zones.span();
     }
     // 7. Else if key is "unit", then
     else if (key == "unit"sv) {
         // a. Let list be ! AvailableCanonicalUnits( ).
-        static NeverDestroyed<Vector<Utf16String>> units { [] {
-            Vector<Utf16String> units;
-            auto sanctioned_units = sanctioned_single_unit_identifiers();
-            units.ensure_capacity(sanctioned_units.size());
-            for (auto unit : sanctioned_units)
-                units.unchecked_append(Utf16String::from_utf16(unit));
-            return units;
-        }() };
-        list = units->span();
+        static auto const units = sanctioned_single_unit_identifiers();
+        list = units.span();
     }
     // 8. Else,
     else {
@@ -157,8 +153,10 @@ JS_DEFINE_NATIVE_FUNCTION(Intl::supported_values_of)
     }
 
     // 9. Return CreateArrayFromList( list ).
-    return Array::create_from<Utf16String>(realm, *list, [&](auto const& value) {
-        return PrimitiveString::create(vm, value);
+    return list->visit([&]<typename T>(ReadonlySpan<T> list) {
+        return Array::create_from<T>(realm, list, [&](auto value) {
+            return PrimitiveString::create(vm, value);
+        });
     });
 }
 

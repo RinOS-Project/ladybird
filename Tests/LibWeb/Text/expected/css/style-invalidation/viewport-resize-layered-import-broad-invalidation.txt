@@ -1,3 +1,0 @@
-initial layered import color: rgb(255, 0, 0)
-resized layered import color: rgb(0, 128, 0)
-resized back layered import color: rgb(255, 0, 0)

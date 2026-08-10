@@ -1,4 +1,0 @@
-Visibility before: hidden
-Color      before: rgb(255, 0, 0)
-Visibility after: visible
-Color      after: rgb(0, 128, 0)

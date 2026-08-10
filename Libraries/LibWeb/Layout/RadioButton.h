@@ -12,15 +12,16 @@
 namespace Web::Layout {
 
 class RadioButton final : public ReplacedBox {
-    LAYOUT_NODE(RadioButton, ReplacedBox);
+    GC_CELL(RadioButton, ReplacedBox);
+    GC_DECLARE_ALLOCATOR(RadioButton);
 
 public:
-    RadioButton(DOM::Document&, HTML::HTMLInputElement&, NonnullRefPtr<CSS::ComputedValues const>);
+    RadioButton(DOM::Document&, HTML::HTMLInputElement&, GC::Ref<CSS::ComputedProperties>);
     virtual ~RadioButton() override;
 
 private:
     CSS::SizeWithAspectRatio compute_auto_content_box_size() const override { return { 12, 12, {} }; }
-    virtual RefPtr<Painting::Paintable> create_paintable() const override;
+    virtual GC::Ptr<Painting::Paintable> create_paintable() const override;
 };
 
 }

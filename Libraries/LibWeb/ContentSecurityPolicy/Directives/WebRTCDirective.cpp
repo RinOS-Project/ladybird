@@ -11,7 +11,7 @@ namespace Web::ContentSecurityPolicy::Directives {
 
 GC_DEFINE_ALLOCATOR(WebRTCDirective);
 
-WebRTCDirective::WebRTCDirective(Utf16FlyString name, Vector<Utf16String> value)
+WebRTCDirective::WebRTCDirective(String name, Vector<String> value)
     : Directive(move(name), move(value))
 {
 }

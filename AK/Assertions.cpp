@@ -7,7 +7,6 @@
 #include <AK/Assertions.h>
 #include <AK/Backtrace.h>
 #include <AK/Format.h>
-#include <AK/NeverDestroyed.h>
 #include <AK/Platform.h>
 #include <AK/StringView.h>
 
@@ -87,8 +86,8 @@ void dump_backtrace(unsigned frames_to_skip, unsigned max_depth)
     auto stacktrace = cpptrace::generate_trace(frames_to_skip, max_depth);
     auto* var = getenv("LADYBIRD_BACKTRACE_SNIPPETS");
     bool print_snippets = var && strnlen(var, 1) > 0;
-    static NeverDestroyed<cpptrace::formatter> formatter { cpptrace::formatter {}.snippets(print_snippets) };
-    auto string = formatter->format(stacktrace, true);
+    static auto formatter = cpptrace::formatter {}.snippets(print_snippets);
+    auto string = formatter.format(stacktrace, true);
     warnln("{}", StringView { string.c_str(), string.length() });
 }
 #elif defined(AK_HAS_BACKTRACE_HEADER)

@@ -4,16 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/FlyString.h>
 #include <AK/JsonObject.h>
-#include <AK/NeverDestroyed.h>
-#include <LibGC/Heap.h>
-#include <LibWeb/Bindings/PlatformObject.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/Bindings/WrapperWorld.h>
 #include <LibWeb/DOM/CustomEvent.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Internals/WebUI.h>
@@ -22,23 +17,9 @@
 
 namespace WebContent {
 
-static JS::PropertyKey const& ladybird_property()
-{
-    static NeverDestroyed<JS::PropertyKey> property { "ladybird"_utf16_fly_string };
-    return *property;
-}
-
-static Utf16FlyString const& web_ui_loaded_event()
-{
-    static NeverDestroyed<Utf16FlyString> event { "WebUILoaded"_utf16_fly_string };
-    return *event;
-}
-
-static FlyString const& web_ui_message_event()
-{
-    static NeverDestroyed<FlyString> event { "WebUIMessage"_fly_string };
-    return *event;
-}
+static auto LADYBIRD_PROPERTY = JS::PropertyKey { "ladybird"_utf16_fly_string };
+static auto WEB_UI_LOADED_EVENT = "WebUILoaded"_fly_string;
+static auto WEB_UI_MESSAGE_EVENT = "WebUIMessage"_fly_string;
 
 ErrorOr<NonnullRefPtr<WebUIConnection>> WebUIConnection::connect(IPC::TransportHandle handle, Web::DOM::Document& document)
 {
@@ -50,12 +31,11 @@ WebUIConnection::WebUIConnection(NonnullOwnPtr<IPC::Transport> transport, Web::D
     : IPC::ConnectionFromClient<WebUIClientEndpoint, WebUIServerEndpoint>(*this, move(transport), 1)
     , m_document(document)
 {
-    auto& realm = m_document->relevant_settings_object().realm();
-    auto& window = Web::HTML::relevant_window(realm.global_object());
-    realm.global_object().define_direct_property(ladybird_property(), Web::Bindings::wrap(Web::Bindings::host_defined_wrapper_world(realm), realm, Web::Internals::WebUI::create(window)), JS::default_attributes);
+    auto& realm = m_document->realm();
+    m_document->window()->define_direct_property(LADYBIRD_PROPERTY, realm.create<Web::Internals::WebUI>(realm), JS::default_attributes);
 
-    Web::HTML::queue_a_task(Web::HTML::Task::Source::Unspecified, nullptr, m_document, GC::create_function(GC::Heap::the(), [&document = *m_document]() {
-        document.dispatch_event(Web::DOM::Event::create(Web::HTML::relevant_global_object(document), web_ui_loaded_event()));
+    Web::HTML::queue_a_task(Web::HTML::Task::Source::Unspecified, nullptr, m_document, GC::create_function(realm.heap(), [&document = *m_document]() {
+        document.dispatch_event(Web::DOM::Event::create(document.realm(), WEB_UI_LOADED_EVENT));
     }));
 }
 
@@ -64,7 +44,7 @@ WebUIConnection::~WebUIConnection()
     if (!m_document->window())
         return;
 
-    (void)m_document->relevant_settings_object().realm().global_object().internal_delete(ladybird_property());
+    (void)m_document->window()->internal_delete(LADYBIRD_PROPERTY);
 }
 
 void WebUIConnection::visit_edges(JS::Cell::Visitor& visitor)
@@ -81,7 +61,7 @@ void WebUIConnection::send_message(String name, JsonValue data)
     detail.set("name"sv, move(name));
     detail.set("data"sv, move(data));
 
-    auto& realm = m_document->relevant_settings_object().realm();
+    auto& realm = m_document->realm();
     Web::HTML::TemporaryExecutionContext context { realm };
 
     auto serialized_detail = Web::WebDriver::json_deserialize(*m_document->browsing_context(), detail);
@@ -93,10 +73,10 @@ void WebUIConnection::send_message(String name, JsonValue data)
     Web::DOM::CustomEventInit event_init {};
     event_init.detail = serialized_detail.value();
 
-    m_document->dispatch_event(Web::DOM::CustomEvent::create(realm.global_object(), web_ui_message_event(), event_init));
+    m_document->dispatch_event(Web::DOM::CustomEvent::create(realm, WEB_UI_MESSAGE_EVENT, event_init));
 }
 
-void WebUIConnection::received_message_from_web_ui(Utf16String const& name, JS::Value data)
+void WebUIConnection::received_message_from_web_ui(String const& name, JS::Value data)
 {
     if (!m_document->browsing_context())
         return;
@@ -107,7 +87,7 @@ void WebUIConnection::received_message_from_web_ui(Utf16String const& name, JS::
         return;
     }
 
-    async_received_message(name.to_utf8(), deserialized_data.value());
+    async_received_message(name, deserialized_data.value());
 }
 
 }

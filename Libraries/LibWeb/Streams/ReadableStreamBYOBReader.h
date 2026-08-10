@@ -10,16 +10,17 @@
 #include <AK/Forward.h>
 #include <AK/Function.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/ReadableStreamBYOBReader.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Streams/ReadableStreamGenericReader.h>
-#include <LibWeb/WebIDL/Buffers.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::Streams {
 
-using ReadableStreamBYOBReaderReadOptions = Bindings::ReadableStreamBYOBReaderReadOptions;
+// https://streams.spec.whatwg.org/#dictdef-readablestreambyobreaderreadoptions
+struct ReadableStreamBYOBReaderReadOptions {
+    WebIDL::UnsignedLongLong min = 1;
+};
 
 // https://streams.spec.whatwg.org/#read-into-request
 class ReadIntoRequest : public JS::Cell {
@@ -40,26 +41,28 @@ public:
 
 // https://streams.spec.whatwg.org/#readablestreambyobreader
 class ReadableStreamBYOBReader final
-    : public Bindings::GCAllocatedWrappable
+    : public Bindings::PlatformObject
     , public ReadableStreamGenericReaderMixin {
-    WEB_WRAPPABLE(ReadableStreamBYOBReader, Bindings::GCAllocatedWrappable);
+    WEB_PLATFORM_OBJECT(ReadableStreamBYOBReader, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(ReadableStreamBYOBReader);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<ReadableStreamBYOBReader>> create(JS::Realm&, GC::Ref<ReadableStream>);
+    static WebIDL::ExceptionOr<GC::Ref<ReadableStreamBYOBReader>> construct_impl(JS::Realm&, GC::Ref<ReadableStream>);
 
     virtual ~ReadableStreamBYOBReader() override = default;
 
-    GC::Ref<WebIDL::Promise> read(WebIDL::ArrayBufferView, ReadableStreamBYOBReaderReadOptions options = {});
+    GC::Ref<WebIDL::Promise> read(GC::Root<WebIDL::ArrayBufferView>&, ReadableStreamBYOBReaderReadOptions options = {});
 
     void release_lock();
 
     Vector<GC::Ref<ReadIntoRequest>>& read_into_requests() { return m_read_into_requests; }
 
 private:
-    ReadableStreamBYOBReader();
+    explicit ReadableStreamBYOBReader(JS::Realm&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+
+    virtual void visit_edges(Cell::Visitor&) override;
 
     // https://streams.spec.whatwg.org/#readablestreambyobreader-readintorequests
     // A list of read-into requests, used when a consumer requests chunks sooner than they are available

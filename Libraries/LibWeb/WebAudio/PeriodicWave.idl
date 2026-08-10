@@ -1,3 +1,5 @@
+#import <WebAudio/BaseAudioContext.idl>
+
 // https://webaudio.github.io/web-audio-api/#PeriodicWaveConstraints
 dictionary PeriodicWaveConstraints {
     boolean disableNormalization = false;

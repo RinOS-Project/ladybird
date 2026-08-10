@@ -6,13 +6,11 @@
  */
 
 #include <AK/CharacterTypes.h>
-#include <AK/Checked.h>
 #include <AK/Function.h>
-#include <AK/NumericLimits.h>
 #include <AK/Optional.h>
-#include <AK/Utf16StringBuilder.h>
 #include <AK/Utf16View.h>
-#include <LibJS/Bytecode/Debug.h>
+#include <LibJS/Bytecode/Generator.h>
+#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/ModuleLoading.h>
 #include <LibJS/Parser.h>
 #include <LibJS/Runtime/AbstractOperations.h>
@@ -41,33 +39,9 @@
 #include <LibJS/Runtime/StringPrototype.h>
 #include <LibJS/Runtime/SuppressedError.h>
 #include <LibJS/Runtime/Temporal/AbstractOperations.h>
-#include <LibJS/Runtime/VM.h>
 #include <LibJS/Runtime/ValueInlines.h>
 
 namespace JS {
-
-size_t max_js_string_length()
-{
-    return NumericLimits<u32>::max();
-}
-
-ThrowCompletionOr<size_t> checked_js_string_length_sum(VM& vm, size_t addend_a, size_t addend_b, ErrorType const& error_type)
-{
-    Checked<size_t> sum = addend_a;
-    sum += addend_b;
-    if (sum.has_overflow() || sum.value() > max_js_string_length())
-        return vm.throw_completion<RangeError>(error_type);
-    return sum.value();
-}
-
-ThrowCompletionOr<size_t> checked_js_string_length_product(VM& vm, size_t factor_a, size_t factor_b, ErrorType const& error_type)
-{
-    Checked<size_t> product = factor_a;
-    product *= factor_b;
-    if (product.has_overflow() || product.value() > max_js_string_length())
-        return vm.throw_completion<RangeError>(error_type);
-    return product.value();
-}
 
 // 7.2.1 RequireObjectCoercible ( argument ), https://tc39.es/ecma262/#sec-requireobjectcoercible
 ThrowCompletionOr<Value> require_object_coercible(VM& vm, Value value)
@@ -90,18 +64,12 @@ ThrowCompletionOr<Value> call_impl(VM& vm, Value function, Value this_value, Rea
     ExecutionContext* callee_context = nullptr;
     auto& function_object = function.as_function();
     size_t registers_and_locals_count = 0;
-    ReadonlySpan<Value> constants;
+    size_t constants_count = 0;
     size_t argument_count = arguments_list.size();
-    function_object.get_stack_frame_info(registers_and_locals_count, constants, argument_count);
+    function_object.get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(callee_context, registers_and_locals_count, constants_count, argument_count);
 
-    auto& stack = vm.interpreter_stack();
-    auto* stack_mark = stack.top();
-    auto* callee_context = stack.allocate(registers_and_locals_count, constants, argument_count);
-    if (!callee_context) [[unlikely]]
-        return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
-    ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
-
-    auto* argument_values = callee_context->arguments_data();
+    auto* argument_values = callee_context->arguments.data();
     for (size_t i = 0; i < arguments_list.size(); ++i)
         argument_values[i] = arguments_list[i];
     callee_context->passed_argument_count = arguments_list.size();
@@ -119,18 +87,12 @@ ThrowCompletionOr<Value> call_impl(VM&, FunctionObject& function, Value this_val
     // 3. Return ? F.[[Call]](V, argumentsList).
     ExecutionContext* callee_context = nullptr;
     size_t registers_and_locals_count = 0;
-    ReadonlySpan<Value> constants;
+    size_t constants_count = 0;
     size_t argument_count = arguments_list.size();
-    function.get_stack_frame_info(registers_and_locals_count, constants, argument_count);
+    function.get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(callee_context, registers_and_locals_count, constants_count, argument_count);
 
-    auto& stack = vm.interpreter_stack();
-    auto* stack_mark = stack.top();
-    auto* callee_context = stack.allocate(registers_and_locals_count, constants, argument_count);
-    if (!callee_context) [[unlikely]]
-        return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
-    ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
-
-    auto* argument_values = callee_context->arguments_data();
+    auto* argument_values = callee_context->arguments.data();
     for (size_t i = 0; i < arguments_list.size(); ++i)
         argument_values[i] = arguments_list[i];
     callee_context->passed_argument_count = arguments_list.size();
@@ -150,18 +112,12 @@ ThrowCompletionOr<GC::Ref<Object>> construct_impl(VM&, FunctionObject& function,
     // 3. Return ? F.[[Construct]](argumentsList, newTarget).
     ExecutionContext* callee_context = nullptr;
     size_t registers_and_locals_count = 0;
-    ReadonlySpan<Value> constants;
+    size_t constants_count = 0;
     size_t argument_count = arguments_list.size();
-    function.get_stack_frame_info(registers_and_locals_count, constants, argument_count);
+    function.get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(callee_context, registers_and_locals_count, constants_count, argument_count);
 
-    auto& stack = vm.interpreter_stack();
-    auto* stack_mark = stack.top();
-    auto* callee_context = stack.allocate(registers_and_locals_count, constants, argument_count);
-    if (!callee_context) [[unlikely]]
-        return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
-    ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
-
-    auto* argument_values = callee_context->arguments_data();
+    auto* argument_values = callee_context->arguments.data();
     for (size_t i = 0; i < arguments_list.size(); ++i)
         argument_values[i] = arguments_list[i];
     callee_context->passed_argument_count = arguments_list.size();
@@ -177,7 +133,7 @@ ThrowCompletionOr<size_t> length_of_array_like(VM& vm, Object const& object)
         return object.indexed_properties().array_like_size();
 
     // 1. Return ℝ(? ToLength(? Get(obj, "length"))).
-    static auto& cache = *new Bytecode::StaticPropertyLookupCache;
+    static Bytecode::PropertyLookupCache cache;
     return TRY(object.get(vm.names.length, cache)).to_length(vm);
 }
 
@@ -196,7 +152,7 @@ ThrowCompletionOr<GC::RootVector<Value>> create_list_from_array_like(VM& vm, Val
     auto length = TRY(length_of_array_like(vm, array_like));
 
     // 4. Let list be a new empty List.
-    GC::RootVector<Value> list;
+    auto list = GC::RootVector<Value> { vm.heap() };
     list.ensure_capacity(length);
 
     // 5. Let index be 0.
@@ -224,7 +180,7 @@ ThrowCompletionOr<GC::RootVector<Value>> create_list_from_array_like(VM& vm, Val
 ThrowCompletionOr<FunctionObject*> species_constructor(VM& vm, Object const& object, FunctionObject& default_constructor)
 {
     // 1. Let C be ? Get(O, "constructor").
-    static auto& cache = *new Bytecode::StaticPropertyLookupCache;
+    static Bytecode::PropertyLookupCache cache;
     auto constructor = TRY(object.get(vm.names.constructor, cache));
 
     // 2. If C is undefined, return defaultConstructor.
@@ -236,7 +192,7 @@ ThrowCompletionOr<FunctionObject*> species_constructor(VM& vm, Object const& obj
         return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, constructor);
 
     // 4. Let S be ? Get(C, @@species).
-    static auto& cache2 = *new Bytecode::StaticPropertyLookupCache;
+    static Bytecode::PropertyLookupCache cache2;
     auto species = TRY(constructor.as_object().get(vm.well_known_symbol_species(), cache2));
 
     // 5. If S is either undefined or null, return defaultConstructor.
@@ -436,7 +392,7 @@ ThrowCompletionOr<Object*> get_prototype_from_constructor(VM& vm, FunctionObject
     // 1. Assert: intrinsicDefaultProto is this specification's name of an intrinsic object. The corresponding object must be an intrinsic that is intended to be used as the [[Prototype]] value of an object.
 
     // 2. Let proto be ? Get(constructor, "prototype").
-    static auto& cache = *new Bytecode::StaticPropertyLookupCache;
+    static Bytecode::PropertyLookupCache cache;
     auto prototype = TRY(constructor.get(vm.names.prototype, cache));
 
     // 3. If Type(proto) is not Object, then
@@ -642,8 +598,7 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
 
     // 6. NOTE: In the case of a direct eval, evalRealm is the realm of both the caller of eval and of the eval function itself.
     // 7. Perform ? HostEnsureCanCompileStrings(evalRealm, « », xStr, xStr, direct, « », x).
-    auto code_string_view = code_string->utf16_string_view();
-    TRY(vm.host_ensure_can_compile_strings(eval_realm, {}, code_string_view, code_string_view, direct == EvalMode::Direct ? CompilationType::DirectEval : CompilationType::IndirectEval, {}, x));
+    TRY(vm.host_ensure_can_compile_strings(eval_realm, {}, code_string->utf8_string_view(), code_string->utf8_string_view(), direct == EvalMode::Direct ? CompilationType::DirectEval : CompilationType::IndirectEval, {}, x));
 
     // 8. Let inFunction be false.
     bool in_function = false;
@@ -704,15 +659,23 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
         .in_class_field_initializer = in_class_field_initializer,
     };
 
-    auto rust_compilation = RustIntegration::compile_eval(*code_string, vm, strict_caller, in_function, in_method, in_derived_constructor, in_class_field_initializer);
-    if (!rust_compilation.has_value())
-        return vm.throw_completion<SyntaxError>("Failed to compile eval code"_utf16);
-    if (rust_compilation->is_error())
-        return vm.throw_completion<SyntaxError>(rust_compilation->release_error());
-    auto& eval_result = rust_compilation->value();
-    auto executable = eval_result.executable;
-    auto strict_eval = eval_result.is_strict_mode;
-    auto eval_declaration_data = move(eval_result.declaration_data);
+    Parser parser(Lexer(SourceCode::create({}, code_string->utf16_string())), Program::Type::Script, move(initial_state));
+    auto program = parser.parse_program(strict_caller == CallerMode::Strict);
+
+    //     b. If script is a List of errors, throw a SyntaxError exception.
+    if (parser.has_errors()) {
+        auto& error = parser.errors()[0];
+        return vm.throw_completion<SyntaxError>(error.to_string());
+    }
+
+    bool strict_eval = false;
+
+    // 14. If strictCaller is true, let strictEval be true.
+    if (strict_caller == CallerMode::Strict)
+        strict_eval = true;
+    // 15. Else, let strictEval be IsStrict of script.
+    else
+        strict_eval = program->is_strict_mode();
 
     // 16. Let runningContext be the running execution context.
     // 17. NOTE: If direct is true, runningContext will be the execution context that performed the direct eval. If direct is false, runningContext will be the execution context for the invocation of the eval function.
@@ -765,15 +728,16 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
     auto eval_declaration_data = EvalDeclarationData::create(vm, program, strict_eval);
     TRY(eval_declaration_instantiation(vm, eval_declaration_data, variable_environment, lexical_environment, private_environment, strict_eval));
 
-    if (Bytecode::should_dump_bytecode())
+    // 31. If result.[[Type]] is normal, then
+    //     a. Set result to the result of evaluating body.
+    auto executable = Bytecode::Generator::generate_from_ast_node(vm, program, {});
+    executable->name = "eval"_utf16_fly_string;
+    if (Bytecode::g_dump_bytecode)
         executable->dump();
 
     // 22. Let evalContext be a new ECMAScript code execution context.
-    auto& stack = vm.interpreter_stack();
-    auto* stack_mark = stack.top();
-    auto* eval_context = stack.allocate(executable->registers_and_locals_count, executable->constants, 0);
-    if (!eval_context) [[unlikely]]
-        return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
+    ExecutionContext* eval_context = nullptr;
+    ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(eval_context, executable->registers_and_locals_count, executable->constants.size(), 0);
 
     // 23. Set evalContext's Function to null.
     // NOTE: This was done in the construction of eval_context.
@@ -805,7 +769,7 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
 
     Optional<Value> eval_result;
 
-    result = TRY(vm.run_executable(*eval_context, *executable, {}));
+    eval_result = TRY(vm.bytecode_interpreter().run_executable(*eval_context, *executable, {}));
 
     // 32. If result.[[Type]] is normal and result.[[Value]] is empty, then
     //     a. Set result to NormalCompletion(undefined).
@@ -897,16 +861,11 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, EvalDeclarationDa
                 for (auto const& name : data.var_names) {
                     // a. If ! thisEnv.HasBinding(name) is true, then
                     if (MUST(this_environment->has_binding(name))) {
-                        // B.3.4 Changes to EvalDeclarationInstantiation, https://tc39.es/ecma262/#sec-evaldeclarationinstantiation
-                        // i. Normative Optional
-                        //     If the host is a web browser or otherwise supports VariableStatements in Catch Blocks, then
-                        //         i. If thisEnv is not the Environment Record for a Catch clause, throw a SyntaxError exception.
-                        // ii. Else,
-                        //     i. Throw a SyntaxError exception.
-                        // AD-HOC: We are a web browser, so we only implement the web browser branch.
-                        if (!this_environment->is_catch_environment()) {
-                            return vm.throw_completion<SyntaxError>(ErrorType::EvalVarHoistingConflict, name);
-                        }
+                        // i. Throw a SyntaxError exception.
+                        return vm.throw_completion<SyntaxError>(ErrorType::TopLevelVariableAlreadyDeclared, name);
+
+                        // FIXME: ii. NOTE: Annex B.3.4 defines alternate semantics for the above step.
+                        // In particular it only throw the syntax error if it is not an environment from a catchclause.
                     }
                     // b. NOTE: A direct eval will not hoist var declaration over a like-named lexical declaration.
                 }
@@ -925,10 +884,7 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, EvalDeclarationDa
     //         i. If privateIdentifiers does not contain binding.[[Description]], append binding.[[Description]] to privateIdentifiers.
     //     b. Set pointer to pointer.[[OuterPrivateEnvironment]].
     // 7. If AllPrivateIdentifiersValid of body with argument privateIdentifiers is false, throw a SyntaxError exception.
-    for (auto const& name : data.referenced_private_names) {
-        if (!private_environment || !private_environment->contains_private_identifier(name))
-            return vm.throw_completion<SyntaxError>(ErrorType::PrivateFieldNotDeclared, name);
-    }
+    // FIXME: Add Private identifiers check here.
 
     // 8. Let functionsToInitialize be a new empty List.
     // 9. Let declaredFunctionNames be a new empty List.
@@ -1083,7 +1039,9 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, EvalDeclarationDa
     }
 
     // 17. For each Parse Node f of functionsToInitialize, do
-    for (auto const& function_to_initialize : data.functions_to_initialize) {
+    // NB: We iterate in reverse order since we appended the functions
+    //     instead of prepending during pre-computation.
+    for (auto const& function_to_initialize : data.functions_to_initialize.in_reverse()) {
         // a. Let fn be the sole element of the BoundNames of f.
         // b. Let fo be InstantiateFunctionObject of f with arguments lexEnv and privateEnv.
         auto function = ECMAScriptFunctionObject::create_from_function_data(
@@ -1158,6 +1116,7 @@ Object* create_unmapped_arguments_object(VM& vm, ReadonlySpan<Value> arguments)
     // 2. Let obj be OrdinaryObjectCreate(%Object.prototype%, « [[ParameterMap]] »).
     // 3. Set obj.[[ParameterMap]] to undefined.
     auto object = Object::create_with_premade_shape(realm.intrinsics().unmapped_arguments_object_shape());
+    object->set_has_parameter_map();
 
     // 4. Perform ! DefinePropertyOrThrow(obj, "length", PropertyDescriptor { [[Value]]: 𝔽(len), [[Writable]]: true, [[Enumerable]]: false, [[Configurable]]: true }).
     object->put_direct(realm.intrinsics().unmapped_arguments_object_length_offset(), Value(length));
@@ -1328,7 +1287,7 @@ CanonicalIndex canonical_numeric_index_string(PropertyKey const& property_key, C
 
     // FIXME: We return 0 instead of n but it might not observable?
     // 3. If SameValue(! ToString(n), argument) is true, return n.
-    if (number_to_utf16_string(*maybe_double) == argument)
+    if (number_to_string(*maybe_double) == argument)
         return CanonicalIndex(CanonicalIndex::Type::Numeric, 0);
 
     // 4. Return undefined.
@@ -1336,7 +1295,7 @@ CanonicalIndex canonical_numeric_index_string(PropertyKey const& property_key, C
 }
 
 // 22.1.3.19.1 GetSubstitution ( matched, str, position, captures, namedCaptures, replacementTemplate ), https://tc39.es/ecma262/#sec-getsubstitution
-ThrowCompletionOr<Utf16String> get_substitution(VM& vm, Utf16View const& matched, Utf16View const& str, size_t position, Span<Value> captures, Value named_captures, Utf16View const& replacement_template)
+ThrowCompletionOr<String> get_substitution(VM& vm, Utf16View const& matched, Utf16View const& str, size_t position, Span<Value> captures, Value named_captures, Value replacement_template)
 {
     // 1. Let stringLength be the length of str.
     auto string_length = str.length_in_code_units();
@@ -1345,10 +1304,11 @@ ThrowCompletionOr<Utf16String> get_substitution(VM& vm, Utf16View const& matched
     VERIFY(position <= string_length);
 
     // 3. Let result be the empty String.
-    Utf16StringBuilder result;
+    StringBuilder result(StringBuilder::Mode::UTF16);
 
     // 4. Let templateRemainder be replacementTemplate.
-    auto template_remainder = replacement_template;
+    auto replace_template_string = TRY(replacement_template.to_utf16_string(vm));
+    Utf16View template_remainder { replace_template_string };
 
     // 5. Repeat, while templateRemainder is not the empty String,
     while (!template_remainder.is_empty()) {
@@ -1410,7 +1370,8 @@ ThrowCompletionOr<Utf16String> get_substitution(VM& vm, Utf16View const& matched
             auto digits = template_remainder.substring_view(1, digit_count);
 
             // iii. Let index be ℝ(StringToNumber(digits)).
-            auto index = static_cast<size_t>(string_to_number(digits));
+            auto utf8_digits = MUST(digits.to_utf8());
+            auto index = static_cast<size_t>(string_to_number(utf8_digits));
 
             // iv. Assert: 0 ≤ index ≤ 99.
             VERIFY(index <= 99);
@@ -1429,7 +1390,8 @@ ThrowCompletionOr<Utf16String> get_substitution(VM& vm, Utf16View const& matched
                 digits = digits.substring_view(0, 1);
 
                 // 4. Set index to ℝ(StringToNumber(digits)).
-                index = static_cast<size_t>(string_to_number(digits));
+                utf8_digits = MUST(digits.to_utf8());
+                index = static_cast<size_t>(string_to_number(utf8_digits));
             }
 
             // vii. Let ref be the substring of templateRemainder from 0 to 1 + digitCount.
@@ -1521,7 +1483,7 @@ ThrowCompletionOr<Utf16String> get_substitution(VM& vm, Utf16View const& matched
     }
 
     // 6. Return result.
-    return result.to_string();
+    return MUST(result.utf16_string_view().to_utf8());
 }
 
 void DisposeCapability::visit_edges(GC::Cell::Visitor& visitor) const
@@ -1984,7 +1946,7 @@ ThrowCompletionOr<Value> get_option(VM& vm, Object const& options, PropertyKey c
             [](Empty) -> Value { return js_undefined(); },
             [](bool default_) -> Value { return Value { default_ }; },
             [](double default_) -> Value { return Value { default_ }; },
-            [&](Utf16View default_) -> Value { return PrimitiveString::create(vm, default_); });
+            [&](StringView default_) -> Value { return PrimitiveString::create(vm, default_); });
     }
 
     // 3. If type is BOOLEAN, then
@@ -1998,17 +1960,16 @@ ThrowCompletionOr<Value> get_option(VM& vm, Object const& options, PropertyKey c
         VERIFY(type == OptionType::String);
 
         // b. Set value to ? ToString(value).
-        auto value_string = TRY(value.to_utf16_string(vm));
+        value = TRY(value.to_primitive_string(vm));
+    }
 
-        // 5. If values is not EMPTY and values does not contain value, throw a RangeError exception.
-        if (!values.is_empty()) {
-            auto value_string_view = value_string.utf16_view();
-            auto it = find_if(values.begin(), values.end(), [&](auto allowed_value) { return value_string_view == allowed_value; });
-            if (it == values.end())
-                return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, value_string_view, property.as_string());
-        }
+    // 5. If values is not EMPTY and values does not contain value, throw a RangeError exception.
+    if (!values.is_empty()) {
+        // NOTE: Every location in the spec that invokes GetOption with type=boolean also has values=undefined.
+        VERIFY(value.is_string());
 
-        value = PrimitiveString::create(vm, value_string);
+        if (auto value_string = value.as_string().utf8_string(); !values.contains_slow(value_string))
+            return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, value_string, property.as_string());
     }
 
     // 6. Return value.
@@ -2022,23 +1983,13 @@ ThrowCompletionOr<RoundingMode> get_rounding_mode_option(VM& vm, Object const& o
     static constexpr auto allowed_strings = to_array({ "ceil"sv, "floor"sv, "expand"sv, "trunc"sv, "halfCeil"sv, "halfFloor"sv, "halfExpand"sv, "halfTrunc"sv, "halfEven"sv });
 
     // 2. Let stringFallback be the value from the "String Identifier" column of the row with fallback in its "Rounding Mode" column.
-    static constexpr auto utf16_allowed_strings = to_array({ u"ceil"sv, u"floor"sv, u"expand"sv, u"trunc"sv, u"halfCeil"sv, u"halfFloor"sv, u"halfExpand"sv, u"halfTrunc"sv, u"halfEven"sv });
-    auto string_fallback = utf16_allowed_strings[to_underlying(fallback)];
+    auto string_fallback = allowed_strings[to_underlying(fallback)];
 
     // 3. Let stringValue be ? GetOption(options, "roundingMode", STRING, allowedStrings, stringFallback).
     auto string_value = TRY(get_option(vm, options, vm.names.roundingMode, OptionType::String, allowed_strings, string_fallback));
 
     // 4. Return the value from the "Rounding Mode" column of the row with stringValue in its "String Identifier" column.
-    auto string = string_value.as_string().utf16_string_view();
-    Optional<size_t> index;
-    for (size_t i = 0; i < allowed_strings.size(); ++i) {
-        if (string == allowed_strings[i]) {
-            index = i;
-            break;
-        }
-    }
-    VERIFY(index.has_value());
-    return static_cast<RoundingMode>(*index);
+    return static_cast<RoundingMode>(allowed_strings.first_index_of(string_value.as_string().utf8_string_view()).value());
 }
 
 // 14.5.2.4 GetRoundingIncrementOption ( options ), https://tc39.es/proposal-temporal/#sec-temporal-getroundingincrementoption

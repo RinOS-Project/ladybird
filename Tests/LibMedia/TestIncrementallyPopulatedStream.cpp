@@ -10,8 +10,6 @@
 #include <LibTest/TestCase.h>
 #include <LibThreading/Thread.h>
 
-#include "TestMediaCommon.h"
-
 static ByteBuffer make_test_data(size_t size)
 {
     auto buffer = MUST(ByteBuffer::create_uninitialized(size));
@@ -179,7 +177,7 @@ TEST_CASE(add_overlapping_chunks)
 
 TEST_CASE(add_chunk_at_offset)
 {
-    never_destroyed_event_loop();
+    Core::EventLoop loop;
 
     auto stream = Media::IncrementallyPopulatedStream::create_empty();
     stream->set_expected_size(100);
@@ -207,15 +205,10 @@ TEST_CASE(cursor_abort_and_reset)
 
     auto cursor = stream->create_cursor();
 
-    IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<bool> read_blocked { false };
+    EXPECT(!cursor->is_blocked());
+
     IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<bool> read_completed { false };
     IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<bool> was_aborted { false };
-
-    cursor->set_blocked_change_handler([&](Media::ReadBlocked blocked) {
-        read_blocked = blocked == Media::ReadBlocked::Yes;
-    });
-
-    EXPECT(!read_blocked.load());
 
     auto thread = Threading::Thread::construct("TestAbort"sv, [&, cursor]() -> intptr_t {
         Array<u8, 10> buffer;
@@ -227,14 +220,14 @@ TEST_CASE(cursor_abort_and_reset)
 
     thread->start();
 
-    while (!read_blocked.load())
+    while (!cursor->is_blocked())
         ;
-    EXPECT(read_blocked.load());
+    EXPECT(cursor->is_blocked());
 
     cursor->abort();
     MUST(thread->join());
 
-    EXPECT(!read_blocked.load());
+    EXPECT_EQ(cursor->is_blocked(), false);
     EXPECT(read_completed.load());
     EXPECT(was_aborted.load());
 
@@ -249,297 +242,9 @@ TEST_CASE(cursor_abort_and_reset)
     EXPECT_EQ(result.value(), 10u);
 }
 
-TEST_CASE(cursor_blocked_change_handler)
-{
-    auto stream = Media::IncrementallyPopulatedStream::create_empty();
-    stream->set_expected_size(100);
-
-    auto cursor = stream->create_cursor();
-
-    IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<u32> blocked_count { 0 };
-    IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<u32> unblocked_count { 0 };
-    IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<bool> last_state { false };
-    IGNORE_USE_IN_ESCAPING_LAMBDA Atomic<bool> read_succeeded { false };
-
-    cursor->set_blocked_change_handler([&](Media::ReadBlocked blocked) {
-        if (blocked == Media::ReadBlocked::Yes)
-            blocked_count++;
-        else
-            unblocked_count++;
-        last_state = blocked == Media::ReadBlocked::Yes;
-    });
-
-    auto thread = Threading::Thread::construct("TestBlockHandler"sv, [&, cursor]() -> intptr_t {
-        Array<u8, 10> buffer;
-        read_succeeded = !cursor->read_into(buffer).is_error();
-        return 0;
-    });
-    thread->start();
-
-    // The read finds no data and parks, firing the handler with blocked=true exactly once.
-    while (blocked_count.load() == 0)
-        ;
-    EXPECT_EQ(blocked_count.load(), 1u);
-    EXPECT_EQ(unblocked_count.load(), 0u);
-    EXPECT(last_state.load());
-
-    // Appending the awaited data resumes the read, firing the handler with blocked=false.
-    auto data = make_test_data(100);
-    stream->add_chunk_at(0, data.bytes());
-
-    MUST(thread->join());
-    EXPECT(read_succeeded.load());
-    EXPECT_EQ(blocked_count.load(), 1u);
-    EXPECT_EQ(unblocked_count.load(), 1u);
-    EXPECT(!last_state.load());
-}
-
-TEST_CASE(redundant_chunk_within_existing_chunk_at_nonzero_offset)
-{
-    // Regression test: add_chunk_at used to compare chunk.size() (a relative byte count)
-    // against new_chunk_end (an absolute file offset). When the existing chunk started at
-    // a non-zero offset, chunk.size() < new_chunk_end even if the new data was fully
-    // covered, causing the buffer to be shrunk and data beyond the new chunk's end to be lost.
-    auto stream = Media::IncrementallyPopulatedStream::create_empty();
-
-    constexpr size_t data_size = 200;
-    auto data = make_test_data(data_size);
-
-    // Add a chunk at a non-zero offset covering [100, 120).
-    stream->add_chunk_at(100, data.bytes().slice(100, 20));
-
-    // Add a redundant chunk fully within [100, 120), specifically [105, 115).
-    // With the bug, this shrinks the existing chunk to [100, 115), losing bytes [115, 120).
-    stream->add_chunk_at(105, data.bytes().slice(105, 10));
-
-    stream->close();
-
-    auto cursor = stream->create_cursor();
-    MUST(cursor->seek(100, SeekMode::SetPosition));
-
-    Array<u8, 20> buffer;
-    auto bytes_read = MUST(cursor->read_into(buffer));
-
-    EXPECT_EQ(bytes_read, 20u);
-    for (size_t i = 0; i < 20; i++)
-        EXPECT_EQ(buffer[i], static_cast<u8>(100 + i));
-}
-
-TEST_CASE(remove_byte_range_splits_chunk)
-{
-    auto data = make_test_data(100);
-    auto stream = Media::IncrementallyPopulatedStream::create_from_data(data.bytes());
-
-    stream->remove_byte_range(30, 70);
-
-    auto ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 2u);
-    EXPECT_EQ(ranges[0].start, 0u);
-    EXPECT_EQ(ranges[0].end, 30u);
-    EXPECT_EQ(ranges[1].start, 70u);
-    EXPECT_EQ(ranges[1].end, 100u);
-
-    auto cursor = stream->create_cursor();
-    Array<u8, 30> buffer;
-    auto bytes_read = MUST(cursor->read_into(buffer));
-    EXPECT_EQ(bytes_read, 30u);
-    for (size_t i = 0; i < 30; i++)
-        EXPECT_EQ(buffer[i], static_cast<u8>(i));
-
-    MUST(cursor->seek(70, SeekMode::SetPosition));
-    bytes_read = MUST(cursor->read_into(buffer));
-    EXPECT_EQ(bytes_read, 30u);
-    for (size_t i = 0; i < 30; i++)
-        EXPECT_EQ(buffer[i], static_cast<u8>(70 + i));
-}
-
-TEST_CASE(remove_byte_range_trims_chunk)
-{
-    auto data = make_test_data(100);
-    auto stream = Media::IncrementallyPopulatedStream::create_from_data(data.bytes());
-
-    stream->remove_byte_range(0, 20);
-    stream->remove_byte_range(80, 100);
-
-    auto ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 1u);
-    EXPECT_EQ(ranges[0].start, 20u);
-    EXPECT_EQ(ranges[0].end, 80u);
-
-    auto cursor = stream->create_cursor();
-    MUST(cursor->seek(20, SeekMode::SetPosition));
-
-    Array<u8, 60> buffer;
-    auto bytes_read = MUST(cursor->read_into(buffer));
-    EXPECT_EQ(bytes_read, 60u);
-    for (size_t i = 0; i < 60; i++)
-        EXPECT_EQ(buffer[i], static_cast<u8>(20 + i));
-}
-
-TEST_CASE(remove_byte_range_across_disjoint_chunks)
-{
-    auto stream = Media::IncrementallyPopulatedStream::create_empty();
-    auto data = make_test_data(100);
-
-    stream->add_chunk_at(0, data.bytes().trim(20));
-    stream->add_chunk_at(40, data.bytes().slice(40, 20));
-    stream->add_chunk_at(80, data.bytes().slice(80));
-    stream->remove_byte_range(10, 90);
-
-    auto ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 2u);
-    EXPECT_EQ(ranges[0].start, 0u);
-    EXPECT_EQ(ranges[0].end, 10u);
-    EXPECT_EQ(ranges[1].start, 90u);
-    EXPECT_EQ(ranges[1].end, 100u);
-
-    auto cursor = stream->create_cursor();
-    Array<u8, 10> buffer;
-    auto bytes_read = MUST(cursor->read_into(buffer));
-    EXPECT_EQ(bytes_read, 10u);
-    for (size_t i = 0; i < 10; i++)
-        EXPECT_EQ(buffer[i], static_cast<u8>(i));
-
-    MUST(cursor->seek(90, SeekMode::SetPosition));
-    bytes_read = MUST(cursor->read_into(buffer));
-    EXPECT_EQ(bytes_read, 10u);
-    for (size_t i = 0; i < 10; i++)
-        EXPECT_EQ(buffer[i], static_cast<u8>(90 + i));
-}
-
-TEST_CASE(add_touching_chunks_forward)
-{
-    auto stream = Media::IncrementallyPopulatedStream::create_empty();
-    auto data = make_test_data(100);
-
-    stream->add_chunk_at(0, data.bytes().trim(50));
-    stream->add_chunk_at(50, data.bytes().slice(50));
-
-    auto ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 1u);
-    EXPECT_EQ(ranges[0].start, 0u);
-    EXPECT_EQ(ranges[0].end, 100u);
-}
-
-TEST_CASE(add_touching_chunks_reverse)
-{
-    auto stream = Media::IncrementallyPopulatedStream::create_empty();
-    auto data = make_test_data(100);
-
-    stream->add_chunk_at(50, data.bytes().slice(50));
-    stream->add_chunk_at(0, data.bytes().trim(50));
-
-    auto ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 1u);
-    EXPECT_EQ(ranges[0].start, 0u);
-    EXPECT_EQ(ranges[0].end, 100u);
-
-    // Verify the data is contiguous and correct.
-    auto cursor = stream->create_cursor();
-    Array<u8, 100> buffer;
-    auto bytes_read = MUST(cursor->read_into(buffer));
-    EXPECT_EQ(bytes_read, 100u);
-    for (size_t i = 0; i < 100; i++)
-        EXPECT_EQ(buffer[i], static_cast<u8>(i));
-}
-
-TEST_CASE(add_disjoint_chunks)
-{
-    auto stream = Media::IncrementallyPopulatedStream::create_empty();
-    auto data = make_test_data(100);
-
-    stream->add_chunk_at(0, data.bytes().trim(30));
-    stream->add_chunk_at(70, data.bytes().slice(70));
-
-    auto ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 2u);
-    EXPECT_EQ(ranges[0].start, 0u);
-    EXPECT_EQ(ranges[0].end, 30u);
-    EXPECT_EQ(ranges[1].start, 70u);
-    EXPECT_EQ(ranges[1].end, 100u);
-}
-
-TEST_CASE(add_chunk_fills_gap)
-{
-    auto stream = Media::IncrementallyPopulatedStream::create_empty();
-    auto data = make_test_data(100);
-
-    stream->add_chunk_at(0, data.bytes().trim(30));
-    stream->add_chunk_at(70, data.bytes().slice(70));
-
-    auto ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 2u);
-
-    // Fill the gap.
-    stream->add_chunk_at(30, data.bytes().slice(30, 40));
-
-    ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 1u);
-    EXPECT_EQ(ranges[0].start, 0u);
-    EXPECT_EQ(ranges[0].end, 100u);
-
-    // Verify data integrity.
-    auto cursor = stream->create_cursor();
-    Array<u8, 100> buffer;
-    auto bytes_read = MUST(cursor->read_into(buffer));
-    EXPECT_EQ(bytes_read, 100u);
-    for (size_t i = 0; i < 100; i++)
-        EXPECT_EQ(buffer[i], static_cast<u8>(i));
-}
-
-TEST_CASE(add_chunk_spans_multiple_existing_chunks)
-{
-    auto stream = Media::IncrementallyPopulatedStream::create_empty();
-    auto data = make_test_data(120);
-
-    stream->add_chunk_at(0, data.bytes().trim(10));
-    stream->add_chunk_at(20, data.bytes().slice(20, 10));
-    stream->add_chunk_at(40, data.bytes().slice(40, 10));
-    stream->add_chunk_at(10, data.bytes().slice(10, 60));
-
-    auto ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 1u);
-    EXPECT_EQ(ranges[0].start, 0u);
-    EXPECT_EQ(ranges[0].end, 70u);
-
-    auto cursor = stream->create_cursor();
-    Array<u8, 70> buffer;
-    auto bytes_read = MUST(cursor->read_into(buffer));
-    EXPECT_EQ(bytes_read, 70u);
-    for (size_t i = 0; i < 70; i++)
-        EXPECT_EQ(buffer[i], static_cast<u8>(i));
-}
-
-TEST_CASE(add_three_disjoint_then_connect)
-{
-    auto stream = Media::IncrementallyPopulatedStream::create_empty();
-    auto data = make_test_data(150);
-
-    stream->add_chunk_at(0, data.bytes().trim(30));
-    stream->add_chunk_at(60, data.bytes().slice(60, 30));
-    stream->add_chunk_at(120, data.bytes().slice(120));
-
-    auto ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 3u);
-
-    // Connect first and second with a chunk that touches both.
-    stream->add_chunk_at(30, data.bytes().slice(30, 30));
-    ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 2u);
-    EXPECT_EQ(ranges[0].start, 0u);
-    EXPECT_EQ(ranges[0].end, 90u);
-
-    // Connect second and third.
-    stream->add_chunk_at(90, data.bytes().slice(90, 30));
-    ranges = stream->available_byte_ranges();
-    EXPECT_EQ(ranges.size(), 1u);
-    EXPECT_EQ(ranges[0].start, 0u);
-    EXPECT_EQ(ranges[0].end, 150u);
-}
-
 TEST_CASE(data_request_callback_invoked)
 {
-    auto& loop = never_destroyed_event_loop();
+    Core::EventLoop loop;
 
     // Stream size must be larger than FORWARD_REQUEST_THRESHOLD (1 MiB) to test callback
     static constexpr u64 stream_size = 2 * MiB;

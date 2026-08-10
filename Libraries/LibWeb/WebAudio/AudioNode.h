@@ -7,27 +7,28 @@
 
 #pragma once
 
-#include <AK/NonnullOwnPtr.h>
 #include <AK/Optional.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/AudioNode.h>
+#include <LibWeb/Bindings/AudioNodePrototype.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/DOM/EventTarget.h>
-#include <LibWeb/WebAudio/Rendering/RenderNode.h>
 #include <LibWeb/WebAudio/Types.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::WebAudio {
 
-using ChannelCountMode = Bindings::ChannelCountMode;
-using ChannelInterpretation = Bindings::ChannelInterpretation;
+// https://webaudio.github.io/web-audio-api/#AudioNodeOptions
+struct AudioNodeOptions {
+    Optional<WebIDL::UnsignedLong> channel_count;
+    Optional<Bindings::ChannelCountMode> channel_count_mode;
+    Optional<Bindings::ChannelInterpretation> channel_interpretation;
+};
 
 struct AudioNodeDefaultOptions {
     WebIDL::UnsignedLong channel_count;
-    ChannelCountMode channel_count_mode;
-    ChannelInterpretation channel_interpretation;
+    Bindings::ChannelCountMode channel_count_mode;
+    Bindings::ChannelInterpretation channel_interpretation;
 };
-
-using AudioNodeOptions = Bindings::AudioNodeOptions;
 
 struct AudioNodeConnection {
     GC::Ref<AudioNode> destination_node;
@@ -46,12 +47,10 @@ struct AudioParamConnection {
 
 // https://webaudio.github.io/web-audio-api/#AudioNode
 class AudioNode : public DOM::EventTarget {
-    WEB_WRAPPABLE(AudioNode, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(AudioNode, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(AudioNode);
 
 public:
-    static constexpr bool OVERRIDES_FINALIZE = true;
-
     virtual ~AudioNode() override;
 
     WebIDL::ExceptionOr<GC::Ref<AudioNode>> connect(GC::Ref<AudioNode> destination_node, WebIDL::UnsignedLong output = 0, WebIDL::UnsignedLong input = 0);
@@ -81,29 +80,28 @@ public:
     virtual WebIDL::ExceptionOr<void> set_channel_count(WebIDL::UnsignedLong);
     virtual WebIDL::UnsignedLong channel_count() const { return m_channel_count; }
 
-    virtual WebIDL::ExceptionOr<void> set_channel_count_mode(ChannelCountMode);
-    ChannelCountMode channel_count_mode();
-    virtual WebIDL::ExceptionOr<void> set_channel_interpretation(ChannelInterpretation);
-    ChannelInterpretation channel_interpretation();
+    virtual WebIDL::ExceptionOr<void> set_channel_count_mode(Bindings::ChannelCountMode);
+    Bindings::ChannelCountMode channel_count_mode();
+    virtual WebIDL::ExceptionOr<void> set_channel_interpretation(Bindings::ChannelInterpretation);
+    Bindings::ChannelInterpretation channel_interpretation();
 
     WebIDL::ExceptionOr<void> initialize_audio_node_options(AudioNodeOptions const& given_options, AudioNodeDefaultOptions const& default_options);
 
     NodeID node_id() const { return m_node_id; }
-    JS::Object& relevant_global_object() const;
 
 protected:
-    AudioNode(GC::Ref<BaseAudioContext>, WebIDL::UnsignedLong channel_count = 2);
-    void queue_render_node_creation(NonnullOwnPtr<Rendering::RenderNode>);
+    AudioNode(JS::Realm&, GC::Ref<BaseAudioContext>, WebIDL::UnsignedLong channel_count = 2);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
-    virtual void finalize() override;
 
 private:
-    void queue_connection_update();
-    void queue_channel_config_update();
     GC::Ref<BaseAudioContext> m_context;
     WebIDL::UnsignedLong m_channel_count { 2 };
-    ChannelCountMode m_channel_count_mode { ChannelCountMode::Max };
-    ChannelInterpretation m_channel_interpretation { ChannelInterpretation::Speakers };
+    Bindings::ChannelCountMode m_channel_count_mode { Bindings::ChannelCountMode::Max };
+    Bindings::ChannelInterpretation m_channel_interpretation { Bindings::ChannelInterpretation::Speakers };
+    // Connections from other AudioNode outputs into this node's inputs.
+    Vector<AudioNodeConnection> m_input_connections;
     // Connections from this node's outputs into other AudioNode inputs.
     Vector<AudioNodeConnection> m_output_connections;
     // Connections from this node's outputs into AudioParams.

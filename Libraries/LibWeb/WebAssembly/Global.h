@@ -6,42 +6,37 @@
 
 #pragma once
 
-#include <AK/Optional.h>
 #include <LibWasm/AbstractMachine/AbstractMachine.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/WebAssembly/WebAssembly.h>
-#include <LibWeb/WebIDL/ExceptionOr.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
+#include <LibWeb/Bindings/GlobalPrototype.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::WebAssembly {
 
 struct GlobalDescriptor {
-    Wasm::ValueType value;
+    Bindings::ValueType value;
     bool mutable_ { false };
 };
 
-class Global : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(Global, Bindings::GCAllocatedWrappable);
+class Global : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(Global, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(Global);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<Global>> create(NonnullRefPtr<Detail::WebAssemblyCache>, GlobalDescriptor const&, Wasm::Value);
-    static GC::Ref<Global> create(NonnullRefPtr<Detail::WebAssemblyCache>, Wasm::GlobalAddress);
+    static WebIDL::ExceptionOr<GC::Ref<Global>> construct_impl(JS::Realm&, GlobalDescriptor& descriptor, JS::Value v);
 
-    WebIDL::ExceptionOr<Wasm::GlobalType> type() const;
-    WebIDL::ExceptionOr<Wasm::Value> value() const;
-    WebIDL::ExceptionOr<Wasm::ValueType> value_type() const;
-    WebIDL::ExceptionOr<void> set_value(Wasm::Value);
+    WebIDL::ExceptionOr<JS::Value> value_of() const;
+
+    WebIDL::ExceptionOr<void> set_value(JS::Value);
+    WebIDL::ExceptionOr<JS::Value> value() const;
 
     Wasm::GlobalAddress address() const { return m_address; }
-    Detail::WebAssemblyCache& cache() { return *m_cache; }
-    Detail::WebAssemblyCache& cache() const { return *m_cache; }
 
 private:
-    Global(NonnullRefPtr<Detail::WebAssemblyCache>, Wasm::GlobalAddress);
+    Global(JS::Realm&, Wasm::GlobalAddress);
 
-    virtual void visit_edges(Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
 
-    NonnullRefPtr<Detail::WebAssemblyCache> m_cache;
     Wasm::GlobalAddress m_address;
 };
 

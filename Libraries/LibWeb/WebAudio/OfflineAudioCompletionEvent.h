@@ -6,37 +6,32 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
-#include <LibWeb/Bindings/OfflineAudioCompletionEvent.h>
 #include <LibWeb/DOM/Event.h>
-#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibWeb/WebAudio/AudioBuffer.h>
-
-namespace Web::HTML {
-
-class Window;
-
-}
 
 namespace Web::WebAudio {
 
-using OfflineAudioCompletionEventInit = Bindings::OfflineAudioCompletionEventInit;
+struct OfflineAudioCompletionEventInit : public DOM::EventInit {
+    GC::Ptr<AudioBuffer> rendered_buffer;
+};
 
 class OfflineAudioCompletionEvent final : public DOM::Event {
-    WEB_WRAPPABLE(OfflineAudioCompletionEvent, DOM::Event);
+    WEB_PLATFORM_OBJECT(OfflineAudioCompletionEvent, DOM::Event);
     GC_DECLARE_ALLOCATOR(OfflineAudioCompletionEvent);
 
 public:
-    static GC::Ref<OfflineAudioCompletionEvent> create(Utf16FlyString const& event_name, OfflineAudioCompletionEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    static WebIDL::ExceptionOr<GC::Ref<OfflineAudioCompletionEvent>> construct_impl(JS::Realm&, FlyString const& event_name, OfflineAudioCompletionEventInit const& event_init);
 
     virtual ~OfflineAudioCompletionEvent() override;
 
     GC::Ptr<AudioBuffer> rendered_buffer() const { return m_rendered_buffer; }
 
 private:
-    OfflineAudioCompletionEvent(Utf16FlyString const& event_name, OfflineAudioCompletionEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    OfflineAudioCompletionEvent(JS::Realm&, FlyString const& event_name, OfflineAudioCompletionEventInit const& event_init);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    void initialize(JS::Realm&) override;
+
+    virtual void visit_edges(Cell::Visitor&) override;
 
     GC::Ptr<AudioBuffer> m_rendered_buffer;
 };

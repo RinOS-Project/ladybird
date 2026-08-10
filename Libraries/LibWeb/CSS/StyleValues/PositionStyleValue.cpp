@@ -36,12 +36,19 @@ bool PositionStyleValue::is_center(SerializationMode mode) const
     return edge_x()->is_center(mode) && edge_y()->is_center(mode);
 }
 
-CSSPixelPoint PositionStyleValue::resolved(CSSPixelRect const& rect) const
+CSSPixelPoint PositionStyleValue::resolved(Layout::Node const& node, CSSPixelRect const& rect) const
 {
     // Note: A preset + a none default x/y_relative_to is impossible in the syntax (and makes little sense)
-    CSSPixels x = LengthPercentage::from_style_value(edge_x()->offset()).to_px(rect.width());
-    CSSPixels y = LengthPercentage::from_style_value(edge_y()->offset()).to_px(rect.height());
+    CSSPixels x = LengthPercentage::from_style_value(m_properties.edge_x->offset()).to_px(node, rect.width());
+    CSSPixels y = LengthPercentage::from_style_value(m_properties.edge_y->offset()).to_px(node, rect.height());
     return CSSPixelPoint { rect.x() + x, rect.y() + y };
+}
+
+ValueComparingNonnullRefPtr<PositionStyleValue const> PositionStyleValue::with_resolved_keywords() const
+{
+    return PositionStyleValue::create(
+        edge_x()->with_resolved_keywords(),
+        edge_y()->with_resolved_keywords());
 }
 
 ValueComparingNonnullRefPtr<StyleValue const> PositionStyleValue::absolutized(ComputationContext const& computation_context) const
@@ -53,9 +60,9 @@ ValueComparingNonnullRefPtr<StyleValue const> PositionStyleValue::absolutized(Co
 
 void PositionStyleValue::serialize(StringBuilder& builder, SerializationMode mode) const
 {
-    edge_x()->serialize(builder, mode);
+    m_properties.edge_x->serialize(builder, mode);
     builder.append(' ');
-    edge_y()->serialize(builder, mode);
+    m_properties.edge_y->serialize(builder, mode);
 }
 
 }

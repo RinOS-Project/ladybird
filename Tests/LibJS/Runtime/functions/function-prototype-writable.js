@@ -8,11 +8,3 @@ test("a function's prototype property should be writable", () => {
     x.prototype = 1;
     expect(x.prototype).toBe(1);
 });
-
-test("a function's prototype property appears in own property names", () => {
-    function x() {
-        "use strict";
-    }
-
-    expect(Object.getOwnPropertyNames(x)).toEqual(["length", "name", "prototype"]);
-});

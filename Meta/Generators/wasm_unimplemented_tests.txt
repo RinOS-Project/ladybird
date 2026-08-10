@@ -1,2 +1,0 @@
-module relaxed_dot_product.0
-module relaxed_madd_nmadd.0

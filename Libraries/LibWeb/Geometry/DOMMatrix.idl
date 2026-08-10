@@ -1,3 +1,5 @@
+#import <Geometry/DOMMatrixReadOnly.idl>
+
 // https://drafts.fxtf.org/geometry/#dommatrix
 [Exposed=(Window,Worker), Serializable, LegacyWindowAlias=(SVGMatrix, WebKitCSSMatrix)]
 interface DOMMatrix : DOMMatrixReadOnly {
@@ -45,5 +47,5 @@ interface DOMMatrix : DOMMatrixReadOnly {
     DOMMatrix skewYSelf(optional unrestricted double sy = 0);
     DOMMatrix invertSelf();
 
-    [Exposed=Window] DOMMatrix setMatrixValue(Utf16DOMString transformList);
+    [Exposed=Window] DOMMatrix setMatrixValue(DOMString transformList);
 };

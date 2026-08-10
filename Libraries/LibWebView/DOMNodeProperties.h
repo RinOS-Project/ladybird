@@ -14,7 +14,6 @@ namespace WebView {
 
 struct WEBVIEW_API DOMNodeProperties {
     enum class Type {
-        AppliedStyleRules,
         ComputedStyle,
         Layout,
         UsedFonts,

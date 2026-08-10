@@ -1,3 +1,9 @@
+#import <SVG/SVGAnimatedEnumeration.idl>
+#import <SVG/SVGAnimatedNumber.idl>
+#import <SVG/SVGAnimatedString.idl>
+#import <SVG/SVGElement.idl>
+#import <SVG/SVGFilterPrimitiveStandardAttributes.idl>
+
 // https://drafts.csswg.org/filter-effects-1/#InterfaceSVGFEGaussianBlurElement
 [Exposed=Window]
 interface SVGFEGaussianBlurElement : SVGElement {
@@ -13,7 +19,7 @@ interface SVGFEGaussianBlurElement : SVGElement {
     readonly attribute SVGAnimatedNumber stdDeviationY;
     readonly attribute SVGAnimatedEnumeration edgeMode;
 
-    [FIXME] undefined setStdDeviation(float stdDeviationX, float stdDeviationY);
+    [FIXME] void setStdDeviation(float stdDeviationX, float stdDeviationY);
 };
 
 SVGFEGaussianBlurElement includes SVGFilterPrimitiveStandardAttributes;

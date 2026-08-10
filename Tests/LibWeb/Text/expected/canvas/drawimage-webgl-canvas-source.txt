@@ -1,1 +1,0 @@
-B sampled the WebGL frame at drawImage time (red): true

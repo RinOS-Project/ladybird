@@ -6,41 +6,38 @@
 
 #pragma once
 
-#include <AK/Optional.h>
 #include <AK/String.h>
-#include <AK/Vector.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
-namespace Web::Bindings {
-
-struct ClipboardUnsanitizedFormats;
-
-}
-
 namespace Web::Clipboard {
 
-using ClipboardReadOptions = Bindings::ClipboardUnsanitizedFormats;
+struct ClipboardUnsanitizedFormats {
+    // FIXME: This should not actually be an Optional, but the IDL generator creates it as such.
+    Optional<Vector<String>> unsanitized;
+};
 
 class Clipboard final : public DOM::EventTarget {
-    WEB_WRAPPABLE(Clipboard, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(Clipboard, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(Clipboard);
 
 public:
-    static GC::Ref<Clipboard> create();
+    static WebIDL::ExceptionOr<GC::Ref<Clipboard>> construct_impl(JS::Realm&);
     virtual ~Clipboard() override;
 
-    void read(JS::Realm&, ClipboardReadOptions formats, GC::Ref<WebIDL::Promise>);
-    void read_text(JS::Realm&, GC::Ref<WebIDL::Promise>);
+    GC::Ref<WebIDL::Promise> read(ClipboardUnsanitizedFormats formats = {});
+    GC::Ref<WebIDL::Promise> read_text();
 
-    void write(JS::Realm&, GC::RootVector<GC::Ref<ClipboardItem>> const&, GC::Ref<WebIDL::Promise>);
-    void write_text(JS::Realm&, Utf16String, GC::Ref<WebIDL::Promise>);
+    GC::Ref<WebIDL::Promise> write(GC::RootVector<GC::Root<ClipboardItem>>&);
+    GC::Ref<WebIDL::Promise> write_text(String);
 
 private:
-    Clipboard();
+    Clipboard(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

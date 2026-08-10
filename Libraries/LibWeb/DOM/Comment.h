@@ -6,25 +6,24 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
 #include <LibWeb/DOM/CharacterData.h>
-#include <LibWeb/Forward.h>
 
 namespace Web::DOM {
 
 class Comment final : public CharacterData {
-    WEB_WRAPPABLE(Comment, CharacterData);
+    WEB_PLATFORM_OBJECT(Comment, CharacterData);
     GC_DECLARE_ALLOCATOR(Comment);
 
 public:
-    [[nodiscard]] static GC::Ref<Comment> create(Document&, Utf16String data);
-    [[nodiscard]] static GC::Ref<Comment> create_for_constructor(JS::Object&, Utf16String data);
+    static WebIDL::ExceptionOr<GC::Ref<Comment>> construct_impl(JS::Realm&, Utf16String data);
     virtual ~Comment() override = default;
 
-    virtual Utf16FlyString node_name() const override { return "#comment"_utf16_fly_string; }
+    virtual FlyString node_name() const override { return "#comment"_fly_string; }
 
 private:
     Comment(Document&, Utf16String);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 template<>

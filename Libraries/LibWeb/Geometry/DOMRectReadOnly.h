@@ -8,30 +8,31 @@
 #pragma once
 
 #include <LibGfx/Rect.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Bindings/Serializable.h>
-#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/Forward.h>
-#include <LibWeb/WebIDL/ExceptionOr.h>
-
-namespace Web::Bindings {
-
-struct DOMRectInit;
-
-}
 
 namespace Web::Geometry {
 
+// https://drafts.fxtf.org/geometry/#dictdef-domrectinit
+struct DOMRectInit {
+    double x { 0.0 };
+    double y { 0.0 };
+    double width { 0.0 };
+    double height { 0.0 };
+};
+
 // https://drafts.fxtf.org/geometry/#domrectreadonly
-class WEB_API DOMRectReadOnly
-    : public Bindings::GCAllocatedWrappable
+class DOMRectReadOnly
+    : public Bindings::PlatformObject
     , public Bindings::Serializable {
-    WEB_WRAPPABLE(DOMRectReadOnly, Bindings::GCAllocatedWrappable);
+    WEB_PLATFORM_OBJECT(DOMRectReadOnly, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(DOMRectReadOnly);
 
 public:
-    [[nodiscard]] static GC::Ref<DOMRectReadOnly> create(double x, double y, double width, double height);
-    static GC::Ref<DOMRectReadOnly> create();
-    [[nodiscard]] static GC::Ref<DOMRectReadOnly> dom_rect_read_only_from_rect(Bindings::DOMRectInit const&);
+    static WebIDL::ExceptionOr<GC::Ref<DOMRectReadOnly>> construct_impl(JS::Realm&, double x = 0, double y = 0, double width = 0, double height = 0);
+    [[nodiscard]] static GC::Ref<DOMRectReadOnly> from_rect(JS::VM&, DOMRectInit const&);
+    static GC::Ref<DOMRectReadOnly> create(JS::Realm&);
 
     virtual ~DOMRectReadOnly() override;
 
@@ -68,12 +69,14 @@ public:
         return min(x(), x() + width());
     }
 
-    virtual WebIDL::ExceptionOr<void> serialization_steps(HTML::StructuredSerializeWriter&, bool for_storage, HTML::SerializationMemory&) override;
-    virtual WebIDL::ExceptionOr<void> deserialization_steps(JS::Realm&, HTML::StructuredSerializeReader&, HTML::DeserializationMemory&) override;
+    virtual WebIDL::ExceptionOr<void> serialization_steps(HTML::TransferDataEncoder&, bool for_storage, HTML::SerializationMemory&) override;
+    virtual WebIDL::ExceptionOr<void> deserialization_steps(HTML::TransferDataDecoder&, HTML::DeserializationMemory&) override;
 
 protected:
-    DOMRectReadOnly(double x, double y, double width, double height);
-    DOMRectReadOnly();
+    DOMRectReadOnly(JS::Realm&, double x, double y, double width, double height);
+    explicit DOMRectReadOnly(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 
     Gfx::DoubleRect m_rect;
 };

@@ -12,10 +12,10 @@ TextEncoderCommonMixin::TextEncoderCommonMixin() = default;
 TextEncoderCommonMixin::~TextEncoderCommonMixin() = default;
 
 // https://encoding.spec.whatwg.org/#dom-textencoder-encoding
-Utf16FlyString const& TextEncoderCommonMixin::encoding() const
+FlyString const& TextEncoderCommonMixin::encoding() const
 {
     // The encoding getter steps are to return "utf-8".
-    static Utf16FlyString const encoding = "utf-8"_utf16_fly_string;
+    static FlyString const encoding = "utf-8"_fly_string;
     return encoding;
 }
 

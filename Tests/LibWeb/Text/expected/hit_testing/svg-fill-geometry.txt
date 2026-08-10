@@ -1,3 +1,0 @@
-inside triangle fill: triangle
-triangle bounding box corner outside fill: svg
-inside unfilled rect: svg

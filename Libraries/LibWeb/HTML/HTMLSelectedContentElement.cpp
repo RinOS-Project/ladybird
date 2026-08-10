@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLSelectedContentElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/HTMLSelectElement.h>
 #include <LibWeb/HTML/HTMLSelectedContentElement.h>
 
@@ -17,6 +19,12 @@ HTMLSelectedContentElement::HTMLSelectedContentElement(DOM::Document& document, 
 }
 
 HTMLSelectedContentElement::~HTMLSelectedContentElement() = default;
+
+void HTMLSelectedContentElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLSelectedContentElement);
+    Base::initialize(realm);
+}
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#clear-a-selectedcontent
 void HTMLSelectedContentElement::clear_selectedcontent()
@@ -74,16 +82,12 @@ void HTMLSelectedContentElement::post_connection()
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#the-selectedcontent-element:html-element-removing-steps
-void HTMLSelectedContentElement::removed_from(IsSubtreeRoot is_subtree_root, DOM::Node* old_ancestor, DOM::Node& old_root)
+void HTMLSelectedContentElement::removed_from(DOM::Node* old_parent, DOM::Node& old_root)
 {
-    // The selectedcontent HTML element removing steps, given removedNode, isSubtreeRoot, and oldAncestor are:
-    Base::removed_from(is_subtree_root, old_ancestor, old_root);
+    // The selectedcontent HTML element removing steps, given selectedcontent and oldParent, are:
+    Base::removed_from(old_parent, old_root);
 
-    // 1. If removedNode's disabled is true, then return.
-    if (m_disabled)
-        return;
-
-    // 2. For each ancestor of removedNode's ancestors, in reverse tree order:
+    // 1. For each ancestor of selectedcontent's ancestors, in reverse tree order:
     for (auto* ancestor = parent(); ancestor; ancestor = ancestor->parent()) {
         // 1. If ancestor is a select element, then return.
         if (is<HTMLSelectElement>(*ancestor)) {
@@ -91,8 +95,8 @@ void HTMLSelectedContentElement::removed_from(IsSubtreeRoot is_subtree_root, DOM
         }
     }
 
-    // 3. For each ancestor of oldAncestor's inclusive ancestors, in reverse tree order:
-    for (auto* ancestor = old_ancestor; ancestor; ancestor = ancestor->parent()) {
+    // 2. For each ancestor of oldParent's inclusive ancestors, in reverse tree order:
+    for (auto* ancestor = old_parent; ancestor; ancestor = ancestor->parent()) {
         // 1. If ancestor is a select element, then run update a select's selectedcontent given ancestor and return.
         if (auto* select_element = as_if<HTMLSelectElement>(*ancestor)) {
             MUST(select_element->update_selectedcontent());

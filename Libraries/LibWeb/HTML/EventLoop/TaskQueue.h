@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Vector.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibWeb/HTML/EventLoop/Task.h>
 
@@ -19,7 +20,7 @@ public:
     explicit TaskQueue(HTML::EventLoop&);
     virtual ~TaskQueue() override;
 
-    bool is_empty() const { return m_tasks.is_empty() && m_idle_tasks.is_empty(); }
+    bool is_empty() const { return m_tasks.is_empty(); }
 
     bool has_runnable_tasks() const;
     bool has_rendering_tasks() const;
@@ -28,7 +29,12 @@ public:
     GC::Ptr<HTML::Task> take_first_runnable();
 
     void enqueue(GC::Ref<HTML::Task> task) { add(task); }
-    GC::Ptr<HTML::Task> dequeue();
+    GC::Ptr<HTML::Task> dequeue()
+    {
+        if (m_tasks.is_empty())
+            return {};
+        return m_tasks.take_first();
+    }
 
     void remove_tasks_matching(Function<bool(HTML::Task const&)>);
     GC::Ptr<Task> take_first_runnable_matching(Function<bool(HTML::Task const&)>);
@@ -40,9 +46,7 @@ private:
 
     GC::Ref<HTML::EventLoop> m_event_loop;
 
-    Task::Queue m_tasks;
-    Task::Queue m_idle_tasks;
-    GC::Ptr<HTML::Task const> m_last_added_task;
+    Vector<GC::Ref<HTML::Task>> m_tasks;
 };
 
 }

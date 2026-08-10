@@ -1,3 +1,0 @@
-250: subgrid [a] [b] [c]
-500: subgrid [x] [y] [z]
-750: subgrid [x] [y] [z]

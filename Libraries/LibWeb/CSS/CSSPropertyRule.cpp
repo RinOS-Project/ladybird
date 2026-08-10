@@ -1,13 +1,13 @@
 /*
  * Copyright (c) 2024, Alex Ungurianu <alex@ungurianu.com>
- * Copyright (c) 2025-2026, Sam Atkins <sam@ladybird.org>
+ * Copyright (c) 2025, Sam Atkins <sam@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/CSSPropertyRulePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSPropertyRule.h>
-#include <LibWeb/CSS/CustomPropertyRegistration.h>
 #include <LibWeb/CSS/Serialize.h>
 #include <LibWeb/Dump.h>
 
@@ -15,44 +15,47 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSPropertyRule);
 
-GC::Ref<CSSPropertyRule> CSSPropertyRule::create(Utf16FlyString name, Utf16FlyString syntax, NonnullRefPtr<Parser::SyntaxNode> parsed_syntax, bool inherits, RefPtr<StyleValue const> initial_value)
+GC::Ref<CSSPropertyRule> CSSPropertyRule::create(JS::Realm& realm, FlyString name, FlyString syntax, bool inherits, RefPtr<StyleValue const> initial_value)
 {
-    return GC::Heap::the().allocate<CSSPropertyRule>(move(name), move(syntax), move(parsed_syntax), inherits, move(initial_value));
+    return realm.create<CSSPropertyRule>(realm, move(name), move(syntax), inherits, move(initial_value));
 }
 
-CSSPropertyRule::CSSPropertyRule(Utf16FlyString name, Utf16FlyString syntax, NonnullRefPtr<Parser::SyntaxNode> parsed_syntax, bool inherits, RefPtr<StyleValue const> initial_value)
-    : CSSRule(Type::Property)
+CSSPropertyRule::CSSPropertyRule(JS::Realm& realm, FlyString name, FlyString syntax, bool inherits, RefPtr<StyleValue const> initial_value)
+    : CSSRule(realm, Type::Property)
     , m_name(move(name))
     , m_syntax(move(syntax))
-    , m_parsed_syntax(move(parsed_syntax))
     , m_inherits(inherits)
     , m_initial_value(move(initial_value))
 {
 }
 
-CSSPropertyRule::~CSSPropertyRule() = default;
-
-Optional<Utf16String> CSSPropertyRule::initial_value() const
+Optional<String> CSSPropertyRule::initial_value() const
 {
     if (m_initial_value)
-        return m_initial_value->to_utf16_string(SerializationMode::Normal);
+        return m_initial_value->to_string(SerializationMode::Normal);
     return {};
+}
+
+void CSSPropertyRule::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSPropertyRule);
+    Base::initialize(realm);
 }
 
 CustomPropertyRegistration CSSPropertyRule::to_registration() const
 {
     return CustomPropertyRegistration {
         .property_name = m_name,
-        .syntax = m_parsed_syntax,
+        .syntax = m_syntax.to_string(),
         .inherit = m_inherits,
         .initial_value = m_initial_value,
     };
 }
 
 // https://www.w3.org/TR/cssom-1/#serialize-a-css-rule
-Utf16String CSSPropertyRule::serialized() const
+String CSSPropertyRule::serialized() const
 {
-    Utf16StringBuilder builder;
+    StringBuilder builder;
 
     // Serialization algorithm is defined in the spec below
     // https://drafts.css-houdini.org/css-properties-values-api/#the-css-property-rule-interface
@@ -61,18 +64,14 @@ Utf16String CSSPropertyRule::serialized() const
 
     // 1. The string "@property" followed by a single SPACE (U+0020).
     // 2. The result of performing serialize an identifier on the rule’s name, followed by a single SPACE (U+0020).
-    builder.append_ascii("@property "sv);
-    serialize_an_identifier(builder, name());
-    builder.append_ascii(' ');
+    builder.appendff("@property {} ", serialize_an_identifier(name()));
 
     // 3. The string "{ ", i.e., a single LEFT CURLY BRACKET (U+007B), followed by a SPACE (U+0020).
-    builder.append_ascii("{ "sv);
+    builder.append("{ "sv);
 
     // 4. The string "syntax:", followed by a single SPACE (U+0020).
     // 5. The result of performing serialize a string on the rule’s syntax, followed by a single SEMICOLON (U+003B), followed by a SPACE (U+0020).
-    builder.append_ascii("syntax: "sv);
-    serialize_a_string(builder, syntax());
-    builder.append_ascii("; "sv);
+    builder.appendff("syntax: {}; ", serialize_a_string(syntax()));
 
     // 6. The string "inherits:", followed by a single SPACE (U+0020).
     // 7. For the rule’s inherits attribute, one of the following depending on the attribute’s value:
@@ -85,14 +84,14 @@ Utf16String CSSPropertyRule::serialized() const
         // 1. The string "initial-value:".
         // 2. The result of performing serialize a CSS value in the rule’s initial-value followed by a single SEMICOLON
         //    (U+003B), followed by a SPACE (U+0020).
-        builder.append_ascii("initial-value: "sv);
+        builder.append("initial-value: "sv);
         m_initial_value->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii("; "sv);
+        builder.append("; "sv);
     }
     // 9. A single RIGHT CURLY BRACKET (U+007D).
-    builder.append_ascii("}"sv);
+    builder.append("}"sv);
 
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 void CSSPropertyRule::dump(StringBuilder& builder, int indent_levels) const
@@ -103,8 +102,7 @@ void CSSPropertyRule::dump(StringBuilder& builder, int indent_levels) const
     builder.appendff("Name: {}\n", name());
 
     dump_indent(builder, indent_levels + 1);
-    builder.appendff("Syntax: `{}`\n", syntax());
-    m_parsed_syntax->dump(builder, indent_levels + 2);
+    builder.appendff("Syntax: {}\n", syntax());
 
     dump_indent(builder, indent_levels + 1);
     builder.appendff("Inherits: {}\n", inherits());

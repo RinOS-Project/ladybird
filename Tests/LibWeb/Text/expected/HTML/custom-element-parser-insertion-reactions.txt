@@ -1,2 +1,0 @@
-after parser insertion: constructor,connected
-at DOMContentLoaded: constructor,connected

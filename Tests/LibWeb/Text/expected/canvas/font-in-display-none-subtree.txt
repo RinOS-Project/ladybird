@@ -1,2 +1,0 @@
-24px serif
-32px monospace

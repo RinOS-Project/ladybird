@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
 #include <LibWeb/Fetch/Infrastructure/FetchRecord.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 
@@ -12,14 +11,14 @@ namespace Web::Fetch::Infrastructure {
 
 GC_DEFINE_ALLOCATOR(FetchRecord);
 
-GC::Ref<FetchRecord> FetchRecord::create(GC::Ref<Infrastructure::Request> request)
+GC::Ref<FetchRecord> FetchRecord::create(JS::VM& vm, GC::Ref<Infrastructure::Request> request)
 {
-    return GC::Heap::the().allocate<FetchRecord>(request);
+    return vm.heap().allocate<FetchRecord>(request);
 }
 
-GC::Ref<FetchRecord> FetchRecord::create(GC::Ref<Infrastructure::Request> request, GC::Ptr<Fetch::Infrastructure::FetchController> fetch_controller)
+GC::Ref<FetchRecord> FetchRecord::create(JS::VM& vm, GC::Ref<Infrastructure::Request> request, GC::Ptr<Fetch::Infrastructure::FetchController> fetch_controller)
 {
-    return GC::Heap::the().allocate<FetchRecord>(request, fetch_controller);
+    return vm.heap().allocate<FetchRecord>(request, fetch_controller);
 }
 
 FetchRecord::FetchRecord(GC::Ref<Infrastructure::Request> request)

@@ -6,12 +6,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/CSS/ComputedValues.h>
-#include <LibWeb/CSS/PropertyID.h>
-#include <LibWeb/CSS/StyleValues/ShorthandStyleValue.h>
+#include <LibGfx/Painter.h>
 #include <LibWeb/HTML/Canvas/CanvasState.h>
-#include <LibWeb/HTML/LocalNavigable.h>
-#include <LibWeb/Platform/FontPlugin.h>
 
 namespace Web::HTML {
 
@@ -21,8 +17,8 @@ void CanvasState::save()
     // The save() method steps are to push a copy of the current drawing state onto the drawing state stack.
     m_drawing_state_stack.append(m_drawing_state);
 
-    if (auto* canvas_command_list = this->canvas_command_list())
-        canvas_command_list->append(Gfx::CanvasCommands::Save {});
+    if (auto* painter = painter_for_canvas_state())
+        painter->save();
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-restore
@@ -33,8 +29,8 @@ void CanvasState::restore()
         return;
     m_drawing_state = m_drawing_state_stack.take_last();
 
-    if (auto* canvas_command_list = this->canvas_command_list())
-        canvas_command_list->append(Gfx::CanvasCommands::Restore {});
+    if (auto* painter = painter_for_canvas_state())
+        painter->restore();
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-reset
@@ -51,47 +47,29 @@ bool CanvasState::is_context_lost()
     return m_context_lost;
 }
 
-CSS::ComputationContext CanvasState::computation_context_for_drawing_state() const
+NonnullRefPtr<Gfx::PaintStyle> CanvasState::FillOrStrokeStyle::to_gfx_paint_style()
 {
-    auto font_metrics = [&]() {
-        // https://html.spec.whatwg.org/multipage/canvas.html#text-styles
-        // NB: We lazily initialize the font, so if it hasn't been set yet we generate the font metrics based on the default font
-        if (!m_drawing_state.font_style_value) {
-            // When the object implementing the CanvasTextDrawingStyles interface is created, the font of the context must be set to 10px sans-serif.
-            return CSS::Length::FontMetrics { 10, Platform::FontPlugin::the().default_font(8)->pixel_metrics(), CSS::InitialValues::line_height() };
-        }
-
-        VERIFY(m_drawing_state.current_font_cascade_list);
-        auto const& first_font = m_drawing_state.current_font_cascade_list->font_for_code_point(' ');
-        auto const& font_size = m_drawing_state.font_style_value->as_shorthand().longhand(CSS::PropertyID::FontSize)->as_length().length().absolute_length_to_px();
-
-        return CSS::Length::FontMetrics { font_size, first_font.pixel_metrics(), CSS::InitialValues::line_height() };
-    }();
-
-    auto viewport_rect = canvas_element().visit(
-        [&](GC::Ref<HTMLCanvasElement> const& canvas_element) {
-            if (auto navigable = canvas_element->navigable())
-                return navigable->viewport_rect();
-            return CSSPixelRect { 0, 0, 0, 0 };
+    return m_fill_or_stroke_style.visit(
+        [&](Gfx::Color color) -> NonnullRefPtr<Gfx::PaintStyle> {
+            if (!m_color_paint_style)
+                m_color_paint_style = Gfx::SolidColorPaintStyle::create(color).release_value_but_fixme_should_propagate_errors();
+            return m_color_paint_style.release_nonnull();
         },
-        [&](GC::Ref<OffscreenCanvas> const&) {
-            return CSSPixelRect { 0, 0, 0, 0 };
+        [&](auto handle) {
+            return handle->to_gfx_paint_style();
         });
+}
 
-    return {
-        .length_resolution_context = {
-            .viewport_rect = viewport_rect,
-            .font_metrics = font_metrics,
-            .root_font_metrics = font_metrics },
+Gfx::Color CanvasState::FillOrStrokeStyle::to_color_but_fixme_should_accept_any_paint_style() const
+{
+    return as_color().value_or(Gfx::Color::Black);
+}
 
-        // NB: We don't require an abstract element because tree counting and random() functions aren't allowed in
-        //     non-font canvas context values
-        .abstract_element = {},
-
-        // FIXME: The spec doesn't specify what color scheme should be used here but other browsers always use light so
-        //        we do too for compatibility. See https://github.com/whatwg/html/issues/12505
-        .color_scheme = CSS::PreferredColorScheme::Light
-    };
+Optional<Gfx::Color> CanvasState::FillOrStrokeStyle::as_color() const
+{
+    if (auto* color = m_fill_or_stroke_style.get_pointer<Gfx::Color>())
+        return *color;
+    return {};
 }
 
 }

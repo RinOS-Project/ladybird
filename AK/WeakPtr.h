@@ -136,9 +136,7 @@ public:
 
     [[nodiscard]] RefPtr<T> strong_ref() const
     {
-        if (auto* ptr = unsafe_ptr(); ptr && ptr->try_ref())
-            return adopt_ref(*ptr);
-        return {};
+        return RefPtr<T> { ptr() };
     }
 
     T* ptr() const { return unsafe_ptr(); }

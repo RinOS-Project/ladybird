@@ -6,11 +6,9 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Runtime/PromiseCapability.h>
-#include <LibWeb/Bindings/ClipboardItem.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/ClipboardItemPrototype.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/DataTransfer.h>
@@ -18,47 +16,52 @@
 
 namespace Web::Clipboard {
 
-constexpr auto WEB_CUSTOM_FORMAT_PREFIX = "web "_utf16;
+constexpr auto WEB_CUSTOM_FORMAT_PREFIX = "web "sv;
 
-using PresentationStyle = Bindings::PresentationStyle;
+// https://w3c.github.io/clipboard-apis/#mandatory-data-types
+constexpr inline Array MANDATORY_DATA_TYPES = {
+    "text/plain"sv, "text/html"sv, "image/png"sv
+};
 
-StringView presentation_style_to_string(PresentationStyle);
+struct ClipboardItemOptions {
+    Bindings::PresentationStyle presentation_style { Bindings::PresentationStyle::Unspecified };
+};
 
 // https://w3c.github.io/clipboard-apis/#clipboard-item-interface
-class ClipboardItem : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(ClipboardItem, Bindings::GCAllocatedWrappable);
+class ClipboardItem : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(ClipboardItem, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(ClipboardItem);
 
 public:
     struct Representation {
-        Utf16String mime_type;         // The MIME type (e.g., "text/plain").
+        String mime_type;              // The MIME type (e.g., "text/plain").
         bool is_custom { false };      // Whether this is a web custom format.
         GC::Ref<WebIDL::Promise> data; // The actual data for this representation.
     };
 
-    static GC::Ref<ClipboardItem> create();
-    static WebIDL::ExceptionOr<GC::Ref<ClipboardItem>> create(GC::OrderedRootHashMap<Utf16String, GC::Ref<WebIDL::Promise>> const& items, PresentationStyle);
-    static WebIDL::ExceptionOr<GC::Ref<ClipboardItem>> create(GC::OrderedRootHashMap<Utf16String, GC::Ref<WebIDL::Promise>> const& items, Bindings::ClipboardItemOptions const&);
+    static WebIDL::ExceptionOr<GC::Ref<ClipboardItem>> construct_impl(JS::Realm&, OrderedHashMap<String, GC::Root<WebIDL::Promise>> const& items, ClipboardItemOptions const& options = {});
 
     virtual ~ClipboardItem() override;
 
-    PresentationStyle presentation_style() const;
+    Bindings::PresentationStyle presentation_style() const { return m_presentation_style; }
 
-    Vector<Utf16String> const& types() const { return m_types; }
+    Vector<String> const& types() const { return m_types; }
 
     Vector<Representation> const& representations() const { return m_representations; }
     void append_representation(Representation);
-    WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> get_type(JS::Realm&, Utf16String const& type) const;
 
-    static bool supports(Utf16String const& type);
+    WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> get_type(String const& type);
+
+    static bool supports(JS::VM&, String const& type);
 
 private:
-    ClipboardItem();
+    ClipboardItem(JS::Realm&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    PresentationStyle m_presentation_style;
-    Vector<Utf16String> m_types;
+    Bindings::PresentationStyle m_presentation_style;
+    Vector<String> m_types;
     Vector<Representation> m_representations;
 };
 

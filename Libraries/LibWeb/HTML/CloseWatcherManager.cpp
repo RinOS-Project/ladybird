@@ -1,11 +1,10 @@
 /*
- * Copyright (c) 2024-present, the Ladybird developers.
+ * Copyright (c) 2024, the Ladybird developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/TypeCasts.h>
-#include <LibGC/Heap.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/EventDispatcher.h>
 #include <LibWeb/DOM/IDLEventListener.h>
@@ -17,12 +16,13 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(CloseWatcherManager);
 
-GC::Ref<CloseWatcherManager> CloseWatcherManager::create()
+GC::Ref<CloseWatcherManager> CloseWatcherManager::create(JS::Realm& realm)
 {
-    return GC::Heap::the().allocate<CloseWatcherManager>();
+    return realm.create<CloseWatcherManager>(realm);
 }
 
-CloseWatcherManager::CloseWatcherManager()
+CloseWatcherManager::CloseWatcherManager(JS::Realm& realm)
+    : PlatformObject(realm)
 {
 }
 
@@ -31,7 +31,7 @@ void CloseWatcherManager::add(GC::Ref<CloseWatcher> close_watcher)
     // If manager's groups's size is less than manager's allowed number of groups
     if (m_groups.size() < m_allowed_number_of_groups) {
         // then append « closeWatcher » to manager's groups.
-        GC::RootVector<GC::Ref<CloseWatcher>> new_group;
+        GC::RootVector<GC::Ref<CloseWatcher>> new_group(realm().heap());
         new_group.append(close_watcher);
         m_groups.append(move(new_group));
     } else {
@@ -68,7 +68,7 @@ bool CloseWatcherManager::process_close_watchers()
         auto& group = m_groups.last();
         // Ambiguous spec wording. We copy the groups to avoid modifying the original while iterating.
         // See https://github.com/whatwg/html/issues/10240
-        GC::RootVector<GC::Ref<CloseWatcher>> group_copy;
+        GC::RootVector<GC::Ref<CloseWatcher>> group_copy(realm().heap());
         group_copy.ensure_capacity(group.size());
         for (auto& close_watcher : group) {
             group_copy.append(close_watcher);
@@ -111,7 +111,7 @@ bool CloseWatcherManager::can_prevent_close()
     return m_groups.size() < m_allowed_number_of_groups;
 }
 
-void CloseWatcherManager::visit_edges(GC::Cell::Visitor& visitor)
+void CloseWatcherManager::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
 

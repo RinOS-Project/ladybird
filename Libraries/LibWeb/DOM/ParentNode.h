@@ -12,7 +12,7 @@
 namespace Web::DOM {
 
 class WEB_API ParentNode : public Node {
-    WEB_NON_IDL_WRAPPABLE(ParentNode, Node);
+    WEB_NON_IDL_PLATFORM_OBJECT(ParentNode, Node);
     GC_DECLARE_ALLOCATOR(ParentNode);
 
 public:
@@ -25,30 +25,29 @@ public:
     GC::Ptr<Element> last_element_child();
     u32 child_element_count() const;
 
-    WebIDL::ExceptionOr<GC::Ptr<Element>> query_selector(Utf16View);
-    WebIDL::ExceptionOr<GC::Ref<NodeList>> query_selector_all(Utf16View);
+    WebIDL::ExceptionOr<GC::Ptr<Element>> query_selector(StringView);
+    WebIDL::ExceptionOr<GC::Ref<NodeList>> query_selector_all(StringView);
 
     GC::Ref<HTMLCollection> children();
 
-    GC::Ref<HTMLCollection> get_elements_by_tag_name(Utf16FlyString const&);
-    GC::Ref<HTMLCollection> get_elements_by_tag_name_ns(Optional<Utf16FlyString>, Utf16FlyString const&);
+    GC::Ref<HTMLCollection> get_elements_by_tag_name(FlyString const&);
+    GC::Ref<HTMLCollection> get_elements_by_tag_name_ns(Optional<FlyString>, FlyString const&);
 
-    WebIDL::ExceptionOr<void> prepend(ReadonlySpan<Variant<GC::Ref<Node>, Utf16String>> const& nodes);
-    WebIDL::ExceptionOr<void> append(ReadonlySpan<Variant<GC::Ref<Node>, Utf16String>> const& nodes);
-    WebIDL::ExceptionOr<void> replace_children(ReadonlySpan<Variant<GC::Ref<Node>, Utf16String>> const& nodes);
+    WebIDL::ExceptionOr<void> prepend(Vector<Variant<GC::Root<Node>, Utf16String>> const& nodes);
+    WebIDL::ExceptionOr<void> append(Vector<Variant<GC::Root<Node>, Utf16String>> const& nodes);
+    WebIDL::ExceptionOr<void> replace_children(Vector<Variant<GC::Root<Node>, Utf16String>> const& nodes);
     WebIDL::ExceptionOr<void> move_before(GC::Ref<Node> node, GC::Ptr<Node> child);
 
-    GC::Ref<HTMLCollection> get_elements_by_class_name(Utf16View);
+    GC::Ref<HTMLCollection> get_elements_by_class_name(StringView);
 
-    GC::Ptr<Element> get_element_by_id(Utf16View id) const;
-
-    bool has_child_affected_by_last_child_pseudo_class() const { return m_has_child_affected_by_last_child_pseudo_class; }
-    void set_has_child_affected_by_last_child_pseudo_class(bool value) { m_has_child_affected_by_last_child_pseudo_class = value; }
-
-    bool has_child_affected_by_backward_positional_pseudo_class() const { return m_has_child_affected_by_backward_positional_pseudo_class; }
-    void set_has_child_affected_by_backward_positional_pseudo_class(bool value) { m_has_child_affected_by_backward_positional_pseudo_class = value; }
+    GC::Ptr<Element> get_element_by_id(FlyString const& id) const;
 
 protected:
+    ParentNode(JS::Realm& realm, Document& document, NodeType type)
+        : Node(realm, document, type)
+    {
+    }
+
     ParentNode(Document& document, NodeType type)
         : Node(document, type)
     {
@@ -58,8 +57,6 @@ protected:
 
 private:
     GC::Ptr<HTMLCollection> m_children;
-    bool m_has_child_affected_by_last_child_pseudo_class { false };
-    bool m_has_child_affected_by_backward_positional_pseudo_class { false };
 };
 
 template<>

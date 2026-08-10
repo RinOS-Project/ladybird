@@ -7,9 +7,8 @@
 #pragma once
 
 #include <LibURL/URL.h>
-#include <LibWeb/Bindings/ServiceWorker.h>
-#include <LibWeb/Bindings/Worker.h>
-#include <LibWeb/Forward.h>
+#include <LibWeb/Bindings/ServiceWorkerPrototype.h>
+#include <LibWeb/Bindings/WorkerPrototype.h>
 
 namespace Web::ServiceWorker {
 
@@ -20,7 +19,7 @@ namespace Web::ServiceWorker {
 struct ServiceWorkerRecord {
     // https://w3c.github.io/ServiceWorker/#dfn-state
     // A service worker has an associated state, which is one of "parsed", "installing", "installed", "activating", "activated", and "redundant". It is initially "parsed".
-    ServiceWorkerState state = ServiceWorkerState::Parsed;
+    Bindings::ServiceWorkerState state = Bindings::ServiceWorkerState::Parsed;
 
     // https://w3c.github.io/ServiceWorker/#dfn-script-url
     // A service worker has an associated script url (a URL).
@@ -28,7 +27,7 @@ struct ServiceWorkerRecord {
 
     // https://w3c.github.io/ServiceWorker/#dfn-type
     // A service worker has an associated type which is either "classic" or "module". Unless stated otherwise, it is "classic".
-    WorkerType worker_type = WorkerType::Classic;
+    Bindings::WorkerType worker_type = Bindings::WorkerType::Classic;
 
     // https://w3c.github.io/ServiceWorker/#dfn-classic-scripts-imported-flag
     // A service worker has an associated classic scripts imported flag. It is initially unset.

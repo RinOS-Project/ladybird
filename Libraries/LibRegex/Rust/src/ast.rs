@@ -238,10 +238,10 @@ pub enum ClassSetExpression {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClassSetOperand {
     /// A single character.
-    Char(u32),
+    Char(char),
 
     /// A range: `a-z`.
-    Range(u32, u32),
+    Range(char, char),
 
     /// A nested character class: `[a-z]` inside another class.
     NestedClass(CharacterClass),

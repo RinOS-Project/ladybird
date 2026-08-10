@@ -2,7 +2,8 @@ Harness status: OK
 
 Found 40 tests
 
-40 Pass
+30 Pass
+10 Fail
 Pass	# AUDIT TASK RUNNER STARTED.
 Pass	Executing "disconnect()"
 Pass	Executing "disconnect(output)"
@@ -16,19 +17,49 @@ Pass	> [disconnect()]
 Pass	  Channel #0 contains only the constant 0.
 Pass	< [disconnect()] All assertions passed. (total 1 assertions)
 Pass	> [disconnect(output)] 
-Pass	  Channel #0 contains only the constant 4.
-Pass	< [disconnect(output)] All assertions passed. (total 1 assertions)
+Fail	X Channel #0: Expected 4 for all values but found 128 unexpected values: 
+	Index	Actual
+	[0]	0
+	[1]	0
+	[2]	0
+	[3]	0
+	...and 124 more errors.
+Fail	< [disconnect(output)] 1 out of 1 assertions were failed.
 Pass	> [disconnect(AudioNode)] 
-Pass	  Channel #0 contains only the constant 2.
-Pass	< [disconnect(AudioNode)] All assertions passed. (total 1 assertions)
+Fail	X Channel #0: Expected 2 for all values but found 128 unexpected values: 
+	Index	Actual
+	[0]	0
+	[1]	0
+	[2]	0
+	[3]	0
+	...and 124 more errors.
+Fail	< [disconnect(AudioNode)] 1 out of 1 assertions were failed.
 Pass	> [disconnect(AudioNode, output)] 
-Pass	  Channel #0 contains only the constant 3.
-Pass	< [disconnect(AudioNode, output)] All assertions passed. (total 1 assertions)
+Fail	X Channel #0: Expected 3 for all values but found 128 unexpected values: 
+	Index	Actual
+	[0]	0
+	[1]	0
+	[2]	0
+	[3]	0
+	...and 124 more errors.
+Fail	< [disconnect(AudioNode, output)] 1 out of 1 assertions were failed.
 Pass	> [disconnect(AudioNode, output, input)] 
-Pass	  Channel #0 contains only the constant 1.
-Pass	  Channel #1 contains only the constant 2.
+Fail	X Channel #0: Expected 1 for all values but found 128 unexpected values: 
+	Index	Actual
+	[0]	0
+	[1]	0
+	[2]	0
+	[3]	0
+	...and 124 more errors.
+Fail	X Channel #1: Expected 2 for all values but found 128 unexpected values: 
+	Index	Actual
+	[0]	0
+	[1]	0
+	[2]	0
+	[3]	0
+	...and 124 more errors.
 Pass	  Channel #2 contains only the constant 0.
-Pass	< [disconnect(AudioNode, output, input)] All assertions passed. (total 3 assertions)
+Fail	< [disconnect(AudioNode, output, input)] 2 out of 3 assertions were failed.
 Pass	> [exceptions] 
 Pass	  splitter.disconnect(2) threw IndexSizeError: "Output index 2 exceeds number of outputs".
 Pass	  Disconnecting a connection twice did not throw an exception.
@@ -42,4 +73,4 @@ Pass	< [exceptions] All assertions passed. (total 8 assertions)
 Pass	> [disabled-outputs] 
 Pass	  Disabled outputs handled correctly
 Pass	< [disabled-outputs] All assertions passed. (total 1 assertions)
-Pass	# AUDIT TASK RUNNER FINISHED: 7 tasks ran successfully.
+Fail	# AUDIT TASK RUNNER FINISHED: 4 out of 7 tasks were failed.

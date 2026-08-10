@@ -14,9 +14,11 @@
 
 namespace Web::Painting {
 
-NonnullRefPtr<SVGGraphicsPaintable> SVGGraphicsPaintable::create(Layout::SVGGraphicsBox const& layout_box)
+GC_DEFINE_ALLOCATOR(SVGGraphicsPaintable);
+
+GC::Ref<SVGGraphicsPaintable> SVGGraphicsPaintable::create(Layout::SVGGraphicsBox const& layout_box)
 {
-    return adopt_ref(*new SVGGraphicsPaintable(layout_box));
+    return layout_box.heap().allocate<SVGGraphicsPaintable>(layout_box);
 }
 
 SVGGraphicsPaintable::SVGGraphicsPaintable(Layout::SVGGraphicsBox const& layout_box)
@@ -26,7 +28,7 @@ SVGGraphicsPaintable::SVGGraphicsPaintable(Layout::SVGGraphicsBox const& layout_
 
 void SVGGraphicsPaintable::reset_for_relayout()
 {
-    Paintable::reset_for_relayout();
+    PaintableBox::reset_for_relayout();
     m_computed_transforms = {};
 }
 

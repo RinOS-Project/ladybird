@@ -8,15 +8,17 @@
 
 #include "GridTrackSize.h"
 #include <AK/String.h>
-#include <LibWeb/CSS/Serialize.h>
 #include <LibWeb/CSS/Size.h>
-#include <LibWeb/CSS/StyleValues/FunctionStyleValue.h>
-#include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 
 namespace Web::CSS {
 
-GridSize::GridSize(NonnullRefPtr<StyleValue const> size)
+GridSize::GridSize(Size size)
     : m_value(move(size))
+{
+}
+
+GridSize::GridSize(Flex flex_factor)
+    : m_value(move(flex_factor))
 {
 }
 
@@ -24,75 +26,91 @@ GridSize::~GridSize() = default;
 
 bool GridSize::is_auto(Layout::AvailableSize const& available_size) const
 {
-    if (m_value->to_keyword() == Keyword::Auto)
-        return true;
-
-    if (m_value->is_percentage() || (m_value->is_calculated() && m_value->as_calculated().contains_percentage()))
-        return !available_size.is_definite();
+    if (auto const* size = m_value.get_pointer<Size>()) {
+        if (size->is_auto())
+            return true;
+        if (size->is_fit_content())
+            return false;
+        if (size->contains_percentage())
+            return !available_size.is_definite();
+        return false;
+    }
 
     return false;
 }
 
-static bool is_length_percentage(NonnullRefPtr<StyleValue const> const& value)
-{
-    return value->is_length() || value->is_percentage() || (value->is_calculated() && value->as_calculated().resolves_to_length());
-}
-
 bool GridSize::is_fixed(Layout::AvailableSize const& available_size) const
 {
-    if (!is_length_percentage(m_value))
-        return false;
+    if (auto const* size = m_value.get_pointer<Size>()) {
+        if (!size->is_length_percentage())
+            return false;
+        if (size->contains_percentage())
+            return available_size.is_definite();
+        return true;
+    }
 
-    if (m_value->is_percentage() || (m_value->is_calculated() && m_value->as_calculated().contains_percentage()))
-        return available_size.is_definite();
-
-    return true;
+    return false;
 }
 
 bool GridSize::is_flexible_length() const
 {
-    return m_value->is_flex() || (m_value->is_calculated() && m_value->as_calculated().resolves_to_flex());
+    return m_value.has<Flex>();
 }
 
 bool GridSize::is_fit_content() const
 {
-    if (m_value->to_keyword() == Keyword::FitContent)
-        return true;
-
-    if (m_value->is_function() && m_value->as_function().name() == "fit-content"_utf16_fly_string)
-        return true;
+    if (auto const* size = m_value.get_pointer<Size>())
+        return size->is_fit_content();
 
     return false;
 }
 
 bool GridSize::is_max_content() const
 {
-    return m_value->to_keyword() == Keyword::MaxContent;
+    if (auto const* size = m_value.get_pointer<Size>())
+        return size->is_max_content();
+
+    return false;
 }
 
 bool GridSize::is_min_content() const
 {
-    return m_value->to_keyword() == Keyword::MinContent;
+    if (auto const* size = m_value.get_pointer<Size>())
+        return size->is_min_content();
+
+    return false;
 }
 
 bool GridSize::is_intrinsic(Layout::AvailableSize const& available_size) const
 {
-    return is_auto(available_size) || is_max_content() || is_min_content() || is_fit_content();
+    return m_value.visit(
+        [&available_size](Size const& size) {
+            return size.is_auto()
+                || size.is_max_content()
+                || size.is_min_content()
+                || size.is_fit_content()
+                || (size.contains_percentage() && !available_size.is_definite());
+        },
+        [](Flex const&) {
+            return false;
+        });
 }
 
 bool GridSize::is_definite() const
 {
-    return is_length_percentage(m_value);
+    return m_value.visit(
+        [](Size const& size) { return size.is_length_percentage(); },
+        [](Flex const&) { return false; });
 }
 
 GridSize GridSize::make_auto()
 {
-    return GridSize(KeywordStyleValue::create(Keyword::Auto));
+    return GridSize(Size::make_auto());
 }
 
 void GridSize::serialize(StringBuilder& builder, SerializationMode mode) const
 {
-    m_value->serialize(builder, mode);
+    m_value.visit([&builder, mode](auto const& it) { it.serialize(builder, mode); });
 }
 
 String GridSize::to_string(SerializationMode mode) const
@@ -104,12 +122,37 @@ String GridSize::to_string(SerializationMode mode) const
 
 GridSize GridSize::absolutized(ComputationContext const& context) const
 {
-    auto absolutized_value = m_value->absolutized(context);
+    auto absolutize_length_percentage = [&context](LengthPercentage const& length_percentage) -> Optional<LengthPercentage> {
+        if (length_percentage.is_length()) {
+            auto length = length_percentage.length().absolutize(context.length_resolution_context);
+            if (length.has_value())
+                return length.release_value();
+            return {};
+        }
 
-    if (absolutized_value == m_value)
-        return *this;
+        if (length_percentage.is_calculated())
+            return LengthPercentage::from_style_value(length_percentage.calculated()->absolutized(context));
 
-    return GridSize { absolutized_value };
+        return {};
+    };
+    return m_value.visit(
+        [&](Size const& size) -> GridSize {
+            if (size.is_length_percentage()) {
+                if (auto result = absolutize_length_percentage(size.length_percentage()); result.has_value())
+                    return Size::make_length_percentage(result.release_value());
+            }
+
+            if (size.is_fit_content() && size.fit_content_available_space().has_value()) {
+                if (auto result = absolutize_length_percentage(size.fit_content_available_space().value()); result.has_value()) {
+                    return Size::make_fit_content(result.release_value());
+                }
+            }
+
+            return GridSize { size };
+        },
+        [](Flex const& flex) {
+            return GridSize { flex };
+        });
 }
 
 GridMinMax::GridMinMax(GridSize min_grid_size, GridSize max_grid_size)
@@ -142,10 +185,10 @@ GridMinMax GridMinMax::absolutized(ComputationContext const& context) const
     };
 }
 
-GridRepeat::GridRepeat(GridRepeatType grid_repeat_type, GridTrackSizeList&& grid_track_size_list, RefPtr<StyleValue const> repeat_count)
+GridRepeat::GridRepeat(GridRepeatType grid_repeat_type, GridTrackSizeList&& grid_track_size_list, size_t repeat_count)
     : m_type(grid_repeat_type)
     , m_grid_track_size_list(move(grid_track_size_list))
-    , m_repeat_count(move(repeat_count))
+    , m_repeat_count(repeat_count)
 {
 }
 
@@ -165,7 +208,7 @@ void GridRepeat::serialize(StringBuilder& builder, SerializationMode mode) const
         builder.append("auto-fill"sv);
         break;
     case GridRepeatType::Fixed:
-        m_repeat_count->serialize(builder, mode);
+        builder.appendff("{}", m_repeat_count);
         break;
     default:
         VERIFY_NOT_REACHED();
@@ -187,7 +230,7 @@ GridRepeat GridRepeat::absolutized(ComputationContext const& context) const
     return GridRepeat {
         m_type,
         m_grid_track_size_list.absolutized(context),
-        m_repeat_count ? RefPtr<StyleValue const> { m_repeat_count->absolutized(context) } : nullptr,
+        m_repeat_count,
     };
 }
 
@@ -223,7 +266,7 @@ void GridLineNames::serialize(StringBuilder& builder) const
     for (size_t i = 0; i < m_names.size(); ++i) {
         if (i > 0)
             builder.append(" "sv);
-        builder.append(serialize_an_identifier(m_names[i].name));
+        builder.append(m_names[i].name);
     }
     builder.append("]"sv);
 }
@@ -240,30 +283,8 @@ GridTrackSizeList GridTrackSizeList::make_none()
     return GridTrackSizeList();
 }
 
-GridTrackSizeList GridTrackSizeList::make_line_name_list()
-{
-    GridTrackSizeList list;
-    list.m_preserve_line_name_sets = true;
-    return list;
-}
-
-GridTrackSizeList GridTrackSizeList::make_subgrid()
-{
-    GridTrackSizeList list;
-    list.m_is_subgrid = true;
-    list.m_preserve_line_name_sets = true;
-    return list;
-}
-
 void GridTrackSizeList::serialize(StringBuilder& builder, SerializationMode mode) const
 {
-    if (m_is_subgrid) {
-        builder.append("subgrid"sv);
-        if (m_list.is_empty())
-            return;
-        builder.append(" "sv);
-    }
-
     if (m_list.is_empty()) {
         builder.append("none"sv);
         return;
@@ -303,11 +324,6 @@ bool GridTrackSizeList::operator==(GridTrackSizeList const& other) const = defau
 
 void GridTrackSizeList::append(GridLineNames&& line_names)
 {
-    if (m_preserve_line_name_sets) {
-        m_list.append(move(line_names));
-        return;
-    }
-
     if (!m_list.is_empty() && m_list.last().has<GridLineNames>()) {
         auto& last_line_names = m_list.last().get<GridLineNames>();
         for (auto const& name : line_names.names())
@@ -325,8 +341,6 @@ void GridTrackSizeList::append(ExplicitGridTrack&& explicit_track)
 GridTrackSizeList GridTrackSizeList::absolutized(ComputationContext const& context) const
 {
     GridTrackSizeList result;
-    result.m_is_subgrid = m_is_subgrid;
-    result.m_preserve_line_name_sets = m_preserve_line_name_sets;
     for (auto const& item : m_list) {
         item.visit(
             [&result, &context](ExplicitGridTrack const& track) {
@@ -337,6 +351,15 @@ GridTrackSizeList GridTrackSizeList::absolutized(ComputationContext const& conte
             });
     }
     return result;
+}
+
+bool GridTrackSizeList::is_computationally_independent() const
+{
+    return all_of(m_list, [](auto const& item) {
+        return item.visit(
+            [](ExplicitGridTrack const& track) { return track.is_computationally_independent(); },
+            [](GridLineNames const&) { return true; });
+    });
 }
 
 }

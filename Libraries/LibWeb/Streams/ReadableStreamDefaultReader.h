@@ -9,7 +9,7 @@
 #include <AK/Function.h>
 #include <AK/SinglyLinkedList.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Streams/ReadableStreamGenericReader.h>
 
@@ -48,8 +48,11 @@ public:
     // failureSteps, which is an algorithm accepting a JavaScript value
     using FailureSteps = GC::Function<void(JS::Value error)>;
 
+    // AD-HOC: callback triggered on every chunk received from the stream.
+    using ChunkSteps = GC::Function<void(ByteBuffer)>;
+
 private:
-    ReadLoopReadRequest(JS::Realm&, ReadableStreamDefaultReader&, GC::Ref<SuccessSteps>, GC::Ref<FailureSteps>);
+    ReadLoopReadRequest(JS::Realm&, ReadableStreamDefaultReader&, GC::Ref<SuccessSteps>, GC::Ref<FailureSteps>, GC::Ptr<ChunkSteps> = {}, GC::Ptr<JS::Cell> extra_root = {});
 
     virtual void visit_edges(Visitor&) override;
 
@@ -62,17 +65,29 @@ private:
     ByteBuffer m_bytes;
     GC::Ref<SuccessSteps> m_success_steps;
     GC::Ref<FailureSteps> m_failure_steps;
+    GC::Ptr<ChunkSteps> m_chunk_steps;
+    GC::Ptr<JS::Cell> m_extra_root;
 };
 
 // https://streams.spec.whatwg.org/#readablestreamdefaultreader
 class ReadableStreamDefaultReader final
-    : public Bindings::GCAllocatedWrappable
+    : public Bindings::PlatformObject
     , public ReadableStreamGenericReaderMixin {
-    WEB_WRAPPABLE(ReadableStreamDefaultReader, Bindings::GCAllocatedWrappable);
+    WEB_PLATFORM_OBJECT(ReadableStreamDefaultReader, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(ReadableStreamDefaultReader);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<ReadableStreamDefaultReader>> create(JS::Realm&, GC::Ref<ReadableStream>);
+    static WebIDL::ExceptionOr<GC::Ref<ReadableStreamDefaultReader>> construct_impl(JS::Realm&, GC::Ref<ReadableStream>);
+
+    // AD-HOC: Callback functions for read_all_chunks
+    // successSteps, which is an algorithm accepting a JavaScript value
+    using ReadAllOnSuccessSteps = GC::Function<void()>;
+
+    // failureSteps, which is an algorithm accepting a JavaScript value
+    using ReadAllOnFailureSteps = GC::Function<void(JS::Value error)>;
+
+    // AD-HOC: callback triggered on every chunk received from the stream.
+    using ReadAllOnChunkSteps = GC::Function<void(JS::Value chunk)>;
 
     virtual ~ReadableStreamDefaultReader() override = default;
 
@@ -89,9 +104,11 @@ public:
     void set_readable_stream_pipe_to_operation(Badge<Detail::ReadableStreamPipeTo>, GC::Ptr<JS::Cell> readable_stream_pipe_to_operation) { m_readable_stream_pipe_to_operation = readable_stream_pipe_to_operation; }
 
 private:
-    ReadableStreamDefaultReader();
+    explicit ReadableStreamDefaultReader(JS::Realm&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+
+    virtual void visit_edges(Cell::Visitor&) override;
 
     SinglyLinkedList<GC::Ref<ReadRequest>> m_read_requests;
 

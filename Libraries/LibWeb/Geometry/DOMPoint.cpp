@@ -5,39 +5,47 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
-#include <LibWeb/Bindings/DOMPointReadOnly.h>
+#include <LibWeb/Bindings/DOMPointPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Geometry/DOMPoint.h>
 
 namespace Web::Geometry {
 
 GC_DEFINE_ALLOCATOR(DOMPoint);
 
-GC::Ref<DOMPoint> DOMPoint::create(double x, double y, double z, double w)
+GC::Ref<DOMPoint> DOMPoint::construct_impl(JS::Realm& realm, double x, double y, double z, double w)
 {
-    return GC::Heap::the().allocate<DOMPoint>(x, y, z, w);
+    return realm.create<DOMPoint>(realm, x, y, z, w);
 }
 
-GC::Ref<DOMPoint> DOMPoint::create()
+GC::Ref<DOMPoint> DOMPoint::create(JS::Realm& realm)
 {
-    return GC::Heap::the().allocate<DOMPoint>();
+    return realm.create<DOMPoint>(realm);
 }
 
-GC::Ref<DOMPoint> DOMPoint::dom_point_from_point(Bindings::DOMPointInit const& other)
-{
-    return create(other.x, other.y, other.z, other.w);
-}
-
-DOMPoint::DOMPoint(double x, double y, double z, double w)
-    : DOMPointReadOnly(x, y, z, w)
+DOMPoint::DOMPoint(JS::Realm& realm, double x, double y, double z, double w)
+    : DOMPointReadOnly(realm, x, y, z, w)
 {
 }
 
-DOMPoint::DOMPoint()
-    : DOMPointReadOnly()
+DOMPoint::DOMPoint(JS::Realm& realm)
+    : DOMPointReadOnly(realm)
 {
+}
+
+// https://drafts.fxtf.org/geometry/#dom-dompoint-frompoint
+GC::Ref<DOMPoint> DOMPoint::from_point(JS::VM& vm, DOMPointInit const& other)
+{
+    // The fromPoint(other) static method on DOMPoint must create a DOMPoint from the dictionary other.
+    return construct_impl(*vm.current_realm(), other.x, other.y, other.z, other.w);
 }
 
 DOMPoint::~DOMPoint() = default;
+
+void DOMPoint::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(DOMPoint);
+    Base::initialize(realm);
+}
 
 }

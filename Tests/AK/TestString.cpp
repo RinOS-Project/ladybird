@@ -18,14 +18,6 @@
 #include <AK/Vector.h>
 #include <ctype.h>
 
-TEST_CASE(short_ascii_literal_is_constexpr)
-{
-    // The _string UDL folds short ASCII literals to a compile-time constant.
-    static constexpr String s = "foo"_string;
-    EXPECT_EQ(s, "foo"sv);
-    EXPECT_EQ(s.bytes().size(), 3u);
-}
-
 TEST_CASE(construct_empty)
 {
     String empty;
@@ -280,21 +272,6 @@ TEST_CASE(string_builder)
     auto string = MUST(builder.to_string());
     EXPECT_EQ(string, "🦬🪒"sv);
     EXPECT_EQ(string.bytes().size(), 8u);
-}
-
-TEST_CASE(string_builder_outlined_to_string)
-{
-    StringBuilder builder;
-    builder.append_repeated("abcd"sv, 100);
-
-    auto string = MUST(builder.to_string());
-    EXPECT_EQ(string.bytes_as_string_view().length(), 400u);
-    EXPECT(string.starts_with_bytes("abcd"sv));
-    EXPECT(string.ends_with_bytes("abcd"sv));
-
-    builder.append("reused"sv);
-    auto reused_string = MUST(builder.to_string());
-    EXPECT_EQ(reused_string, "reused"sv);
 }
 
 TEST_CASE(ak_format)

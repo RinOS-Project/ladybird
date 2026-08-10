@@ -6,29 +6,35 @@
 
 #pragma once
 
-#include <LibCore/Forward.h>
 #include <LibMedia/PlaybackManager.h>
+#include <LibMedia/PlaybackStates/BufferingStateHandler.h>
 #include <LibMedia/PlaybackStates/Forward.h>
+#include <LibMedia/PlaybackStates/PausedStateHandler.h>
 
 namespace Media {
 
 class PlayingStateHandler final : public PlaybackStateHandler {
 public:
-    PlayingStateHandler(PlaybackManager& manager);
-    virtual ~PlayingStateHandler() override;
+    PlayingStateHandler(PlaybackManager& manager)
+        : PlaybackStateHandler(manager)
+    {
+    }
+    virtual ~PlayingStateHandler() override = default;
 
     virtual void on_enter() override
     {
-        manager().m_clock->resume();
-        update_unticked_end_of_stream_timer();
+        manager().m_time_provider->resume();
     }
     virtual void on_exit() override
     {
-        manager().m_clock->pause();
+        manager().m_time_provider->pause();
     }
 
     virtual void play() override { }
-    virtual void pause() override;
+    virtual void pause() override
+    {
+        manager().replace_state_handler<PausedStateHandler>();
+    }
 
     virtual bool is_playing() override
     {
@@ -38,17 +44,12 @@ public:
     {
         return PlaybackState::Playing;
     }
-    virtual AvailableData available_data() override
+
+    virtual void enter_buffering() override
     {
-        return AvailableData::Future;
+        manager().replace_state_handler<BufferingStateHandler>(true);
     }
-
-    virtual void on_pipeline_status_changed(PipelineStatus) override;
-
-private:
-    void update_unticked_end_of_stream_timer();
-
-    RefPtr<Core::Timer> m_unticked_end_of_stream_timer;
+    virtual void exit_buffering() override { }
 };
 
 }

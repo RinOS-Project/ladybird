@@ -6,32 +6,33 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Crypto/SubtleCrypto.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::Crypto {
 
-class Crypto : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(Crypto, Bindings::GCAllocatedWrappable);
+class Crypto : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(Crypto, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(Crypto);
 
 public:
-    [[nodiscard]] static GC::Ref<Crypto> create();
+    [[nodiscard]] static GC::Ref<Crypto> create(JS::Realm&);
 
     virtual ~Crypto() override;
 
     GC::Ref<SubtleCrypto> subtle() const;
 
-    WebIDL::ExceptionOr<WebIDL::ArrayBufferViewVariant> get_random_values(WebIDL::ArrayBufferViewVariant) const;
-    Utf16String random_uuid() const;
+    WebIDL::ExceptionOr<GC::Root<WebIDL::ArrayBufferView>> get_random_values(GC::Root<WebIDL::ArrayBufferView>) const;
+    String random_uuid() const;
 
 protected:
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
 private:
-    Crypto();
+    explicit Crypto(JS::Realm&);
 
     GC::Ptr<SubtleCrypto> m_subtle;
 };

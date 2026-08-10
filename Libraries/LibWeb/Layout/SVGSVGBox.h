@@ -12,10 +12,11 @@
 namespace Web::Layout {
 
 class SVGSVGBox final : public ReplacedBox {
-    LAYOUT_NODE(SVGSVGBox, ReplacedBox);
+    GC_CELL(SVGSVGBox, ReplacedBox);
+    GC_DECLARE_ALLOCATOR(SVGSVGBox);
 
 public:
-    SVGSVGBox(DOM::Document&, SVG::SVGSVGElement&, NonnullRefPtr<CSS::ComputedValues const>);
+    SVGSVGBox(DOM::Document&, SVG::SVGSVGElement&, GC::Ref<CSS::ComputedProperties>);
     virtual ~SVGSVGBox() override = default;
 
     SVG::SVGSVGElement& dom_node() { return as<SVG::SVGSVGElement>(*ReplacedBox::dom_node()); }
@@ -23,7 +24,7 @@ public:
 
     virtual bool can_have_children() const override { return true; }
 
-    virtual RefPtr<Painting::Paintable> create_paintable() const override;
+    virtual GC::Ptr<Painting::Paintable> create_paintable() const override;
 
 private:
     virtual CSS::SizeWithAspectRatio natural_size() const override;

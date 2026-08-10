@@ -6,7 +6,6 @@
  */
 
 #include <AK/Stream.h>
-#include <AK/Vector.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/CMYKBitmap.h>
 #include <LibGfx/ImageFormats/JPEGWriter.h>

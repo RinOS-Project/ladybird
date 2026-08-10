@@ -5,6 +5,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/CSSGroupingRulePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/CSS/CSSGroupingRule.h>
 #include <LibWeb/CSS/CSSRuleList.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
@@ -12,8 +15,8 @@
 
 namespace Web::CSS {
 
-CSSGroupingRule::CSSGroupingRule(CSSRuleList& rules, Type type)
-    : CSSRule(type)
+CSSGroupingRule::CSSGroupingRule(JS::Realm& realm, CSSRuleList& rules, Type type)
+    : CSSRule(realm, type)
     , m_rules(rules)
 {
     m_rules->set_owner_rule(*this);
@@ -21,7 +24,13 @@ CSSGroupingRule::CSSGroupingRule(CSSRuleList& rules, Type type)
         rule->set_parent_rule(this);
 }
 
-void CSSGroupingRule::visit_edges(GC::Cell::Visitor& visitor)
+void CSSGroupingRule::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSGroupingRule);
+    Base::initialize(realm);
+}
+
+void CSSGroupingRule::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_rules);
@@ -35,28 +44,20 @@ void CSSGroupingRule::clear_caches()
 }
 
 // https://drafts.csswg.org/cssom/#dom-cssgroupingrule-insertrule
-WebIDL::ExceptionOr<u32> CSSGroupingRule::insert_rule(Utf16View rule, u32 index)
+WebIDL::ExceptionOr<u32> CSSGroupingRule::insert_rule(StringView rule, u32 index)
 {
     // The insertRule(rule, index) method must return the result of invoking insert a CSS rule rule into the child CSS
     // rules at index, with the nested flag set.
-    HashTable<Utf16FlyString> declared_namespaces;
-    if (auto* sheet = parent_style_sheet())
-        declared_namespaces = sheet->declared_namespaces();
-    TRY(m_rules->insert_a_css_rule(rule, index, CSSRuleList::Nested::Yes, declared_namespaces));
+    TRY(m_rules->insert_a_css_rule(rule, index, CSSRuleList::Nested::Yes, m_parent_style_sheet->declared_namespaces()));
 
     // AD-HOC: The spec doesn't say where to set the parent rule, so we'll do it here.
     m_rules->item(index)->set_parent_rule(this);
-    if (auto* sheet = parent_style_sheet())
-        sheet->invalidate_owners(DOM::StyleInvalidationReason::StyleSheetInsertRule);
     return index;
 }
 
 WebIDL::ExceptionOr<void> CSSGroupingRule::delete_rule(u32 index)
 {
-    TRY(m_rules->remove_a_css_rule(index));
-    if (auto* sheet = parent_style_sheet())
-        sheet->invalidate_owners(DOM::StyleInvalidationReason::StyleSheetDeleteRule);
-    return {};
+    return m_rules->remove_a_css_rule(index);
 }
 
 void CSSGroupingRule::for_each_effective_rule(TraversalOrder order, Function<void(Web::CSS::CSSRule const&)> const& callback) const

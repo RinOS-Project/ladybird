@@ -22,7 +22,7 @@ ErrorOr<NonnullRefPtr<Gfx::Bitmap>> VectorGraphic::bitmap(IntSize size, AffineTr
 ErrorOr<NonnullRefPtr<Gfx::Bitmap>> VectorGraphic::bitmap(IntSize size, AffineTransform transform) const
 {
     auto bitmap = TRY(Bitmap::create(Gfx::BitmapFormat::BGRA8888, size));
-    auto painter = make<PainterSkia>(PaintingSurface::wrap_bitmap(bitmap));
+    auto painter = PainterSkia::create(bitmap);
 
     // Apply the transform then center within destination rectangle (this ignores any translation from the transform):
     // This allows you to easily rotate or flip the image before painting.

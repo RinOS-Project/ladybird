@@ -6,23 +6,21 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/CSSMathValue.h>
+#include <LibWeb/Bindings/CSSMathValuePrototype.h>
 #include <LibWeb/CSS/CSSNumericValue.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::CSS {
 
-using CSSMathOperator = Bindings::CSSMathOperator;
-
 // https://drafts.css-houdini.org/css-typed-om-1/#cssmathvalue
 class CSSMathValue : public CSSNumericValue {
-    WEB_WRAPPABLE(CSSMathValue, CSSNumericValue);
+    WEB_PLATFORM_OBJECT(CSSMathValue, CSSNumericValue);
     GC_DECLARE_ALLOCATOR(CSSMathValue);
 
 public:
     virtual ~CSSMathValue() override = default;
 
-    CSSMathOperator operator_() const { return m_operator; }
+    Bindings::CSSMathOperator operator_() const { return m_operator; }
 
     enum class Nested : u8 {
         No,
@@ -32,14 +30,16 @@ public:
         With,
         Without,
     };
-    virtual void serialize_math_value(Utf16StringBuilder&, Nested, Parens) const = 0;
+    virtual void serialize_math_value(StringBuilder&, Nested, Parens) const = 0;
 
     virtual WebIDL::ExceptionOr<NonnullRefPtr<StyleValue const>> create_an_internal_representation(PropertyNameAndID const&, PerformTypeCheck) const final override;
 
 protected:
-    explicit CSSMathValue(CSSMathOperator, NumericType);
+    explicit CSSMathValue(JS::Realm&, Bindings::CSSMathOperator, NumericType);
 
-    CSSMathOperator m_operator;
+    virtual void initialize(JS::Realm&) override;
+
+    Bindings::CSSMathOperator m_operator;
 };
 
 }

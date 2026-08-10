@@ -4,22 +4,31 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SpeechSynthesisVoicePrototype.h>
 #include <LibWeb/Speech/SpeechSynthesisVoice.h>
 
 namespace Web::Speech {
 
 GC_DEFINE_ALLOCATOR(SpeechSynthesisVoice);
 
-GC::Ref<SpeechSynthesisVoice> SpeechSynthesisVoice::create()
+GC::Ref<SpeechSynthesisVoice> SpeechSynthesisVoice::create(JS::Realm& realm)
 {
-    return GC::Heap::the().allocate<SpeechSynthesisVoice>();
+    return realm.create<SpeechSynthesisVoice>(realm);
 }
 
-SpeechSynthesisVoice::SpeechSynthesisVoice()
+SpeechSynthesisVoice::SpeechSynthesisVoice(JS::Realm& realm)
+    : Bindings::PlatformObject(realm)
 {
 }
 
 SpeechSynthesisVoice::~SpeechSynthesisVoice() = default;
+
+void SpeechSynthesisVoice::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SpeechSynthesisVoice);
+    Base::initialize(realm);
+}
 
 }

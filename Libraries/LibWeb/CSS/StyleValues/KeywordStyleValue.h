@@ -11,53 +11,80 @@
 
 #include <LibWeb/CSS/Keyword.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
-#include <LibWeb/Export.h>
 
 namespace Web::CSS {
 
-class WEB_API KeywordStyleValue : public StyleValueWithDefaultOperators<KeywordStyleValue> {
+class KeywordStyleValue : public StyleValueWithDefaultOperators<KeywordStyleValue> {
 public:
     static ValueComparingNonnullRefPtr<KeywordStyleValue const> create(Keyword keyword)
     {
-        // Keyword values are immutable and the keyword set is small, so every keyword is
-        // interned: one instance per keyword for the lifetime of the process. Repeated
-        // creations are then allocation-free, and identical keywords are pointer-identical.
-        static auto const& instances = *[] {
-            auto* instances = new (nothrow) Vector<NonnullRefPtr<KeywordStyleValue const>>();
-            instances->ensure_capacity(number_of_keywords);
-            for (size_t i = 0; i < number_of_keywords; ++i)
-                instances->unchecked_append(adopt_ref(*new (nothrow) KeywordStyleValue(static_cast<Keyword>(i))));
-            return instances;
-        }();
-        return instances[to_underlying(keyword)];
+        switch (keyword) {
+        case Keyword::Inherit: {
+            static ValueComparingNonnullRefPtr<KeywordStyleValue const> const inherit_instance = adopt_ref(*new (nothrow) KeywordStyleValue(Keyword::Inherit));
+            return inherit_instance;
+        }
+        case Keyword::Initial: {
+            static ValueComparingNonnullRefPtr<KeywordStyleValue const> const initial_instance = adopt_ref(*new (nothrow) KeywordStyleValue(Keyword::Initial));
+            return initial_instance;
+        }
+        case Keyword::Revert: {
+            static ValueComparingNonnullRefPtr<KeywordStyleValue const> const revert_instance = adopt_ref(*new (nothrow) KeywordStyleValue(Keyword::Revert));
+            return revert_instance;
+        }
+        case Keyword::RevertLayer: {
+            static ValueComparingNonnullRefPtr<KeywordStyleValue const> const revert_layer_instance = adopt_ref(*new (nothrow) KeywordStyleValue(Keyword::RevertLayer));
+            return revert_layer_instance;
+        }
+        case Keyword::Unset: {
+            static ValueComparingNonnullRefPtr<KeywordStyleValue const> const unset_instance = adopt_ref(*new (nothrow) KeywordStyleValue(Keyword::Unset));
+            return unset_instance;
+        }
+        default:
+            return adopt_ref(*new (nothrow) KeywordStyleValue(keyword));
+        }
     }
     virtual ~KeywordStyleValue() override = default;
 
-    Keyword keyword() const { return static_cast<Keyword>(m_value->keyword.keyword); }
+    Keyword keyword() const { return m_keyword; }
 
     static bool is_color(Keyword);
-    bool has_color() const;
-    Optional<Color> to_color(ColorResolutionContext) const;
-    ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const&) const;
-    void serialize(StringBuilder&, SerializationMode) const;
-    void serialize(Utf16StringBuilder&, SerializationMode) const;
-    Vector<Parser::ComponentValue> tokenize() const;
-    GC::Ref<CSSStyleValue> reify(Utf16FlyString const& associated_property) const;
+    virtual bool has_color() const override;
+    virtual Optional<Color> to_color(ColorResolutionContext) const override;
+    virtual ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const&) const override;
+    virtual void serialize(StringBuilder&, SerializationMode) const override;
+    virtual Vector<Parser::ComponentValue> tokenize() const override;
+    virtual GC::Ref<CSSStyleValue> reify(JS::Realm&, FlyString const& associated_property) const override;
 
-    bool properties_equal(KeywordStyleValue const& other) const { return keyword() == other.keyword(); }
+    bool properties_equal(KeywordStyleValue const& other) const { return m_keyword == other.m_keyword; }
+
+    virtual bool is_computationally_independent() const override
+    {
+        if (is_css_wide_keyword())
+            return false;
+
+        // FIXME: Are there any other color keywords which aren't computationally independent?
+        if (first_is_one_of(m_keyword, Keyword::Accentcolor, Keyword::Accentcolortext))
+            return false;
+
+        // FIXME: Are there any other keywords which aren't computationally independent?
+        return true;
+    }
 
 private:
-    friend class StyleValue;
-
-    explicit KeywordStyleValue(StyleValueFFI::StyleValueData const* data)
-        : StyleValueWithDefaultOperators(Type::Keyword, data)
-    {
-    }
-
     explicit KeywordStyleValue(Keyword keyword)
-        : StyleValueWithDefaultOperators(Type::Keyword, StyleValueFFI::rust_style_value_create_keyword(to_underlying(keyword)))
+        : StyleValueWithDefaultOperators(Type::Keyword)
+        , m_keyword(keyword)
     {
     }
+
+    Keyword m_keyword { Keyword::Invalid };
 };
+
+inline Keyword StyleValue::to_keyword() const
+{
+    if (is_keyword())
+        return static_cast<KeywordStyleValue const&>(*this).keyword();
+    return Keyword::Invalid;
+}
 
 }

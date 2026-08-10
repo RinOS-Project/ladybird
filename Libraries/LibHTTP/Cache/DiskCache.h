@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/ByteBuffer.h>
 #include <AK/Error.h>
 #include <AK/LexicalPath.h>
 #include <AK/Optional.h>
@@ -18,7 +17,6 @@
 #include <LibHTTP/Cache/CacheEntry.h>
 #include <LibHTTP/Cache/CacheIndex.h>
 #include <LibHTTP/Cache/CacheMode.h>
-#include <LibHTTP/Cache/Utilities.h>
 #include <LibURL/Forward.h>
 
 namespace HTTP {
@@ -28,11 +26,15 @@ public:
     enum class Mode {
         Normal,
 
+        // In partitioned mode, the cache is enabled as normal, but each RequestServer process operates with a unique
+        // disk cache database.
+        Partitioned,
+
         // In test mode, we only enable caching of responses on a per-request basis, signified by a request header. The
         // response headers will include some status on how the request was handled.
         Testing,
     };
-    static ErrorOr<Optional<DiskCache>> create(Mode, LexicalPath const& cache_root);
+    static ErrorOr<DiskCache> create(Mode);
 
     DiskCache(DiskCache&&);
     DiskCache& operator=(DiskCache&&);
@@ -49,13 +51,6 @@ public:
         Revalidate,
     };
     Variant<Optional<CacheEntryReader&>, CacheHasOpenEntry> open_entry(CacheRequest&, URL::URL const&, StringView method, HeaderList const& request_headers, CacheMode, OpenMode);
-
-    ErrorOr<bool> store_associated_data(URL::URL const&, StringView method, HeaderList const& request_headers, Optional<u64> vary_key, CacheEntryAssociatedData, ReadonlyBytes);
-    ErrorOr<Optional<ByteBuffer>> retrieve_associated_data(URL::URL const&, StringView method, HeaderList const& request_headers, Optional<u64> vary_key, CacheEntryAssociatedData);
-    ErrorOr<Optional<CacheEntryBodyFile>> retrieve_associated_data_file(URL::URL const&, StringView method, HeaderList const& request_headers, Optional<u64> vary_key, CacheEntryAssociatedData);
-
-    // Ensure an index row exists for url+method so the shelf has something to attach to even if there are no real HTTP requests in flight.
-    ErrorOr<bool> create_synthetic_entry(URL::URL const&, StringView method);
 
     void remove_entries_exceeding_cache_limit();
     void set_maximum_disk_cache_size(u64 maximum_disk_cache_size);
@@ -79,6 +74,8 @@ private:
     void delete_entry(u64 cache_key, u64 vary_key);
 
     Mode m_mode;
+    Optional<String> m_partitioned_cache_key;
+
     NonnullRefPtr<Database::Database> m_database;
 
     struct OpenCacheEntry {

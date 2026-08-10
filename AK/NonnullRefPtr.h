@@ -6,6 +6,8 @@
 
 #pragma once
 
+#define NONNULLREFPTR_SCRUB_BYTE 0xe1
+
 #include <AK/Assertions.h>
 #include <AK/Format.h>
 #include <AK/Traits.h>
@@ -91,7 +93,11 @@ public:
 
     ALWAYS_INLINE ~NonnullRefPtr()
     {
-        unref_if_not_null(m_ptr);
+        auto* ptr = exchange(m_ptr, nullptr);
+        unref_if_not_null(ptr);
+#ifdef SANITIZE_PTRS
+        m_ptr = reinterpret_cast<T*>(explode_byte(NONNULLREFPTR_SCRUB_BYTE));
+#endif
     }
 
     template<typename U>

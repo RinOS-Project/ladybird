@@ -1,26 +1,25 @@
 <!DOCTYPE html>
 <script src="../include.js"></script>
-<script src="HTMLMediaElement-include.js"></script>
 <video id="video"></video>
 <script>
     const video = document.getElementById("video");
 
     function logEvent(name) {
-        let entry = `${name}: ${formatReadyStateExpectation(video, name)}`;
+        let entry = `${name}: readyState=${video.readyState}`;
+        if (name === "durationchange")
+            entry += ` duration=${video.duration}`;
         println(entry);
     }
 
     for (const name of [
-        "loadstart", "loadedmetadata", "loadeddata",
-        "canplay", "canplaythrough",
+        "loadstart", "durationchange", "loadedmetadata",
+        "loadeddata", "canplay", "canplaythrough",
     ]) {
         video.addEventListener(name, () => logEvent(name));
     }
 
-    asyncTest(async done => {
-        video.addEventListener("canplaythrough", () => {
-            done();
-        })
+    asyncTest(done => {
+        video.addEventListener("canplaythrough", () => done());
         video.src = "../../../Assets/test-webm.webm";
     });
 </script>

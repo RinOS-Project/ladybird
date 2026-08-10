@@ -1,3 +1,7 @@
+#import <WebAssembly/Instance.idl>
+#import <WebAssembly/Module.idl>
+#import <Fetch/Response.idl>
+
 dictionary WebAssemblyInstantiatedSource {
     required Module module;
     required Instance instance;
@@ -9,11 +13,11 @@ dictionary WebAssemblyInstantiatedSource {
 namespace WebAssembly {
     // FIXME: Streaming APIs are supposed to be only exposed to Window, Worker
 
-    [NeedsCallerRealm] boolean validate(BufferSource bytes);
-    [NeedsCallerRealm] Promise<Module> compile(BufferSource bytes);
-    [NeedsCallerRealm] Promise<Module> compileStreaming(Promise<Response> source);
+    boolean validate(BufferSource bytes);
+    Promise<Module> compile(BufferSource bytes);
+    Promise<Module> compileStreaming(Promise<Response> source);
 
-    [NeedsCallerRealm] Promise<WebAssemblyInstantiatedSource> instantiate(BufferSource bytes, optional object importObject);
-    [NeedsCallerRealm] Promise<WebAssemblyInstantiatedSource> instantiateStreaming(Promise<Response> source, optional object importObject);
-    [NeedsCallerRealm] Promise<Instance> instantiate(Module moduleObject, optional object importObject);
+    Promise<WebAssemblyInstantiatedSource> instantiate(BufferSource bytes, optional object importObject);
+    Promise<WebAssemblyInstantiatedSource> instantiateStreaming(Promise<Response> source, optional object importObject);
+    Promise<Instance> instantiate(Module moduleObject, optional object importObject);
 };

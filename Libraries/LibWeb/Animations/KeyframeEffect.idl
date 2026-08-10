@@ -1,3 +1,6 @@
+#import <Animations/AnimationEffect.idl>
+#import <DOM/Element.idl>
+
 // https://drafts.csswg.org/web-animations-1/#the-compositeoperation-enumeration
 enum CompositeOperation { "replace", "add", "accumulate" };
 
@@ -7,7 +10,21 @@ enum CompositeOperationOrAuto { "replace", "add", "accumulate", "auto" };
 // https://drafts.csswg.org/web-animations-1/#the-keyframeeffectoptions-dictionary
 dictionary KeyframeEffectOptions : EffectTiming {
     CompositeOperation composite = "replace";
-    Utf16CSSOMString? pseudoElement = null;
+    CSSOMString? pseudoElement = null;
+};
+
+// https://drafts.csswg.org/web-animations-1/#dictdef-basepropertyindexedkeyframe
+dictionary BasePropertyIndexedKeyframe {
+    (double? or sequence<double?>) offset = [];
+    (DOMString or sequence<DOMString>) easing = [];
+    (CompositeOperationOrAuto or sequence<CompositeOperationOrAuto>) composite = [];
+};
+
+// https://drafts.csswg.org/web-animations-1/#dictdef-basekeyframe
+dictionary BaseKeyframe {
+    double? offset = null;
+    DOMString easing = "linear";
+    CompositeOperationOrAuto composite = "auto";
 };
 
 // https://drafts.csswg.org/web-animations-1/#the-keyframeeffect-interface
@@ -18,7 +35,7 @@ interface KeyframeEffect : AnimationEffect {
 
     attribute Element? target;
     attribute CSSOMString? pseudoElement;
-    [ImplementedAs=composite_for_bindings] attribute CompositeOperation composite;
+    attribute CompositeOperation composite;
     sequence<object> getKeyframes();
-    [ImplementedAs=set_keyframes_from_js, NeedsCallerRealm] undefined setKeyframes(object? keyframes);
+    undefined setKeyframes(object? keyframes);
 };

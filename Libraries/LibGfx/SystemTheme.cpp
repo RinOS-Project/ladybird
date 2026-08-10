@@ -7,7 +7,6 @@
  */
 
 #include <AK/LexicalPath.h>
-#include <AK/NeverDestroyed.h>
 #include <AK/QuickSort.h>
 #include <LibCore/ConfigFile.h>
 #include <LibCore/DirIterator.h>
@@ -15,11 +14,148 @@
 
 namespace Gfx {
 
-static auto& theme_buffer()
+static void set_theme_path(SystemTheme& theme, PathRole role, char const* path)
 {
-    static NeverDestroyed<Core::AnonymousBuffer> buffer;
-    return *buffer;
+    auto copy_length = min(strlen(path) + 1, sizeof(theme.path[(int)role]));
+    memcpy(theme.path[(int)role], path, copy_length);
+    theme.path[(int)role][sizeof(theme.path[(int)role]) - 1] = '\0';
 }
+
+static void assign_theme_color(SystemTheme& theme, ColorRole role, StringView value)
+{
+    auto color = Color::from_string(value);
+    VERIFY(color.has_value());
+    theme.color[(int)role] = color->value();
+}
+
+void populate_system_theme_with_default_values(SystemTheme& theme)
+{
+    __builtin_memset(&theme, 0, sizeof(SystemTheme));
+
+    auto default_surface = Color::from_string("#d4d0c8"sv);
+    VERIFY(default_surface.has_value());
+
+    for (int i = 0; i < (int)ColorRole::__Count; ++i)
+        theme.color[i] = default_surface->value();
+
+    assign_theme_color(theme, ColorRole::Accent, "#ab6e4a"sv);
+    assign_theme_color(theme, ColorRole::ActiveLink, "#ff0000"sv);
+    assign_theme_color(theme, ColorRole::ActiveWindowBorder1, "#6e2209"sv);
+    assign_theme_color(theme, ColorRole::ActiveWindowBorder2, "#f4ca9e"sv);
+    assign_theme_color(theme, ColorRole::ActiveWindowTitle, "#ffffff"sv);
+    assign_theme_color(theme, ColorRole::ActiveWindowTitleShadow, "#421405"sv);
+    assign_theme_color(theme, ColorRole::ActiveWindowTitleStripes, "#6e2209"sv);
+    assign_theme_color(theme, ColorRole::Base, "#ffffff"sv);
+    assign_theme_color(theme, ColorRole::BaseText, "#000000"sv);
+    assign_theme_color(theme, ColorRole::Black, "#000000"sv);
+    assign_theme_color(theme, ColorRole::Blue, "#000080"sv);
+    assign_theme_color(theme, ColorRole::BrightBlack, "#808080"sv);
+    assign_theme_color(theme, ColorRole::BrightBlue, "#0000ff"sv);
+    assign_theme_color(theme, ColorRole::BrightCyan, "#00ffff"sv);
+    assign_theme_color(theme, ColorRole::BrightGreen, "#00ff00"sv);
+    assign_theme_color(theme, ColorRole::BrightMagenta, "#ff00ff"sv);
+    assign_theme_color(theme, ColorRole::BrightRed, "#ff0000"sv);
+    assign_theme_color(theme, ColorRole::BrightWhite, "#ffffff"sv);
+    assign_theme_color(theme, ColorRole::BrightYellow, "#ffff00"sv);
+    assign_theme_color(theme, ColorRole::Button, "#d4d0c8"sv);
+    assign_theme_color(theme, ColorRole::ButtonText, "#000000"sv);
+    assign_theme_color(theme, ColorRole::ColorSchemeBackground, "#ffffff"sv);
+    assign_theme_color(theme, ColorRole::ColorSchemeForeground, "#000000"sv);
+    assign_theme_color(theme, ColorRole::Cyan, "#008080"sv);
+    assign_theme_color(theme, ColorRole::DesktopBackground, "#505050"sv);
+    assign_theme_color(theme, ColorRole::DisabledTextBack, "#ffffff"sv);
+    assign_theme_color(theme, ColorRole::DisabledTextFront, "#808080"sv);
+    assign_theme_color(theme, ColorRole::FocusOutline, "#909090"sv);
+    assign_theme_color(theme, ColorRole::Green, "#008000"sv);
+    assign_theme_color(theme, ColorRole::Gutter, "#d4d0c8"sv);
+    assign_theme_color(theme, ColorRole::GutterBorder, "#404040"sv);
+    assign_theme_color(theme, ColorRole::HighlightSearching, "#ffff00"sv);
+    assign_theme_color(theme, ColorRole::HighlightSearchingText, "#000000"sv);
+    assign_theme_color(theme, ColorRole::HoverHighlight, "#e3dfdb"sv);
+    assign_theme_color(theme, ColorRole::InactiveSelection, "#606060"sv);
+    assign_theme_color(theme, ColorRole::InactiveSelectionText, "#ffffff"sv);
+    assign_theme_color(theme, ColorRole::InactiveWindowBorder1, "#808080"sv);
+    assign_theme_color(theme, ColorRole::InactiveWindowBorder2, "#c0c0c0"sv);
+    assign_theme_color(theme, ColorRole::InactiveWindowTitle, "#d5d0c7"sv);
+    assign_theme_color(theme, ColorRole::InactiveWindowTitleShadow, "#4c4c4c"sv);
+    assign_theme_color(theme, ColorRole::InactiveWindowTitleStripes, "#808080"sv);
+    assign_theme_color(theme, ColorRole::Link, "#0000ff"sv);
+    assign_theme_color(theme, ColorRole::Magenta, "#800080"sv);
+    assign_theme_color(theme, ColorRole::MenuBase, "#ffffff"sv);
+    assign_theme_color(theme, ColorRole::MenuBaseText, "#000000"sv);
+    assign_theme_color(theme, ColorRole::MenuSelection, "#d2c0b6"sv);
+    assign_theme_color(theme, ColorRole::MenuSelectionText, "#000000"sv);
+    assign_theme_color(theme, ColorRole::MenuStripe, "#dbd8d1"sv);
+    assign_theme_color(theme, ColorRole::PlaceholderText, "#808080"sv);
+    assign_theme_color(theme, ColorRole::Red, "#800000"sv);
+    assign_theme_color(theme, ColorRole::RubberBandBorder, "#6e2209"sv);
+    assign_theme_color(theme, ColorRole::RubberBandFill, "#f4ca9e"sv);
+    assign_theme_color(theme, ColorRole::Ruler, "#d4d0c8"sv);
+    assign_theme_color(theme, ColorRole::RulerActiveText, "#404040"sv);
+    assign_theme_color(theme, ColorRole::RulerBorder, "#404040"sv);
+    assign_theme_color(theme, ColorRole::RulerInactiveText, "#808080"sv);
+    assign_theme_color(theme, ColorRole::Selection, "#84351a"sv);
+    assign_theme_color(theme, ColorRole::SelectionText, "#ffffff"sv);
+    assign_theme_color(theme, ColorRole::SyntaxComment, "#a0a1a7"sv);
+    assign_theme_color(theme, ColorRole::SyntaxControlKeyword, "#a42ea2"sv);
+    assign_theme_color(theme, ColorRole::SyntaxIdentifier, "#000000"sv);
+    assign_theme_color(theme, ColorRole::SyntaxKeyword, "#a42ea2"sv);
+    assign_theme_color(theme, ColorRole::SyntaxNumber, "#976715"sv);
+    assign_theme_color(theme, ColorRole::SyntaxOperator, "#000000"sv);
+    assign_theme_color(theme, ColorRole::SyntaxPreprocessorStatement, "#00a0a0"sv);
+    assign_theme_color(theme, ColorRole::SyntaxPreprocessorValue, "#a00000"sv);
+    assign_theme_color(theme, ColorRole::SyntaxPunctuation, "#000000"sv);
+    assign_theme_color(theme, ColorRole::SyntaxString, "#53a053"sv);
+    assign_theme_color(theme, ColorRole::SyntaxType, "#a000a0"sv);
+    assign_theme_color(theme, ColorRole::SyntaxFunction, "#0000ff"sv);
+    assign_theme_color(theme, ColorRole::SyntaxVariable, "#000000"sv);
+    assign_theme_color(theme, ColorRole::SyntaxCustomType, "#ffa500"sv);
+    assign_theme_color(theme, ColorRole::SyntaxNamespace, "#ffa500"sv);
+    assign_theme_color(theme, ColorRole::SyntaxMember, "#ff0000"sv);
+    assign_theme_color(theme, ColorRole::SyntaxParameter, "#eb6d1e"sv);
+    assign_theme_color(theme, ColorRole::TextCursor, "#6e2209"sv);
+    assign_theme_color(theme, ColorRole::ThreedHighlight, "#ffffff"sv);
+    assign_theme_color(theme, ColorRole::ThreedShadow1, "#808080"sv);
+    assign_theme_color(theme, ColorRole::ThreedShadow2, "#404040"sv);
+    assign_theme_color(theme, ColorRole::Tooltip, "#ffffe1"sv);
+    assign_theme_color(theme, ColorRole::TooltipText, "#000000"sv);
+    assign_theme_color(theme, ColorRole::Tray, "#808080"sv);
+    assign_theme_color(theme, ColorRole::TrayText, "#ffffff"sv);
+    assign_theme_color(theme, ColorRole::VisitedLink, "#ff00ff"sv);
+    assign_theme_color(theme, ColorRole::White, "#c0c0c0"sv);
+    assign_theme_color(theme, ColorRole::Window, "#d4d0c8"sv);
+    assign_theme_color(theme, ColorRole::WindowText, "#000000"sv);
+    assign_theme_color(theme, ColorRole::Yellow, "#808000"sv);
+
+    theme.alignment[(int)AlignmentRole::TitleAlignment] = Gfx::TextAlignment::CenterLeft;
+    theme.flag[(int)FlagRole::BoldTextAsBright] = true;
+    theme.flag[(int)FlagRole::IsDark] = false;
+    theme.flag[(int)FlagRole::TitleButtonsIconOnly] = false;
+    theme.metric[(int)MetricRole::BorderThickness] = 4;
+    theme.metric[(int)MetricRole::BorderRadius] = 0;
+    theme.metric[(int)MetricRole::TitleHeight] = 19;
+    theme.metric[(int)MetricRole::TitleButtonWidth] = 15;
+    theme.metric[(int)MetricRole::TitleButtonHeight] = 15;
+
+    set_theme_path(theme, PathRole::TitleButtonIcons, "/res/icons/16x16/");
+    set_theme_path(theme, PathRole::InactiveWindowShadow, "");
+    set_theme_path(theme, PathRole::ActiveWindowShadow, "");
+    set_theme_path(theme, PathRole::TaskbarShadow, "");
+    set_theme_path(theme, PathRole::MenuShadow, "");
+    set_theme_path(theme, PathRole::TooltipShadow, "");
+    set_theme_path(theme, PathRole::ColorScheme, "/res/color-schemes/Default.ini");
+}
+
+SystemTheme default_system_theme()
+{
+    SystemTheme theme {};
+    populate_system_theme_with_default_values(theme);
+    return theme;
+}
+
+static SystemTheme dummy_theme = default_system_theme();
+static SystemTheme const* theme_page = &dummy_theme;
+static Core::AnonymousBuffer theme_buffer;
 
 bool has_current_system_theme_buffer()
 {
@@ -28,13 +164,17 @@ bool has_current_system_theme_buffer()
 
 Core::AnonymousBuffer& current_system_theme_buffer()
 {
-    VERIFY(theme_buffer().is_valid());
-    return theme_buffer();
+    VERIFY(theme_buffer.is_valid());
+    return theme_buffer;
 }
 
 void set_system_theme(Core::AnonymousBuffer buffer)
 {
-    theme_buffer() = move(buffer);
+    theme_buffer = move(buffer);
+    if (theme_buffer.is_valid())
+        theme_page = theme_buffer.data<SystemTheme>();
+    else
+        theme_page = &dummy_theme;
 }
 
 ErrorOr<Core::AnonymousBuffer> load_system_theme(Core::ConfigFile const& file, Optional<ByteString> const& color_scheme)
@@ -49,7 +189,7 @@ ErrorOr<Core::AnonymousBuffer> load_system_theme(Core::ConfigFile const& file, O
         if (color_scheme.value() != "Custom"sv)
             memcpy(data->path[(int)PathRole::ColorScheme], color_scheme.value().characters(), color_scheme.value().length());
         else
-            memcpy(buffer.data<SystemTheme>(), theme_buffer().data<SystemTheme>(), sizeof(SystemTheme));
+            memcpy(buffer.data<SystemTheme>(), theme_buffer.data<SystemTheme>(), sizeof(SystemTheme));
     }
 
     auto get_color = [&](auto& name) -> Optional<Color> {

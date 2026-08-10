@@ -1,6 +1,6 @@
-$bc604c32 delete-super-property.js:1:1
+$2915e894 delete-super-property.js:1:1
   Registers: 11
-  Blocks:    6
+  Blocks:    7
   Locals:    e~0, e~1
   Constants:
     [0] = String("foo")
@@ -9,77 +9,81 @@ $bc604c32 delete-super-property.js:1:1
 
 block0:
   [   0] GetLexicalEnvironment dst:reg4
-  [   8] CreateLexicalEnvironment dst:reg5, parent:reg4, capacity:0, is_catch_environment:false
-  [  20] CreateVariable `A`, is_immutable:true, is_global:false, is_strict:true
-  [  30] SetLexicalEnvironment environment:reg4
-  [  38] NewClass dst:reg6, class_environment:reg5, class_blueprint_index:0, element_keys:[element_keys:String("foo"), element_keys:String("baz")]
-  [  60] DynamicInitializeLexicalBinding `A`, src:reg6
+  [   8] CreateLexicalEnvironment dst:reg5, parent:reg4, capacity:0
+  [  18] CreateVariable `A`, is_immutable:true, is_global:false, is_strict:false
+  [  28] SetLexicalEnvironment environment:reg4
+  [  30] NewClass dst:reg6, class_environment:reg5, class_blueprint_index:0, element_keys:[element_keys:String("foo"), element_keys:String("baz")]
+  [  58] InitializeLexicalBinding `A`, src:reg6
   [  70] Jump target:block3
 
 block1:
-  [  78] Catch dst:reg6
+  [  78] Catch dst:reg5
   [  80] SetLexicalEnvironment environment:reg4
-  [  88] Mov3 c0_dst:e~0, c0_src:reg6, c1_dst:reg5, c1_src:Undefined, c2_dst:reg7, c2_src:reg5
+  [  88] Mov3 dst1:e~0, src1:reg5, dst2:reg6, src2:Undefined, dst3:reg7, src3:reg6
 
 block2:
-  [  a8] Jump target:block5
+  [  a8] Jump target:block6
 
 block3:
-  [  b0] MovSrcUndefined dst:reg6
-  [  b8] GetGlobal dst:reg9, `A`
-  [  c8] CallConstruct dst:reg8, callee:reg9, A
-  [  e0] GetById dst:reg9, base:reg8, `foo`
-  [  f8] Call dst:reg5, callee:reg9, this_value:reg8, <object>.foo
-  [ 118] Mov2 c0_dst:reg6, c0_src:reg5, c1_dst:reg5, c1_src:reg6
-  [ 130] Jump target:block2
+  [  b0] Mov dst:reg5, src:Undefined
+  [  c0] GetGlobal dst:reg9, `A`
+  [  d8] CallConstruct dst:reg8, callee:reg9, A
+  [  f0] GetById dst:reg9, base:reg8, `foo`
+  [ 110] Call dst:reg6, callee:reg9, this_value:reg8, <object>.foo
+  [ 130] Mov2 dst1:reg5, src1:reg6, dst2:reg6, src2:reg5
+  [ 148] Jump target:block2
 
 block4:
-  [ 138] Catch dst:reg6
-  [ 140] SetLexicalEnvironment environment:reg4
-  [ 148] Mov3 c0_dst:e~1, c0_src:reg6, c1_dst:reg7, c1_src:Undefined, c2_dst:reg9, c2_src:reg7
-  [ 168] End value:reg7
+  [ 150] Catch dst:reg5
+  [ 158] SetLexicalEnvironment environment:reg4
+  [ 160] Mov3 dst1:e~1, src1:reg5, dst2:reg7, src2:Undefined, dst3:reg8, src3:reg7
 
 block5:
-  [ 170] MovSrcUndefined dst:reg6
-  [ 178] GetGlobal dst:reg10, `A`
-  [ 188] CallConstruct dst:reg8, callee:reg10, A
-  [ 1a0] GetById dst:reg10, base:reg8, `baz`
-  [ 1b8] Call dst:reg7, callee:reg10, this_value:reg8, <object>.baz
-  [ 1d8] Mov2 c0_dst:reg6, c0_src:reg7, c1_dst:reg7, c1_src:reg6
-  [ 1f0] End value:reg7
+  [ 180] End value:reg7
+
+block6:
+  [ 188] Mov dst:reg5, src:Undefined
+  [ 198] GetGlobal dst:reg10, `A`
+  [ 1b0] CallConstruct dst:reg9, callee:reg10, A
+  [ 1c8] GetById dst:reg10, base:reg9, `baz`
+  [ 1e8] Call dst:reg7, callee:reg10, this_value:reg9, <object>.baz
+  [ 208] Mov2 dst1:reg5, src1:reg7, dst2:reg7, src2:reg5
+  [ 220] End value:reg7
 
 Exception handlers:
-  [  b0 ..  138] => handler block1
-  [ 170 ..  1f8] => handler block4
+  [  b0 ..  150] => handler block1
+  [ 188 ..  228] => handler block4
 
 
-A$ef0589ec
+A$811c9dc5
   Registers: 5
   Blocks:    1
   Constants:
     [0] = Undefined
 
 block0:
-  [   0] End value:Undefined
+  [   0] GetLexicalEnvironment dst:reg4
+  [   8] End value:Undefined
 
 
-foo$7707d509 delete-super-property.js:3:9
+foo$7dff3f72 delete-super-property.js:3:9
   Registers: 7
   Blocks:    2
   Constants:
     [0] = Undefined
 
 block0:
-  [   0] ResolveThisBinding
-  [   8] ResolveSuperBase dst:reg5
-  [  10] NewReferenceError dst:reg6, Can't delete a property on 'super'
-  [  20] Throw src:reg6
+  [   0] GetLexicalEnvironment dst:reg4
+  [   8] ResolveThisBinding
+  [  10] ResolveSuperBase dst:reg5
+  [  18] NewReferenceError dst:reg6, Can't delete a property on 'super'
+  [  28] Throw src:reg6
 
 block1:
-  [  28] End value:Undefined
+  [  30] End value:Undefined
 
 
-baz$8acb3acb delete-super-property.js:6:9
+baz$cb4e52e2 delete-super-property.js:6:9
   Registers: 7
   Blocks:    2
   Constants:
@@ -87,10 +91,11 @@ baz$8acb3acb delete-super-property.js:6:9
     [1] = Undefined
 
 block0:
-  [   0] ResolveThisBinding
-  [   8] ResolveSuperBase dst:reg5
-  [  10] NewReferenceError dst:reg6, Can't delete a property on 'super'
-  [  20] Throw src:reg6
+  [   0] GetLexicalEnvironment dst:reg4
+  [   8] ResolveThisBinding
+  [  10] ResolveSuperBase dst:reg5
+  [  18] NewReferenceError dst:reg6, Can't delete a property on 'super'
+  [  28] Throw src:reg6
 
 block1:
-  [  28] End value:Undefined
+  [  30] End value:Undefined

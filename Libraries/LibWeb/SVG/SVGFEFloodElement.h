@@ -15,19 +15,21 @@ namespace Web::SVG {
 class SVGFEFloodElement final
     : public SVGElement
     , public SVGFilterPrimitiveStandardAttributes<SVGFEFloodElement> {
-    WEB_WRAPPABLE(SVGFEFloodElement, SVGElement);
+    WEB_PLATFORM_OBJECT(SVGFEFloodElement, SVGElement);
     GC_DECLARE_ALLOCATOR(SVGFEFloodElement);
 
 public:
     virtual ~SVGFEFloodElement() override = default;
 
-    virtual RefPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::ComputedValues const>) override;
+    virtual GC::Ptr<Layout::Node> create_layout_node(GC::Ref<CSS::ComputedProperties>) override;
 
     Gfx::Color flood_color();
     float flood_opacity() const;
 
 private:
     SVGFEFloodElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 };
 

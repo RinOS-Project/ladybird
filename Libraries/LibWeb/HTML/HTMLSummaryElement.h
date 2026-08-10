@@ -12,7 +12,7 @@
 namespace Web::HTML {
 
 class HTMLSummaryElement final : public HTMLElement {
-    WEB_NON_IDL_WRAPPABLE(HTMLSummaryElement, HTMLElement);
+    WEB_NON_IDL_PLATFORM_OBJECT(HTMLSummaryElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLSummaryElement);
 
 public:
@@ -29,6 +29,8 @@ public:
 
 private:
     HTMLSummaryElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

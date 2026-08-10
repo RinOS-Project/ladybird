@@ -16,19 +16,17 @@ namespace Web {
 namespace IPC {
 
 template<>
-ErrorOr<void> encode(Encoder& encoder, Web::CSSPixelPoint const& value)
+ErrorOr<void> encode(Encoder& encoder, Web::DevicePixels const& value)
 {
-    TRY(encoder.encode(value.x().raw_value()));
-    TRY(encoder.encode(value.y().raw_value()));
+    TRY(encoder.encode(value.value()));
     return {};
 }
 
 template<>
-ErrorOr<Web::CSSPixelPoint> decode(Decoder& decoder)
+ErrorOr<Web::DevicePixels> decode(Decoder& decoder)
 {
-    auto x = TRY(decoder.decode<i32>());
-    auto y = TRY(decoder.decode<i32>());
-    return Web::CSSPixelPoint { Web::CSSPixels::from_raw(x), Web::CSSPixels::from_raw(y) };
+    auto value = TRY(decoder.decode<int>());
+    return Web::DevicePixels(value);
 }
 
 template<>

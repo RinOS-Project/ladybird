@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/ServiceWorkerRegistrationPrototype.h>
 #include <LibWeb/ServiceWorker/ServiceWorker.h>
 #include <LibWeb/ServiceWorker/ServiceWorkerRegistration.h>
 
@@ -12,10 +14,16 @@ namespace Web::ServiceWorker {
 
 GC_DEFINE_ALLOCATOR(ServiceWorkerRegistration);
 
-ServiceWorkerRegistration::ServiceWorkerRegistration(Registration const& registration)
-    : DOM::EventTarget()
+ServiceWorkerRegistration::ServiceWorkerRegistration(JS::Realm& realm, Registration const& registration)
+    : DOM::EventTarget(realm)
     , m_registration(registration)
 {
+}
+
+void ServiceWorkerRegistration::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(ServiceWorkerRegistration);
+    Base::initialize(realm);
 }
 
 void ServiceWorkerRegistration::visit_edges(Cell::Visitor& visitor)
@@ -26,9 +34,9 @@ void ServiceWorkerRegistration::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_active);
 }
 
-GC::Ref<ServiceWorkerRegistration> ServiceWorkerRegistration::create(Registration const& registration)
+GC::Ref<ServiceWorkerRegistration> ServiceWorkerRegistration::create(JS::Realm& realm, Registration const& registration)
 {
-    return GC::Heap::the().allocate<ServiceWorkerRegistration>(registration);
+    return realm.create<ServiceWorkerRegistration>(realm, registration);
 }
 
 }

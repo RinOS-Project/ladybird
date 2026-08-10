@@ -7,12 +7,7 @@
         xhr.open("GET", "data:text/html,<!DOCTYPE html><html/>", true);
         xhr.onreadystatechange = function() {
             if (xhr.readyState === 4 && xhr.status === 200) {
-                const response = xhr.response;
-                if (response instanceof Document)
-                    println("PASS");
-                else
-                    println("FAIL");
-                if (response === xhr.response)
+                if (xhr.response instanceof Document)
                     println("PASS");
                 else
                     println("FAIL");

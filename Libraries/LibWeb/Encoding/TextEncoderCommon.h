@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
+#include <AK/FlyString.h>
 
 namespace Web::Encoding {
 
@@ -15,7 +15,7 @@ public:
     virtual ~TextEncoderCommonMixin();
 
     // https://encoding.spec.whatwg.org/#dom-textencoder-encoding
-    Utf16FlyString const& encoding() const;
+    FlyString const& encoding() const;
 
 protected:
     TextEncoderCommonMixin();

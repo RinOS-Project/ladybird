@@ -10,12 +10,14 @@
 
 namespace Web::Layout {
 
-SVGGraphicsBox::SVGGraphicsBox(DOM::Document& document, SVG::SVGGraphicsElement& element, NonnullRefPtr<CSS::ComputedValues const> style)
+GC_DEFINE_ALLOCATOR(SVGGraphicsBox);
+
+SVGGraphicsBox::SVGGraphicsBox(DOM::Document& document, SVG::SVGGraphicsElement& element, GC::Ref<CSS::ComputedProperties> style)
     : SVGBox(document, element, style)
 {
 }
 
-RefPtr<Painting::Paintable> SVGGraphicsBox::create_paintable() const
+GC::Ptr<Painting::Paintable> SVGGraphicsBox::create_paintable() const
 {
     return Painting::SVGGraphicsPaintable::create(*this);
 }

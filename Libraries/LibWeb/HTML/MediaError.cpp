@@ -4,22 +4,26 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/MediaErrorPrototype.h>
 #include <LibWeb/HTML/MediaError.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(MediaError);
 
-GC::Ref<MediaError> MediaError::create(Code code, Utf16String message)
-{
-    return GC::Heap::the().allocate<MediaError>(code, move(message));
-}
-
-MediaError::MediaError(Code code, Utf16String message)
-    : m_code(code)
+MediaError::MediaError(JS::Realm& realm, Code code, String message)
+    : Base(realm)
+    , m_code(code)
     , m_message(move(message))
 {
+}
+
+void MediaError::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(MediaError);
+    Base::initialize(realm);
 }
 
 }

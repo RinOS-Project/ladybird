@@ -22,8 +22,7 @@ class TestWebView final : public WebView::HeadlessWebView {
 public:
     static NonnullOwnPtr<TestWebView> create(Core::AnonymousBuffer theme, Web::DevicePixelSize window_size);
 
-    void clear_content_blockers();
-    NonnullRefPtr<Core::Promise<Empty>> reset_session_history();
+    void clear_content_filters();
     pid_t web_content_pid() const;
 
     NonnullRefPtr<Core::Promise<RefPtr<Gfx::Bitmap const>>> take_screenshot();
@@ -35,13 +34,10 @@ public:
 private:
     TestWebView(Core::AnonymousBuffer theme, Web::DevicePixelSize viewport_size);
 
-    virtual void insert_clipboard_item(Web::Clipboard::SystemClipboardItem) override;
-    virtual Vector<Web::Clipboard::SystemClipboardRepresentation> clipboard_entries() const override;
-
     virtual void did_receive_screenshot(Badge<WebView::WebContentClient>, Gfx::ShareableBitmap const& screenshot) override;
+
     RefPtr<Core::Promise<RefPtr<Gfx::Bitmap const>>> m_pending_screenshot;
 
-    Optional<Web::Clipboard::SystemClipboardItem> m_clipboard_item;
     NonnullRefPtr<TestPromise> m_test_promise;
 };
 

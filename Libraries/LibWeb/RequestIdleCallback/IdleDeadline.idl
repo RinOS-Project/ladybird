@@ -2,7 +2,7 @@
 [Exposed=Window]
 interface IdleDeadline {
 
-    DOMHighResTimeStamp timeRemaining();
+    double timeRemaining();
     readonly attribute boolean didTimeout;
 
 };

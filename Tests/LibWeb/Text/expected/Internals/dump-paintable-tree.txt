@@ -1,3 +1,4 @@
 PaintableWithLines (BlockContainer<DIV>#target) [8,8 100x50]
-  InlinePaintable (InlineNode<SPAN>) [8,8 39.78125x16]
+  PaintableWithLines (InlineNode<SPAN>) [8,8 39.78125x18]
+    TextPaintable (TextNode<#text>)
 

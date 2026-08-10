@@ -1,9 +1,13 @@
+#import <DOM/EventHandler.idl>
+#import <DOM/EventTarget.idl>
+#import <HTML/AudioTrack.idl>
+
 // https://html.spec.whatwg.org/multipage/media.html#audiotracklist
 [Exposed=Window]
 interface AudioTrackList : EventTarget {
     readonly attribute unsigned long length;
     getter AudioTrack (unsigned long index);
-    AudioTrack? getTrackById(Utf16DOMString id);
+    AudioTrack? getTrackById(DOMString id);
 
     attribute EventHandler onchange;
     attribute EventHandler onaddtrack;

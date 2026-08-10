@@ -6,28 +6,32 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/OscillatorNode.h>
+#include <LibWeb/Bindings/OscillatorNodePrototype.h>
 #include <LibWeb/WebAudio/AudioScheduledSourceNode.h>
 
 namespace Web::WebAudio {
 
-using OscillatorType = Bindings::OscillatorType;
-using OscillatorOptions = Bindings::OscillatorOptions;
+// https://webaudio.github.io/web-audio-api/#OscillatorOptions
+struct OscillatorOptions : AudioNodeOptions {
+    Bindings::OscillatorType type { Bindings::OscillatorType::Sine };
+    float frequency { 440 };
+    float detune { 0 };
+    GC::Ptr<PeriodicWave> periodic_wave;
+};
 
 // https://webaudio.github.io/web-audio-api/#OscillatorNode
 class OscillatorNode : public AudioScheduledSourceNode {
-    WEB_WRAPPABLE(OscillatorNode, AudioScheduledSourceNode);
+    WEB_PLATFORM_OBJECT(OscillatorNode, AudioScheduledSourceNode);
     GC_DECLARE_ALLOCATOR(OscillatorNode);
 
 public:
     virtual ~OscillatorNode() override;
 
-    static WebIDL::ExceptionOr<GC::Ref<OscillatorNode>> create(GC::Ref<BaseAudioContext>, OscillatorOptions const& = {});
-    static WebIDL::ExceptionOr<void> validate_options(OscillatorOptions const&);
-    static WebIDL::ExceptionOr<GC::Ref<OscillatorNode>> create_for_constructor(GC::Ref<BaseAudioContext>, OscillatorOptions const& = {});
+    static WebIDL::ExceptionOr<GC::Ref<OscillatorNode>> create(JS::Realm&, GC::Ref<BaseAudioContext>, OscillatorOptions const& = {});
+    static WebIDL::ExceptionOr<GC::Ref<OscillatorNode>> construct_impl(JS::Realm&, GC::Ref<BaseAudioContext>, OscillatorOptions const& = {});
 
-    OscillatorType type() const;
-    WebIDL::ExceptionOr<void> set_type(OscillatorType);
+    Bindings::OscillatorType type() const;
+    WebIDL::ExceptionOr<void> set_type(Bindings::OscillatorType);
 
     void set_periodic_wave(GC::Ptr<PeriodicWave>);
 
@@ -38,14 +42,14 @@ public:
     WebIDL::UnsignedLong number_of_outputs() override { return 1; }
 
 protected:
-    OscillatorNode(GC::Ref<BaseAudioContext>, OscillatorOptions const& = {});
+    OscillatorNode(JS::Realm&, GC::Ref<BaseAudioContext>, OscillatorOptions const& = {});
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:
-    void queue_waveform_update();
-
     // https://webaudio.github.io/web-audio-api/#dom-oscillatornode-type
-    OscillatorType m_type { OscillatorType::Sine };
+    Bindings::OscillatorType m_type { Bindings::OscillatorType::Sine };
 
     // https://webaudio.github.io/web-audio-api/#dom-oscillatornode-frequency
     GC::Ref<AudioParam> m_frequency;

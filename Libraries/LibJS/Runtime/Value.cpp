@@ -7,14 +7,13 @@
  */
 
 #include <AK/AllOf.h>
-#include <AK/Array.h>
 #include <AK/Assertions.h>
+#include <AK/ByteString.h>
 #include <AK/CharacterTypes.h>
-#include <AK/NeverDestroyed.h>
 #include <AK/StringBuilder.h>
 #include <AK/StringConversions.h>
 #include <AK/Utf16String.h>
-#include <AK/Utf16StringBuilder.h>
+#include <AK/Utf8View.h>
 #include <LibCrypto/BigInt/SignedBigInteger.h>
 #include <LibJS/Bytecode/PropertyAccess.h>
 #include <LibJS/Runtime/AbstractOperations.h>
@@ -59,11 +58,7 @@ static inline bool same_type_for_equality(Value const& lhs, Value const& rhs)
     return false;
 }
 
-static auto const& bigint_zero()
-{
-    static NeverDestroyed<Crypto::SignedBigInteger> zero { 0 };
-    return *zero;
-}
+static Crypto::SignedBigInteger const BIGINT_ZERO { 0 };
 
 static ALWAYS_INLINE bool both_number(Value const& lhs, Value const& rhs)
 {
@@ -75,50 +70,9 @@ static ALWAYS_INLINE bool both_bigint(Value const& lhs, Value const& rhs)
     return lhs.is_bigint() && rhs.is_bigint();
 }
 
-static void append_ascii_for_number(StringBuilder& builder, char code_unit)
-{
-    builder.append(code_unit);
-}
-
-static void append_ascii_for_number(Utf16StringBuilder& builder, char code_unit)
-{
-    builder.append_ascii(code_unit);
-}
-
-static void append_ascii_for_number(StringBuilder& builder, StringView string)
-{
-    builder.append(string);
-}
-
-static void append_ascii_for_number(Utf16StringBuilder& builder, StringView string)
-{
-    builder.append_ascii(string);
-}
-
-static void append_ascii_for_number(StringBuilder& builder, char const* string, size_t length)
-{
-    builder.append(string, length);
-}
-
-static void append_ascii_for_number(Utf16StringBuilder& builder, char const* string, size_t length)
-{
-    builder.append_ascii(StringView { string, length });
-}
-
-static void append_repeated_ascii_for_number(StringBuilder& builder, char code_unit, size_t count)
-{
-    builder.append_repeated(code_unit, count);
-}
-
-static void append_repeated_ascii_for_number(Utf16StringBuilder& builder, char code_unit, size_t count)
-{
-    builder.append_repeated_ascii(code_unit, count);
-}
-
 // 6.1.6.1.20 Number::toString ( x ), https://tc39.es/ecma262/#sec-numeric-types-number-tostring
 // Implementation for radix = 10
-template<typename Builder>
-static void number_to_string_impl(Builder& builder, double d, NumberToStringMode mode)
+void number_to_string(StringBuilder& builder, double d, NumberToStringMode mode)
 {
     auto convert_to_decimal_digits_array = [](auto x, auto& digits, auto& length) {
         for (; x; x /= 10)
@@ -129,24 +83,24 @@ static void number_to_string_impl(Builder& builder, double d, NumberToStringMode
 
     // 1. If x is NaN, return "NaN".
     if (isnan(d)) {
-        append_ascii_for_number(builder, "NaN"sv);
+        builder.append("NaN"sv);
         return;
     }
 
     // 2. If x is +0𝔽 or -0𝔽, return "0".
     if (d == +0.0 || d == -0.0) {
-        append_ascii_for_number(builder, "0"sv);
+        builder.append("0"sv);
         return;
     }
 
     // 4. If x is +∞𝔽, return "Infinity".
     if (isinf(d)) {
         if (d > 0) {
-            append_ascii_for_number(builder, "Infinity"sv);
+            builder.append("Infinity"sv);
             return;
         }
 
-        append_ascii_for_number(builder, "-Infinity"sv);
+        builder.append("-Infinity"sv);
         return;
     }
 
@@ -165,7 +119,7 @@ static void number_to_string_impl(Builder& builder, double d, NumberToStringMode
 
     // 3. If x < -0𝔽, return the string-concatenation of "-" and Number::toString(-x, radix).
     if (sign)
-        append_ascii_for_number(builder, '-');
+        builder.append('-');
 
     // Non-standard: Intl needs number-to-string conversions for extremely large numbers without any
     // exponential formatting, as it will handle such formatting itself in a locale-aware way.
@@ -177,31 +131,31 @@ static void number_to_string_impl(Builder& builder, double d, NumberToStringMode
         if (n >= k) {
             // i. Return the string-concatenation of:
             // the code units of the k digits of the representation of s using radix radix
-            append_ascii_for_number(builder, mantissa_digits.data(), k);
+            builder.append(mantissa_digits.data(), k);
             // n - k occurrences of the code unit 0x0030 (DIGIT ZERO)
-            append_repeated_ascii_for_number(builder, '0', n - k);
+            builder.append_repeated('0', n - k);
             // b. Else if n > 0, then
         } else if (n > 0) {
             // i. Return the string-concatenation of:
             // the code units of the most significant n digits of the representation of s using radix radix
-            append_ascii_for_number(builder, mantissa_digits.data(), n);
+            builder.append(mantissa_digits.data(), n);
             // the code unit 0x002E (FULL STOP)
-            append_ascii_for_number(builder, '.');
+            builder.append('.');
             // the code units of the remaining k - n digits of the representation of s using radix radix
-            append_ascii_for_number(builder, mantissa_digits.data() + n, k - n);
+            builder.append(mantissa_digits.data() + n, k - n);
             // c. Else,
         } else {
             // i. Assert: n ≤ 0.
             VERIFY(n <= 0);
             // ii. Return the string-concatenation of:
             // the code unit 0x0030 (DIGIT ZERO)
-            append_ascii_for_number(builder, '0');
+            builder.append('0');
             // the code unit 0x002E (FULL STOP)
-            append_ascii_for_number(builder, '.');
+            builder.append('.');
             // -n occurrences of the code unit 0x0030 (DIGIT ZERO)
-            append_repeated_ascii_for_number(builder, '0', -n);
+            builder.append_repeated('0', -n);
             // the code units of the k digits of the representation of s using radix radix
-            append_ascii_for_number(builder, mantissa_digits.data(), k);
+            builder.append(mantissa_digits.data(), k);
         }
 
         return;
@@ -223,42 +177,51 @@ static void number_to_string_impl(Builder& builder, double d, NumberToStringMode
     if (k == 1) {
         // a. Return the string-concatenation of:
         // the code unit of the single digit of s
-        append_ascii_for_number(builder, mantissa_digits[0]);
+        builder.append(mantissa_digits[0]);
         // the code unit 0x0065 (LATIN SMALL LETTER E)
-        append_ascii_for_number(builder, 'e');
+        builder.append('e');
         // exponentSign
-        append_ascii_for_number(builder, exponent_sign);
+        builder.append(exponent_sign);
         // the code units of the decimal representation of abs(n - 1)
-        append_ascii_for_number(builder, exponent_digits.data(), exponent_length);
+        builder.append(exponent_digits.data(), exponent_length);
 
         return;
     }
 
     // 12. Return the string-concatenation of:
     // the code unit of the most significant digit of the decimal representation of s
-    append_ascii_for_number(builder, mantissa_digits[0]);
+    builder.append(mantissa_digits[0]);
     // the code unit 0x002E (FULL STOP)
-    append_ascii_for_number(builder, '.');
+    builder.append('.');
     // the code units of the remaining k - 1 digits of the decimal representation of s
-    append_ascii_for_number(builder, mantissa_digits.data() + 1, k - 1);
+    builder.append(mantissa_digits.data() + 1, k - 1);
     // the code unit 0x0065 (LATIN SMALL LETTER E)
-    append_ascii_for_number(builder, 'e');
+    builder.append('e');
     // exponentSign
-    append_ascii_for_number(builder, exponent_sign);
+    builder.append(exponent_sign);
     // the code units of the decimal representation of abs(n - 1)
-    append_ascii_for_number(builder, exponent_digits.data(), exponent_length);
+    builder.append(exponent_digits.data(), exponent_length);
 }
 
-void number_to_string(StringBuilder& builder, double d, NumberToStringMode mode)
+String number_to_string(double d, NumberToStringMode mode)
 {
-    number_to_string_impl(builder, d, mode);
+    StringBuilder builder;
+    number_to_string(builder, d, mode);
+    return MUST(builder.to_string());
 }
 
 Utf16String number_to_utf16_string(double d, NumberToStringMode mode)
 {
-    Utf16StringBuilder builder;
-    number_to_string_impl(builder, d, mode);
-    return builder.to_string();
+    StringBuilder builder(StringBuilder::Mode::UTF16);
+    number_to_string(builder, d, mode);
+    return builder.to_utf16_string();
+}
+
+ByteString number_to_byte_string(double d, NumberToStringMode mode)
+{
+    StringBuilder builder;
+    number_to_string(builder, d, mode);
+    return builder.to_byte_string();
 }
 
 // 7.2.2 IsArray ( argument ), https://tc39.es/ecma262/#sec-isarray
@@ -290,11 +253,9 @@ ThrowCompletionOr<bool> Value::is_array(VM& vm) const
     return false;
 }
 
-Array& Value::as_array_exotic_object()
+Array& Value::as_array()
 {
-    auto ptr = as_if<Array>();
-    ASSERT(ptr);
-    return *ptr;
+    return *as_if<Array>();
 }
 
 // 7.2.3 IsCallable ( argument ), https://tc39.es/ecma262/#sec-iscallable
@@ -308,16 +269,12 @@ bool Value::is_function() const
 
 FunctionObject& Value::as_function()
 {
-    auto ptr = as_if<FunctionObject>();
-    ASSERT(ptr);
-    return *ptr;
+    return *as_if<FunctionObject>();
 }
 
 FunctionObject const& Value::as_function() const
 {
-    auto ptr = as_if<FunctionObject>();
-    ASSERT(ptr);
-    return *ptr;
+    return *as_if<FunctionObject>();
 }
 
 // 7.2.4 IsConstructor ( argument ), https://tc39.es/ecma262/#sec-isconstructor
@@ -343,7 +300,7 @@ ThrowCompletionOr<bool> Value::is_regexp(VM& vm) const
         return false;
 
     // 2. Let matcher be ? Get(argument, @@match).
-    static auto& cache = *new Bytecode::StaticPropertyLookupCache;
+    static Bytecode::StaticPropertyLookupCache cache;
     auto matcher = TRY(as_object().get(vm.well_known_symbol_match(), cache));
 
     // 3. If matcher is not undefined, return ToBoolean(matcher).
@@ -397,6 +354,39 @@ GC::Ref<PrimitiveString> Value::typeof_(VM& vm) const
     }
 }
 
+String Value::to_string_without_side_effects() const
+{
+    if (is_double())
+        return number_to_string(m_value.as_double);
+
+    switch (m_value.tag) {
+    case UNDEFINED_TAG:
+        return "undefined"_string;
+    case NULL_TAG:
+        return "null"_string;
+    case BOOLEAN_TAG:
+        return as_bool() ? "true"_string : "false"_string;
+    case INT32_TAG:
+        return String::number(as_i32());
+    case STRING_TAG:
+        return as_string().utf8_string();
+    case SYMBOL_TAG:
+        return as_symbol().descriptive_string().to_utf8_but_should_be_ported_to_utf16();
+    case BIGINT_TAG:
+        return as_bigint().to_string().release_value();
+    case OBJECT_TAG:
+        return String::formatted("[object {}]", as_object().class_name()).release_value();
+    case ACCESSOR_TAG:
+        return "<accessor>"_string;
+    case EMPTY_TAG:
+        return "<empty>"_string;
+    default:
+        if (is_cell())
+            return String::formatted("[internal object {}]", as_cell().class_name()).release_value();
+        VERIFY_NOT_REACHED();
+    }
+}
+
 Utf16String Value::to_utf16_string_without_side_effects() const
 {
     if (is_double())
@@ -441,6 +431,57 @@ ThrowCompletionOr<GC::Ref<PrimitiveString>> Value::to_primitive_string(VM& vm)
 }
 
 // 7.1.17 ToString ( argument ), https://tc39.es/ecma262/#sec-tostring
+ThrowCompletionOr<String> Value::to_string(VM& vm) const
+{
+    if (is_double())
+        return number_to_string(m_value.as_double);
+
+    switch (m_value.tag) {
+    // 1. If argument is a String, return argument.
+    case STRING_TAG:
+        return as_string().utf8_string();
+    // 2. If argument is a Symbol, throw a TypeError exception.
+    case SYMBOL_TAG:
+        return vm.throw_completion<TypeError>(ErrorType::Convert, "symbol", "string");
+    // 3. If argument is undefined, return "undefined".
+    case UNDEFINED_TAG:
+        return "undefined"_string;
+    // 4. If argument is null, return "null".
+    case NULL_TAG:
+        return "null"_string;
+    // 5. If argument is true, return "true".
+    // 6. If argument is false, return "false".
+    case BOOLEAN_TAG:
+        return as_bool() ? "true"_string : "false"_string;
+    // 7. If argument is a Number, return Number::toString(argument, 10).
+    case INT32_TAG:
+        return String::number(as_i32());
+    // 8. If argument is a BigInt, return BigInt::toString(argument, 10).
+    case BIGINT_TAG:
+        return TRY_OR_THROW_OOM(vm, as_bigint().big_integer().to_base(10));
+    // 9. Assert: argument is an Object.
+    case OBJECT_TAG: {
+        // 10. Let primValue be ? ToPrimitive(argument, string).
+        auto primitive_value = TRY(to_primitive(vm, PreferredType::String));
+
+        // 11. Assert: primValue is not an Object.
+        VERIFY(!primitive_value.is_object());
+
+        // 12. Return ? ToString(primValue).
+        return primitive_value.to_string(vm);
+    }
+    default:
+        VERIFY_NOT_REACHED();
+    }
+}
+
+// 7.1.17 ToString ( argument ), https://tc39.es/ecma262/#sec-tostring
+ThrowCompletionOr<ByteString> Value::to_byte_string(VM& vm) const
+{
+    return TRY(to_string(vm)).to_byte_string();
+}
+
+// 7.1.17 ToString ( argument ), https://tc39.es/ecma262/#sec-tostring
 ThrowCompletionOr<Utf16String> Value::to_utf16_string(VM& vm) const
 {
     if (is_double())
@@ -468,7 +509,7 @@ ThrowCompletionOr<Utf16String> Value::to_utf16_string(VM& vm) const
         return Utf16String::number(as_i32());
         // 8. If argument is a BigInt, return BigInt::toString(argument, 10).
     case BIGINT_TAG:
-        return MUST(as_bigint().big_integer().to_base_utf16(10));
+        return Utf16String::from_utf8(MUST(as_bigint().big_integer().to_base(10)));
         // 9. Assert: argument is an Object.
     case OBJECT_TAG: {
         // 10. Let primValue be ? ToPrimitive(argument, string).
@@ -507,7 +548,7 @@ bool Value::to_boolean_slow_case() const
     case STRING_TAG:
         return !as_string().is_empty();
     case BIGINT_TAG:
-        return as_bigint().big_integer() != bigint_zero();
+        return as_bigint().big_integer() != BIGINT_ZERO;
     case OBJECT_TAG:
         // B.3.6.1 Changes to ToBoolean, https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot-to-boolean
         // 3. If argument is an Object and argument has an [[IsHTMLDDA]] internal slot, return false.
@@ -528,24 +569,24 @@ ThrowCompletionOr<Value> Value::to_primitive_slow_case(VM& vm, PreferredType pre
     // 1. If input is an Object, then
     if (is_object()) {
         // a. Let exoticToPrim be ? GetMethod(input, @@toPrimitive).
-        static auto& cache = *new Bytecode::StaticPropertyLookupCache;
+        static Bytecode::StaticPropertyLookupCache cache;
         auto exotic_to_primitive = TRY(get_method(vm, vm.well_known_symbol_to_primitive(), cache));
 
         // b. If exoticToPrim is not undefined, then
         if (exotic_to_primitive) {
-            auto hint = [&]() -> Utf16FlyString {
+            auto hint = [&]() -> ByteString {
                 switch (preferred_type) {
                 // i. If preferredType is not present, let hint be "default".
                 case PreferredType::Default:
-                    return "default"_utf16_fly_string;
+                    return "default";
                 // ii. Else if preferredType is string, let hint be "string".
                 case PreferredType::String:
-                    return "string"_utf16_fly_string;
+                    return "string";
                 // iii. Else,
                 // 1. Assert: preferredType is number.
                 // 2. Let hint be "number".
                 case PreferredType::Number:
-                    return "number"_utf16_fly_string;
+                    return "number";
                 default:
                     VERIFY_NOT_REACHED();
                 }
@@ -559,7 +600,7 @@ ThrowCompletionOr<Value> Value::to_primitive_slow_case(VM& vm, PreferredType pre
                 return result;
 
             // vi. Throw a TypeError exception.
-            return vm.throw_completion<TypeError>(ErrorType::ToPrimitiveReturnedObject, to_utf16_string_without_side_effects(), hint);
+            return vm.throw_completion<TypeError>(ErrorType::ToPrimitiveReturnedObject, to_string_without_side_effects(), hint);
         }
 
         // c. If preferredType is not present, let preferredType be number.
@@ -648,47 +689,17 @@ constexpr bool is_ascii_number(u32 code_point)
     return is_ascii_digit(code_point) || code_point == '.' || (code_point == 'e' || code_point == 'E') || code_point == '+' || code_point == '-';
 }
 
-static constexpr AK::Array js_whitespace_code_units {
-    u'\u0009',
-    u'\u000A',
-    u'\u000B',
-    u'\u000C',
-    u'\u000D',
-    u'\u0020',
-    u'\u00A0',
-    u'\u1680',
-    u'\u2000',
-    u'\u2001',
-    u'\u2002',
-    u'\u2003',
-    u'\u2004',
-    u'\u2005',
-    u'\u2006',
-    u'\u2007',
-    u'\u2008',
-    u'\u2009',
-    u'\u200A',
-    u'\u2028',
-    u'\u2029',
-    u'\u202F',
-    u'\u205F',
-    u'\u3000',
-    u'\uFEFF',
-};
-
-static constexpr Utf16View js_whitespace { js_whitespace_code_units.data(), js_whitespace_code_units.size() };
-
 struct NumberParseResult {
-    Utf16View literal;
+    StringView literal;
     u8 base;
 };
 
-static Optional<NumberParseResult> parse_number_text(Utf16View text)
+static Optional<NumberParseResult> parse_number_text(StringView text)
 {
     NumberParseResult result {};
 
-    auto check_prefix = [&](Utf16View lower_prefix, Utf16View upper_prefix) {
-        if (text.length_in_code_units() <= 2)
+    auto check_prefix = [&](auto lower_prefix, auto upper_prefix) {
+        if (text.length() <= 2)
             return false;
         if (!text.starts_with(lower_prefix) && !text.starts_with(upper_prefix))
             return false;
@@ -726,10 +737,10 @@ static Optional<NumberParseResult> parse_number_text(Utf16View text)
 }
 
 // 7.1.4.1.1 StringToNumber ( str ), https://tc39.es/ecma262/#sec-stringtonumber
-double string_to_number(Utf16View string)
+double string_to_number(StringView string)
 {
     // 1. Let text be StringToCodePoints(str).
-    auto text = string.trim(js_whitespace);
+    auto text = Utf8View(string).trim(whitespace_characters, AK::TrimMode::Both).as_string();
 
     // 2. Let literal be ParseText(text, StringNumericLiteral).
     if (text.is_empty())
@@ -784,7 +795,7 @@ ThrowCompletionOr<Value> Value::to_number_slow_case(VM& vm) const
         return Value(as_bool() ? 1 : 0);
     // 6. If argument is a String, return StringToNumber(argument).
     case STRING_TAG:
-        return string_to_number(as_string().utf16_string_view());
+        return string_to_number(as_string().utf8_string_view());
     // 7. Assert: argument is an Object.
     case OBJECT_TAG: {
         // 8. Let primValue be ? ToPrimitive(argument, number).
@@ -801,7 +812,7 @@ ThrowCompletionOr<Value> Value::to_number_slow_case(VM& vm) const
     }
 }
 
-static Optional<BigInt*> string_to_bigint(VM& vm, Utf16View string);
+static Optional<BigInt*> string_to_bigint(VM& vm, StringView string);
 
 // 7.1.13 ToBigInt ( argument ), https://tc39.es/ecma262/#sec-tobigint
 ThrowCompletionOr<GC::Ref<BigInt>> Value::to_bigint(VM& vm) const
@@ -838,7 +849,7 @@ ThrowCompletionOr<GC::Ref<BigInt>> Value::to_bigint(VM& vm) const
         return primitive.as_bigint();
     case STRING_TAG: {
         // 1. Let n be ! StringToBigInt(prim).
-        auto bigint = string_to_bigint(vm, primitive.as_string().utf16_string_view());
+        auto bigint = string_to_bigint(vm, primitive.as_string().utf8_string_view());
 
         // 2. If n is undefined, throw a SyntaxError exception.
         if (!bigint.has_value())
@@ -857,17 +868,17 @@ ThrowCompletionOr<GC::Ref<BigInt>> Value::to_bigint(VM& vm) const
 }
 
 struct BigIntParseResult {
-    Utf16View literal;
+    StringView literal;
     u8 base { 10 };
     bool is_negative { false };
 };
 
-static Optional<BigIntParseResult> parse_bigint_text(Utf16View text)
+static Optional<BigIntParseResult> parse_bigint_text(StringView text)
 {
     BigIntParseResult result {};
 
-    auto parse_for_prefixed_base = [&](Utf16View lower_prefix, Utf16View upper_prefix, auto validator) {
-        if (text.length_in_code_units() <= 2)
+    auto parse_for_prefixed_base = [&](auto lower_prefix, auto upper_prefix, auto validator) {
+        if (text.length() <= 2)
             return false;
         if (!text.starts_with(lower_prefix) && !text.starts_with(upper_prefix))
             return false;
@@ -902,10 +913,10 @@ static Optional<BigIntParseResult> parse_bigint_text(Utf16View text)
 }
 
 // 7.1.14 StringToBigInt ( str ), https://tc39.es/ecma262/#sec-stringtobigint
-static Optional<BigInt*> string_to_bigint(VM& vm, Utf16View string)
+static Optional<BigInt*> string_to_bigint(VM& vm, StringView string)
 {
     // 1. Let text be StringToCodePoints(str).
-    auto text = string.trim(js_whitespace);
+    auto text = Utf8View(string).trim(whitespace_characters, AK::TrimMode::Both).as_string();
 
     // 2. Let literal be ParseText(text, StringIntegerLiteral).
     auto result = parse_bigint_text(text);
@@ -917,7 +928,7 @@ static Optional<BigInt*> string_to_bigint(VM& vm, Utf16View string)
     // 4. Let mv be the MV of literal.
     // 5. Assert: mv is an integer.
     auto bigint = MUST(Crypto::SignedBigInteger::from_base(result->base, result->literal));
-    if (result->is_negative && (bigint != bigint_zero()))
+    if (result->is_negative && (bigint != BIGINT_ZERO))
         bigint.negate();
 
     // 6. Return ℤ(mv).
@@ -1598,8 +1609,8 @@ ThrowCompletionOr<Value> unary_minus(VM& vm, Value lhs)
 
     // 6.1.6.2.1 BigInt::unaryMinus ( x ), https://tc39.es/ecma262/#sec-numeric-types-bigint-unaryMinus
     // 1. If x is 0ℤ, return 0ℤ.
-    if (old_value.as_bigint().big_integer() == bigint_zero())
-        return BigInt::create(vm, bigint_zero());
+    if (old_value.as_bigint().big_integer() == BIGINT_ZERO)
+        return BigInt::create(vm, BIGINT_ZERO);
 
     // 2. Return the BigInt value that represents the negation of ℝ(x).
     auto big_integer_negated = old_value.as_bigint().big_integer();
@@ -1927,7 +1938,7 @@ ThrowCompletionOr<Value> div(VM& vm, Value lhs, Value rhs)
         auto x = lhs_numeric.as_bigint().big_integer();
         auto y = rhs_numeric.as_bigint().big_integer();
         // 1. If y is 0ℤ, throw a RangeError exception.
-        if (y == bigint_zero())
+        if (y == BIGINT_ZERO)
             return vm.throw_completion<RangeError>(ErrorType::DivisionByZero);
         // 2. Let quotient be ℝ(x) / ℝ(y).
         // 3. Return the BigInt value that represents quotient rounded towards 0 to the next integer value.
@@ -1967,7 +1978,7 @@ ThrowCompletionOr<Value> mod(VM& vm, Value lhs, Value rhs)
         auto n = lhs_numeric.as_bigint().big_integer();
         auto d = rhs_numeric.as_bigint().big_integer();
         // 1. If d is 0ℤ, throw a RangeError exception.
-        if (d == bigint_zero())
+        if (d == BIGINT_ZERO)
             return vm.throw_completion<RangeError>(ErrorType::DivisionByZero);
         // 2. If n is 0ℤ, return 0ℤ.
         // 3. Let quotient be ℝ(n) / ℝ(d).
@@ -2136,7 +2147,7 @@ ThrowCompletionOr<Value> instance_of(VM& vm, Value value, Value target)
         return vm.throw_completion<TypeError>(ErrorType::NotAnObject, target);
 
     // 2. Let instOfHandler be ? GetMethod(target, @@hasInstance).
-    static auto& cache = *new Bytecode::StaticPropertyLookupCache;
+    static Bytecode::StaticPropertyLookupCache cache;
     auto instance_of_handler = TRY(target.get_method(vm, vm.well_known_symbol_has_instance(), cache));
 
     // 3. If instOfHandler is not undefined, then
@@ -2182,7 +2193,7 @@ ThrowCompletionOr<Value> ordinary_has_instance(VM& vm, Value lhs, Value rhs)
     auto* lhs_object = &lhs.as_object();
 
     // 4. Let P be ? Get(C, "prototype").
-    static auto& cache = *new Bytecode::StaticPropertyLookupCache;
+    static Bytecode::StaticPropertyLookupCache cache;
     auto rhs_prototype = TRY(rhs.get(vm, vm.names.prototype, cache));
 
     // 5. If P is not an Object, throw a TypeError exception.
@@ -2363,7 +2374,7 @@ ThrowCompletionOr<bool> is_loosely_equal(VM& vm, Value lhs, Value rhs)
     // 7. If Type(x) is BigInt and Type(y) is String, then
     if (lhs.is_bigint() && rhs.is_string()) {
         // a. Let n be StringToBigInt(y).
-        auto bigint = string_to_bigint(vm, rhs.as_string().utf16_string_view());
+        auto bigint = string_to_bigint(vm, rhs.as_string().utf8_string_view());
 
         // b. If n is undefined, return false.
         if (!bigint.has_value())
@@ -2462,7 +2473,7 @@ ThrowCompletionOr<TriState> is_less_than(VM& vm, Value lhs, Value rhs, bool left
     // a. If px is a BigInt and py is a String, then
     if (x_primitive.is_bigint() && y_primitive.is_string()) {
         // i. Let ny be StringToBigInt(py).
-        auto y_bigint = string_to_bigint(vm, y_primitive.as_string().utf16_string_view());
+        auto y_bigint = string_to_bigint(vm, y_primitive.as_string().utf8_string_view());
 
         // ii. If ny is undefined, return undefined.
         if (!y_bigint.has_value())
@@ -2477,7 +2488,7 @@ ThrowCompletionOr<TriState> is_less_than(VM& vm, Value lhs, Value rhs, bool left
     // b. If px is a String and py is a BigInt, then
     if (x_primitive.is_string() && y_primitive.is_bigint()) {
         // i. Let nx be StringToBigInt(px).
-        auto x_bigint = string_to_bigint(vm, x_primitive.as_string().utf16_string_view());
+        auto x_bigint = string_to_bigint(vm, x_primitive.as_string().utf8_string_view());
 
         // ii. If nx is undefined, return undefined.
         if (!x_bigint.has_value())

@@ -5,57 +5,66 @@
  */
 
 #include <LibGC/Heap.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/NavigationDestinationPrototype.h>
 #include <LibWeb/HTML/NavigationDestination.h>
 #include <LibWeb/HTML/NavigationHistoryEntry.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
-#include <LibWeb/Infra/SerializedURL.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(NavigationDestination);
 
-GC::Ref<NavigationDestination> NavigationDestination::create()
+GC::Ref<NavigationDestination> NavigationDestination::create(JS::Realm& realm)
 {
-    return GC::Heap::the().allocate<NavigationDestination>();
+    return realm.create<NavigationDestination>(realm);
 }
 
-NavigationDestination::NavigationDestination()
+NavigationDestination::NavigationDestination(JS::Realm& realm)
+    : Bindings::PlatformObject(realm)
 {
 }
 
 NavigationDestination::~NavigationDestination() = default;
 
-void NavigationDestination::visit_edges(GC::Cell::Visitor& visitor)
+void NavigationDestination::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(NavigationDestination);
+    Base::initialize(realm);
+}
+
+void NavigationDestination::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_entry);
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigationdestination-url
-Utf16String NavigationDestination::url() const
+String NavigationDestination::url() const
 {
     // The url getter steps are to return this's URL, serialized.
-    return utf16_string_from_url_ascii(m_url.serialize());
+    return m_url.serialize();
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigationdestination-key
-Utf16String NavigationDestination::key() const
+String NavigationDestination::key() const
 {
     // The key getter steps are:
 
     // 1. If this's entry is null, then return the empty string.
     // 2. Return this's entry's key.
-    return (m_entry == nullptr) ? Utf16String {} : m_entry->key();
+    return (m_entry == nullptr) ? String {} : m_entry->key();
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigationdestination-id
-Utf16String NavigationDestination::id() const
+String NavigationDestination::id() const
 {
     // The id getter steps are:
 
     // 1. If this's entry is null, then return the empty string.
     // 2. Return this's entry's ID.
-    return (m_entry == nullptr) ? Utf16String {} : m_entry->id();
+    return (m_entry == nullptr) ? String {} : m_entry->id();
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigationdestination-index
@@ -76,10 +85,10 @@ bool NavigationDestination::same_document() const
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigationdestination-getstate
-WebIDL::ExceptionOr<JS::Value> NavigationDestination::get_state(JS::Realm& realm)
+WebIDL::ExceptionOr<JS::Value> NavigationDestination::get_state()
 {
     // The getState() method steps are to return StructuredDeserialize(this's state).
-    return HTML::structured_deserialize(realm.vm(), m_state, realm);
+    return structured_deserialize(vm(), m_state, realm());
 }
 
 }

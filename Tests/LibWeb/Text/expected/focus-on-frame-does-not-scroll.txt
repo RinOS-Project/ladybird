@@ -1,3 +1,0 @@
-scrollY after focusing iframe element: 0
-scrollY after iframe content calls window.focus(): 0
-scrollY after focusing a regular element is nonzero: true

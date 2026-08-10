@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/HTMLAudioElementPrototype.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/HTML/HTMLAudioElement.h>
@@ -22,9 +22,24 @@ HTMLAudioElement::HTMLAudioElement(DOM::Document& document, DOM::QualifiedName q
 
 HTMLAudioElement::~HTMLAudioElement() = default;
 
-RefPtr<Layout::Node> HTMLAudioElement::create_layout_node(NonnullRefPtr<CSS::ComputedValues const> style)
+void HTMLAudioElement::initialize(JS::Realm& realm)
 {
-    return make_ref_counted<Layout::AudioBox>(document(), *this, style);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLAudioElement);
+    Base::initialize(realm);
+}
+
+void HTMLAudioElement::adjust_computed_style(CSS::ComputedProperties& style)
+{
+    Base::adjust_computed_style(style);
+
+    // https://html.spec.whatwg.org/multipage/rendering.html#embedded-content-rendering-rules
+    if (!has_attribute(AttributeNames::controls))
+        style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::None)));
+}
+
+GC::Ptr<Layout::Node> HTMLAudioElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+{
+    return heap().allocate<Layout::AudioBox>(document(), *this, style);
 }
 
 Layout::AudioBox* HTMLAudioElement::layout_node()

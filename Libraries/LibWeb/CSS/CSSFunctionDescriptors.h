@@ -6,28 +6,28 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
 #include <LibWeb/CSS/CSSDescriptors.h>
 
 namespace Web::CSS {
 
 // https://drafts.csswg.org/css-mixins-1/#cssfunctiondescriptors
 class CSSFunctionDescriptors final : public CSSDescriptors {
-    WEB_WRAPPABLE(CSSFunctionDescriptors, CSSDescriptors);
+    WEB_PLATFORM_OBJECT(CSSFunctionDescriptors, CSSDescriptors);
     GC_DECLARE_ALLOCATOR(CSSFunctionDescriptors);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSFunctionDescriptors> create(Vector<Descriptor>);
+    [[nodiscard]] static GC::Ref<CSSFunctionDescriptors> create(JS::Realm&, Vector<Descriptor>);
 
     virtual ~CSSFunctionDescriptors() override = default;
 
-    Utf16String result() const;
-    WebIDL::ExceptionOr<void> set_result(Utf16View value);
+    virtual void initialize(JS::Realm&) override;
+
+    String result() const;
+    WebIDL::ExceptionOr<void> set_result(StringView value);
 
 private:
-    explicit CSSFunctionDescriptors(Vector<Descriptor> descriptors)
-        : CSSDescriptors(AtRuleID::Function, move(descriptors))
+    CSSFunctionDescriptors(JS::Realm& realm, Vector<Descriptor> descriptors)
+        : CSSDescriptors(realm, AtRuleID::Function, move(descriptors))
     {
     }
 };

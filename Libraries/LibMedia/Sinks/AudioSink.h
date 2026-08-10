@@ -6,24 +6,20 @@
 
 #pragma once
 
-#include <AK/NonnullRefPtr.h>
-#include <AK/Time.h>
+#include <AK/AtomicRefCounted.h>
 #include <LibMedia/AudioBlock.h>
 #include <LibMedia/Export.h>
 #include <LibMedia/Forward.h>
-#include <LibMedia/MediaPipelineNode.h>
-#include <LibMedia/Producers/AudioProducer.h>
+#include <LibMedia/Track.h>
 
 namespace Media {
 
-class MEDIA_API AudioSink : public virtual MediaPipelineNode {
+class MEDIA_API AudioSink : public AtomicRefCounted<AudioSink> {
 public:
     virtual ~AudioSink() = default;
 
-    virtual ErrorOr<void> connect_input(NonnullRefPtr<AudioProducer> const&) = 0;
-    virtual void disconnect_input(NonnullRefPtr<AudioProducer> const&) = 0;
-
-    virtual void seek(AK::Duration timestamp) = 0;
+    virtual void set_provider(Track const&, RefPtr<AudioDataProvider> const&) = 0;
+    virtual RefPtr<AudioDataProvider> provider(Track const&) const = 0;
 };
 
 }

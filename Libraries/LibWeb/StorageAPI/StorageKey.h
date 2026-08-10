@@ -51,13 +51,3 @@ struct Traits<Web::StorageAPI::StorageKey> : public DefaultTraits<Web::StorageAP
 };
 
 }
-
-namespace IPC {
-
-template<>
-WEB_API ErrorOr<void> encode(Encoder&, Web::StorageAPI::StorageKey const&);
-
-template<>
-WEB_API ErrorOr<Web::StorageAPI::StorageKey> decode(Decoder&);
-
-}

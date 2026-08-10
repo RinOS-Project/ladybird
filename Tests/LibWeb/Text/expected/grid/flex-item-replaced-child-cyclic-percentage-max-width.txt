@@ -1,2 +1,0 @@
-grid-template-columns: 144.25px 144.25px 144.25px 144.25px
-last item right: 652

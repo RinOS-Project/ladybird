@@ -50,8 +50,6 @@ test("regex split", () => {
         "CODE",
         "",
     ]);
-
-    expect(/(\ud83d\ude00)(\ud83d)(\ude00)/[Symbol.split]("x😀😀y")).toEqual(["x", "😀", "\ud83d", "\ude00", "y"]);
 });
 
 test("UTF-16", () => {

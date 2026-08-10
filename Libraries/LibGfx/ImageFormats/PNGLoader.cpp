@@ -6,11 +6,11 @@
  */
 
 #include <AK/Vector.h>
-#include <LibGfx/DecodedImageFrame.h>
 #include <LibGfx/ImageFormats/ExifOrientedBitmap.h>
-#include <LibGfx/ImageFormats/ExifReader.h>
 #include <LibGfx/ImageFormats/PNGLoader.h>
+#include <LibGfx/ImageFormats/TIFFLoader.h>
 #include <LibGfx/ImageFormats/TIFFMetadata.h>
+#include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/Painter.h>
 #include <png.h>
 
@@ -34,22 +34,6 @@ struct PNGLoadingContext {
     Optional<ByteBuffer> icc_profile;
     OwnPtr<ExifMetadata> exif_metadata;
 
-    // Working state for read_frames(). These live as members (rather than as stack-locals inside read_frames()) — so
-    // that a libpng longjmp out of the setjmp scope below doesn't bypass C++ destructors, and leak the heap storage
-    // they own. The setjmp handler clears them, so the memory gets released promptly on the error path.
-    Vector<u8*> row_pointers;
-    RefPtr<Bitmap> in_flight_bitmap;
-    RefPtr<Bitmap> output_buffer;
-    OwnPtr<Painter> painter;
-
-    void clear_read_frames_working_state()
-    {
-        row_pointers.clear();
-        in_flight_bitmap = nullptr;
-        output_buffer = nullptr;
-        painter = nullptr;
-    }
-
     ErrorOr<size_t> read_frames(png_structp, png_infop);
     ErrorOr<void> apply_exif_orientation();
 
@@ -57,9 +41,6 @@ struct PNGLoadingContext {
     {
         // NOTE: We need to setjmp() here because libpng uses longjmp() for error handling.
         if (auto error_value = setjmp(png_jmpbuf(png_ptr)); error_value) {
-            // longjmp() bypassed the C++ destructors for any stack-locals in read_frames(); release the working-state
-            // members explicitly here — so their heap storage doesn't sit around until ~PNGLoadingContext().
-            clear_read_frames_working_state();
             return Error::from_errno(error_value);
         }
 
@@ -246,7 +227,7 @@ ErrorOr<void> PNGImageDecoderPlugin::initialize()
     u32 exif_length = 0;
     int const num_exif_chunks = png_get_eXIf_1(m_context->png_ptr, m_context->info_ptr, &exif_length, &exif_data);
     if (num_exif_chunks > 0)
-        m_context->exif_metadata = TRY(TIFF::read_exif_metadata({ exif_data, exif_length }));
+        m_context->exif_metadata = TRY(TIFFImageDecoderPlugin::read_exif_metadata({ exif_data, exif_length }));
 
     return {};
 }
@@ -278,18 +259,19 @@ ErrorOr<void> PNGLoadingContext::apply_exif_orientation()
 
 ErrorOr<size_t> PNGLoadingContext::read_frames(png_structp png_ptr, png_infop info_ptr)
 {
+    Vector<u8*> row_pointers;
+#ifdef AK_OS_RINOS
+    (void)info_ptr;
+#endif
     auto decode_frame = [&](IntSize frame_size) -> ErrorOr<NonnullRefPtr<Bitmap>> {
-        // Allocate into the in_flight_bitmap member — so the bitmap survives a potential libpng longjmp out of
-        // png_read_image() below.
-        in_flight_bitmap = TRY(Bitmap::create(BitmapFormat::BGRA8888, AlphaType::Unpremultiplied, frame_size));
+        auto frame_bitmap = TRY(Bitmap::create(BitmapFormat::BGRA8888, AlphaType::Unpremultiplied, frame_size));
 
         row_pointers.resize_and_keep_capacity(frame_size.height());
         for (auto i = 0; i < frame_size.height(); ++i)
-            row_pointers[i] = in_flight_bitmap->scanline_u8(i);
+            row_pointers[i] = frame_bitmap->scanline_u8(i);
 
         png_read_image(png_ptr, row_pointers.data());
-        // Past the longjmp window; hand the bitmap to the caller, and clear the member.
-        return in_flight_bitmap.release_nonnull();
+        return frame_bitmap;
     };
 
 #ifndef AK_OS_RINOS
@@ -298,8 +280,8 @@ ErrorOr<size_t> PNGLoadingContext::read_frames(png_structp png_ptr, png_infop in
         png_set_acTL(png_ptr, info_ptr, frame_count, loop_count);
 
         // Conceptually, at the beginning of each play the output buffer must be completely initialized to a fully transparent black rectangle, with width and height dimensions from the `IHDR` chunk.
-        output_buffer = TRY(Bitmap::create(BitmapFormat::BGRA8888, AlphaType::Unpremultiplied, size));
-        painter = Painter::create(*output_buffer);
+        auto output_buffer = TRY(Bitmap::create(BitmapFormat::BGRA8888, AlphaType::Unpremultiplied, size));
+        auto painter = Painter::create(output_buffer);
         size_t animation_frame_count = 0;
 
         for (size_t frame_index = 0; frame_index < frame_count; ++frame_index) {
@@ -344,11 +326,11 @@ ErrorOr<size_t> PNGLoadingContext::read_frames(png_structp png_ptr, png_infop in
             switch (blend_op) {
             case PNG_BLEND_OP_SOURCE:
                 // All color components of the frame, including alpha, overwrite the current contents of the frame's output buffer region.
-                painter->draw_bitmap(frame_rect, Gfx::DecodedImageFrame { *decoded_frame_bitmap }, decoded_frame_bitmap->rect(), Gfx::ScalingMode::NearestNeighbor, {}, 1.0f, Gfx::CompositingAndBlendingOperator::Copy);
+                painter->draw_bitmap(frame_rect, Gfx::ImmutableBitmap::create(*decoded_frame_bitmap), decoded_frame_bitmap->rect(), Gfx::ScalingMode::NearestNeighbor, {}, 1.0f, Gfx::CompositingAndBlendingOperator::Copy);
                 break;
             case PNG_BLEND_OP_OVER:
                 // The frame should be composited onto the output buffer based on its alpha, using a simple OVER operation as described in the "Alpha Channel Processing" section of the PNG specification.
-                painter->draw_bitmap(frame_rect, Gfx::DecodedImageFrame { *decoded_frame_bitmap }, decoded_frame_bitmap->rect(), ScalingMode::NearestNeighbor, {}, 1.0f, Gfx::CompositingAndBlendingOperator::SourceOver);
+                painter->draw_bitmap(frame_rect, Gfx::ImmutableBitmap::create(*decoded_frame_bitmap), decoded_frame_bitmap->rect(), ScalingMode::NearestNeighbor, {}, 1.0f, Gfx::CompositingAndBlendingOperator::SourceOver);
                 break;
             default:
                 VERIFY_NOT_REACHED();
@@ -367,7 +349,7 @@ ErrorOr<size_t> PNGLoadingContext::read_frames(png_structp png_ptr, png_infop in
                 break;
             case PNG_DISPOSE_OP_PREVIOUS:
                 // The frame's region of the output buffer is to be reverted to the previous contents before rendering the next frame.
-                painter->draw_bitmap(frame_rect, Gfx::DecodedImageFrame { *prev_output_buffer }, IntRect { x, y, width, height }, Gfx::ScalingMode::NearestNeighbor, {}, 1.0f, Gfx::CompositingAndBlendingOperator::Copy);
+                painter->draw_bitmap(frame_rect, Gfx::ImmutableBitmap::create(*prev_output_buffer), IntRect { x, y, width, height }, Gfx::ScalingMode::NearestNeighbor, {}, 1.0f, Gfx::CompositingAndBlendingOperator::Copy);
                 break;
             default:
                 VERIFY_NOT_REACHED();
@@ -392,9 +374,7 @@ ErrorOr<size_t> PNGLoadingContext::read_frames(png_structp png_ptr, png_infop in
         frame_descriptors.append({ move(decoded_frame_bitmap), 0 });
 #ifndef AK_OS_RINOS
     }
-
-    // Clear the working state — so it doesn't outlive read_frames() on the success path.
-    clear_read_frames_working_state();
+#endif
     return frame_count;
 }
 

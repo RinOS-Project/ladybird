@@ -15,6 +15,8 @@
 
 namespace Web::Painting {
 
+GC_DEFINE_ALLOCATOR(CheckBoxPaintable);
+
 static Gfx::Path check_mark_path(Gfx::IntRect checkbox_rect)
 {
     Gfx::Path path;
@@ -33,14 +35,14 @@ static Gfx::Path check_mark_path(Gfx::IntRect checkbox_rect)
     return path.copy_transformed(scale_checkmark_to_fit);
 }
 
-NonnullRefPtr<CheckBoxPaintable>
+GC::Ref<CheckBoxPaintable>
 CheckBoxPaintable::create(Layout::CheckBox const& layout_box)
 {
-    return adopt_ref(*new CheckBoxPaintable(layout_box));
+    return layout_box.heap().allocate<CheckBoxPaintable>(layout_box);
 }
 
 CheckBoxPaintable::CheckBoxPaintable(Layout::CheckBox const& layout_box)
-    : Paintable(layout_box)
+    : PaintableBox(layout_box)
 {
 }
 
@@ -49,18 +51,14 @@ void CheckBoxPaintable::paint(DisplayListRecordingContext& context, PaintPhase p
     if (!is_visible())
         return;
 
-    Paintable::paint(context, phase);
+    PaintableBox::paint(context, phase);
 
     if (phase != PaintPhase::Foreground)
         return;
 
     auto const& checkbox = as<HTML::HTMLInputElement const>(*dom_node());
     bool enabled = checkbox.enabled();
-
-    // Keep checkboxes painted as square, centered within the space they occupy.
-    auto outer_rect = absolute_rect();
-    auto checkbox_size = min(outer_rect.width(), outer_rect.height());
-    auto checkbox_rect = context.enclosing_device_rect(CSSPixelRect { 0, 0, checkbox_size, checkbox_size }.centered_within(outer_rect)).to_type<int>();
+    auto checkbox_rect = context.enclosing_device_rect(absolute_rect()).to_type<int>();
     auto checkbox_radius = checkbox_rect.width() / 5;
 
     auto shade = [&](Color color, float amount) {

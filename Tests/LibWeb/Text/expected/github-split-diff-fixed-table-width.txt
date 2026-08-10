@@ -1,3 +1,0 @@
-table width: 600
-cell widths: 150, 150, 150, 150
-cell width sum: 600

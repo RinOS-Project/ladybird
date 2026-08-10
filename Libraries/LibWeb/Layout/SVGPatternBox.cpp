@@ -9,12 +9,14 @@
 
 namespace Web::Layout {
 
-SVGPatternBox::SVGPatternBox(DOM::Document& document, SVG::SVGPatternElement& element, NonnullRefPtr<CSS::ComputedValues const> style)
+GC_DEFINE_ALLOCATOR(SVGPatternBox);
+
+SVGPatternBox::SVGPatternBox(DOM::Document& document, SVG::SVGPatternElement& element, GC::Ref<CSS::ComputedProperties> style)
     : SVGBox(document, element, style)
 {
 }
 
-RefPtr<Painting::Paintable> SVGPatternBox::create_paintable() const
+GC::Ptr<Painting::Paintable> SVGPatternBox::create_paintable() const
 {
     return Painting::SVGPatternPaintable::create(*this);
 }

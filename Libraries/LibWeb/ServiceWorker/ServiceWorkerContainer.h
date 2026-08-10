@@ -7,12 +7,9 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/ServiceWorkerContainer.h>
-#include <LibWeb/Bindings/ServiceWorkerRegistration.h>
-#include <LibWeb/Bindings/Worker.h>
+#include <LibWeb/Bindings/ServiceWorkerRegistrationPrototype.h>
+#include <LibWeb/Bindings/WorkerPrototype.h>
 #include <LibWeb/DOM/EventTarget.h>
-#include <LibWeb/Export.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/TrustedTypes/TrustedScript.h>
 #include <LibWeb/TrustedTypes/TrustedScriptURL.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
@@ -25,23 +22,25 @@
 
 namespace Web::ServiceWorker {
 
-using RegistrationOptions = Bindings::RegistrationOptions;
+struct RegistrationOptions {
+    Optional<String> scope;
+    Bindings::WorkerType type = Bindings::WorkerType::Classic;
+    Bindings::ServiceWorkerUpdateViaCache update_via_cache = Bindings::ServiceWorkerUpdateViaCache::Imports;
+};
 
 class ServiceWorkerContainer : public DOM::EventTarget {
-    WEB_WRAPPABLE(ServiceWorkerContainer, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(ServiceWorkerContainer, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(ServiceWorkerContainer);
 
 public:
-    [[nodiscard]] static GC::Ref<ServiceWorkerContainer> create(HTML::EnvironmentSettingsObject&);
+    [[nodiscard]] static GC::Ref<ServiceWorkerContainer> create(JS::Realm& realm);
     virtual ~ServiceWorkerContainer() override;
 
-    GC::Ref<WebIDL::Promise> ready();
-    void register_(JS::Realm&, TrustedTypes::TrustedScriptURLOrString script_url, RegistrationOptions const&, GC::Ref<WebIDL::Promise>);
-    void get_registration(JS::Realm&, Utf16String const& client_url, GC::Ref<WebIDL::Promise>);
-    void get_registrations(JS::Realm&, GC::Ref<WebIDL::Promise>);
+    GC::Ref<WebIDL::Promise> register_(TrustedTypes::TrustedScriptURLOrString script_url, RegistrationOptions const& options);
 
-    void start_ready_promise_steps(GC::Ref<WebIDL::Promise>);
-    HTML::EnvironmentSettingsObject& service_worker_client() { return m_service_worker_client; }
+    GC::Ref<WebIDL::Promise> get_registration(String const& client_url);
+
+    GC::Ref<WebIDL::Promise> ready();
 
 #undef __ENUMERATE
 #define __ENUMERATE(attribute_name, event_name)       \
@@ -51,15 +50,15 @@ public:
 #undef __ENUMERATE
 
 private:
-    explicit ServiceWorkerContainer(HTML::EnvironmentSettingsObject&);
+    explicit ServiceWorkerContainer(JS::Realm&);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    void start_register(JS::Realm&, Optional<URL::URL> scope_url, Optional<URL::URL> script_url,
-        GC::Ref<WebIDL::Promise>, HTML::EnvironmentSettingsObject&, URL::URL referrer,
-        WorkerType, ServiceWorkerUpdateViaCache);
+    void start_register(Optional<URL::URL> scope_url, Optional<URL::URL> script_url, GC::Ref<WebIDL::Promise>, HTML::EnvironmentSettingsObject&, URL::URL referrer, Bindings::WorkerType, Bindings::ServiceWorkerUpdateViaCache);
 
     GC::Ref<HTML::EnvironmentSettingsObject> m_service_worker_client;
+    GC::Ptr<WebIDL::Promise> m_ready_promise;
 };
 
 }

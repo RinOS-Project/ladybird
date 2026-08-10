@@ -87,7 +87,7 @@ public:
                 munmap((void*)chunk, m_chunk_size);
 #endif
             } else {
-                kfree((void*)chunk);
+                kfree_sized((void*)chunk, m_chunk_size);
             }
         });
     }

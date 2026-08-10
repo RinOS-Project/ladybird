@@ -6,34 +6,35 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
 #include <LibWeb/CSS/CSSMathValue.h>
 
 namespace Web::CSS {
 
 // https://drafts.css-houdini.org/css-typed-om-1/#cssmathproduct
 class CSSMathProduct final : public CSSMathValue {
-    WEB_WRAPPABLE(CSSMathProduct, CSSMathValue);
+    WEB_PLATFORM_OBJECT(CSSMathProduct, CSSMathValue);
     GC_DECLARE_ALLOCATOR(CSSMathProduct);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSMathProduct> create(NumericType, GC::Ref<CSSNumericArray>);
-    static WebIDL::ExceptionOr<GC::Ref<CSSMathProduct>> create_for_constructor(ReadonlySpan<CSSNumberish>);
-    static WebIDL::ExceptionOr<GC::Ref<CSSMathProduct>> multiply_all_types_into_math_product(GC::RootVector<GC::Ref<CSSNumericValue>> const&);
+    [[nodiscard]] static GC::Ref<CSSMathProduct> create(JS::Realm&, NumericType, GC::Ref<CSSNumericArray>);
+    static WebIDL::ExceptionOr<GC::Ref<CSSMathProduct>> construct_impl(JS::Realm&, Vector<CSSNumberish>);
+    static WebIDL::ExceptionOr<GC::Ref<CSSMathProduct>> multiply_all_types_into_math_product(JS::Realm&, GC::RootVector<GC::Ref<CSSNumericValue>> const&);
 
     virtual ~CSSMathProduct() override;
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
     GC::Ref<CSSNumericArray> values() const;
 
-    virtual void serialize_math_value(Utf16StringBuilder&, Nested, Parens) const override;
+    virtual void serialize_math_value(StringBuilder&, Nested, Parens) const override;
     virtual bool is_equal_numeric_value(GC::Ref<CSSNumericValue> other) const override;
     virtual Optional<SumValue> create_a_sum_value() const override;
 
-    virtual WebIDL::ExceptionOr<CalcNodeRef> create_calculation_node(CalculationContext const&) const override;
+    virtual WebIDL::ExceptionOr<NonnullRefPtr<CalculationNode const>> create_calculation_node(CalculationContext const&) const override;
 
 private:
-    CSSMathProduct(NumericType, GC::Ref<CSSNumericArray>);
+    CSSMathProduct(JS::Realm&, NumericType, GC::Ref<CSSNumericArray>);
     GC::Ref<CSSNumericArray> m_values;
 };
 

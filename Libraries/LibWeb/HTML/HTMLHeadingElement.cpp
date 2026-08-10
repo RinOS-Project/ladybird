@@ -5,6 +5,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLHeadingElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/DOM/Document.h>
@@ -21,7 +24,13 @@ HTMLHeadingElement::HTMLHeadingElement(DOM::Document& document, DOM::QualifiedNa
 
 HTMLHeadingElement::~HTMLHeadingElement() = default;
 
-bool HTMLHeadingElement::is_presentational_hint(Utf16FlyString const& name) const
+void HTMLHeadingElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLHeadingElement);
+    Base::initialize(realm);
+}
+
+bool HTMLHeadingElement::is_presentational_hint(FlyString const& name) const
 {
     if (Base::is_presentational_hint(name))
         return true;
@@ -30,19 +39,19 @@ bool HTMLHeadingElement::is_presentational_hint(Utf16FlyString const& name) cons
 }
 
 // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
-void HTMLHeadingElement::apply_presentational_hints(Vector<CSS::StyleProperty>& properties) const
+void HTMLHeadingElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
 {
-    HTMLElement::apply_presentational_hints(properties);
-    for_each_attribute([&](Utf16FlyString const& name, Utf16View value) {
+    HTMLElement::apply_presentational_hints(cascaded_properties);
+    for_each_attribute([&](auto& name, auto& value) {
         if (name == HTML::AttributeNames::align) {
-            if (value == u"left"sv)
-                properties.append({ .property_id = CSS::PropertyID::TextAlign, .value = CSS::KeywordStyleValue::create(CSS::Keyword::Left) });
-            else if (value == u"right"sv)
-                properties.append({ .property_id = CSS::PropertyID::TextAlign, .value = CSS::KeywordStyleValue::create(CSS::Keyword::Right) });
-            else if (value == u"center"sv)
-                properties.append({ .property_id = CSS::PropertyID::TextAlign, .value = CSS::KeywordStyleValue::create(CSS::Keyword::Center) });
-            else if (value == u"justify"sv)
-                properties.append({ .property_id = CSS::PropertyID::TextAlign, .value = CSS::KeywordStyleValue::create(CSS::Keyword::Justify) });
+            if (value == "left"sv)
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::Left));
+            else if (value == "right"sv)
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::Right));
+            else if (value == "center"sv)
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::Center));
+            else if (value == "justify"sv)
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::Justify));
         }
     });
 }

@@ -12,10 +12,10 @@
 namespace Web::Layout {
 
 class ReplacedBox : public Box {
-    LAYOUT_NODE(ReplacedBox, Box);
+    GC_CELL(ReplacedBox, Box);
 
 public:
-    ReplacedBox(DOM::Document&, GC::Ptr<DOM::Element>, NonnullRefPtr<CSS::ComputedValues const>);
+    ReplacedBox(DOM::Document&, GC::Ptr<DOM::Element>, GC::Ref<CSS::ComputedProperties>);
     virtual ~ReplacedBox() override;
 
     GC::Ptr<DOM::Element const> dom_node() const { return as<DOM::Element>(Node::dom_node()); }
@@ -25,6 +25,7 @@ public:
 
 private:
     virtual bool is_replaced_box() const final { return true; }
+    virtual bool has_auto_content_box_size() const override { return true; }
 };
 
 template<>

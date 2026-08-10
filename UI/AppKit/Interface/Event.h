@@ -14,13 +14,12 @@
 
 namespace Ladybird {
 
-Web::UIEvents::KeyModifier ns_modifiers_to_key_modifiers(NSEventModifierFlags);
 Web::MouseEvent ns_event_to_mouse_event(Web::MouseEvent::Type, NSEvent*, NSView*, Web::UIEvents::MouseButton);
 
 Web::DragEvent ns_event_to_drag_event(Web::DragEvent::Type, id<NSDraggingInfo>, NSView*);
 Vector<URL::URL> drag_event_url_list(Web::DragEvent const&);
 
-Web::KeyEvent ns_event_to_key_event(Web::KeyEvent::Type, NSEvent*, bool should_insert_text = false);
+Web::KeyEvent ns_event_to_key_event(Web::KeyEvent::Type, NSEvent*);
 NSEvent* key_event_to_ns_event(Web::KeyEvent const&);
 
 NSEvent* create_context_menu_mouse_event(NSView*, Gfx::IntPoint);

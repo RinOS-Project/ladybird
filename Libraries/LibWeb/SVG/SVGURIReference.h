@@ -32,10 +32,11 @@ public:
         //      deprecated attribute.
         if (!m_href_animated_string) {
             auto& this_svg_element = as<SVGElement>(*this);
-            m_href_animated_string = SVGAnimatedString::create(this_svg_element,
+            m_href_animated_string = SVGAnimatedString::create(this_svg_element.realm(),
+                this_svg_element,
                 DOM::QualifiedName { AttributeNames::href, OptionalNone {}, OptionalNone {} },
                 supports_xlink_href == SupportsXLinkHref::Yes
-                    ? Optional<DOM::QualifiedName> { DOM::QualifiedName { AttributeNames::href, "xlink"_utf16_fly_string, Namespace::XLink } }
+                    ? Optional<DOM::QualifiedName> { DOM::QualifiedName { AttributeNames::href, "xlink"_fly_string, Namespace::XLink } }
                     : OptionalNone {});
         }
         return *m_href_animated_string;

@@ -1,2 +1,0 @@
-shared worker error
-worker error

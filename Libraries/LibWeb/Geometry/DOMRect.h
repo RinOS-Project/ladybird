@@ -8,24 +8,18 @@
 
 #include <LibWeb/Geometry/DOMRectReadOnly.h>
 
-namespace Web::Bindings {
-
-struct DOMRectInit;
-
-}
-
 namespace Web::Geometry {
 
 // https://drafts.fxtf.org/geometry/#DOMRect
-class WEB_API DOMRect final : public DOMRectReadOnly {
-    WEB_WRAPPABLE(DOMRect, DOMRectReadOnly);
+class DOMRect final : public DOMRectReadOnly {
+    WEB_PLATFORM_OBJECT(DOMRect, DOMRectReadOnly);
     GC_DECLARE_ALLOCATOR(DOMRect);
 
 public:
-    [[nodiscard]] static GC::Ref<DOMRect> create(double x, double y, double width, double height);
-    [[nodiscard]] static GC::Ref<DOMRect> create(Gfx::FloatRect const&);
-    [[nodiscard]] static GC::Ref<DOMRect> create();
-    [[nodiscard]] static GC::Ref<DOMRect> dom_rect_from_rect(Bindings::DOMRectInit const&);
+    static WebIDL::ExceptionOr<GC::Ref<DOMRect>> construct_impl(JS::Realm&, double x = 0, double y = 0, double width = 0, double height = 0);
+    [[nodiscard]] static GC::Ref<DOMRect> create(JS::Realm&, Gfx::FloatRect const&);
+    [[nodiscard]] static GC::Ref<DOMRect> create(JS::Realm&);
+    [[nodiscard]] static GC::Ref<DOMRect> from_rect(JS::VM&, DOMRectInit const&);
 
     virtual ~DOMRect() override;
 
@@ -40,8 +34,10 @@ public:
     void set_height(double height) { m_rect.set_height(height); }
 
 private:
-    DOMRect(double x, double y, double width, double height);
-    DOMRect();
+    DOMRect(JS::Realm&, double x, double y, double width, double height);
+    explicit DOMRect(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

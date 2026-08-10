@@ -25,7 +25,6 @@ public:
     static ErrorOr<NonnullOwnPtr<MappedFile>> map(StringView path, Mode mode = Mode::ReadOnly);
     static ErrorOr<NonnullOwnPtr<MappedFile>> map_from_file(NonnullOwnPtr<Core::File>, StringView path);
     static ErrorOr<NonnullOwnPtr<MappedFile>> map_from_fd_and_close(int fd, StringView path, Mode mode = Mode::ReadOnly);
-    static ErrorOr<NonnullOwnPtr<MappedFile>> map_from_fd_range_and_close(int fd, StringView path, off_t offset, size_t size, Mode mode = Mode::ReadOnly);
     virtual ~MappedFile();
 
     // Non-stream APIs for using MappedFile as a simple POSIX API wrapper.
@@ -34,10 +33,8 @@ public:
     ReadonlyBytes bytes() const LIFETIME_BOUND { return { m_data, m_size }; }
 
 private:
-    explicit MappedFile(void* mapping, size_t mapping_size, void* data, size_t size, Mode);
+    explicit MappedFile(void*, size_t, Mode, bool is_memory_mapped);
 
-    void* m_mapping { nullptr };
-    size_t m_mapping_size { 0 };
     void* m_data { nullptr };
     size_t m_size { 0 };
     bool m_is_memory_mapped { false };

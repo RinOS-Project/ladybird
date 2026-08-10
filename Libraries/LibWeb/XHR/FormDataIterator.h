@@ -6,26 +6,27 @@
 
 #pragma once
 
-#include <LibJS/Runtime/Object.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/XHR/FormData.h>
 
 namespace Web::XHR {
 
-class FormDataIterator : public JS::Object {
-    JS_OBJECT(FormDataIterator, JS::Object);
+class FormDataIterator : public Bindings::PlatformObject {
+    WEB_NON_IDL_PLATFORM_OBJECT(FormDataIterator, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(FormDataIterator);
 
 public:
-    [[nodiscard]] static GC::Ref<FormDataIterator> create(JS::Realm&, FormData const&, JS::Object::PropertyKind iterator_kind);
+    [[nodiscard]] static GC::Ref<FormDataIterator> create(FormData const&, JS::Object::PropertyKind iterator_kind);
 
     virtual ~FormDataIterator() override;
 
-    JS::Object* next(JS::Realm&);
+    JS::Object* next();
 
 private:
-    FormDataIterator(JS::Realm&, FormData const&, JS::Object::PropertyKind iterator_kind);
+    FormDataIterator(FormData const&, JS::Object::PropertyKind iterator_kind);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     GC::Ref<FormData const> m_form_data;
     JS::Object::PropertyKind m_iterator_kind;

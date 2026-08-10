@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/UIEventPrototype.h>
 #include <LibWeb/HTML/WindowProxy.h>
 #include <LibWeb/UIEvents/UIEvent.h>
 
@@ -12,40 +13,23 @@ namespace Web::UIEvents {
 
 GC_DEFINE_ALLOCATOR(UIEvent);
 
-GC::Ref<UIEvent> UIEvent::create(FlyString const& event_name, HighResolutionTime::DOMHighResTimeStamp time_stamp)
+GC::Ref<UIEvent> UIEvent::create(JS::Realm& realm, FlyString const& event_name)
 {
-    return GC::Heap::the().allocate<UIEvent>(event_name, time_stamp);
+    return realm.create<UIEvent>(realm, event_name);
 }
 
-GC::Ref<UIEvent> UIEvent::create(FlyString const& event_name, UIEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
+WebIDL::ExceptionOr<GC::Ref<UIEvent>> UIEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, UIEventInit const& event_init)
 {
-    return GC::Heap::the().allocate<UIEvent>(event_name, event_init, time_stamp);
+    return realm.create<UIEvent>(realm, event_name, event_init);
 }
 
-GC::Ref<UIEvent> UIEvent::create(Utf16String const& event_name, UIEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-{
-    return GC::Heap::the().allocate<UIEvent>(Utf16FlyString::from_utf16(event_name.utf16_view()), event_init, time_stamp);
-}
-
-UIEvent::UIEvent(FlyString const& event_name, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-    : Event(event_name, time_stamp)
+UIEvent::UIEvent(JS::Realm& realm, FlyString const& event_name)
+    : Event(realm, event_name)
 {
 }
 
-UIEvent::UIEvent(Utf16FlyString const& event_name, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-    : Event(event_name, time_stamp)
-{
-}
-
-UIEvent::UIEvent(FlyString const& event_name, UIEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-    : Event(event_name, event_init, time_stamp)
-    , m_view(event_init.view)
-    , m_detail(event_init.detail)
-{
-}
-
-UIEvent::UIEvent(Utf16FlyString const& event_name, UIEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-    : Event(event_name, event_init, time_stamp)
+UIEvent::UIEvent(JS::Realm& realm, FlyString const& event_name, UIEventInit const& event_init)
+    : Event(realm, event_name, event_init)
     , m_view(event_init.view)
     , m_detail(event_init.detail)
 {
@@ -53,7 +37,13 @@ UIEvent::UIEvent(Utf16FlyString const& event_name, UIEventInit const& event_init
 
 UIEvent::~UIEvent() = default;
 
-void UIEvent::visit_edges(GC::Cell::Visitor& visitor)
+void UIEvent::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(UIEvent);
+    Base::initialize(realm);
+}
+
+void UIEvent::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_view);

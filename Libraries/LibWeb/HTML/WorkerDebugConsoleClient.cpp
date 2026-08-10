@@ -7,6 +7,7 @@
 #include <AK/StringBuilder.h>
 #include <LibGC/RootVector.h>
 #include <LibJS/Runtime/Completion.h>
+#include <LibJS/Runtime/Realm.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibWeb/HTML/WorkerDebugConsoleClient.h>
 

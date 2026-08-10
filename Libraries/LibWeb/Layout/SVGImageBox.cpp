@@ -5,18 +5,22 @@
  */
 
 #include <LibWeb/Layout/SVGImageBox.h>
-#include <LibWeb/Painting/SVGImagePaintable.h>
+#include <LibWeb/Painting/ImagePaintable.h>
+#include <LibWeb/Painting/SVGGraphicsPaintable.h>
+#include <LibWeb/Painting/StackingContext.h>
 
 namespace Web::Layout {
 
-SVGImageBox::SVGImageBox(DOM::Document& document, SVG::SVGGraphicsElement& element, NonnullRefPtr<CSS::ComputedValues const> style)
+GC_DEFINE_ALLOCATOR(SVGImageBox);
+
+SVGImageBox::SVGImageBox(DOM::Document& document, SVG::SVGGraphicsElement& element, GC::Ref<CSS::ComputedProperties> style)
     : SVGGraphicsBox(document, element, style)
 {
 }
 
-RefPtr<Painting::Paintable> SVGImageBox::create_paintable() const
+GC::Ptr<Painting::Paintable> SVGImageBox::create_paintable() const
 {
-    return Painting::SVGImagePaintable::create(*this);
+    return Painting::ImagePaintable::create(*this);
 }
 
 }

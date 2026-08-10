@@ -7,16 +7,14 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Crypto/Crypto.h>
 #include <LibWeb/HTML/EventNames.h>
-#include <LibWeb/HTML/WindowOrWorkerGlobalScope.h>
 #include <LibWeb/IndexedDB/IDBCursor.h>
 #include <LibWeb/IndexedDB/IDBIndex.h>
 #include <LibWeb/IndexedDB/IDBObjectStore.h>
 #include <LibWeb/IndexedDB/IDBRequest.h>
 #include <LibWeb/IndexedDB/IDBTransaction.h>
-#include <LibWeb/WebIDL/DOMException.h>
 
 namespace Web::IndexedDB {
 
@@ -24,31 +22,22 @@ GC_DEFINE_ALLOCATOR(IDBRequest);
 
 IDBRequest::~IDBRequest() = default;
 
-IDBRequest::IDBRequest(GC::Ref<DOM::EventTarget> relevant_global_object, IDBRequestSource source)
-    : EventTarget()
+IDBRequest::IDBRequest(JS::Realm& realm, IDBRequestSource source)
+    : EventTarget(realm)
     , m_source(source)
-    , m_global_object(relevant_global_object)
     , m_uuid(Crypto::generate_random_uuid())
 {
 }
 
-GC::Ref<IDBRequest> IDBRequest::create(GC::Ref<DOM::EventTarget> relevant_global_object, IDBRequestSource source)
+void IDBRequest::initialize(JS::Realm& realm)
 {
-    return GC::Heap::the().allocate<IDBRequest>(relevant_global_object, source);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(IDBRequest);
+    Base::initialize(realm);
 }
 
-// https://w3c.github.io/IndexedDB/#dom-idbrequest-result
-WebIDL::ExceptionOr<JS::Value> IDBRequest::result() const
+GC::Ref<IDBRequest> IDBRequest::create(JS::Realm& realm, IDBRequestSource source)
 {
-    // 1. If this's done flag is false, then throw an "InvalidStateError" DOMException.
-    if (!done())
-        return WebIDL::InvalidStateError::create("The request is not done"_utf16);
-
-    // 2. Otherwise, return this's result, or undefined if the request resulted in an error.
-    if (has_error())
-        return JS::js_undefined();
-
-    return m_result;
+    return realm.create<IDBRequest>(realm, source);
 }
 
 void IDBRequest::visit_edges(Visitor& visitor)
@@ -56,19 +45,12 @@ void IDBRequest::visit_edges(Visitor& visitor)
     Base::visit_edges(visitor);
     visitor.visit(m_result);
     visitor.visit(m_transaction);
-    visitor.visit(m_source);
-    visitor.visit(m_global_object);
+
+    m_source.visit(
+        [&](Empty) {},
+        [&](auto const& object) { visitor.visit(object); });
+
     visitor.visit(m_error);
-}
-
-JS::Object& IDBRequest::relevant_global_object() const
-{
-    return HTML::relevant_global_object(relevant_global_scope());
-}
-
-HTML::WindowOrWorkerGlobalScopeMixin& IDBRequest::relevant_global_scope() const
-{
-    return HTML::relevant_window_or_worker_global_scope(*m_global_object);
 }
 
 DOM::EventTarget* IDBRequest::get_parent(DOM::Event const&)
@@ -102,21 +84,36 @@ WebIDL::CallbackType* IDBRequest::onerror()
     return event_handler_attribute(HTML::EventNames::error);
 }
 
+// https://w3c.github.io/IndexedDB/#dom-idbrequest-readystate
+[[nodiscard]] Bindings::IDBRequestReadyState IDBRequest::ready_state() const
+{
+    // The readyState getter steps are to return "pending" if this's done flag is false, and "done" otherwise.
+    return m_done ? Bindings::IDBRequestReadyState::Done : Bindings::IDBRequestReadyState::Pending;
+}
+
 // https://w3c.github.io/IndexedDB/#dom-idbrequest-error
 [[nodiscard]] GC::Ptr<WebIDL::DOMException> IDBRequest::error() const
 {
     // 1. If this's done flag is false, then throw an "InvalidStateError" DOMException.
     if (!m_done)
-        return WebIDL::InvalidStateError::create("The request is not done"_utf16);
+        return WebIDL::InvalidStateError::create(realm(), "The request is not done"_utf16);
 
     // 2. Otherwise, return this's error, or null if no error occurred.
     return m_error.value_or(nullptr);
 }
 
-Bindings::IDBRequestReadyState IDBRequest::ready_state() const
+// https://w3c.github.io/IndexedDB/#dom-idbrequest-result
+[[nodiscard]] WebIDL::ExceptionOr<JS::Value> IDBRequest::result() const
 {
-    // The readyState getter steps are to return "pending" if this's done flag is false, and "done" otherwise.
-    return done() ? Bindings::IDBRequestReadyState::Done : Bindings::IDBRequestReadyState::Pending;
+    // 1. If this's done flag is false, then throw an "InvalidStateError" DOMException.
+    if (!m_done)
+        return WebIDL::InvalidStateError::create(realm(), "The request is not done"_utf16);
+
+    // 2. Otherwise, return this's result, or undefined if the request resulted in an error.
+    if (m_error.has_value())
+        return JS::js_undefined();
+
+    return m_result;
 }
 
 }

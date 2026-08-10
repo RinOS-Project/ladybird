@@ -4,17 +4,17 @@ Program (script) @1:1
       ├─ BindingPattern (object)
       │  ├─ entry
       │  │  ├─ name
-      │  │  │  └─ Identifier "foo" [global] @1:7
+      │  │  │  └─ Identifier "foo" [global] @1:5
       │  │  └─ alias
-      │  │     └─ Identifier "a" [global] (let) @1:12
+      │  │     └─ Identifier "a" [global] @1:5
       │  └─ entry
       │     ├─ name
-      │     │  └─ Identifier "1" [global] @1:15
+      │     │  └─ Identifier "1" [global] @1:5
       │     └─ alias
-      │        └─ Identifier "b" [global] (let) @1:18
+      │        └─ Identifier "b" [global] @1:5
       └─ ObjectExpression @1:24
          ├─ ObjectProperty @1:24
-         │  ├─ StringLiteral "foo" @1:26
+         │  ├─ StringLiteral "foo" @1:24
          │  └─ NumericLiteral 1 @1:31
          └─ ObjectProperty @1:24
             ├─ NumericLiteral 1 @1:34

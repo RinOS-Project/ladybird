@@ -1,3 +1,5 @@
+#import <SVG/SVGAnimatedRect.idl>
+
 // https://svgwg.org/svg2-draft/types.html#InterfaceSVGFitToViewBox
 interface mixin SVGFitToViewBox {
     [SameObject, ImplementedAs=view_box_for_bindings] readonly attribute SVGAnimatedRect viewBox;

@@ -7,83 +7,161 @@
 
 #include <AK/Debug.h>
 #include <AK/QuickSort.h>
-#include <LibGC/RootHashTable.h>
-#include <LibJS/Bytecode/Executable.h>
+#include <LibJS/Bytecode/Interpreter.h>
+#include <LibJS/Parser.h>
 #include <LibJS/Runtime/AsyncFunctionDriverWrapper.h>
 #include <LibJS/Runtime/ECMAScriptFunctionObject.h>
-#include <LibJS/Runtime/ExternalMemory.h>
 #include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/ModuleEnvironment.h>
 #include <LibJS/Runtime/PromiseCapability.h>
 #include <LibJS/Runtime/SharedFunctionInstanceData.h>
-#include <LibJS/Runtime/VM.h>
-#include <LibJS/RustIntegration.h>
-#include <LibJS/Script.h>
-#include <LibJS/SourceCode.h>
 #include <LibJS/SourceTextModule.h>
 
 namespace JS {
 
 GC_DEFINE_ALLOCATOR(SourceTextModule);
 
-static size_t import_attributes_external_memory_size(Vector<ImportAttribute> const& attributes)
+// 16.2.2.4 Static Semantics: WithClauseToAttributes, https://tc39.es/ecma262/#sec-withclausetoattributes
+static Vector<ImportAttribute> with_clause_to_assertions(Vector<ImportAttribute> const& source_attributes)
 {
-    size_t size = vector_external_memory_size(attributes);
-    for (auto const& attribute : attributes) {
-        size = saturating_add_external_memory_size(size, utf16_string_external_memory_size(attribute.key));
-        size = saturating_add_external_memory_size(size, utf16_string_external_memory_size(attribute.value));
+    // WithClause : with { WithEntries ,opt }
+    // 1. Let attributes be WithClauseToAttributes of WithEntries.
+    Vector<ImportAttribute> attributes;
+
+    // AssertEntries : AssertionKey : StringLiteral
+    // AssertEntries : AssertionKey : StringLiteral , WithEntries
+
+    for (auto const& attribute : source_attributes) {
+        // 1. Let key be the PropName of AttributeKey.
+        // 2. Let entry be the ImportAttribute Record { [[Key]]: key, [[Value]]: SV of StringLiteral }.
+        // 3. Return « entry ».
+        attributes.empend(attribute);
     }
-    return size;
+
+    // 2. Sort attributes according to the lexicographic order of their [[Key]] field, treating the value of each such
+    //    field as a sequence of UTF-16 code unit values. NOTE: This sorting is observable only in that hosts are
+    //    prohibited from changing behaviour based on the order in which attributes are enumerated.
+    // NOTE: The sorting is done in construction of the ModuleRequest object.
+
+    // 3. Return attributes.
+    return attributes;
 }
 
-static size_t module_request_external_memory_size(Optional<ModuleRequest> const& request)
+// 16.2.1.4 Static Semantics: ModuleRequests, https://tc39.es/ecma262/#sec-static-semantics-modulerequests
+static Vector<ModuleRequest> module_requests(Program& program)
 {
-    if (!request.has_value())
-        return 0;
-    return import_attributes_external_memory_size(request->attributes);
+    // A List of all the ModuleSpecifier strings used by the module represented by this record to request the importation of a module.
+    // NOTE: The List is source text occurrence ordered!
+    struct RequestedModuleAndSourceIndex {
+        u32 source_offset { 0 };
+        ModuleRequest const* module_request { nullptr };
+    };
+
+    Vector<RequestedModuleAndSourceIndex> requested_modules_with_indices;
+
+    for (auto const& import_statement : program.imports())
+        requested_modules_with_indices.empend(import_statement->start_offset(), &import_statement->module_request());
+
+    for (auto const& export_statement : program.exports()) {
+        for (auto const& export_entry : export_statement->entries()) {
+            if (!export_entry.is_module_request())
+                continue;
+            requested_modules_with_indices.empend(export_statement->start_offset(), &export_statement->module_request());
+        }
+    }
+
+    // NOTE: The List is source code occurrence ordered. https://tc39.es/ecma262/#table-cyclic-module-fields
+    quick_sort(requested_modules_with_indices, [&](RequestedModuleAndSourceIndex const& lhs, RequestedModuleAndSourceIndex const& rhs) {
+        return lhs.source_offset < rhs.source_offset;
+    });
+
+    Vector<ModuleRequest> requested_modules_in_source_order;
+    requested_modules_in_source_order.ensure_capacity(requested_modules_with_indices.size());
+
+    for (auto const& module : requested_modules_with_indices) {
+        if (module.module_request->attributes.is_empty()) {
+            // ImportDeclaration : import ImportClause FromClause ;
+            // ExportDeclaration : export ExportFromClause FromClause ;
+
+            // 1. Let specifier be SV of FromClause.
+            // 2. Return a List whose sole element is the ModuleRequest Record { [[Specifer]]: specifier, [[Attributes]]: « » }.
+            requested_modules_in_source_order.empend(module.module_request->module_specifier);
+        } else {
+            // ImportDeclaration : import ImportClause FromClause WithClause ;
+            // ExportDeclaration : export ExportFromClause FromClause WithClause ;
+
+            // 1. Let specifier be the SV of FromClause.
+            // 2. Let attributes be WithClauseToAttributes of WithClause.
+            auto attributes = with_clause_to_assertions(module.module_request->attributes);
+
+            // NOTE: We have to modify the attributes in place because else it might keep unsupported ones.
+            const_cast<ModuleRequest*>(module.module_request)->attributes = move(attributes);
+
+            // 3. Return a List whose sole element is the ModuleRequest Record { [[Specifier]]: specifier, [[Attributes]]: attributes }.
+            requested_modules_in_source_order.empend(module.module_request->module_specifier, module.module_request->attributes);
+        }
+    }
+
+    return requested_modules_in_source_order;
 }
 
-static size_t import_entries_external_memory_size(Vector<ImportEntry> const& entries)
-{
-    size_t size = vector_external_memory_size(entries);
-    for (auto const& entry : entries)
-        size = saturating_add_external_memory_size(size, module_request_external_memory_size(entry.m_module_request));
-    return size;
-}
-
-static size_t export_entries_external_memory_size(Vector<ExportEntry> const& entries)
-{
-    size_t size = vector_external_memory_size(entries);
-    for (auto const& entry : entries)
-        size = saturating_add_external_memory_size(size, module_request_external_memory_size(entry.m_module_request));
-    return size;
-}
-
-SourceTextModule::SourceTextModule(Realm& realm, StringView filename, Script::HostDefined* host_defined, bool has_top_level_await,
-    Vector<ModuleRequest> requested_modules, Vector<ImportEntry> import_entries,
-    Vector<ExportEntry> local_export_entries, Vector<ExportEntry> indirect_export_entries,
-    Vector<ExportEntry> star_export_entries, Optional<Utf16FlyString> default_export_binding_name,
-    Vector<Utf16FlyString> var_declared_names, Vector<LexicalBinding> lexical_bindings,
-    Vector<FunctionToInitialize> functions_to_initialize,
-    Vector<GC::Root<SharedFunctionInstanceData>> shared_function_data,
-    GC::Ptr<Bytecode::Executable> executable,
-    GC::Ptr<SharedFunctionInstanceData> tla_shared_data,
-    ExecutableBacking executable_backing)
+SourceTextModule::SourceTextModule(Realm& realm, StringView filename, Script::HostDefined* host_defined, bool has_top_level_await, NonnullRefPtr<Program> body, Vector<ModuleRequest> requested_modules,
+    Vector<ImportEntry> import_entries, Vector<ExportEntry> local_export_entries,
+    Vector<ExportEntry> indirect_export_entries, Vector<ExportEntry> star_export_entries,
+    Optional<Utf16FlyString> default_export_binding_name)
     : CyclicModule(realm, filename, has_top_level_await, move(requested_modules), host_defined)
-    , m_execution_context(ExecutionContext::create(0, ReadonlySpan<Value> {}, 0))
+    , m_ecmascript_code(move(body))
+    , m_execution_context(ExecutionContext::create(0, 0, 0))
     , m_import_entries(move(import_entries))
     , m_local_export_entries(move(local_export_entries))
     , m_indirect_export_entries(move(indirect_export_entries))
     , m_star_export_entries(move(star_export_entries))
     , m_default_export_binding_name(move(default_export_binding_name))
-    , m_executable(executable)
-    , m_tla_shared_data(tla_shared_data)
-    , m_executable_backing(executable_backing)
 {
-    for (auto& shared_data : shared_function_data)
-        m_shared_function_data.append(*shared_data);
+    auto& vm = realm.vm();
 
-    verify_executable_backing_invariants();
+    // Pre-compute var declared names (initialize_environment step 21).
+    MUST(m_ecmascript_code->for_each_var_declared_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
+        m_var_declared_names.append(identifier.string());
+        return {};
+    }));
+
+    // Pre-compute lexical bindings and functions to initialize (initialize_environment step 24).
+    MUST(m_ecmascript_code->for_each_lexically_scoped_declaration([&](Declaration const& declaration) {
+        return declaration.for_each_bound_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
+            LexicalBinding binding;
+            binding.name = identifier.string();
+            binding.is_constant = declaration.is_constant_declaration();
+
+            if (declaration.is_function_declaration()) {
+                VERIFY(is<FunctionDeclaration>(declaration));
+                auto const& function_declaration = static_cast<FunctionDeclaration const&>(declaration);
+                auto shared_data = SharedFunctionInstanceData::create_for_function_node(vm, function_declaration);
+                if (function_declaration.name() == ExportStatement::local_name_for_default)
+                    shared_data->m_name = "default"_utf16_fly_string;
+                binding.function_index = static_cast<i32>(m_functions_to_initialize.size());
+                m_functions_to_initialize.append({ *shared_data, shared_data->m_name });
+            }
+
+            m_lexical_bindings.append(move(binding));
+            return {};
+        });
+    }));
+
+    // For TLA modules, pre-create the SharedFunctionInstanceData for the
+    // async wrapper function so that execute_module() doesn't need the AST.
+    if (has_top_level_await) {
+        FunctionParsingInsights parsing_insights;
+        parsing_insights.uses_this_from_environment = true;
+        parsing_insights.uses_this = true;
+        m_tla_shared_data = vm.heap().allocate<SharedFunctionInstanceData>(
+            vm, FunctionKind::Async,
+            "module code with top-level await"_utf16_fly_string,
+            0, FunctionParameters::empty(), *m_ecmascript_code,
+            Utf16View {}, true, false, parsing_insights, Vector<LocalVariable> {});
+        m_tla_shared_data->m_is_module_wrapper = true;
+        m_ecmascript_code = nullptr;
+    }
 }
 
 SourceTextModule::~SourceTextModule() = default;
@@ -93,221 +171,150 @@ void SourceTextModule::visit_edges(Cell::Visitor& visitor)
     Base::visit_edges(visitor);
     visitor.visit(m_import_meta);
     m_execution_context->visit_edges(visitor);
-    m_shared_function_data.visit_edges(visitor);
     for (auto const& function : m_functions_to_initialize)
         visitor.visit(function.shared_data);
     visitor.visit(m_executable);
     visitor.visit(m_tla_shared_data);
 }
 
-size_t SourceTextModule::external_memory_size() const
-{
-    size_t size = Base::external_memory_size();
-    size = saturating_add_external_memory_size(size, import_entries_external_memory_size(m_import_entries));
-    size = saturating_add_external_memory_size(size, export_entries_external_memory_size(m_local_export_entries));
-    size = saturating_add_external_memory_size(size, export_entries_external_memory_size(m_indirect_export_entries));
-    size = saturating_add_external_memory_size(size, export_entries_external_memory_size(m_star_export_entries));
-    size = saturating_add_external_memory_size(size, vector_external_memory_size(m_var_declared_names));
-    size = saturating_add_external_memory_size(size, vector_external_memory_size(m_lexical_bindings));
-    size = saturating_add_external_memory_size(size, vector_external_memory_size(m_functions_to_initialize));
-    return size;
-}
-
-Result<GC::Ref<SourceTextModule>, Vector<ParserError>> SourceTextModule::parse_from_pre_parsed(FFI::ParsedProgram* parsed, NonnullRefPtr<SourceCode const> source_code, Realm& realm, StringView filename, Script::HostDefined* host_defined)
-{
-    auto rust_result = RustIntegration::compile_parsed_module(parsed, move(source_code), realm);
-    // Always from the Rust pipeline, so the Optional must have a value.
-    VERIFY(rust_result.has_value());
-    if (rust_result->is_error())
-        return rust_result->release_error();
-    auto& module_result = rust_result->value();
-    GC::ConservativeVector<FunctionToInitialize> functions_to_initialize;
-    functions_to_initialize.ensure_capacity(module_result.functions_to_initialize.size());
-    for (auto& f : module_result.functions_to_initialize)
-        functions_to_initialize.append({ *f.shared_data, move(f.name) });
-    return realm.heap().allocate<SourceTextModule>(
-        realm, filename, host_defined, module_result.has_top_level_await,
-        move(module_result.requested_modules), move(module_result.import_entries),
-        move(module_result.local_export_entries), move(module_result.indirect_export_entries),
-        move(module_result.star_export_entries), move(module_result.default_export_binding_name),
-        move(module_result.var_declared_names), move(module_result.lexical_bindings),
-        move(functions_to_initialize),
-        move(module_result.shared_function_data),
-        module_result.executable.ptr(), module_result.tla_shared_data.ptr(), ExecutableBacking::source());
-}
-
-Result<GC::Ref<SourceTextModule>, Vector<ParserError>> SourceTextModule::parse_from_pre_compiled(FFI::CompiledProgram* compiled, NonnullRefPtr<SourceCode const> source_code, Realm& realm, StringView filename, Script::HostDefined* host_defined)
-{
-    auto rust_result = RustIntegration::materialize_compiled_module(compiled, move(source_code), realm);
-    // Always from the Rust pipeline, so the Optional must have a value.
-    VERIFY(rust_result.has_value());
-    if (rust_result->is_error())
-        return rust_result->release_error();
-    auto& module_result = rust_result->value();
-    Vector<FunctionToInitialize> functions_to_initialize;
-    functions_to_initialize.ensure_capacity(module_result.functions_to_initialize.size());
-    for (auto& f : module_result.functions_to_initialize)
-        functions_to_initialize.append({ *f.shared_data, move(f.name) });
-    return realm.heap().allocate<SourceTextModule>(
-        realm, filename, host_defined, module_result.has_top_level_await,
-        move(module_result.requested_modules), move(module_result.import_entries),
-        move(module_result.local_export_entries), move(module_result.indirect_export_entries),
-        move(module_result.star_export_entries), move(module_result.default_export_binding_name),
-        move(module_result.var_declared_names), move(module_result.lexical_bindings),
-        move(functions_to_initialize),
-        move(module_result.shared_function_data),
-        module_result.executable.ptr(), module_result.tla_shared_data.ptr(), ExecutableBacking::heap_bytecode());
-}
-
-Result<GC::Ref<SourceTextModule>, Vector<ParserError>> SourceTextModule::parse_from_bytecode_cache(NonnullRefPtr<RustIntegration::DecodedBytecodeCache> bytecode_cache, NonnullRefPtr<SourceCode const> source_code, Realm& realm, StringView filename, Script::HostDefined* host_defined)
-{
-    auto rust_result = RustIntegration::materialize_bytecode_cache_module(bytecode_cache, move(source_code), realm);
-    // Always from the Rust pipeline, so the Optional must have a value.
-    VERIFY(rust_result.has_value());
-    if (rust_result->is_error())
-        return rust_result->release_error();
-    auto& module_result = rust_result->value();
-    Vector<FunctionToInitialize> functions_to_initialize;
-    functions_to_initialize.ensure_capacity(module_result.functions_to_initialize.size());
-    for (auto& f : module_result.functions_to_initialize)
-        functions_to_initialize.append({ *f.shared_data, move(f.name) });
-    return realm.heap().allocate<SourceTextModule>(
-        realm, filename, host_defined, module_result.has_top_level_await,
-        move(module_result.requested_modules), move(module_result.import_entries),
-        move(module_result.local_export_entries), move(module_result.indirect_export_entries),
-        move(module_result.star_export_entries), move(module_result.default_export_binding_name),
-        move(module_result.var_declared_names), move(module_result.lexical_bindings),
-        move(functions_to_initialize),
-        move(module_result.shared_function_data),
-        module_result.executable.ptr(), module_result.tla_shared_data.ptr(), ExecutableBacking::mapped_bytecode_cache(move(bytecode_cache)));
-}
-
-bool SourceTextModule::try_install_bytecode_cache(NonnullRefPtr<RustIntegration::DecodedBytecodeCache> bytecode_cache, NonnullRefPtr<SourceCode const> source_code)
-{
-    if (m_executable_backing.is_mapped_bytecode_cache())
-        return false;
-
-    auto shared_function_data = collect_shared_function_data();
-    auto result = RustIntegration::try_install_bytecode_cache_module(bytecode_cache, move(source_code), realm(), m_executable, shared_function_data, m_tla_shared_data);
-    if (!result.has_value())
-        return false;
-
-    complete_bytecode_cache_install(result->executable.ptr(), result->top_level_await_executable.ptr(), move(bytecode_cache));
-    return true;
-}
-
-void SourceTextModule::install_generated_bytecode_cache(NonnullRefPtr<RustIntegration::DecodedBytecodeCache> bytecode_cache, NonnullRefPtr<SourceCode const> source_code)
-{
-    VERIFY(can_install_generated_bytecode_cache());
-
-    auto shared_function_data = collect_shared_function_data();
-    auto result = RustIntegration::install_generated_bytecode_cache_module(bytecode_cache, move(source_code), realm(), m_executable, shared_function_data, m_tla_shared_data);
-    complete_bytecode_cache_install(result.executable.ptr(), result.top_level_await_executable.ptr(), move(bytecode_cache));
-}
-
-bool SourceTextModule::can_generate_bytecode_cache() const
-{
-    auto has_executable = m_executable || (m_tla_shared_data && m_tla_shared_data->m_executable);
-    return has_executable && m_executable_backing.can_generate_bytecode_cache();
-}
-
-bool SourceTextModule::can_install_generated_bytecode_cache() const
-{
-    auto has_executable = m_executable || (m_tla_shared_data && m_tla_shared_data->m_executable);
-    return has_executable && m_executable_backing.can_install_generated_bytecode_cache();
-}
-
-void SourceTextModule::begin_bytecode_cache_generation()
-{
-    VERIFY(can_generate_bytecode_cache());
-    m_executable_backing.begin_bytecode_cache_generation();
-    verify_executable_backing_invariants();
-}
-
-void SourceTextModule::finish_bytecode_cache_generation_without_install()
-{
-    m_executable_backing.finish_bytecode_cache_generation_without_install();
-    verify_executable_backing_invariants();
-}
-
-Vector<SharedFunctionInstanceData*> SourceTextModule::collect_shared_function_data()
-{
-    Vector<SharedFunctionInstanceData*> shared_function_data;
-    shared_function_data.ensure_capacity(m_shared_function_data.size_slow());
-    m_shared_function_data.for_each([&](auto& shared_data) {
-        shared_function_data.unchecked_append(&shared_data);
-    });
-    return shared_function_data;
-}
-
-void SourceTextModule::complete_bytecode_cache_install(GC::Ptr<Bytecode::Executable> executable, GC::Ptr<Bytecode::Executable> top_level_await_executable, NonnullRefPtr<RustIntegration::DecodedBytecodeCache> bytecode_cache)
-{
-    VERIFY(executable || top_level_await_executable);
-    if (executable) {
-        VERIFY(m_executable);
-        m_executable = executable;
-    }
-    if (top_level_await_executable) {
-        VERIFY(m_tla_shared_data);
-        m_tla_shared_data->set_executable(top_level_await_executable);
-        m_tla_shared_data->clear_non_bytecode_cache_compile_inputs();
-    }
-    m_shared_function_data.clear_non_bytecode_cache_compile_inputs();
-    m_executable_backing.finish_bytecode_cache_install(move(bytecode_cache));
-    verify_executable_backing_invariants();
-}
-
-Result<GC::Ref<SourceTextModule>, Vector<ParserError>> SourceTextModule::from_rust_result(Optional<Result<RustIntegration::ModuleResult, Vector<ParserError>>> rust_result, Realm& realm, StringView filename, Script::HostDefined* host_defined)
-{
-    if (!rust_result.has_value())
-        return Vector<ParserError> {};
-    if (rust_result->is_error())
-        return rust_result->release_error();
-
-    auto& module_result = rust_result->value();
-    GC::ConservativeVector<FunctionToInitialize> functions_to_initialize;
-    functions_to_initialize.ensure_capacity(module_result.functions_to_initialize.size());
-    for (auto& f : module_result.functions_to_initialize)
-        functions_to_initialize.append({ *f.shared_data, move(f.name) });
-    return realm.heap().allocate<SourceTextModule>(
-        realm, filename, host_defined, module_result.has_top_level_await,
-        move(module_result.requested_modules), move(module_result.import_entries),
-        move(module_result.local_export_entries), move(module_result.indirect_export_entries),
-        move(module_result.star_export_entries), move(module_result.default_export_binding_name),
-        move(module_result.var_declared_names), move(module_result.lexical_bindings),
-        move(functions_to_initialize),
-        move(module_result.shared_function_data),
-        module_result.executable.ptr(), module_result.tla_shared_data.ptr(), ExecutableBacking::source());
-}
-
 // 16.2.1.7.1 ParseModule ( sourceText, realm, hostDefined ), https://tc39.es/ecma262/#sec-parsemodule
-Result<GC::Ref<SourceTextModule>, Vector<ParserError>> SourceTextModule::parse(Utf16View source_text, Realm& realm, StringView filename, Utf16View display_filename, Script::HostDefined* host_defined)
+Result<GC::Ref<SourceTextModule>, Vector<ParserError>> SourceTextModule::parse(StringView source_text, Realm& realm, StringView filename, Script::HostDefined* host_defined)
 {
-    auto fallback_display_filename = display_filename.is_empty() ? Utf16String::from_utf8(filename) : Utf16String {};
-    if (display_filename.is_empty())
-        display_filename = fallback_display_filename.utf16_view();
+    // 1. Let body be ParseText(sourceText, Module).
+    auto parser = Parser(Lexer(SourceCode::create(String::from_utf8(filename).release_value_but_fixme_should_propagate_errors(), Utf16String::from_utf8(source_text))), Program::Type::Module);
+    auto body = parser.parse_program();
 
-    return from_rust_result(RustIntegration::compile_module(source_text, realm, display_filename), realm, filename, host_defined);
-}
+    // 2. If body is a List of errors, return body.
+    if (parser.has_errors())
+        return parser.errors();
 
-Result<GC::Ref<SourceTextModule>, Vector<ParserError>> SourceTextModule::parse(NonnullRefPtr<SourceCode const> source_code, Realm& realm, StringView filename, Script::HostDefined* host_defined)
-{
-    return from_rust_result(RustIntegration::compile_module(move(source_code), realm), realm, filename, host_defined);
-}
+    // 3. Let requestedModules be the ModuleRequests of body.
+    auto requested_modules = module_requests(*body);
 
-void SourceTextModule::verify_executable_backing_invariants()
-{
-    VERIFY(m_executable || (m_tla_shared_data && m_tla_shared_data->m_executable));
+    // 4. Let importEntries be ImportEntries of body.
+    Vector<ImportEntry> import_entries;
+    for (auto const& import_statement : body->imports())
+        import_entries.extend(import_statement->entries());
 
-    if (!m_executable_backing.requires_non_bytecode_cache_compile_inputs_to_be_cleared())
-        return;
+    // 5. Let importedBoundNames be ImportedLocalNames(importEntries).
+    // NOTE: Since we have to potentially extract the import entry we just use importEntries
+    //       In the future it might be an optimization to have a set/map of string to speed up the search.
 
-    VERIFY(!m_shared_function_data.contains_rust_function_ast());
-    VERIFY(!m_shared_function_data.contains_precompiled_bytecode());
+    // 6. Let indirectExportEntries be a new empty List.
+    Vector<ExportEntry> indirect_export_entries;
+
+    // 7. Let localExportEntries be a new empty List.
+    Vector<ExportEntry> local_export_entries;
+
+    // 8. Let starExportEntries be a new empty List.
+    Vector<ExportEntry> star_export_entries;
+
+    // NOTE: Not in the spec but makes it easier to find the default.
+    Optional<Utf16FlyString> default_export_binding_name;
+
+    // 9. Let exportEntries be ExportEntries of body.
+    // 10. For each ExportEntry Record ee of exportEntries, do
+    for (auto const& export_statement : body->exports()) {
+        if (export_statement->is_default_export()) {
+            VERIFY(!default_export_binding_name.has_value());
+            VERIFY(export_statement->entries().size() == 1);
+            VERIFY(export_statement->has_statement());
+
+            auto const& entry = export_statement->entries()[0];
+            VERIFY(entry.kind == ExportEntry::Kind::NamedExport);
+            VERIFY(!entry.is_module_request());
+            VERIFY(import_entries.find_if(
+                                     [&](ImportEntry const& import_entry) {
+                                         return import_entry.local_name == entry.local_or_import_name;
+                                     })
+                    .is_end());
+
+            // Extract the binding name if the default export is a non-declaration statement.
+            if (!is<Declaration>(export_statement->statement()))
+                default_export_binding_name = entry.local_or_import_name.value();
+        }
+
+        for (auto const& export_entry : export_statement->entries()) {
+            // Special case, export {} from "module" should add "module" to
+            // required_modules but not any import or export so skip here.
+            if (export_entry.kind == ExportEntry::Kind::EmptyNamedExport) {
+                VERIFY(export_statement->entries().size() == 1);
+                break;
+            }
+
+            // a. If ee.[[ModuleRequest]] is null, then
+            if (!export_entry.is_module_request()) {
+
+                auto in_imported_bound_names = import_entries.find_if(
+                    [&](ImportEntry const& import_entry) {
+                        return import_entry.local_name == export_entry.local_or_import_name;
+                    });
+
+                // i. If ee.[[LocalName]] is not an element of importedBoundNames, then
+                if (in_imported_bound_names.is_end()) {
+                    // 1. Append ee to localExportEntries.
+                    local_export_entries.empend(export_entry);
+                }
+                // ii. Else,
+                else {
+                    // 1. Let ie be the element of importEntries whose [[LocalName]] is the same as ee.[[LocalName]].
+                    auto& import_entry = *in_imported_bound_names;
+
+                    // 2. If ie.[[ImportName]] is NAMESPACE-OBJECT, then
+                    if (import_entry.is_namespace()) {
+                        // a. NOTE: This is a re-export of an imported module namespace object.
+                        // b. Append ee to localExportEntries.
+                        local_export_entries.empend(export_entry);
+                    }
+                    // 3. Else,
+                    else {
+                        // a. NOTE: This is a re-export of a single name.
+                        // b. Append the ExportEntry Record { [[ModuleRequest]]: ie.[[ModuleRequest]], [[ImportName]]: ie.[[ImportName]], [[LocalName]]: null, [[ExportName]]: ee.[[ExportName]] } to indirectExportEntries.
+                        indirect_export_entries.empend(ExportEntry::indirect_export_entry(import_entry.module_request(), export_entry.export_name, import_entry.import_name));
+                    }
+                }
+            }
+            // b. Else if ee.[[ImportName]] is all-but-default, then
+            else if (export_entry.kind == ExportEntry::Kind::ModuleRequestAllButDefault) {
+                // i. Assert: ee.[[ExportName]] is null.
+                VERIFY(!export_entry.export_name.has_value());
+                // ii. Append ee to starExportEntries.
+                star_export_entries.empend(export_entry);
+            }
+            // c. Else,
+            else {
+                // i. Append ee to indirectExportEntries.
+                indirect_export_entries.empend(export_entry);
+            }
+        }
+    }
+
+    // 11. Let async be body Contains await.
+    bool async = body->has_top_level_await();
+
+    // 12. Return Source Text Module Record {
+    //          [[Realm]]: realm, [[Environment]]: empty, [[Namespace]]: empty, [[CycleRoot]]: empty, [[HasTLA]]: async,
+    //          [[AsyncEvaluation]]: false, [[TopLevelCapability]]: empty, [[AsyncParentModules]]: « »,
+    //          [[PendingAsyncDependencies]]: empty, [[Status]]: unlinked, [[EvaluationError]]: empty,
+    //          [[HostDefined]]: hostDefined, [[ECMAScriptCode]]: body, [[Context]]: empty, [[ImportMeta]]: empty,
+    //          [[RequestedModules]]: requestedModules, [[ImportEntries]]: importEntries, [[LocalExportEntries]]: localExportEntries,
+    //          [[IndirectExportEntries]]: indirectExportEntries, [[StarExportEntries]]: starExportEntries, [[DFSIndex]]: empty, [[DFSAncestorIndex]]: empty }.
+    return realm.heap().allocate<SourceTextModule>(
+        realm,
+        filename,
+        host_defined,
+        async,
+        move(body),
+        move(requested_modules),
+        move(import_entries),
+        move(local_export_entries),
+        move(indirect_export_entries),
+        move(star_export_entries),
+        move(default_export_binding_name));
 }
 
 // 16.2.1.7.2.1 GetExportedNames ( [ exportStarSet ] ), https://tc39.es/ecma262/#sec-getexportednames
-Vector<Utf16FlyString> SourceTextModule::get_exported_names(VM& vm, GC::RootHashTable<GC::Ref<Module const>>& export_star_set)
+Vector<Utf16FlyString> SourceTextModule::get_exported_names(VM& vm, HashTable<Module const*>& export_star_set)
 {
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] get_export_names of {}", filename());
 
@@ -318,7 +325,7 @@ Vector<Utf16FlyString> SourceTextModule::get_exported_names(VM& vm, GC::RootHash
     // NOTE: This is done by Module.
 
     // 3. If exportStarSet contains module, then
-    if (export_star_set.contains(GC::Ref<Module const>(*this))) {
+    if (export_star_set.contains(this)) {
         // a. Assert: We've reached the starting point of an export * circularity.
         // FIXME: How do we check that?
 
@@ -327,7 +334,7 @@ Vector<Utf16FlyString> SourceTextModule::get_exported_names(VM& vm, GC::RootHash
     }
 
     // 4. Append module to exportStarSet.
-    export_star_set.set(GC::Ref<Module const>(*this));
+    export_star_set.set(this);
 
     // 5. Let exportedNames be a new empty List.
     Vector<Utf16FlyString> exported_names;
@@ -705,19 +712,15 @@ ThrowCompletionOr<void> SourceTextModule::execute_module(VM& vm, GC::Ptr<Promise
     }
 
     u32 registers_and_locals_count = 0;
-    ReadonlySpan<Value> constants;
+    u32 constants_count = 0;
     if (m_executable) {
         registers_and_locals_count = m_executable->registers_and_locals_count;
-        constants = m_executable->constants;
+        constants_count = m_executable->constants.size();
     }
 
     // 1. Let moduleContext be a new ECMAScript code execution context.
-    auto& stack = vm.interpreter_stack();
-    auto* stack_mark = stack.top();
-    auto* module_context = stack.allocate(registers_and_locals_count, constants, 0);
-    if (!module_context) [[unlikely]]
-        return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
-    ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
+    ExecutionContext* module_context = nullptr;
+    ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(module_context, registers_and_locals_count, constants_count, 0);
 
     // 2. Set the Function of moduleContext to null.
 
@@ -742,9 +745,6 @@ ThrowCompletionOr<void> SourceTextModule::execute_module(VM& vm, GC::Ptr<Promise
     // 8. Suspend the currently running execution context.
     // NOTE: Done by the push of execution context in steps below.
 
-    vm.enter_module_execution();
-    ScopeGuard leave_module_execution = [&] { vm.leave_module_execution(); };
-
     // 9. If module.[[HasTLA]] is false, then
     if (!m_has_top_level_await) {
         // a. Assert: capability is not present.
@@ -756,7 +756,7 @@ ThrowCompletionOr<void> SourceTextModule::execute_module(VM& vm, GC::Ptr<Promise
         // c. Let result be the result of evaluating module.[[ECMAScriptCode]].
         Completion result;
 
-        auto result_or_error = vm.run_executable(*module_context, *m_executable, {});
+        auto result_or_error = vm.bytecode_interpreter().run_executable(*module_context, *m_executable, {});
         if (result_or_error.is_error()) {
             result = result_or_error.release_error();
         } else {
@@ -767,8 +767,7 @@ ThrowCompletionOr<void> SourceTextModule::execute_module(VM& vm, GC::Ptr<Promise
         auto& env = as<DeclarativeEnvironment>(*module_context->lexical_environment);
 
         // e. Set result to Completion(DisposeResources(env.[[DisposeCapability]], result)).
-        if (auto* dispose_capability = env.dispose_capability_if_exists())
-            result = dispose_resources(vm, *dispose_capability, result);
+        result = dispose_resources(vm, env.dispose_capability(), result);
 
         // f. Suspend moduleContext and remove it from the execution context stack.
         vm.pop_execution_context();

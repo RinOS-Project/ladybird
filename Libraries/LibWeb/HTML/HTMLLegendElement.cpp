@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/HTMLLegendElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/HTMLFieldSetElement.h>
 #include <LibWeb/HTML/HTMLLegendElement.h>
 #include <LibWeb/Layout/LegendBox.h>
@@ -20,6 +21,12 @@ HTMLLegendElement::HTMLLegendElement(DOM::Document& document, DOM::QualifiedName
 
 HTMLLegendElement::~HTMLLegendElement() = default;
 
+void HTMLLegendElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLLegendElement);
+    Base::initialize(realm);
+}
+
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-legend-form
 HTMLFormElement* HTMLLegendElement::form()
 {
@@ -33,9 +40,9 @@ HTMLFormElement* HTMLLegendElement::form()
     return nullptr;
 }
 
-RefPtr<Layout::Node> HTMLLegendElement::create_layout_node(NonnullRefPtr<CSS::ComputedValues const> style)
+GC::Ptr<Layout::Node> HTMLLegendElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
 {
-    return make_ref_counted<Layout::LegendBox>(document(), *this, style);
+    return heap().allocate<Layout::LegendBox>(document(), *this, move(style));
 }
 
 Layout::LegendBox* HTMLLegendElement::layout_node()

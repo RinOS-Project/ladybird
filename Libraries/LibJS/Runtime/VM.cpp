@@ -7,19 +7,15 @@
  */
 
 #include <AK/Array.h>
-#include <AK/ByteBuffer.h>
 #include <AK/Debug.h>
 #include <AK/LexicalPath.h>
 #include <AK/ScopeGuard.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Time.h>
-#include <LibCore/ImmutableBytes.h>
 #include <LibFileSystem/FileSystem.h>
-#include <LibGC/Heap.h>
-#include <LibGC/PrimitiveStorage.h>
 #include <LibJS/Bytecode/Executable.h>
-#include <LibJS/Debugger.h>
+#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
@@ -31,16 +27,13 @@
 #include <LibJS/Runtime/FunctionEnvironment.h>
 #include <LibJS/Runtime/Iterator.h>
 #include <LibJS/Runtime/NativeFunction.h>
-#include <LibJS/Runtime/NativeJavaScriptBackedFunction.h>
 #include <LibJS/Runtime/PromiseCapability.h>
 #include <LibJS/Runtime/Reference.h>
 #include <LibJS/Runtime/Symbol.h>
 #include <LibJS/Runtime/Temporal/Instant.h>
 #include <LibJS/Runtime/VM.h>
-#include <LibJS/SourceCode.h>
 #include <LibJS/SourceTextModule.h>
 #include <LibJS/SyntheticModule.h>
-#include <LibTextCodec/Decoder.h>
 
 namespace JS {
 
@@ -56,7 +49,7 @@ NonnullRefPtr<VM> VM::create()
     ++s_vm_count;
 
     ErrorMessages error_messages {};
-    error_messages[to_underlying(ErrorMessage::OutOfMemory)] = Utf16String::from_utf16(ErrorType::OutOfMemory.message());
+    error_messages[to_underlying(ErrorMessage::OutOfMemory)] = ErrorType::OutOfMemory.message();
 
     auto vm = adopt_ref(*new VM(move(error_messages)));
 
@@ -85,26 +78,24 @@ VM::VM(ErrorMessages error_messages)
     , m_error_messages(move(error_messages))
 {
     s_the = this;
-    MUST(GC::PrimitiveStorage::the().ensure_cage());
-    m_primitive_storage_cage_base = js_primitive_storage_cage_base;
-    VERIFY(m_primitive_storage_cage_base != 0);
+    m_bytecode_interpreter = make<Bytecode::Interpreter>();
 
     m_heap.register_sweep_callback([] {
         Bytecode::StaticPropertyLookupCache::sweep_all();
     });
 
-    m_empty_string = m_heap.allocate<PrimitiveString>(Utf16String {});
+    m_empty_string = m_heap.allocate<PrimitiveString>(String {});
 
     cached_strings = {
-        .number = m_heap.allocate<PrimitiveString>("number"_utf16),
-        .undefined = m_heap.allocate<PrimitiveString>("undefined"_utf16),
-        .object = m_heap.allocate<PrimitiveString>("object"_utf16),
-        .string = m_heap.allocate<PrimitiveString>("string"_utf16),
-        .symbol = m_heap.allocate<PrimitiveString>("symbol"_utf16),
-        .boolean = m_heap.allocate<PrimitiveString>("boolean"_utf16),
-        .bigint = m_heap.allocate<PrimitiveString>("bigint"_utf16),
-        .function = m_heap.allocate<PrimitiveString>("function"_utf16),
-        .object_Object = m_heap.allocate<PrimitiveString>("[object Object]"_utf16),
+        .number = m_heap.allocate<PrimitiveString>("number"_string),
+        .undefined = m_heap.allocate<PrimitiveString>("undefined"_string),
+        .object = m_heap.allocate<PrimitiveString>("object"_string),
+        .string = m_heap.allocate<PrimitiveString>("string"_string),
+        .symbol = m_heap.allocate<PrimitiveString>("symbol"_string),
+        .boolean = m_heap.allocate<PrimitiveString>("boolean"_string),
+        .bigint = m_heap.allocate<PrimitiveString>("bigint"_string),
+        .function = m_heap.allocate<PrimitiveString>("function"_string),
+        .object_Object = m_heap.allocate<PrimitiveString>("[object Object]"_string),
     };
 
     for (size_t i = 0; i < single_ascii_character_strings.size(); ++i)
@@ -163,7 +154,7 @@ VM::VM(ErrorMessages error_messages)
     };
 
     // 2 HostEnsureCanCompileStrings ( calleeRealm, parameterStrings, bodyString, codeString, compilationType, parameterArgs, bodyArg ), https://tc39.es/proposal-dynamic-code-brand-checks/#sec-hostensurecancompilestrings
-    host_ensure_can_compile_strings = [](Realm&, ReadonlySpan<Utf16String>, Utf16View, Utf16View, CompilationType, ReadonlySpan<Value>, Value) -> ThrowCompletionOr<void> {
+    host_ensure_can_compile_strings = [](Realm&, ReadonlySpan<String>, StringView, StringView, CompilationType, ReadonlySpan<Value>, Value) -> ThrowCompletionOr<void> {
         // The host-defined abstract operation HostEnsureCanCompileStrings takes arguments calleeRealm (a Realm Record),
         // parameterStrings (a List of Strings), bodyString (a String), and direct (a Boolean) and returns either a normal
         // completion containing unused or a throw completion.
@@ -203,7 +194,7 @@ VM::VM(ErrorMessages error_messages)
 
         // The default implementation of HostResizeArrayBuffer is to return NormalCompletion(unhandled).
 
-        if (auto result = buffer.try_resize(new_byte_length, DataBlock::ZeroFillNewBytes::Yes); result.is_error())
+        if (auto result = buffer.buffer().try_resize(new_byte_length, ByteBuffer::ZeroFillNewElements::Yes); result.is_error())
             return throw_completion<RangeError>(ErrorType::NotEnoughMemoryToAllocate, new_byte_length);
 
         return HandledByHost::Handled;
@@ -224,6 +215,18 @@ VM::VM(ErrorMessages error_messages)
         return HandledByHost::Unhandled;
     };
 
+    // 3.6.1 HostInitializeShadowRealm ( realm, context, O ), https://tc39.es/proposal-shadowrealm/#sec-hostinitializeshadowrealm
+    host_initialize_shadow_realm = [](Realm&, NonnullOwnPtr<ExecutionContext>, ShadowRealm&) -> ThrowCompletionOr<void> {
+        // The host-defined abstract operation HostInitializeShadowRealm takes arguments realm (a Realm Record),
+        // context (an execution context), and O (a ShadowRealm object) and returns either a normal completion
+        // containing unused or a throw completion. It is used to inform the host of any newly created realms
+        // from the ShadowRealm constructor. The idea of this hook is to initialize host data structures related
+        // to the ShadowRealm, e.g., for module loading.
+        //
+        // The host may use this hook to add properties to the ShadowRealm's global object. Those properties must be configurable.
+        return {};
+    };
+
     // 2.3.1 HostSystemUTCEpochNanoseconds ( global ), https://tc39.es/proposal-temporal/#sec-hostsystemutcepochnanoseconds
     host_system_utc_epoch_nanoseconds = [](Object const&) {
         // 1. Let ns be the approximate current UTC date and time, in nanoseconds since the epoch.
@@ -239,7 +242,7 @@ VM::VM(ErrorMessages error_messages)
     };
 
     // AD-HOC: Inform the host that we received a date string we were unable to parse.
-    host_unrecognized_date_string = [](Utf16View) {
+    host_unrecognized_date_string = [](StringView) {
     };
 }
 
@@ -247,31 +250,6 @@ VM::~VM()
 {
     --s_vm_count;
     VERIFY(s_vm_count == 0);
-}
-
-void VM::enable_debugging()
-{
-    if (!m_debugger)
-        m_debugger = make<Debugger>();
-}
-
-void VM::disable_debugging()
-{
-    if (m_debugger)
-        VERIFY(!m_debugger->is_paused());
-    m_debugger = nullptr;
-}
-
-SharedFunctionInstanceData* VM::active_shared_function_data()
-{
-    auto* function = active_function_object();
-    if (!function)
-        return nullptr;
-    if (auto* ecmascript_function = as_if<ECMAScriptFunctionObject>(*function))
-        return &ecmascript_function->shared_data();
-    if (auto* native_javascript_backed_function = as_if<NativeJavaScriptBackedFunction>(*function))
-        return &native_javascript_backed_function->shared_data();
-    return nullptr;
 }
 
 Utf16String const& VM::error_message(ErrorMessage type) const
@@ -340,25 +318,17 @@ void VM::gather_roots(HashMap<GC::Cell*, GC::HeapRoot>& roots)
     for (auto finalization_registry : m_finalization_registry_cleanup_jobs)
         roots.set(finalization_registry, GC::HeapRoot { .type = GC::HeapRoot::Type::VM });
 
-    auto gather_roots_from_execution_context_stack = [&roots](Vector<ExecutionContext*> const& stack, Vector<ExecutionContext*> const& previous_running_contexts, ExecutionContext* running_execution_context) {
-        for_each_execution_context_top_to_bottom(stack, previous_running_contexts, running_execution_context, [&](ExecutionContext& execution_context) {
+    auto gather_roots_from_execution_context_stack = [&roots](Vector<ExecutionContext*> const& stack) {
+        for (auto const& execution_context : stack) {
             ExecutionContextRootsCollector visitor;
-            execution_context.visit_edges(visitor);
+            execution_context->visit_edges(visitor);
             for (auto cell : visitor.roots)
                 roots.set(cell, GC::HeapRoot { .type = GC::HeapRoot::Type::VM });
-            return true;
-        });
+        }
     };
-    gather_roots_from_execution_context_stack(m_execution_context_stack, m_execution_context_stack_previous_running_contexts, m_running_execution_context);
-    for (auto const& saved_stack : m_saved_execution_context_stacks)
-        gather_roots_from_execution_context_stack(saved_stack.stack, saved_stack.previous_running_contexts, saved_stack.running_execution_context);
-
-    if (m_type_error_realm_override)
-        roots.set(m_type_error_realm_override, GC::HeapRoot { .type = GC::HeapRoot::Type::VM });
-    for (auto const& saved_stack : m_saved_execution_context_stacks) {
-        if (saved_stack.type_error_realm_override)
-            roots.set(saved_stack.type_error_realm_override, GC::HeapRoot { .type = GC::HeapRoot::Type::VM });
-    }
+    gather_roots_from_execution_context_stack(m_execution_context_stack);
+    for (auto& saved_stack : m_saved_execution_context_stacks)
+        gather_roots_from_execution_context_stack(saved_stack);
 
     for (auto& job : m_promise_jobs)
         roots.set(job, GC::HeapRoot { .type = GC::HeapRoot::Type::VM });
@@ -528,9 +498,7 @@ void VM::run_queued_finalization_registry_cleanup_jobs()
     while (!m_finalization_registry_cleanup_jobs.is_empty()) {
         auto registry = m_finalization_registry_cleanup_jobs.take_last();
         // FIXME: Handle any uncatched exceptions here.
-        auto result = registry->cleanup();
-        if (result.is_error() && registry->has_empty_cells())
-            m_finalization_registry_cleanup_jobs.append(registry);
+        (void)registry->cleanup();
     }
 }
 
@@ -561,85 +529,50 @@ void VM::promise_rejection_tracker(Promise& promise, Promise::RejectionOperation
 
 void VM::dump_backtrace() const
 {
-    for_each_execution_context_top_to_bottom([&](ExecutionContext const& frame) {
-        if (frame.executable) {
-            if (auto source_range = frame.executable->source_range_at(frame.program_counter); source_range.has_value())
-                dbgln("-> {} @ {}:{},{}", frame.function ? frame.function->name_for_call_stack() : ""_utf16, source_range->filename(), source_range->start.line, source_range->start.column);
-            else
-                dbgln("-> {}", frame.function ? frame.function->name_for_call_stack() : ""_utf16);
+    for (ssize_t i = m_execution_context_stack.size() - 1; i >= 0; --i) {
+        auto& frame = m_execution_context_stack[i];
+
+        if (frame->executable) {
+            auto source_range = frame->executable->source_range_at(frame->program_counter).realize();
+            dbgln("-> {} @ {}:{},{}", frame->function ? frame->function->name_for_call_stack() : ""_utf16, source_range.filename(), source_range.start.line, source_range.start.column);
         } else {
-            dbgln("-> {}", frame.function ? frame.function->name_for_call_stack() : ""_utf16);
+            dbgln("-> {}", frame->function ? frame->function->name_for_call_stack() : ""_utf16);
         }
-        return true;
-    });
+    }
 }
 
 void VM::save_execution_context_stack()
 {
-    m_saved_execution_context_stacks.append({
-        .stack = move(m_execution_context_stack),
-        .previous_running_contexts = move(m_execution_context_stack_previous_running_contexts),
-        .running_execution_context = m_running_execution_context,
-        .type_error_realm_override = m_type_error_realm_override,
-        .type_error_realm_override_depth = m_type_error_realm_override_depth,
-    });
-    m_running_execution_context = nullptr;
-    m_type_error_realm_override = nullptr;
-    m_type_error_realm_override_depth = 0;
+    m_saved_execution_context_stacks.append(move(m_execution_context_stack));
 }
 
 void VM::clear_execution_context_stack()
 {
     m_execution_context_stack.clear_with_capacity();
-    m_execution_context_stack_previous_running_contexts.clear_with_capacity();
-    m_running_execution_context = nullptr;
-    m_type_error_realm_override = nullptr;
-    m_type_error_realm_override_depth = 0;
 }
 
 void VM::restore_execution_context_stack()
 {
-    auto saved_stack = m_saved_execution_context_stacks.take_last();
-    m_execution_context_stack = move(saved_stack.stack);
-    m_execution_context_stack_previous_running_contexts = move(saved_stack.previous_running_contexts);
-    m_running_execution_context = saved_stack.running_execution_context;
-    m_type_error_realm_override = saved_stack.type_error_realm_override;
-    m_type_error_realm_override_depth = saved_stack.type_error_realm_override_depth;
-}
-
-ExecutionContext* VM::previous_execution_context() const
-{
-    ExecutionContext* previous_execution_context = nullptr;
-    bool found_running_execution_context = false;
-    for_each_execution_context_top_to_bottom([&](ExecutionContext const& execution_context) {
-        if (!found_running_execution_context) {
-            found_running_execution_context = true;
-            return true;
-        }
-        previous_execution_context = const_cast<ExecutionContext*>(&execution_context);
-        return false;
-    });
-    return previous_execution_context;
+    m_execution_context_stack = m_saved_execution_context_stacks.take_last();
 }
 
 // 9.4.1 GetActiveScriptOrModule ( ), https://tc39.es/ecma262/#sec-getactivescriptormodule
 ScriptOrModule VM::get_active_script_or_module() const
 {
     // 1. If the execution context stack is empty, return null.
-    if (!m_running_execution_context)
+    if (m_execution_context_stack.is_empty())
         return Empty {};
 
     // 2. Let ec be the topmost execution context on the execution context stack whose ScriptOrModule component is not null.
-    ScriptOrModule script_or_module = Empty {};
-    for_each_execution_context_top_to_bottom([&](ExecutionContext const& execution_context) {
-        if (execution_context.script_or_module.has<Empty>())
-            return true;
-        script_or_module = execution_context.script_or_module;
-        return false;
-    });
+    for (auto i = m_execution_context_stack.size() - 1; i > 0; i--) {
+        if (!m_execution_context_stack[i]->script_or_module.has<Empty>())
+            return m_execution_context_stack[i]->script_or_module;
+    }
 
     // 3. If no such execution context exists, return null. Otherwise, return ec's ScriptOrModule.
-    return script_or_module;
+    // Note: Since it is not empty we have 0 and since we got here all the
+    //       above contexts don't have a non-null ScriptOrModule
+    return m_execution_context_stack[0]->script_or_module;
 }
 
 VM::StoredModule* VM::get_stored_module(ImportedModuleReferrer const&, ByteString const& filename, Utf16String const&)
@@ -662,40 +595,14 @@ VM::StoredModule* VM::get_stored_module(ImportedModuleReferrer const&, ByteStrin
     return &(*end_or_module);
 }
 
-static ByteString resolve_module_filename(StringView filename, Utf16View const& module_type);
-
-static StringView utf8_path_view(Utf16View path, Optional<ByteBuffer>& utf8_storage)
+ThrowCompletionOr<void> VM::link_and_eval_module(Badge<Bytecode::Interpreter>, SourceTextModule& module)
 {
-    if (path.has_ascii_storage())
-        return { path.bytes() };
-
-    StringBuilder builder;
-    builder.append(path);
-    utf8_storage = MUST(builder.to_byte_buffer());
-    return { utf8_storage->bytes() };
-}
-
-ThrowCompletionOr<void> VM::link_and_eval_module(SourceTextModule& module)
-{
-    return link_and_eval_module(static_cast<CyclicModule&>(module));
+    return link_and_eval_module(module);
 }
 
 ThrowCompletionOr<void> VM::link_and_eval_module(CyclicModule& module)
 {
     auto filename = module.filename();
-    if (!filename.is_empty()) {
-        auto absolute_filename = resolve_module_filename(LexicalPath::absolute_path("."sv, filename), {});
-        if (!get_stored_module(GC::Ref { module }, absolute_filename, {})) {
-            // Register the entry module before loading dependencies so self-imports resolve to this Module Record.
-            m_loaded_modules.empend(
-                GC::Ref { module },
-                move(absolute_filename),
-                String {},
-                make_root(static_cast<Module&>(module)),
-                true);
-        }
-    }
-
     auto& promise_capability = module.load_requested_modules(nullptr);
 
     if (auto const& promise = as<Promise>(*promise_capability.promise()); promise.state() == Promise::State::Rejected)
@@ -712,16 +619,16 @@ ThrowCompletionOr<void> VM::link_and_eval_module(CyclicModule& module)
     if (evaluated_or_error.is_error())
         return evaluated_or_error.throw_completion();
 
-    auto const& evaluated_value = static_cast<Promise&>(*evaluated_or_error.value()->promise());
+    auto evaluated_value = evaluated_or_error.value();
 
     run_queued_promise_jobs();
     VERIFY(m_promise_jobs.is_empty());
 
     // FIXME: This will break if we start doing promises actually asynchronously.
-    VERIFY(evaluated_value.state() != Promise::State::Pending);
+    VERIFY(evaluated_value->state() != Promise::State::Pending);
 
-    if (evaluated_value.state() == Promise::State::Rejected)
-        return JS::throw_completion(evaluated_value.result());
+    if (evaluated_value->state() == Promise::State::Rejected)
+        return JS::throw_completion(evaluated_value->result());
 
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] Evaluating passed for module {}", module.filename());
     return {};
@@ -807,9 +714,7 @@ void VM::load_imported_module(ImportedModuleReferrer referrer, ModuleRequest con
         });
 
     LexicalPath base_path { base_filename };
-    Optional<ByteBuffer> module_specifier_utf8_storage;
-    auto module_specifier_path = utf8_path_view(module_request.module_specifier.view(), module_specifier_utf8_storage);
-    auto filename = LexicalPath::absolute_path(base_path.dirname(), module_specifier_path);
+    auto filename = LexicalPath::absolute_path(base_path.dirname(), MUST(module_request.module_specifier.view().to_byte_string()));
 
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] base path: '{}'", base_path);
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] initial filename: '{}'", filename);
@@ -819,17 +724,18 @@ void VM::load_imported_module(ImportedModuleReferrer referrer, ModuleRequest con
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] resolved filename: '{}'", filename);
 
 #if JS_MODULE_DEBUG
-    referrer.visit(
-        [&](GC::Ref<Script> const& script) {
-            dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] load_imported_module(Script @ {}, {})", script.ptr(), filename);
+    ByteString referencing_module_string = referrer.visit(
+        [&](Empty) -> ByteString {
+            return ".";
         },
-        [&](GC::Ref<CyclicModule> const& module) {
-            dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] load_imported_module(Module @ {}, {})", module.ptr(), filename);
-        },
-        [&](GC::Ref<Realm> const& realm) {
-            dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] load_imported_module(Realm @ {}, {})", realm.ptr(), filename);
+        [&](auto& script_or_module) {
+            if constexpr (IsSame<Script*, decltype(script_or_module)>) {
+                return ByteString::formatted("Script @ {}", script_or_module.ptr());
+            }
+            return ByteString::formatted("Module @ {}", script_or_module.ptr());
         });
 
+    dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] load_imported_module({}, {})", referencing_module_string, filename);
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE]     resolved {} + {} -> {}", base_path, module_request.module_specifier, filename);
 #endif
 
@@ -860,29 +766,24 @@ void VM::load_imported_module(ImportedModuleReferrer referrer, ModuleRequest con
         return;
     }
 
-    auto source_bytes = Core::ImmutableBytes::adopt(file_content_or_error.release_value());
-    auto decoder = TextCodec::decoder_for("UTF-8"sv);
-    VERIFY(decoder.has_value());
-    auto source_length = TextCodec::convert_input_to_utf16_length_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, StringView { source_bytes.bytes() }).release_value_but_fixme_should_propagate_errors();
-    auto display_filename = Utf16String::from_utf8(filename);
-    auto source_code = SourceCode::create(move(display_filename), source_length, "UTF-8"sv, move(source_bytes));
+    StringView const content_view { file_content_or_error.value().bytes() };
 
-    auto module = [&, source_code = move(source_code)]() mutable -> ThrowCompletionOr<GC::Ref<Module>> {
+    auto module = [&, content = file_content_or_error.release_value()]() -> ThrowCompletionOr<GC::Ref<Module>> {
         // If moduleRequest.[[Attributes]] has an entry entry such that entry.[[Key]] is "type" and entry.[[Value]] is "json",
         // when the host environment performs FinishLoadingImportedModule(referrer, moduleRequest, payload, result), result
         // must either be the Completion Record returned by an invocation of ParseJSONModule or a throw completion.
         if (module_type == "json"sv) {
             dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] reading and parsing JSON module {}", filename);
-            return TRY(parse_json_module(*current_realm(), source_code->code_view(), filename));
+            return parse_json_module(*current_realm(), content_view, filename);
         }
 
         dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] reading and parsing as SourceTextModule module {}", filename);
         // Note: We treat all files as module, so if a script does not have exports it just runs it.
-        auto module_or_errors = SourceTextModule::parse(move(source_code), *current_realm(), filename);
+        auto module_or_errors = SourceTextModule::parse(content_view, *current_realm(), filename);
 
         if (module_or_errors.is_error()) {
             VERIFY(module_or_errors.error().size() > 0);
-            return throw_completion<SyntaxError>(module_or_errors.error().first().to_utf16_string());
+            return throw_completion<SyntaxError>(module_or_errors.error().first().to_byte_string());
         }
 
         return module_or_errors.release_value();
@@ -903,16 +804,16 @@ void VM::load_imported_module(ImportedModuleReferrer referrer, ModuleRequest con
 Vector<StackTraceElement> VM::stack_trace() const
 {
     Vector<StackTraceElement> stack_trace;
-    for_each_execution_context_top_to_bottom([&](ExecutionContext const& context) {
+    stack_trace.ensure_capacity(m_execution_context_stack.size());
+    for (auto* context : m_execution_context_stack.in_reverse()) {
         Optional<SourceRange> source_range;
-        if (context.executable)
-            source_range = context.executable->get_source_range(context.program_counter);
+        if (context->executable)
+            source_range = context->executable->get_source_range(context->program_counter);
         stack_trace.append({
-            .execution_context = const_cast<ExecutionContext*>(&context),
+            .execution_context = context,
             .source_range = move(source_range),
         });
-        return true;
-    });
+    }
 
     return stack_trace;
 }

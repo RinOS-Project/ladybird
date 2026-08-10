@@ -1,3 +1,0 @@
-precomposed accent has positive width: true
-precomposed and decomposed accent widths match: true
-word width includes precomposed accent: true

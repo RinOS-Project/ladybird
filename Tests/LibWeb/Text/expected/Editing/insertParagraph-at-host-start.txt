@@ -1,2 +1,0 @@
-after enter: "<div><br></div><div>line1<br>line2</div>"
-after undo: "line1<br>line2"

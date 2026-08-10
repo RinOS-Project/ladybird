@@ -8,12 +8,9 @@
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
 #include <AK/MemoryStream.h>
-#include <LibGC/Heap.h>
 #include <LibJS/Print.h>
 #include <LibJS/Runtime/BigInt.h>
-#include <LibJS/Runtime/ErrorData.h>
 #include <LibJS/Runtime/Realm.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/Window.h>
 #include <WebContent/ConsoleGlobalEnvironmentExtensions.h>
@@ -26,14 +23,14 @@ GC_DEFINE_ALLOCATOR(DevToolsConsoleClient);
 
 GC::Ref<DevToolsConsoleClient> DevToolsConsoleClient::create(JS::Realm& realm, JS::Console& console, PageClient& client)
 {
-    auto& window = Web::HTML::relevant_window(realm.global_object());
+    auto& window = as<Web::HTML::Window>(realm.global_object());
     auto console_global_environment_extensions = realm.create<ConsoleGlobalEnvironmentExtensions>(realm, window);
 
-    return GC::Heap::the().allocate<DevToolsConsoleClient>(console, client, console_global_environment_extensions);
+    return realm.heap().allocate<DevToolsConsoleClient>(realm, console, client, console_global_environment_extensions);
 }
 
-DevToolsConsoleClient::DevToolsConsoleClient(JS::Console& console, PageClient& client, ConsoleGlobalEnvironmentExtensions& console_global_environment_extensions)
-    : WebContentConsoleClient(console, client, console_global_environment_extensions)
+DevToolsConsoleClient::DevToolsConsoleClient(JS::Realm& realm, JS::Console& console, PageClient& client, ConsoleGlobalEnvironmentExtensions& console_global_environment_extensions)
+    : WebContentConsoleClient(realm, console, client, console_global_environment_extensions)
 {
 }
 
@@ -60,7 +57,7 @@ static JsonValue serialize_js_value(JS::Realm& realm, JS::Value value)
         return value.as_bool();
 
     if (value.is_string())
-        return value.as_string().utf16_string_view().to_utf8_but_should_be_ported_to_utf16();
+        return value.as_string().utf8_string();
 
     if (value.is_number()) {
         if (value.is_nan())
@@ -88,7 +85,7 @@ static JsonValue serialize_js_value(JS::Realm& realm, JS::Value value)
         Web::HTML::TemporaryExecutionContext execution_context { realm };
         AllocatingMemoryStream stream;
 
-        JS::PrintContext context { .vm = vm, .stream = &stream, .strip_ansi = true };
+        JS::PrintContext context { vm, stream, true };
         MUST(JS::print(value, context));
 
         return MUST(String::from_stream(stream, stream.used_buffer_size()));
@@ -99,24 +96,28 @@ static JsonValue serialize_js_value(JS::Realm& realm, JS::Value value)
 
 void DevToolsConsoleClient::handle_result(JS::Value result)
 {
-    auto& settings = Web::HTML::relevant_settings_object(*m_console_global_environment_extensions);
-    m_client->did_execute_js_console_input(serialize_js_value(settings.realm(), result));
+    m_client->did_execute_js_console_input(serialize_js_value(m_realm, result));
 }
 
-void DevToolsConsoleClient::report_exception(Utf16View name, Utf16View message, JS::ErrorData const& error_data, bool in_promise)
+void DevToolsConsoleClient::report_exception(JS::Error const& exception, bool in_promise)
 {
-    Vector<WebView::StackFrame> trace;
-    trace.ensure_capacity(error_data.traceback().size());
+    auto& vm = exception.vm();
 
-    for (auto const& frame : error_data.traceback()) {
+    auto name = exception.get_without_side_effects(vm.names.name);
+    auto message = exception.get_without_side_effects(vm.names.message);
+
+    Vector<WebView::StackFrame> trace;
+    trace.ensure_capacity(exception.traceback().size());
+
+    for (auto const& frame : exception.traceback()) {
         auto const& source_range = frame.source_range();
         WebView::StackFrame stack_frame;
 
         if (!frame.function_name.is_empty())
             stack_frame.function = frame.function_name.to_utf8();
 
-        if (!source_range.filename().is_empty() || source_range.start.line != 0 || source_range.start.column != 0) {
-            stack_frame.file = source_range.filename().to_utf8();
+        if (!source_range.filename().is_empty() || source_range.start.offset != 0 || source_range.end.offset != 0) {
+            stack_frame.file = String::from_utf8_with_replacement_character(source_range.filename());
             stack_frame.line = source_range.start.line;
             stack_frame.column = source_range.start.column;
         }
@@ -128,8 +129,8 @@ void DevToolsConsoleClient::report_exception(Utf16View name, Utf16View message, 
     send_console_output({
         .timestamp = UnixDateTime::now(),
         .output = WebView::ConsoleError {
-            .name = MUST(name.to_utf8()),
-            .message = MUST(message.to_utf8()),
+            .name = name.to_string_without_side_effects(),
+            .message = message.to_string_without_side_effects(),
             .trace = move(trace),
             .inside_promise = in_promise,
         },
@@ -153,13 +154,9 @@ JS::ThrowCompletionOr<JS::Value> DevToolsConsoleClient::printer(JS::Console::Log
         stack_frames.ensure_capacity(trace.stack.size());
 
         for (auto const& frame : trace.stack) {
-            Optional<String> source_file;
-            if (frame.source_file.has_value())
-                source_file = frame.source_file->to_utf8();
-
             stack_frames.unchecked_append(WebView::StackFrame {
-                .function = frame.function_name.to_utf8(),
-                .file = move(source_file),
+                .function = frame.function_name,
+                .file = frame.source_file,
                 .line = frame.line,
                 .column = frame.column,
             });
@@ -168,7 +165,7 @@ JS::ThrowCompletionOr<JS::Value> DevToolsConsoleClient::printer(JS::Console::Log
         send_console_output({
             .timestamp = UnixDateTime::now(),
             .output = WebView::ConsoleTrace {
-                .label = trace.label.to_utf8(),
+                .label = trace.label,
                 .stack = move(stack_frames),
             },
         });

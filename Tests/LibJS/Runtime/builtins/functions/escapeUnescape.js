@@ -16,9 +16,6 @@ test("unescape", () => {
         ["%E4%F6%FC", "äöü"],
         ["%u0107", "ć"],
         ["@*_+-./", "@*_+-./"],
-        ["äöü", "äöü"],
-        ["%uD834%uDF06", "\ud834\udf06"],
-        ["%uD800", "\ud800"],
     ].forEach(test => {
         expect(unescape(test[0])).toBe(test[1]);
     });

@@ -1,7 +1,11 @@
+#import <IndexedDB/IDBRequest.idl>
+#import <IndexedDB/IDBIndex.idl>
+#import <IndexedDB/IDBCursor.idl>
+
 [Exposed=(Window,Worker)]
 interface IDBObjectStore {
     attribute DOMString name;
-    [ImplementedAs=key_path_value, NeedsCallerRealm] readonly attribute any keyPath;
+    readonly attribute any keyPath;
     readonly attribute DOMStringList indexNames;
     [SameObject] readonly attribute IDBTransaction transaction;
     readonly attribute boolean autoIncrement;

@@ -1,2 +1,0 @@
-in-block: 1
-in-inline: 1

@@ -6,11 +6,8 @@
  */
 
 #include <AK/Debug.h>
-#include <AK/QuickSort.h>
-#include <AK/String.h>
 #include <AK/TypeCasts.h>
 #include <LibJS/CyclicModule.h>
-#include <LibJS/Runtime/ExternalMemory.h>
 #include <LibJS/Runtime/ModuleRequest.h>
 #include <LibJS/Runtime/PromiseCapability.h>
 #include <LibJS/Runtime/PromiseConstructor.h>
@@ -19,34 +16,6 @@
 namespace JS {
 
 GC_DEFINE_ALLOCATOR(CyclicModule);
-
-static size_t import_attributes_external_memory_size(Vector<ImportAttribute> const& attributes)
-{
-    size_t size = JS::vector_external_memory_size(attributes);
-    for (auto const& attribute : attributes) {
-        size = JS::saturating_add_external_memory_size(size, JS::utf16_string_external_memory_size(attribute.key));
-        size = JS::saturating_add_external_memory_size(size, JS::utf16_string_external_memory_size(attribute.value));
-    }
-    return size;
-}
-
-static size_t loaded_module_requests_external_memory_size(Vector<LoadedModuleRequest> const& requests)
-{
-    size_t size = JS::vector_external_memory_size(requests);
-    for (auto const& request : requests) {
-        size = JS::saturating_add_external_memory_size(size, JS::utf16_string_external_memory_size(request.specifier));
-        size = JS::saturating_add_external_memory_size(size, import_attributes_external_memory_size(request.attributes));
-    }
-    return size;
-}
-
-static size_t module_requests_external_memory_size(Vector<ModuleRequest> const& requests)
-{
-    size_t size = JS::vector_external_memory_size(requests);
-    for (auto const& request : requests)
-        size = JS::saturating_add_external_memory_size(size, import_attributes_external_memory_size(request.attributes));
-    return size;
-}
 
 CyclicModule::CyclicModule(Realm& realm, StringView filename, bool has_top_level_await, Vector<ModuleRequest> requested_modules, Script::HostDefined* host_defined)
     : Module(realm, filename, host_defined)
@@ -69,26 +38,12 @@ void CyclicModule::visit_edges(Cell::Visitor& visitor)
         visitor.visit(m_evaluation_error.error_value());
 }
 
-size_t CyclicModule::external_memory_size() const
-{
-    size_t size = Base::external_memory_size();
-    size = JS::saturating_add_external_memory_size(size, module_requests_external_memory_size(m_requested_modules));
-    size = JS::saturating_add_external_memory_size(size, loaded_module_requests_external_memory_size(m_loaded_modules));
-    size = JS::saturating_add_external_memory_size(size, JS::vector_external_memory_size(m_async_parent_modules));
-    return size;
-}
-
 void GraphLoadingState::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(promise_capability);
     visitor.visit(host_defined);
     visitor.visit(visited);
-}
-
-size_t GraphLoadingState::external_memory_size() const
-{
-    return JS::hash_table_external_memory_size(visited);
 }
 
 // 16.2.1.5.1 LoadRequestedModules ( [ hostDefined ] ), https://tc39.es/ecma262/#sec-LoadRequestedModules
@@ -224,7 +179,7 @@ ThrowCompletionOr<void> CyclicModule::link(VM& vm)
     // 1. Assert: module.[[Status]] is one of unlinked, linked, evaluating-async, or evaluated.
     VERIFY(m_status == ModuleStatus::Unlinked || m_status == ModuleStatus::Linked || m_status == ModuleStatus::EvaluatingAsync || m_status == ModuleStatus::Evaluated);
     // 2. Let stack be a new empty List.
-    GC::RootVector<GC::Ref<Module>> stack;
+    Vector<Module*> stack;
 
     // 3. Let result be Completion(InnerModuleLinking(module, stack, 0)).
     auto result = inner_module_linking(vm, stack, 0);
@@ -232,8 +187,8 @@ ThrowCompletionOr<void> CyclicModule::link(VM& vm)
     // 4. If result is an abrupt completion, then
     if (result.is_throw_completion()) {
         // a. For each Cyclic Module Record m of stack, do
-        for (auto module : stack) {
-            if (is<CyclicModule>(*module)) {
+        for (auto* module : stack) {
+            if (is<CyclicModule>(module)) {
                 auto& cyclic_module = static_cast<CyclicModule&>(*module);
                 // i. Assert: m.[[Status]] is linking.
                 VERIFY(cyclic_module.m_status == ModuleStatus::Linking);
@@ -259,14 +214,14 @@ ThrowCompletionOr<void> CyclicModule::link(VM& vm)
 }
 
 // 16.2.1.5.1.1 InnerModuleLinking ( module, stack, index ), https://tc39.es/ecma262/#sec-InnerModuleLinking
-ThrowCompletionOr<u32> CyclicModule::inner_module_linking(VM& vm, GC::RootVector<GC::Ref<Module>>& stack, u32 index)
+ThrowCompletionOr<u32> CyclicModule::inner_module_linking(VM& vm, Vector<Module*>& stack, u32 index)
 {
     // 1. If module is not a Cyclic Module Record, then
     //    a. Perform ? module.Link().
     //    b. Return index.
     // Note: Step 1, 1.a and 1.b are handled in Module.cpp
 
-    dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] inner_module_linking[{}](vm, {}, {})", this, MUST(String::join(',', stack)), index);
+    dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] inner_module_linking[{}](vm, {}, {})", this, ByteString::join(',', stack), index);
 
     // 2. If module.[[Status]] is linking, linked, evaluating-async, or evaluated, then
     if (m_status == ModuleStatus::Linking || m_status == ModuleStatus::Linked || m_status == ModuleStatus::EvaluatingAsync || m_status == ModuleStatus::Evaluated) {
@@ -290,7 +245,7 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_linking(VM& vm, GC::RootVector
     ++index;
 
     // 8. Append module to stack.
-    stack.append(*this);
+    stack.append(this);
 
 #if JS_MODULE_DEBUG
     StringBuilder request_module_names;
@@ -317,7 +272,7 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_linking(VM& vm, GC::RootVector
             VERIFY(cyclic_module.m_status == ModuleStatus::Linking || cyclic_module.m_status == ModuleStatus::Linked || cyclic_module.m_status == ModuleStatus::EvaluatingAsync || cyclic_module.m_status == ModuleStatus::Evaluated);
 
             // ii. Assert: requiredModule.[[Status]] is linking if and only if requiredModule is in stack.
-            VERIFY((cyclic_module.m_status == ModuleStatus::Linking) == (stack.contains_slow(GC::Ref { cyclic_module })));
+            VERIFY((cyclic_module.m_status == ModuleStatus::Linking) == (stack.contains_slow(&cyclic_module)));
 
             // iii. If requiredModule.[[Status]] is linking, then
             if (cyclic_module.m_status == ModuleStatus::Linking) {
@@ -332,7 +287,7 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_linking(VM& vm, GC::RootVector
 
     // 11. Assert: module occurs exactly once in stack.
     size_t count = 0;
-    for (auto module : stack) {
+    for (auto* module : stack) {
         if (module == this)
             count++;
     }
@@ -350,7 +305,7 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_linking(VM& vm, GC::RootVector
         while (true) {
             // i. Let requiredModule be the last element in stack.
             // ii. Remove the last element of stack.
-            auto required_module = stack.take_last();
+            auto* required_module = stack.take_last();
 
             // iii. Assert: requiredModule is a Cyclic Module Record.
             VERIFY(is<CyclicModule>(*required_module));
@@ -369,7 +324,7 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_linking(VM& vm, GC::RootVector
 }
 
 // 16.2.1.5.3 Evaluate ( ), https://tc39.es/ecma262/#sec-moduleevaluation
-ThrowCompletionOr<GC::Ref<PromiseCapability>> CyclicModule::evaluate(VM& vm)
+ThrowCompletionOr<GC::Ref<Promise>> CyclicModule::evaluate(VM& vm)
 {
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] evaluate[{}](vm)", this);
     // 1. Assert: This call to Evaluate is not happening at the same time as another call to Evaluate within the surrounding agent.
@@ -396,11 +351,11 @@ ThrowCompletionOr<GC::Ref<PromiseCapability>> CyclicModule::evaluate(VM& vm)
     // 4. If module.[[TopLevelCapability]] is not empty, then
     if (m_top_level_capability != nullptr) {
         // a. Return module.[[TopLevelCapability]].[[Promise]].
-        return GC::Ref<PromiseCapability>(*m_top_level_capability);
+        return as<Promise>(*m_top_level_capability->promise());
     }
 
     // 5. Let stack be a new empty List.
-    GC::RootVector<GC::Ref<Module>> stack;
+    Vector<Module*> stack;
 
     auto& realm = *vm.current_realm();
 
@@ -413,8 +368,10 @@ ThrowCompletionOr<GC::Ref<PromiseCapability>> CyclicModule::evaluate(VM& vm)
 
     // 9. If result is an abrupt completion, then
     if (result.is_throw_completion()) {
+        VERIFY(!m_evaluation_error.is_error());
+
         // a. For each Cyclic Module Record m of stack, do
-        for (auto mod : stack) {
+        for (auto* mod : stack) {
             if (!is<CyclicModule>(*mod))
                 continue;
 
@@ -447,15 +404,11 @@ ThrowCompletionOr<GC::Ref<PromiseCapability>> CyclicModule::evaluate(VM& vm)
         // b. Assert: module.[[EvaluationError]] is empty.
         VERIFY(!m_evaluation_error.is_error());
 
-        // c. If _module_.[[Status]] is ~evaluated~, then
-        if (m_status == ModuleStatus::Evaluated) {
-            // i. Assert: _module_.[[AsyncEvaluationOrder]] is either ~unset~ or ~done~.
-            VERIFY(!m_async_evaluation_order.has_value());
-
-            // ii. NOTE: _module_.[[AsyncEvaluationOrder]] is ~done~ if and only if _module_ had already been evaluated and
-            //     that evaluation was asynchronous.
-
-            // iii. Perform ! Call(_capability_.[[Resolve]], *undefined*, « *undefined* »).
+        // c. If module.[[AsyncEvaluation]] is false, then
+        if (!m_async_evaluation) {
+            // i. Assert: module.[[Status]] is evaluated.
+            VERIFY(m_status == ModuleStatus::Evaluated);
+            // ii. Perform ! Call(capability.[[Resolve]], undefined, « undefined »).
             MUST(call(vm, *m_top_level_capability->resolve(), js_undefined(), js_undefined()));
         }
 
@@ -464,14 +417,13 @@ ThrowCompletionOr<GC::Ref<PromiseCapability>> CyclicModule::evaluate(VM& vm)
     }
 
     // 11. Return capability.[[Promise]].
-    // AD-HOC: Return the promise capability and let the caller unwrap the promise
-    return GC::Ref<PromiseCapability>(*m_top_level_capability);
+    return as<Promise>(*m_top_level_capability->promise());
 }
 
 // 16.2.1.5.2.1 InnerModuleEvaluation ( module, stack, index ), https://tc39.es/ecma262/#sec-innermoduleevaluation
-ThrowCompletionOr<u32> CyclicModule::inner_module_evaluation(VM& vm, GC::RootVector<GC::Ref<Module>>& stack, u32 index)
+ThrowCompletionOr<u32> CyclicModule::inner_module_evaluation(VM& vm, Vector<Module*>& stack, u32 index)
 {
-    dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] inner_module_evaluation[{}](vm, {}, {})", this, MUST(String::join(", "sv, stack)), index);
+    dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] inner_module_evaluation[{}](vm, {}, {})", this, ByteString::join(", "sv, stack), index);
     // Note: Step 1 is performed in Module.cpp
 
     // 2. If module.[[Status]] is evaluating-async or evaluated, then
@@ -507,7 +459,7 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_evaluation(VM& vm, GC::RootVec
     ++index;
 
     // 10. Append module to stack.
-    stack.append(*this);
+    stack.append(this);
 
     // 11. For each ModuleRequest Record request of module.[[RequestedModules]], do
     for (auto& request : m_requested_modules) {
@@ -548,8 +500,8 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_evaluation(VM& vm, GC::RootVec
                 return cyclic_module->m_evaluation_error.throw_completion();
         }
 
-        // v. If _requiredModule_.[[AsyncEvaluationOrder]] is an integer, then
-        if (cyclic_module->m_async_evaluation_order.has_value()) {
+        // v. If requiredModule.[[AsyncEvaluation]] is true, then
+        if (cyclic_module->m_async_evaluation) {
             // 1. Set module.[[PendingAsyncDependencies]] to module.[[PendingAsyncDependencies]] + 1.
             ++m_pending_async_dependencies.value();
 
@@ -561,13 +513,14 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_evaluation(VM& vm, GC::RootVec
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] inner_module_evaluation on {} has tla: {} and pending async dep: {} dfs: {} ancestor dfs: {}", filename(), m_has_top_level_await, m_pending_async_dependencies.value(), m_dfs_index.value(), m_dfs_ancestor_index.value());
     // 12. If module.[[PendingAsyncDependencies]] > 0 or module.[[HasTLA]] is true, then
     if (m_pending_async_dependencies.value() > 0 || m_has_top_level_await) {
-        // a. Assert: _module_.[[AsyncEvaluationOrder]] is ~unset~.
-        VERIFY(!m_async_evaluation_order.has_value());
+        // a. Assert: module.[[AsyncEvaluation]] is false and was never previously set to true.
+        VERIFY(!m_async_evaluation); // FIXME: I don't think we can check previously?
 
-        // b. Set _module_.[[AsyncEvaluationOrder]] to IncrementModuleAsyncEvaluationCount().
-        m_async_evaluation_order = vm.increment_module_async_evaluation_count();
+        // b. Set module.[[AsyncEvaluation]] to true.
+        m_async_evaluation = true;
+        // c. NOTE: The order in which module records have their [[AsyncEvaluation]] fields transition to true is significant. (See 16.2.1.5.2.4.)
 
-        // c. If _module_.[[PendingAsyncDependencies]] = 0, perform ExecuteAsyncModule(_module_).
+        // d. If module.[[PendingAsyncDependencies]] is 0, perform ExecuteAsyncModule(module).
         if (m_pending_async_dependencies.value() == 0)
             execute_async_module(vm);
     }
@@ -578,7 +531,7 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_evaluation(VM& vm, GC::RootVec
 
     // 14. Assert: module occurs exactly once in stack.
     auto count = 0;
-    for (auto module : stack) {
+    for (auto* module : stack) {
         if (module == this)
             count++;
     }
@@ -596,27 +549,25 @@ ThrowCompletionOr<u32> CyclicModule::inner_module_evaluation(VM& vm, GC::RootVec
 
             // i. Let requiredModule be the last element in stack.
             // ii. Remove the last element of stack.
-            auto required_module = stack.take_last();
+            auto* required_module = stack.take_last();
 
             // iii. Assert: requiredModule is a Cyclic Module Record.
             VERIFY(is<CyclicModule>(*required_module));
 
             auto& cyclic_module = static_cast<CyclicModule&>(*required_module);
 
-            // iv. Assert: _requiredModule_.[[AsyncEvaluationOrder]] is either an integer or ~unset~.
-
-            // v. If _requiredModule_.[[AsyncEvaluationOrder]] is ~unset~, set _requiredModule_.[[Status]] to ~evaluated~.
-            if (!cyclic_module.m_async_evaluation_order.has_value())
+            // iv. If requiredModule.[[AsyncEvaluation]] is false, set requiredModule.[[Status]] to evaluated.
+            if (!cyclic_module.m_async_evaluation)
                 cyclic_module.m_status = ModuleStatus::Evaluated;
-            // vi. Else, set _requiredModule_.[[Status]] to ~evaluating-async~.
+            // v. Otherwise, set requiredModule.[[Status]] to evaluating-async.
             else
                 cyclic_module.m_status = ModuleStatus::EvaluatingAsync;
 
-            // vii. If _requiredModule_ and _module_ are the same Module Record, set _done_ to *true*.
+            // vi. If requiredModule and module are the same Module Record, set done to true.
             if (required_module == this)
                 done = true;
 
-            // viii. Set _requiredModule_.[[CycleRoot]] to _module_.
+            // vii. Set requiredModule.[[CycleRoot]] to module.
             cyclic_module.m_cycle_root = this;
         }
     }
@@ -689,7 +640,7 @@ void CyclicModule::execute_async_module(VM& vm)
 }
 
 // 16.2.1.5.2.3 GatherAvailableAncestors ( module, execList ), https://tc39.es/ecma262/#sec-gather-available-ancestors
-void CyclicModule::gather_available_ancestors(GC::RootVector<GC::Ptr<CyclicModule>>& exec_list)
+void CyclicModule::gather_available_ancestors(Vector<CyclicModule*>& exec_list)
 {
     // 1. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
     for (auto module : m_async_parent_modules) {
@@ -701,8 +652,8 @@ void CyclicModule::gather_available_ancestors(GC::RootVector<GC::Ptr<CyclicModul
             // ii. Assert: m.[[EvaluationError]] is empty.
             VERIFY(!module->m_evaluation_error.is_error());
 
-            // iii. Assert: _m_.[[AsyncEvaluationOrder]] is an integer.
-            VERIFY(module->m_async_evaluation_order.has_value());
+            // iii. Assert: m.[[AsyncEvaluation]] is true.
+            VERIFY(module->m_async_evaluation);
 
             // iv. Assert: m.[[PendingAsyncDependencies]] > 0.
             VERIFY(module->m_pending_async_dependencies.value() > 0);
@@ -740,14 +691,14 @@ void CyclicModule::async_module_execution_fulfilled(VM& vm)
     // 2. Assert: module.[[Status]] is evaluating-async.
     VERIFY(m_status == ModuleStatus::EvaluatingAsync);
 
-    // 3. Assert: _module_.[[AsyncEvaluationOrder]] is an integer.
-    VERIFY(m_async_evaluation_order.has_value());
+    // 3. Assert: module.[[AsyncEvaluation]] is true.
+    VERIFY(m_async_evaluation);
 
     // 4. Assert: module.[[EvaluationError]] is empty.
     VERIFY(!m_evaluation_error.is_error());
 
-    // 5. Set _module_.[[AsyncEvaluationOrder]] to ~done~.
-    m_async_evaluation_order = {};
+    // 5. Set module.[[AsyncEvaluation]] to false.
+    m_async_evaluation = false;
 
     // 6. Set module.[[Status]] to evaluated.
     m_status = ModuleStatus::Evaluated;
@@ -762,27 +713,19 @@ void CyclicModule::async_module_execution_fulfilled(VM& vm)
     }
 
     // 8. Let execList be a new empty List.
-    GC::RootVector<GC::Ptr<CyclicModule>> exec_list;
+    Vector<CyclicModule*> exec_list;
 
     // 9. Perform GatherAvailableAncestors(module, execList).
     gather_available_ancestors(exec_list);
 
-    // 10. Assert: All elements of _execList_ have their [[AsyncEvaluationOrder]] field set to an integer,
-    //     [[PendingAsyncDependencies]] field set to 0, and [[EvaluationError]] field set to ~empty~.
-    VERIFY(all_of(exec_list, [&](auto module) {
-        return module->m_async_evaluation_order.has_value()
-            && module->m_pending_async_dependencies.value() == 0
-            && !module->m_evaluation_error.is_error();
-    }));
+    // 10. Let sortedExecList be a List whose elements are the elements of execList, in the order in which they had their [[AsyncEvaluation]] fields set to true in InnerModuleEvaluation.
+    // FIXME: Sort the list. To do this we need to use more than an Optional<bool> to track [[AsyncEvaluation]].
 
-    // 11. Let _sortedExecList_ be a List whose elements are the elements of _execList_, sorted by their
-    //     [[AsyncEvaluationOrder]] field in ascending order.
-    quick_sort(exec_list, [](auto const& left, auto const& right) {
-        return left->m_async_evaluation_order.value() < right->m_async_evaluation_order.value();
-    });
+    // 11. Assert: All elements of sortedExecList have their [[AsyncEvaluation]] field set to true, [[PendingAsyncDependencies]] field set to 0, and [[EvaluationError]] field set to empty.
+    VERIFY(all_of(exec_list, [&](CyclicModule* module) { return module->m_async_evaluation && module->m_pending_async_dependencies.value() == 0 && !module->m_evaluation_error.is_error(); }));
 
     // 12. For each Cyclic Module Record m of sortedExecList, do
-    for (auto module : exec_list) {
+    for (auto* module : exec_list) {
         // a. If m.[[Status]] is evaluated, then
         if (module->m_status == ModuleStatus::Evaluated) {
             // i. Assert: m.[[EvaluationError]] is not empty.
@@ -805,15 +748,12 @@ void CyclicModule::async_module_execution_fulfilled(VM& vm)
             }
             // iii. Else,
             else {
-                // 1. Set _m_.[[AsyncEvaluationOrder]] to ~done~.
-                module->m_async_evaluation_order = {};
-
-                // 2. Set _m_.[[Status]] to ~evaluated~.
+                // 1. Set m.[[Status]] to evaluated.
                 module->m_status = ModuleStatus::Evaluated;
 
-                // 3. If _m_.[[TopLevelCapability]] is not ~empty~, then
+                // 2. If m.[[TopLevelCapability]] is not empty, then
                 if (module->m_top_level_capability != nullptr) {
-                    // a. Assert: _m_.[[CycleRoot]] and _m_ are the same Module Record.
+                    // a. Assert: m.[[CycleRoot]] is m.
                     VERIFY(module->m_cycle_root == module);
 
                     // b. Perform ! Call(m.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
@@ -841,8 +781,8 @@ void CyclicModule::async_module_execution_rejected(VM& vm, Value error)
     // 2. Assert: module.[[Status]] is evaluating-async.
     VERIFY(m_status == ModuleStatus::EvaluatingAsync);
 
-    // 3. Assert: _module_.[[AsyncEvaluationOrder]] is an integer.
-    VERIFY(m_async_evaluation_order.has_value());
+    // 3. Assert: module.[[AsyncEvaluation]] is true.
+    VERIFY(m_async_evaluation);
 
     // 4. Assert: module.[[EvaluationError]] is empty.
     VERIFY(!m_evaluation_error.is_error());
@@ -853,12 +793,13 @@ void CyclicModule::async_module_execution_rejected(VM& vm, Value error)
     // 6. Set module.[[Status]] to evaluated.
     m_status = ModuleStatus::Evaluated;
 
-    // 7. Set _module_.[[AsyncEvaluationOrder]] to ~done~.
-    m_async_evaluation_order = {};
+    // 7. Set module.[[AsyncEvaluationOrder]] to DONE.
+    // FIXME: [[AsyncEvaluation]] was editorially replaced with [[AsyncEvaluationOrder]]. See:
+    //        https://github.com/tc39/ecma262/commit/030dcd6c88e79e066a2d58ee39d045ba7d1e6e03
 
-    // 8. NOTE: _module_.[[AsyncEvaluationOrder]] is set to ~done~ for symmetry with AsyncModuleExecutionFulfilled. In
+    // 8. NOTE: module.[[AsyncEvaluationOrder]] is set to DONE for symmetry with AsyncModuleExecutionFulfilled. In
     //    InnerModuleEvaluation, the value of a module's [[AsyncEvaluationOrder]] internal slot is unused when its
-    //    [[EvaluationError]] internal slot is not ~empty~.
+    //    [[EvaluationError]] internal slot is not EMPTY.
 
     // 9. If module.[[TopLevelCapability]] is not empty, then
     if (m_top_level_capability != nullptr) {
@@ -883,7 +824,7 @@ GC::Ref<Module> CyclicModule::get_imported_module(ModuleRequest const& request)
 {
     // 1. Let records be a List consisting of each LoadedModuleRequest Record r of referrer.[[LoadedModules]]
     //    such that ModuleRequestsEqual(r, request) is true.
-    GC::ConservativeVector<LoadedModuleRequest> records;
+    Vector<LoadedModuleRequest> records;
     for (auto const& r : m_loaded_modules) {
         if (module_requests_equal(r, request))
             records.append(r);
@@ -968,7 +909,7 @@ void continue_dynamic_import(GC::Ref<PromiseCapability> promise_capability, Thro
         auto on_fulfilled = NativeFunction::create(*vm.current_realm(), move(fulfilled_closure), 0);
 
         // f. Perform PerformPromiseThen(evaluatePromise, onFulfilled, onRejected).
-        static_cast<JS::Promise&>(*evaluate_promise.value()->promise()).perform_then(on_fulfilled, on_rejected, {});
+        evaluate_promise.value()->perform_then(on_fulfilled, on_rejected, {});
 
         // g. Return unused.
         return js_undefined();

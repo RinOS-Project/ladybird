@@ -1,3 +1,6 @@
+#import <DOM/Node.idl>
+#import <DOM/AbstractRange.idl>
+
 // https://dom.spec.whatwg.org/#dictdef-staticrangeinit
 dictionary StaticRangeInit {
     required Node startContainer;

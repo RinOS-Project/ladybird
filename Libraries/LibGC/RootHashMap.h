@@ -11,7 +11,6 @@
 #include <LibGC/Cell.h>
 #include <LibGC/Forward.h>
 #include <LibGC/HeapRoot.h>
-#include <LibGC/Rootable.h>
 
 namespace GC {
 
@@ -20,7 +19,6 @@ public:
     virtual void gather_roots(HashMap<Cell*, GC::HeapRoot>&) const = 0;
 
 protected:
-    RootHashMapBase();
     explicit RootHashMapBase(Heap&);
     ~RootHashMapBase();
 
@@ -41,8 +39,8 @@ class RootHashMap final
     using HashMapBase = HashMap<K, V, KeyTraits, ValueTraits, IsOrdered>;
 
 public:
-    RootHashMap()
-        : RootHashMapBase()
+    explicit RootHashMap(Heap& heap)
+        : RootHashMapBase(heap)
     {
     }
 
@@ -50,15 +48,13 @@ public:
 
     virtual void gather_roots(HashMap<Cell*, GC::HeapRoot>& roots) const override
     {
-        static constexpr bool KeyIsGCType = Detail::RootableValueTraits<K>::is_rootable;
-        static constexpr bool ValueIsGCType = Detail::RootableValueTraits<V>::is_rootable;
-        static_assert(KeyIsGCType || ValueIsGCType,
-            "RootHashMap requires at least one of key or value types to be convertible to Cell const* or derive from NanBoxedValue");
         for (auto& [key, value] : *this) {
-            if constexpr (KeyIsGCType)
-                Detail::gather_root(roots, key, HeapRoot::Type::RootHashMap);
-            if constexpr (ValueIsGCType)
-                Detail::gather_root(roots, value, HeapRoot::Type::RootHashMap);
+            if constexpr (IsBaseOf<NanBoxedValue, V>) {
+                if (value.is_cell())
+                    roots.set(&const_cast<V&>(value).as_cell(), HeapRoot { .type = HeapRoot::Type::RootHashMap });
+            } else {
+                roots.set(value, HeapRoot { .type = HeapRoot::Type::RootHashMap });
+            }
         }
     }
 };

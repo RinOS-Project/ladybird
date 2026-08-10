@@ -5,6 +5,8 @@
  */
 
 #include <LibGfx/Path.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGPolylineElementPrototype.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/AttributeParser.h>
@@ -19,12 +21,18 @@ SVGPolylineElement::SVGPolylineElement(DOM::Document& document, DOM::QualifiedNa
 {
 }
 
-void SVGPolylineElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
+void SVGPolylineElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGPolylineElement);
+    Base::initialize(realm);
+}
+
+void SVGPolylineElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
 {
     Base::attribute_changed(name, old_value, value, namespace_);
 
     if (name == SVG::AttributeNames::points) {
-        m_points = AttributeParser::parse_points(value.value_or({}));
+        m_points = AttributeParser::parse_points(value.value_or(String {}));
         set_needs_layout_update(DOM::SetNeedsLayoutReason::StyleChange);
     }
 }

@@ -1,3 +1,7 @@
+#import <TrustedTypes/TrustedHTML.idl>
+#import <TrustedTypes/TrustedScript.idl>
+#import <TrustedTypes/TrustedScriptURL.idl>
+
 // https://w3c.github.io/trusted-types/dist/spec/#typedefdef-trustedtype
 typedef (TrustedHTML or TrustedScript or TrustedScriptURL) TrustedType;
 
@@ -5,9 +9,9 @@ typedef (TrustedHTML or TrustedScript or TrustedScriptURL) TrustedType;
 [Exposed=(Window,Worker)]
 interface TrustedTypePolicy {
     readonly attribute Utf16DOMString name;
-    [NeedsCallerRealm] TrustedHTML createHTML(Utf16DOMString input, any... arguments);
-    [NeedsCallerRealm] TrustedScript createScript(Utf16DOMString input, any... arguments);
-    [NeedsCallerRealm] TrustedScriptURL createScriptURL(Utf16DOMString input, any... arguments);
+    TrustedHTML createHTML(Utf16DOMString input, any... arguments);
+    TrustedScript createScript(Utf16DOMString input, any... arguments);
+    TrustedScriptURL createScriptURL(Utf16DOMString input, any... arguments);
 };
 
 // https://w3c.github.io/trusted-types/dist/spec/#trusted-type-policy-options

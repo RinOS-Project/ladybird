@@ -1,3 +1,0 @@
-currentTime advances: true
-currentTime stays suspended: true
-currentTime resumes: true

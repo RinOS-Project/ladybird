@@ -4,34 +4,23 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/BinarySearch.h>
-#include <LibGC/Heap.h>
+#include <AK/QuickSort.h>
 #include <LibWeb/IndexedDB/Internal/Index.h>
 #include <LibWeb/IndexedDB/Internal/MutationLog.h>
 #include <LibWeb/IndexedDB/Internal/ObjectStore.h>
-#include <LibWeb/IndexedDB/Internal/RecordRange.h>
 
 namespace Web::IndexedDB {
-
-static int compare_index_records(IndexRecord const& a, IndexRecord const& b)
-{
-    auto key_comparison = Key::compare_two_keys(a.key, b.key);
-    if (key_comparison != 0)
-        return key_comparison;
-
-    return Key::compare_two_keys(a.value, b.value);
-}
 
 GC_DEFINE_ALLOCATOR(Index);
 
 Index::~Index() = default;
 
-GC::Ref<Index> Index::create(GC::Ref<ObjectStore> store, Utf16String const& name, KeyPath const& key_path, bool unique, bool multi_entry)
+GC::Ref<Index> Index::create(JS::Realm& realm, GC::Ref<ObjectStore> store, String const& name, KeyPath const& key_path, bool unique, bool multi_entry)
 {
-    return GC::Heap::the().allocate<Index>(store, name, key_path, unique, multi_entry);
+    return realm.create<Index>(store, name, key_path, unique, multi_entry);
 }
 
-Index::Index(GC::Ref<ObjectStore> store, Utf16String const& name, KeyPath const& key_path, bool unique, bool multi_entry)
+Index::Index(GC::Ref<ObjectStore> store, String const& name, KeyPath const& key_path, bool unique, bool multi_entry)
     : m_object_store(store)
     , m_name(name)
     , m_unique(unique)
@@ -52,7 +41,7 @@ void Index::visit_edges(Visitor& visitor)
     }
 }
 
-void Index::set_name(Utf16String name)
+void Index::set_name(String name)
 {
     // NOTE: Update the key in the map so it still matches the name
     auto old_value = m_object_store->index_set().take(m_name).release_value();
@@ -63,21 +52,25 @@ void Index::set_name(Utf16String name)
 
 bool Index::has_record_with_key(GC::Ref<Key> key)
 {
-    return AK::binary_search(m_records, key, nullptr, [](auto const& needle, auto const& record) {
-        return Key::compare_two_keys(needle, record.key);
-    }) != nullptr;
+    auto index = m_records.find_if([&key](auto const& record) {
+        return Key::equals(record.key, key);
+    });
+
+    return index != m_records.end();
 }
 
 // https://w3c.github.io/IndexedDB/#index-referenced-value
-HTML::StorageSerializationRecord const& Index::referenced_value(IndexRecord const& index_record) const
+HTML::SerializationRecord const& Index::referenced_value(IndexRecord const& index_record) const
 {
     // Records in an index are said to have a referenced value.
     // This is the value of the record in the index’s referenced object store which has a key equal to the index’s record’s value.
-    auto* store_record = AK::binary_search(m_object_store->records(), index_record.value, nullptr, [](auto const& needle, auto const& record) {
-        return Key::compare_two_keys(needle, record.key);
-    });
-    VERIFY(store_record);
-    return *store_record->value;
+    return *m_object_store
+                ->records()
+                .first_matching([&](auto const& store_record) {
+                    return Key::equals(store_record.key, index_record.value);
+                })
+                .value()
+                .value;
 }
 
 void Index::clear_records()
@@ -89,18 +82,17 @@ void Index::clear_records()
 
 Optional<IndexRecord&> Index::first_in_range(GC::Ref<IDBKeyRange> range)
 {
-    auto record_range = record_range_for_key_range(m_records, range);
-    if (record_range.start == record_range.end)
-        return {};
-    return m_records[record_range.start];
+    return m_records.first_matching([&](auto const& record) {
+        return range->is_in_range(record.key);
+    });
 }
 
 GC::ConservativeVector<IndexRecord> Index::first_n_in_range(GC::Ref<IDBKeyRange> range, Optional<WebIDL::UnsignedLong> count)
 {
-    GC::ConservativeVector<IndexRecord> records;
-    auto record_range = record_range_for_key_range(m_records, range);
-    for (size_t i = record_range.start; i < record_range.end; ++i) {
-        records.append(m_records[i]);
+    GC::ConservativeVector<IndexRecord> records(range->heap());
+    for (auto const& record : m_records) {
+        if (range->is_in_range(record.key))
+            records.append(record);
 
         if (count.has_value() && records.size() >= *count)
             break;
@@ -111,11 +103,10 @@ GC::ConservativeVector<IndexRecord> Index::first_n_in_range(GC::Ref<IDBKeyRange>
 
 GC::ConservativeVector<IndexRecord> Index::last_n_in_range(GC::Ref<IDBKeyRange> range, Optional<WebIDL::UnsignedLong> count)
 {
-    GC::ConservativeVector<IndexRecord> records;
-    auto record_range = record_range_for_key_range(m_records, range);
-    for (size_t i = record_range.end; i > record_range.start;) {
-        --i;
-        records.append(m_records[i]);
+    GC::ConservativeVector<IndexRecord> records(range->heap());
+    for (auto const& record : m_records.in_reverse()) {
+        if (range->is_in_range(record.key))
+            records.append(record);
 
         if (count.has_value() && records.size() >= *count)
             break;
@@ -126,8 +117,12 @@ GC::ConservativeVector<IndexRecord> Index::last_n_in_range(GC::Ref<IDBKeyRange> 
 
 u64 Index::count_records_in_range(GC::Ref<IDBKeyRange> range)
 {
-    auto record_range = record_range_for_key_range(m_records, range);
-    return record_range.end - record_range.start;
+    u64 count = 0;
+    for (auto const& record : m_records) {
+        if (range->is_in_range(record.key))
+            ++count;
+    }
+    return count;
 }
 
 void Index::store_a_record(IndexRecord const& record)
@@ -135,20 +130,23 @@ void Index::store_a_record(IndexRecord const& record)
     if (auto log = m_object_store->mutation_log())
         log->note_index_record_stored(*this, record);
 
-    // NOTE: The record is stored in index’s list of records such that the list is sorted primarily on the records keys, and secondarily on the records values, in ascending order.
-    if (m_records.is_empty() || compare_index_records(m_records.last(), record) <= 0) {
-        m_records.append(record);
-        return;
-    }
+    m_records.append(record);
 
-    m_records.insert(AK::lower_bound_index(m_records, record, compare_index_records), record);
+    // NOTE: The record is stored in index’s list of records such that the list is sorted primarily on the records keys, and secondarily on the records values, in ascending order.
+    AK::quick_sort(m_records, [](auto const& a, auto const& b) {
+        auto key_comparison = Key::compare_two_keys(a.key, b.key);
+        if (key_comparison != 0)
+            return key_comparison < 0;
+
+        return Key::compare_two_keys(a.value, b.value) < 0;
+    });
 }
 
 void Index::remove_record(IndexRecord const& record)
 {
-    auto index = AK::lower_bound_index(m_records, record, compare_index_records);
-    if (index < m_records.size() && compare_index_records(m_records[index], record) == 0)
-        m_records.remove(index);
+    m_records.remove_first_matching([&](auto const& existing) {
+        return Key::equals(existing.key, record.key) && Key::equals(existing.value, record.value);
+    });
 }
 
 void Index::remove_records_with_value_in_range(GC::Ref<IDBKeyRange> range)

@@ -7,29 +7,26 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
 #include <LibWeb/DOM/CharacterData.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/Slottable.h>
 #include <LibWeb/Export.h>
-#include <LibWeb/Forward.h>
 
 namespace Web::DOM {
 
 class WEB_API Text
     : public CharacterData
     , public SlottableMixin {
-    WEB_WRAPPABLE(Text, CharacterData);
+    WEB_PLATFORM_OBJECT(Text, CharacterData);
     GC_DECLARE_ALLOCATOR(Text);
 
 public:
     virtual ~Text() override = default;
 
-    [[nodiscard]] static GC::Ref<Text> create(Document&, Utf16String data);
-    [[nodiscard]] static GC::Ref<Text> create_for_constructor(JS::Object&, Utf16String data);
+    static WebIDL::ExceptionOr<GC::Ref<Text>> construct_impl(JS::Realm& realm, Utf16String data);
 
     // ^Node
-    virtual Utf16FlyString node_name() const override { return "#text"_utf16_fly_string; }
+    virtual FlyString node_name() const override { return "#text"_fly_string; }
 
     virtual Node& slottable_as_node() override { return *this; }
 
@@ -48,6 +45,7 @@ protected:
     Text(Document&, Utf16String);
     Text(Document&, NodeType, Utf16String);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:

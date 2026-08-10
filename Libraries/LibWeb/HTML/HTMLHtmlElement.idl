@@ -1,3 +1,5 @@
+#import <HTML/HTMLElement.idl>
+
 // https://html.spec.whatwg.org/multipage/semantics.html#htmlhtmlelement
 [Exposed=Window]
 interface HTMLHtmlElement : HTMLElement {
@@ -5,6 +7,6 @@ interface HTMLHtmlElement : HTMLElement {
     [HTMLConstructor] constructor();
 
     // Obsolete
-    [CEReactions, Reflect] attribute Utf16DOMString version;
+    [CEReactions, Reflect] attribute DOMString version;
 
 };

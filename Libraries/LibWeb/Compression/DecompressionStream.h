@@ -12,7 +12,7 @@
 #include <LibCompress/Forward.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Compression/CompressionStream.h>
 #include <LibWeb/Streams/GenericTransformStream.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
@@ -20,30 +20,29 @@
 namespace Web::Compression {
 
 using Decompressor = Variant<
-    NonnullOwnPtr<Compress::BrotliDecompressor>,
     NonnullOwnPtr<Compress::ZlibDecompressor>,
     NonnullOwnPtr<Compress::DeflateDecompressor>,
     NonnullOwnPtr<Compress::GzipDecompressor>>;
 
 // https://compression.spec.whatwg.org/#decompressionstream
 class DecompressionStream final
-    : public Bindings::GCAllocatedWrappable
+    : public Bindings::PlatformObject
     , public Streams::GenericTransformStreamMixin {
-    WEB_WRAPPABLE(DecompressionStream, Bindings::GCAllocatedWrappable);
+    WEB_PLATFORM_OBJECT(DecompressionStream, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(DecompressionStream);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<DecompressionStream>> create(JS::Object& relevant_global_object, Decompressor, NonnullOwnPtr<AllocatingMemoryStream>);
-    static WebIDL::ExceptionOr<GC::Ref<DecompressionStream>> create_for_constructor(JS::Object&, Bindings::CompressionFormat);
+    static WebIDL::ExceptionOr<GC::Ref<DecompressionStream>> construct_impl(JS::Realm&, Bindings::CompressionFormat);
     virtual ~DecompressionStream() override;
 
 private:
-    DecompressionStream(GC::Ref<Streams::TransformStream>, Decompressor, NonnullOwnPtr<AllocatingMemoryStream>);
+    DecompressionStream(JS::Realm&, GC::Ref<Streams::TransformStream>, Decompressor, NonnullOwnPtr<AllocatingMemoryStream>);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    WebIDL::ExceptionOr<void> decompress_and_enqueue_chunk(JS::Realm&, JS::Value);
-    WebIDL::ExceptionOr<void> decompress_flush_and_enqueue(JS::Realm&);
+    WebIDL::ExceptionOr<void> decompress_and_enqueue_chunk(JS::Value);
+    WebIDL::ExceptionOr<void> decompress_flush_and_enqueue();
 
     Decompressor m_decompressor;
     NonnullOwnPtr<AllocatingMemoryStream> m_input_stream;

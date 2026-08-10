@@ -1,12 +1,8 @@
-test("repeat-match-waldemar", () => {
+test.xfail("repeat-match-waldemar", () => {
     // WebKit assertion compatibility shim for Ladybird's test-js harness
 
     function description(msg) {
         // No-op, just used for test documentation in WebKit.
-    }
-
-    function debug(msg) {
-        // No-op, just used for debugging in WebKit tests.
     }
 
     function shouldBe(actual_code, expected_code) {

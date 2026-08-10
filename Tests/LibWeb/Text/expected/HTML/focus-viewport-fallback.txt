@@ -1,2 +1,0 @@
-after intercepted navigation focus reset: body
-after fragment focus fallback: body

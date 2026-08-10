@@ -7,8 +7,7 @@
 #pragma once
 
 #include <AK/HashMap.h>
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
+#include <AK/String.h>
 
 namespace Web::HTML::TokenizedFeature {
 
@@ -28,16 +27,16 @@ TOKENIZED_FEATURE(Scrollbars);
 TOKENIZED_FEATURE(Status);
 TOKENIZED_FEATURE(Toolbar);
 
-using Map = OrderedHashMap<Utf16String, Utf16String>;
+using Map = OrderedHashMap<String, String>;
 
 }
 
 namespace Web::HTML {
 
-TokenizedFeature::Map tokenize_open_features(Utf16View features);
+TokenizedFeature::Map tokenize_open_features(StringView features);
 TokenizedFeature::Popup check_if_a_popup_window_is_requested(TokenizedFeature::Map const&);
 
 template<Enum T>
-T parse_boolean_feature(Utf16View value);
+T parse_boolean_feature(StringView value);
 
 }

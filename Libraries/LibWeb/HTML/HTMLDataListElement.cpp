@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLDataListElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/HTMLDataListElement.h>
 #include <LibWeb/HTML/HTMLOptionElement.h>
 
@@ -17,6 +19,12 @@ HTMLDataListElement::HTMLDataListElement(DOM::Document& document, DOM::Qualified
 }
 
 HTMLDataListElement::~HTMLDataListElement() = default;
+
+void HTMLDataListElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLDataListElement);
+    Base::initialize(realm);
+}
 
 void HTMLDataListElement::visit_edges(Cell::Visitor& visitor)
 {

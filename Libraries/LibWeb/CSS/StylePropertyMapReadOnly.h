@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
 #include <LibWeb/DOM/AbstractElement.h>
 #include <LibWeb/WebIDL/Types.h>
@@ -14,25 +14,26 @@
 namespace Web::CSS {
 
 // https://drafts.css-houdini.org/css-typed-om-1/#stylepropertymapreadonly
-class StylePropertyMapReadOnly : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(StylePropertyMapReadOnly, Bindings::GCAllocatedWrappable);
+class StylePropertyMapReadOnly : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(StylePropertyMapReadOnly, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(StylePropertyMapReadOnly);
 
 public:
-    [[nodiscard]] static GC::Ref<StylePropertyMapReadOnly> create_computed_style(DOM::AbstractElement);
+    [[nodiscard]] static GC::Ref<StylePropertyMapReadOnly> create_computed_style(JS::Realm&, DOM::AbstractElement);
 
     virtual ~StylePropertyMapReadOnly() override;
 
-    WebIDL::ExceptionOr<Variant<GC::Ref<CSSStyleValue>, Empty>> get(Utf16String property);
-    WebIDL::ExceptionOr<GC::RootVector<GC::Ref<CSSStyleValue>>> get_all(Utf16String property);
-    WebIDL::ExceptionOr<bool> has(Utf16String property);
+    WebIDL::ExceptionOr<Variant<GC::Ref<CSSStyleValue>, Empty>> get(String property);
+    WebIDL::ExceptionOr<Vector<GC::Ref<CSSStyleValue>>> get_all(String property);
+    WebIDL::ExceptionOr<bool> has(String property);
     WebIDL::UnsignedLong size() const;
 
 protected:
     using Source = Variant<DOM::AbstractElement, GC::Ref<CSSStyleDeclaration>>;
-    explicit StylePropertyMapReadOnly(Source);
+    explicit StylePropertyMapReadOnly(JS::Realm&, Source);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     static RefPtr<StyleValue const> get_style_value(Source&, PropertyNameAndID const& property);
 

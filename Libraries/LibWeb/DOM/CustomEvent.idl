@@ -1,3 +1,5 @@
+#import <DOM/Event.idl>
+
 // https://dom.spec.whatwg.org/#interface-customevent
 [Exposed=*]
 interface CustomEvent : Event {
@@ -5,7 +7,7 @@ interface CustomEvent : Event {
 
     readonly attribute any detail;
 
-    undefined initCustomEvent([Utf16FlyString] Utf16DOMString type, optional boolean bubbles = false, optional boolean cancelable = false, optional any detail = null); // legacy
+    undefined initCustomEvent(DOMString type, optional boolean bubbles = false, optional boolean cancelable = false, optional any detail = null); // legacy
 };
 
 dictionary CustomEventInit : EventInit {

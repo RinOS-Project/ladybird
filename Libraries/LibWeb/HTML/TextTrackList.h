@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/Utf16View.h>
 #include <LibGC/RootVector.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/HTML/TextTrack.h>
@@ -14,20 +13,15 @@
 namespace Web::HTML {
 
 class TextTrackList final : public DOM::EventTarget {
-    WEB_WRAPPABLE(TextTrackList, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(TextTrackList, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(TextTrackList);
 
 public:
-    static GC::Ref<TextTrackList> create();
-
     virtual ~TextTrackList() override;
-
-    void add_track(GC::Ref<TextTrack>);
 
     size_t length() const;
 
-    GC::Ptr<TextTrack> item(size_t index) const;
-    GC::Ptr<TextTrack> get_track_by_id(Utf16View id) const;
+    GC::Ptr<TextTrack> get_track_by_id(StringView id) const;
 
     void set_onchange(WebIDL::CallbackType*);
     WebIDL::CallbackType* onchange();
@@ -39,9 +33,12 @@ public:
     WebIDL::CallbackType* onremovetrack();
 
 private:
-    TextTrackList();
+    TextTrackList(JS::Realm&);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Visitor&) override;
+
+    virtual JS::ThrowCompletionOr<Optional<JS::PropertyDescriptor>> internal_get_own_property(JS::PropertyKey const& property_name) const override;
 
     Vector<GC::Ref<TextTrack>> m_text_tracks;
 };

@@ -8,61 +8,81 @@
 
 #include <AK/Optional.h>
 #include <AK/String.h>
-#include <AK/Types.h>
-#include <AK/Utf16String.h>
-#include <LibGC/Function.h>
-#include <LibHTTP/Cookie/Cookie.h>
 #include <LibHTTP/Forward.h>
-#include <LibJS/Forward.h>
-#include <LibURL/URL.h>
-#include <LibWeb/Bindings/CookieStore.h>
+#include <LibWeb/Bindings/CookieStorePrototype.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/Export.h>
-#include <LibWeb/WebIDL/CallbackType.h>
-#include <LibWeb/WebIDL/Promise.h>
+#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 
 namespace Web::CookieStore {
 
-using CookieInit = Bindings::CookieInit;
-using CookieListItem = Bindings::CookieListItem;
-using CookieStoreDeleteOptions = Bindings::CookieStoreDeleteOptions;
-using CookieStoreGetOptions = Bindings::CookieStoreGetOptions;
+// https://cookiestore.spec.whatwg.org/#dictdef-cookielistitem
+struct CookieListItem {
+    Optional<String> name;
+    Optional<String> value;
+};
 
-using CookieListCompletionSteps = GC::Function<void(Vector<CookieListItem>)>;
-using CookieMutationCompletionSteps = GC::Function<void(bool)>;
+// https://cookiestore.spec.whatwg.org/#dictdef-cookiestoregetoptions
+struct CookieStoreGetOptions {
+    Optional<String> name;
+    Optional<String> url;
+};
+
+// https://cookiestore.spec.whatwg.org/#dictdef-cookieinit
+struct CookieInit {
+    String name;
+    String value;
+    Optional<HighResolutionTime::DOMHighResTimeStamp> expires;
+    Optional<String> domain;
+    String path;
+    Bindings::CookieSameSite same_site;
+    bool partitioned { false };
+};
+
+// https://cookiestore.spec.whatwg.org/#dictdef-cookiestoredeleteoptions
+struct CookieStoreDeleteOptions {
+    String name;
+    Optional<String> domain;
+    String path;
+    bool partitioned { false };
+};
 
 // https://cookiestore.spec.whatwg.org/#cookiestore
 class WEB_API CookieStore final : public DOM::EventTarget {
-    WEB_WRAPPABLE(CookieStore, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(CookieStore, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(CookieStore);
 
 public:
-    GC::Ref<WebIDL::Promise> get(JS::Realm&, CookieStoreGetOptions const&);
-    GC::Ref<WebIDL::Promise> get(JS::Realm&, Utf16String);
-    void get(URL::URL, Optional<Utf16String>, GC::Ref<CookieListCompletionSteps>);
+    GC::Ref<WebIDL::Promise> get(String name);
+    GC::Ref<WebIDL::Promise> get(CookieStoreGetOptions const&);
 
-    GC::Ref<WebIDL::Promise> get_all(JS::Realm&, CookieStoreGetOptions const&);
-    GC::Ref<WebIDL::Promise> get_all(JS::Realm&, Utf16String);
-    void get_all(URL::URL, Optional<Utf16String>, GC::Ref<CookieListCompletionSteps>);
+    GC::Ref<WebIDL::Promise> get_all(String name);
+    GC::Ref<WebIDL::Promise> get_all(CookieStoreGetOptions const&);
 
-    GC::Ref<WebIDL::Promise> set(JS::Realm&, CookieInit const&);
-    GC::Ref<WebIDL::Promise> set(JS::Realm&, Utf16String name, Utf16String value);
-    void set(URL::URL, CookieInit const&, GC::Ref<CookieMutationCompletionSteps>);
+    GC::Ref<WebIDL::Promise> set(String name, String value);
+    GC::Ref<WebIDL::Promise> set(CookieInit const&);
 
-    GC::Ref<WebIDL::Promise> delete_(JS::Realm&, CookieStoreDeleteOptions const&);
-    GC::Ref<WebIDL::Promise> delete_(JS::Realm&, Utf16String);
-    void delete_(URL::URL, CookieStoreDeleteOptions const&, GC::Ref<CookieMutationCompletionSteps>);
+    GC::Ref<WebIDL::Promise> delete_(String name);
+    GC::Ref<WebIDL::Promise> delete_(CookieStoreDeleteOptions const&);
 
     void set_onchange(WebIDL::CallbackType*);
     WebIDL::CallbackType* onchange();
 
-    void process_cookie_changes(JS::Object&, Vector<HTTP::Cookie::Cookie>);
+    void process_cookie_changes(Vector<HTTP::Cookie::Cookie>);
 
 private:
-    CookieStore(PageClient&);
+    CookieStore(JS::Realm&, PageClient&);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     GC::Ref<PageClient> m_client;
 };
+
+}
+
+namespace Web::Bindings {
+
+JS::Value cookie_list_item_to_value(JS::Realm&, CookieStore::CookieListItem const&);
 
 }

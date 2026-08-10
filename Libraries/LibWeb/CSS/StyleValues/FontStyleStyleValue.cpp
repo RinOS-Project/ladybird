@@ -14,8 +14,9 @@
 namespace Web::CSS {
 
 FontStyleStyleValue::FontStyleStyleValue(FontStyleKeyword font_style, ValueComparingRefPtr<StyleValue const> angle_value)
-    : StyleValueWithDefaultOperators(Type::FontStyle, make_font_style_data(font_style, angle_value))
-    , m_angle_value(move(angle_value))
+    : StyleValueWithDefaultOperators(Type::FontStyle)
+    , m_font_style(font_style)
+    , m_angle_value(angle_value)
 {
 }
 
@@ -41,14 +42,14 @@ int FontStyleStyleValue::to_font_slope() const
 void FontStyleStyleValue::serialize(StringBuilder& builder, SerializationMode mode) const
 {
     Optional<String> angle_string;
-    if (angle()) {
-        angle_string = angle()->to_string(mode);
-        if (font_style() == FontStyleKeyword::Oblique && angle_string == "0deg"sv) {
+    if (m_angle_value) {
+        angle_string = m_angle_value->to_string(mode);
+        if (m_font_style == FontStyleKeyword::Oblique && angle_string == "0deg"sv) {
             builder.append("normal"sv);
             return;
         }
     }
-    builder.append(CSS::to_string(font_style()));
+    builder.append(CSS::to_string(m_font_style));
     // https://drafts.csswg.org/css-fonts/#valdef-font-style-oblique-angle--90deg-90deg
     // The lack of an <angle> represents 14deg. (Note that a font might internally provide its own mapping for "oblique", but the mapping within the font is disregarded.)
     if (angle_string.has_value() && angle_string != "14deg"sv)
@@ -59,13 +60,13 @@ ValueComparingNonnullRefPtr<StyleValue const> FontStyleStyleValue::absolutized(C
 {
     ValueComparingRefPtr<StyleValue const> absolutized_angle;
 
-    if (angle())
-        absolutized_angle = angle()->absolutized(computation_context);
+    if (m_angle_value)
+        absolutized_angle = m_angle_value->absolutized(computation_context);
 
-    if (absolutized_angle == angle())
+    if (absolutized_angle == m_angle_value)
         return *this;
 
-    return FontStyleStyleValue::create(font_style(), absolutized_angle);
+    return FontStyleStyleValue::create(m_font_style, absolutized_angle);
 }
 
 }

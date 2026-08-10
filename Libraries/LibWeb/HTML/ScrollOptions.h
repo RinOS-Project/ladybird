@@ -6,9 +6,14 @@
 
 #pragma once
 
-#include <LibWeb/Forward.h>
+#include <LibWeb/Bindings/WindowGlobalMixin.h>
 
 namespace Web::HTML {
+
+// https://w3c.github.io/csswg-drafts/cssom-view/#dictdef-scrolloptions
+struct ScrollOptions {
+    Bindings::ScrollBehavior behavior { Bindings::ScrollBehavior::Auto };
+};
 
 // https://drafts.csswg.org/cssom-view/#normalize-non-finite-values
 [[nodiscard]] inline double normalize_non_finite_values(double value)

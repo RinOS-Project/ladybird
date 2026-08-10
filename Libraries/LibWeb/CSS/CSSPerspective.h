@@ -14,17 +14,17 @@ namespace Web::CSS {
 
 // https://drafts.css-houdini.org/css-typed-om-1/#typedefdef-cssperspectivevalue
 // NB: CSSKeywordish is flattened here, because our bindings generator flattens nested variants.
-using CSSPerspectiveValue = Variant<GC::Ref<CSSNumericValue>, Utf16String, GC::Ref<CSSKeywordValue>>;
+using CSSPerspectiveValue = Variant<GC::Root<CSSNumericValue>, String, GC::Root<CSSKeywordValue>>;
 using CSSPerspectiveValueInternal = Variant<GC::Ref<CSSNumericValue>, GC::Ref<CSSKeywordValue>>;
 
 // https://drafts.css-houdini.org/css-typed-om-1/#cssperspective
 class CSSPerspective final : public CSSTransformComponent {
-    WEB_WRAPPABLE(CSSPerspective, CSSTransformComponent);
+    WEB_PLATFORM_OBJECT(CSSPerspective, CSSTransformComponent);
     GC_DECLARE_ALLOCATOR(CSSPerspective);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSPerspective> create(CSSPerspectiveValueInternal);
-    static WebIDL::ExceptionOr<GC::Ref<CSSPerspective>> create_for_constructor(CSSPerspectiveValue);
+    [[nodiscard]] static GC::Ref<CSSPerspective> create(JS::Realm&, CSSPerspectiveValueInternal);
+    static WebIDL::ExceptionOr<GC::Ref<CSSPerspective>> construct_impl(JS::Realm&, CSSPerspectiveValue);
 
     virtual ~CSSPerspective() override;
 
@@ -40,8 +40,10 @@ public:
     virtual WebIDL::ExceptionOr<NonnullRefPtr<TransformationStyleValue const>> create_style_value(PropertyNameAndID const&) const override;
 
 private:
-    explicit CSSPerspective(CSSPerspectiveValueInternal);
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    explicit CSSPerspective(JS::Realm&, CSSPerspectiveValueInternal);
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
     CSSPerspectiveValueInternal m_length;
 };

@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/Utf16View.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibURL/Forward.h>
 #include <LibWeb/ContentSecurityPolicy/Directives/Directive.h>
@@ -24,12 +23,12 @@ Directives::Directive::Result should_navigation_response_to_navigation_request_o
     GC::Ref<Fetch::Infrastructure::Response> navigation_response,
     GC::Ref<PolicyList> response_csp_list,
     Directives::Directive::NavigationType navigation_type,
-    GC::Ref<HTML::LocalNavigable> target);
+    GC::Ref<HTML::Navigable> target);
 
-Directives::Directive::Result should_elements_inline_type_behavior_be_blocked_by_content_security_policy(GC::Ref<DOM::Element> element, Directives::Directive::InlineType type, Utf16View source);
-JS::ThrowCompletionOr<void> ensure_csp_does_not_block_string_compilation(JS::Realm& realm, ReadonlySpan<Utf16String> parameter_strings, Utf16View body_string, Utf16View code_string, JS::CompilationType compilation_type, ReadonlySpan<JS::Value> parameter_args, JS::Value body_arg);
+Directives::Directive::Result should_elements_inline_type_behavior_be_blocked_by_content_security_policy(JS::Realm&, GC::Ref<DOM::Element> element, Directives::Directive::InlineType type, String const& source);
+JS::ThrowCompletionOr<void> ensure_csp_does_not_block_string_compilation(JS::Realm& realm, ReadonlySpan<String> parameter_strings, StringView body_string, StringView code_string, JS::CompilationType compilation_type, ReadonlySpan<JS::Value> parameter_args, JS::Value body_arg);
 JS::ThrowCompletionOr<void> ensure_csp_does_not_block_wasm_byte_compilation(JS::Realm&);
 
-[[nodiscard]] Directives::Directive::Result is_base_allowed_for_document(URL::URL const& base, GC::Ref<DOM::Document const> document);
+[[nodiscard]] Directives::Directive::Result is_base_allowed_for_document(JS::Realm&, URL::URL const& base, GC::Ref<DOM::Document const> document);
 
 }

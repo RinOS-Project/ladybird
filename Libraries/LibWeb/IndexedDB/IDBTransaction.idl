@@ -1,3 +1,7 @@
+#import <DOM/EventTarget.idl>
+#import <IndexedDB/IDBDatabase.idl>
+#import <IndexedDB/IDBObjectStore.idl>
+
 [Exposed=(Window,Worker)]
 interface IDBTransaction : EventTarget {
     readonly attribute DOMStringList objectStoreNames;
@@ -5,7 +9,7 @@ interface IDBTransaction : EventTarget {
     readonly attribute IDBTransactionDurability durability;
     [SameObject, ImplementedAs=connection] readonly attribute IDBDatabase db;
     readonly attribute DOMException? error;
-    IDBObjectStore objectStore(Utf16DOMString name);
+    IDBObjectStore objectStore(DOMString name);
     undefined commit();
     undefined abort();
     

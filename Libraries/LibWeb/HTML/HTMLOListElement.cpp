@@ -4,12 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/SaturatingMath.h>
-#include <LibWeb/CSS/CountersSet.h>
+#include <LibWeb/Bindings/HTMLOListElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/PropertyID.h>
-#include <LibWeb/CSS/StyleValues/CounterDefinitionsStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CounterStyleStyleValue.h>
-#include <LibWeb/CSS/StyleValues/IntegerStyleValue.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/AttributeNames.h>
 #include <LibWeb/HTML/HTMLOListElement.h>
@@ -27,11 +26,28 @@ HTMLOListElement::HTMLOListElement(DOM::Document& document, DOM::QualifiedName q
 
 HTMLOListElement::~HTMLOListElement() = default;
 
+void HTMLOListElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLOListElement);
+    Base::initialize(realm);
+}
+
+void HTMLOListElement::attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
+{
+    Base::attribute_changed(local_name, old_value, value, namespace_);
+
+    if (local_name.is_one_of(HTML::AttributeNames::reversed, HTML::AttributeNames::start, HTML::AttributeNames::type)) {
+        set_needs_layout_tree_update(true, DOM::SetNeedsLayoutTreeUpdateReason::HTMLOListElementOrdinalValues);
+        if (auto* first_child_element = first_child_of_type<Element>())
+            first_child_element->maybe_invalidate_ordinals_for_list_owner();
+    }
+}
+
 // https://html.spec.whatwg.org/multipage/grouping-content.html#dom-ol-start
 WebIDL::Long HTMLOListElement::start()
 {
     // The start IDL attribute must reflect the content attribute of the same name, with a default value of 1.
-    auto content_attribute_value = get_attribute(AttributeNames::start).value_or("1"_utf16);
+    auto content_attribute_value = get_attribute(AttributeNames::start).value_or("1"_string);
     if (auto maybe_number = HTML::parse_integer(content_attribute_value); maybe_number.has_value())
         return *maybe_number;
     return 1;
@@ -39,61 +55,58 @@ WebIDL::Long HTMLOListElement::start()
 
 void HTMLOListElement::set_start(WebIDL::Long start)
 {
-    set_attribute_value(AttributeNames::start, Utf16String::number(start));
+    set_attribute_value(AttributeNames::start, String::number(start));
 }
 
-bool HTMLOListElement::is_presentational_hint(Utf16FlyString const& name) const
+// https://html.spec.whatwg.org/multipage/grouping-content.html#concept-ol-start
+AK::Checked<i32> HTMLOListElement::starting_value() const
+{
+    // 1. If the ol element has a start attribute, then:
+    auto start = get_attribute(AttributeNames::start);
+    if (start.has_value()) {
+        // 1. Let parsed be the result of parsing the value of the attribute as an integer.
+        auto parsed = parse_integer(start.value());
+
+        // 2. If parsed is not an error, then return parsed.
+        if (parsed.has_value())
+            return parsed.value();
+    }
+    // 2. If the ol element has a reversed attribute, then return the number of owned li elements.
+    if (has_attribute(AttributeNames::reversed)) {
+        auto const reverse_list_starting_value = number_of_owned_list_items();
+        VERIFY(reverse_list_starting_value <= NumericLimits<WebIDL::Long>::max());
+        return reverse_list_starting_value;
+    }
+
+    // 3. Return 1.
+    return 1;
+}
+
+bool HTMLOListElement::is_presentational_hint(FlyString const& name) const
 {
     if (Base::is_presentational_hint(name))
         return true;
 
-    return name.is_one_of(HTML::AttributeNames::type, HTML::AttributeNames::start, HTML::AttributeNames::reversed);
+    return name == HTML::AttributeNames::type;
 }
 
-void HTMLOListElement::apply_presentational_hints(Vector<CSS::StyleProperty>& properties) const
+void HTMLOListElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
 {
-    Base::apply_presentational_hints(properties);
+    Base::apply_presentational_hints(cascaded_properties);
 
     // https://html.spec.whatwg.org/multipage/rendering.html#lists
-    // "When an ol element has a start attribute or a reversed attribute, or both, the user agent is
-    // expected to use the following steps to treat the attributes as a presentational hint for the
-    // 'counter-reset' property:
-    // 1. Let value be null.
-    // 2. If the element has a start attribute, then set value to the result of parsing the
-    //    attribute's value using the rules for parsing integers.
-    // 3. If the element has a reversed attribute:
-    //    1. If value is an integer, then increment value by 1 and return reversed(list-item) value.
-    //    2. Otherwise, return reversed(list-item).
-    // 4. Otherwise:
-    //    1. If value is an integer, then decrement value by 1 and return list-item value.
-    //    2. Otherwise, there is no presentational hint."
-    auto parsed_start = [&]() -> Optional<i32> {
-        if (auto start = get_attribute(AttributeNames::start); start.has_value())
-            return parse_integer(*start);
-        return {};
-    }();
-    if (has_attribute(AttributeNames::reversed)) {
-        CSS::CounterDefinition definition { CSS::list_item_counter_name(), true, nullptr };
-        if (parsed_start.has_value())
-            definition.value = CSS::IntegerStyleValue::create(AK::saturating_add(*parsed_start, 1));
-        properties.append({ .property_id = CSS::PropertyID::CounterReset, .value = CSS::CounterDefinitionsStyleValue::create({ move(definition) }) });
-    } else if (parsed_start.has_value()) {
-        CSS::CounterDefinition definition { CSS::list_item_counter_name(), false, CSS::IntegerStyleValue::create(AK::saturating_sub(*parsed_start, 1)) };
-        properties.append({ .property_id = CSS::PropertyID::CounterReset, .value = CSS::CounterDefinitionsStyleValue::create({ move(definition) }) });
-    }
-
-    for_each_attribute([&](Utf16FlyString const& name, Utf16View value) {
+    for_each_attribute([&](auto& name, auto& value) {
         if (name == HTML::AttributeNames::type) {
-            if (value == u"1"sv) {
-                properties.append({ .property_id = CSS::PropertyID::ListStyleType, .value = CSS::CounterStyleStyleValue::create("decimal"_utf16_fly_string) });
-            } else if (value == u"a"sv) {
-                properties.append({ .property_id = CSS::PropertyID::ListStyleType, .value = CSS::CounterStyleStyleValue::create("lower-alpha"_utf16_fly_string) });
-            } else if (value == u"A"sv) {
-                properties.append({ .property_id = CSS::PropertyID::ListStyleType, .value = CSS::CounterStyleStyleValue::create("upper-alpha"_utf16_fly_string) });
-            } else if (value == u"i"sv) {
-                properties.append({ .property_id = CSS::PropertyID::ListStyleType, .value = CSS::CounterStyleStyleValue::create("lower-roman"_utf16_fly_string) });
-            } else if (value == u"I"sv) {
-                properties.append({ .property_id = CSS::PropertyID::ListStyleType, .value = CSS::CounterStyleStyleValue::create("upper-roman"_utf16_fly_string) });
+            if (value == "1"sv) {
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::ListStyleType, CSS::CounterStyleStyleValue::create("decimal"_fly_string));
+            } else if (value == "a"sv) {
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::ListStyleType, CSS::CounterStyleStyleValue::create("lower-alpha"_fly_string));
+            } else if (value == "A"sv) {
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::ListStyleType, CSS::CounterStyleStyleValue::create("upper-alpha"_fly_string));
+            } else if (value == "i"sv) {
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::ListStyleType, CSS::CounterStyleStyleValue::create("lower-roman"_fly_string));
+            } else if (value == "I"sv) {
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::ListStyleType, CSS::CounterStyleStyleValue::create("upper-roman"_fly_string));
             }
         }
     });

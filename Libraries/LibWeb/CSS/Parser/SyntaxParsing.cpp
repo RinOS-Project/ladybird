@@ -20,7 +20,7 @@
 
 namespace Web::CSS::Parser {
 
-static RefPtr<SyntaxNode> parse_syntax_single_component(TokenStream<ComponentValue>& tokens, LimitSingleComponentIdentToCustomIdent limit_single_component_ident_to_custom_ident)
+static OwnPtr<SyntaxNode> parse_syntax_single_component(TokenStream<ComponentValue>& tokens, LimitSingleComponentIdentToCustomIdent limit_single_component_ident_to_custom_ident)
 {
     // <syntax-single-component> = '<' <syntax-type-name> '>' | <ident>
     // <syntax-type-name> = angle | color | custom-ident | image | integer
@@ -88,7 +88,7 @@ static Optional<char> parse_syntax_multiplier(TokenStream<ComponentValue>& token
     return {};
 }
 
-RefPtr<SyntaxNode> parse_syntax_component(TokenStream<ComponentValue>& tokens, LimitSingleComponentIdentToCustomIdent limit_single_component_ident_to_custom_ident)
+OwnPtr<SyntaxNode> parse_syntax_component(TokenStream<ComponentValue>& tokens, LimitSingleComponentIdentToCustomIdent limit_single_component_ident_to_custom_ident)
 {
     // <syntax-component> = <syntax-single-component> <syntax-multiplier>?
     //                    | '<' transform-list '>'
@@ -104,9 +104,9 @@ RefPtr<SyntaxNode> parse_syntax_component(TokenStream<ComponentValue>& tokens, L
         auto& ident_token = tokens.consume_a_token();
         auto& end_token = tokens.consume_a_token();
 
-        if (ident_token.is_ident("transform-list"_utf16) && end_token.is_delim('>')) {
+        if (ident_token.is_ident("transform-list"sv) && end_token.is_delim('>')) {
             transform_list_transaction.commit();
-            return TypeSyntaxNode::create("transform-list"_utf16_fly_string);
+            return TypeSyntaxNode::create("transform-list"_fly_string);
         }
     }
 
@@ -149,7 +149,7 @@ static Optional<char> parse_syntax_combinator(TokenStream<ComponentValue>& token
 }
 
 // https://drafts.csswg.org/css-values-5/#typedef-syntax
-RefPtr<SyntaxNode> parse_as_syntax(Vector<ComponentValue> const& component_values, LimitSingleComponentIdentToCustomIdent limit_single_component_ident_to_custom_ident)
+OwnPtr<SyntaxNode> parse_as_syntax(Vector<ComponentValue> const& component_values, LimitSingleComponentIdentToCustomIdent limit_single_component_ident_to_custom_ident)
 {
     // <syntax> = '*' | <syntax-component> [ <syntax-combinator> <syntax-component> ]* | <syntax-string>
     // <syntax-component> = <syntax-single-component> <syntax-multiplier>?
@@ -195,7 +195,7 @@ RefPtr<SyntaxNode> parse_as_syntax(Vector<ComponentValue> const& component_value
     auto first = parse_syntax_component(tokens, limit_single_component_ident_to_custom_ident);
     if (!first)
         return nullptr;
-    Vector<NonnullRefPtr<SyntaxNode>> syntax_components;
+    Vector<NonnullOwnPtr<SyntaxNode>> syntax_components;
     syntax_components.append(first.release_nonnull());
 
     tokens.discard_whitespace();
@@ -233,12 +233,8 @@ RefPtr<StyleValue const> Parser::parse_according_to_syntax_node(TokenStream<Comp
     switch (syntax_node.type()) {
     case SyntaxNode::NodeType::Universal:
         if (auto declaration_value = parse_declaration_value(tokens); declaration_value.has_value()) {
-            SubstitutionFunctionsPresence substitution_functions_presence;
-            if (collect_arbitrary_substitution_function_presence(declaration_value.value(), substitution_functions_presence).is_error())
-                return nullptr;
-
             transaction.commit();
-            return UnresolvedStyleValue::create(declaration_value.release_value(), substitution_functions_presence);
+            return UnresolvedStyleValue::create(declaration_value.release_value());
         }
         return nullptr;
     case SyntaxNode::NodeType::Ident: {
@@ -263,6 +259,7 @@ RefPtr<StyleValue const> Parser::parse_according_to_syntax_node(TokenStream<Comp
         auto const& type_node = as<TypeSyntaxNode>(syntax_node);
         auto const& type_name = type_node.type_name();
         if (auto value_type = value_type_from_string(type_name); value_type.has_value()) {
+            auto scope_guard = push_temporary_value_parsing_context(SyntaxParsingContext { *value_type });
             if (auto result = parse_value(*value_type, tokens)) {
                 transaction.commit();
                 return result.release_nonnull();
@@ -271,7 +268,7 @@ RefPtr<StyleValue const> Parser::parse_according_to_syntax_node(TokenStream<Comp
         }
 
         ErrorReporter::the().report(InvalidValueError {
-            .value_type = Utf16String::formatted("<{}>", type_name),
+            .value_type = MUST(String::formatted("<{}>", type_name)),
             .value_string = tokens.dump_string(),
             .description = "Unknown type in <syntax>."_string,
         });

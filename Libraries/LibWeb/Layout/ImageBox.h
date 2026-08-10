@@ -6,32 +6,35 @@
 
 #pragma once
 
-#include <AK/OwnPtr.h>
 #include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/Layout/ReplacedBox.h>
 
 namespace Web::Layout {
 
 class ImageBox final : public ReplacedBox {
-    LAYOUT_NODE(ImageBox, ReplacedBox);
+    GC_CELL(ImageBox, ReplacedBox);
+    GC_DECLARE_ALLOCATOR(ImageBox);
 
 public:
-    ImageBox(DOM::Document&, GC::Ptr<DOM::Element>, NonnullRefPtr<CSS::ComputedValues const>, ImageProvider const&);
-    ImageBox(DOM::Document&, GC::Ptr<DOM::Element>, NonnullRefPtr<CSS::ComputedValues const>, NonnullOwnPtr<ImageProvider>);
+    ImageBox(DOM::Document&, GC::Ptr<DOM::Element>, GC::Ref<CSS::ComputedProperties>, ImageProvider const&);
     virtual ~ImageBox() override;
 
-    virtual RefPtr<Painting::Paintable> create_paintable() const override;
+    bool renders_as_alt_text() const;
 
-    ImageProvider const& image_provider() const;
-    ImageProvider& image_provider()
-    {
-        return const_cast<ImageProvider&>(const_cast<ImageBox const&>(*this).image_provider());
-    }
+    virtual GC::Ptr<Painting::Paintable> create_paintable() const override;
+
+    auto const& image_provider() const { return m_image_provider; }
+    auto& image_provider() { return m_image_provider; }
+
+    void dom_node_did_update_alt_text(Badge<ImageProvider>);
 
 private:
+    virtual void visit_edges(Visitor&) override;
     virtual CSS::SizeWithAspectRatio natural_size() const override;
 
-    OwnPtr<ImageProvider> m_owned_image_provider;
+    ImageProvider const& m_image_provider;
+
+    mutable Optional<CSSPixels> m_cached_alt_text_width;
 };
 
 }

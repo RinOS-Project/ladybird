@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/GPC/GlobalPrivacyControl.h>
 #include <LibWeb/HTML/NavigatorConcurrentHardware.h>
 #include <LibWeb/HTML/NavigatorDeviceMemory.h>
@@ -18,21 +18,19 @@
 #include <LibWeb/Serial/Serial.h>
 #include <LibWeb/ServiceWorker/ServiceWorkerContainer.h>
 #include <LibWeb/StorageAPI/NavigatorStorage.h>
-#include <LibWeb/WebLocks/NavigatorLocks.h>
 
 namespace Web::HTML {
 
 class WorkerNavigator
-    : public Bindings::GCAllocatedWrappable
+    : public Bindings::PlatformObject
     , public GlobalPrivacyControl::GlobalPrivacyControlMixin
     , public NavigatorConcurrentHardwareMixin
     , public NavigatorDeviceMemoryMixin
     , public NavigatorIDMixin
     , public NavigatorLanguageMixin
     , public NavigatorOnLineMixin
-    , public StorageAPI::NavigatorStorage
-    , public WebLocks::NavigatorLocks {
-    WEB_WRAPPABLE(WorkerNavigator, Bindings::GCAllocatedWrappable);
+    , public StorageAPI::NavigatorStorage {
+    WEB_PLATFORM_OBJECT(WorkerNavigator, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(WorkerNavigator);
 
 public:
@@ -46,21 +44,14 @@ public:
 
     [[nodiscard]] GC::Ref<Serial::Serial> serial();
 
-    [[nodiscard]] GC::Ref<PermissionsAPI::Permissions> permissions();
-
 private:
     explicit WorkerNavigator(WorkerGlobalScope&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     // ^StorageAPI::NavigatorStorage
-    virtual EnvironmentSettingsObject& navigator_storage_settings_object() const override;
-
-    GC::Ref<WorkerGlobalScope> m_global_scope;
-
-    // ^WebLocks::NavigatorLocks
-    virtual Bindings::Wrappable const& this_navigator_locks_object() const override { return *this; }
-    virtual EnvironmentSettingsObject& this_navigator_locks_settings_object() const override { return navigator_storage_settings_object(); }
+    virtual Bindings::PlatformObject const& this_navigator_storage_object() const override { return *this; }
 
     // https://w3c.github.io/media-capabilities/#dom-workernavigator-mediacapabilities
     GC::Ptr<MediaCapabilitiesAPI::MediaCapabilities> m_media_capabilities;
@@ -69,9 +60,6 @@ private:
     GC::Ptr<Serial::Serial> m_serial;
 
     GC::Ptr<ServiceWorker::ServiceWorkerContainer> m_service_worker_container;
-
-    // https://w3c.github.io/permissions/#navigator-and-workernavigator-extension
-    GC::Ptr<PermissionsAPI::Permissions> m_permissions;
 };
 
 }

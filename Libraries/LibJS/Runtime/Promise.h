@@ -42,9 +42,6 @@ public:
     };
     ResolvingFunctions create_resolving_functions();
 
-    static Value resolve_function_steps(VM&, Promise&, bool& already_resolved);
-    static Value reject_function_steps(VM&, Promise&, bool& already_resolved);
-
     void fulfill(Value value);
     void reject(Value reason);
     Value perform_then(Value on_fulfilled, Value on_rejected, GC::Ptr<PromiseCapability> result_capability);
@@ -56,7 +53,6 @@ protected:
     explicit Promise(Object& prototype);
 
     virtual void visit_edges(Visitor&) override;
-    virtual size_t external_memory_size() const override;
 
 private:
     virtual bool is_promise() const override { return true; }

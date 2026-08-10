@@ -9,9 +9,8 @@
 
 #include <AK/Function.h>
 #include <AK/HashTable.h>
-#include <AK/NeverDestroyed.h>
 #include <AK/ScopeGuard.h>
-#include <AK/Utf16StringBuilder.h>
+#include <AK/StringBuilder.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/ArrayConstructor.h>
@@ -30,11 +29,7 @@ namespace JS {
 
 GC_DEFINE_ALLOCATOR(ArrayPrototype);
 
-static auto& array_join_seen_objects()
-{
-    static NeverDestroyed<HashTable<GC::Ref<Object>>> seen_objects;
-    return *seen_objects;
-}
+static HashTable<GC::Ref<Object>> s_array_join_seen_objects;
 
 ArrayPrototype::ArrayPrototype(Realm& realm)
     : Array(realm, realm.intrinsics().object_prototype())
@@ -124,7 +119,7 @@ static ThrowCompletionOr<Object*> array_species_create(VM& vm, Object& original_
     if (!is_array)
         return TRY(Array::create(realm, length)).ptr();
 
-    static auto& cache = *new Bytecode::StaticPropertyLookupCache;
+    static Bytecode::StaticPropertyLookupCache cache;
     auto constructor = TRY(original_array.get(vm.names.constructor, cache));
     if (constructor.is_constructor()) {
         auto& constructor_function = constructor.as_function();
@@ -137,7 +132,7 @@ static ThrowCompletionOr<Object*> array_species_create(VM& vm, Object& original_
     }
 
     if (constructor.is_object()) {
-        static auto& cache2 = *new Bytecode::StaticPropertyLookupCache;
+        static Bytecode::StaticPropertyLookupCache cache2;
         constructor = TRY(constructor.as_object().get(vm.well_known_symbol_species(), cache2));
         if (constructor.is_null())
             constructor = js_undefined();
@@ -157,26 +152,6 @@ static bool can_use_packed_array_fast_path(Array const& array)
     return array.is_simple_packed_array() && array.default_prototype_chain_intact();
 }
 
-static bool can_use_packed_shift_fast_path(Array const& array)
-{
-    // Packed: every index in [0, size) is an own property, so memmove semantics match the spec even if the prototype
-    // chain has indexed properties (HasProperty never escapes to the proto) and even if the array is non-extensible
-    // (no new own properties are created).
-    return array.is_simple_packed_array() && array.length_is_writable();
-}
-
-static bool can_use_holey_shift_fast_path(Array const& array)
-{
-    // Holey: the spec path uses HasProperty + Get on every index, so a poisoned prototype changes the outcome on holes.
-    // A set() on a hole slot also creates a new own property, which a non-extensible array rejects with TypeError.
-    return !array.is_proxy_target()
-        && !array.may_interfere_with_indexed_property_access()
-        && array.indexed_storage_kind() == IndexedStorageKind::Holey
-        && array.default_prototype_chain_intact()
-        && array.extensible()
-        && array.length_is_writable();
-}
-
 static Array* fast_array_species_result(Object& object)
 {
     auto* array = as_if<Array>(object);
@@ -194,15 +169,16 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::at)
     auto relative_index = TRY(vm.argument(0).to_integer_or_infinity(vm));
     if (Value(relative_index).is_infinity())
         return js_undefined();
-    double index;
+    Checked<size_t> index { 0 };
     if (relative_index >= 0) {
-        index = relative_index;
+        index += relative_index;
     } else {
-        index = static_cast<double>(length) + relative_index;
+        index += length;
+        index -= -relative_index;
     }
-    if (index < 0 || index >= length)
+    if (index.has_overflow() || index.value() >= length)
         return js_undefined();
-    return TRY(this_object->get(static_cast<size_t>(index)));
+    return TRY(this_object->get(index.value()));
 }
 
 // 23.1.3.2 Array.prototype.concat ( ...items ), https://tc39.es/ecma262/#sec-array.prototype.concat
@@ -866,10 +842,6 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::index_of)
 
     // 8. If n ≥ 0, then
     if (n >= 0) {
-        // AD-HOC: A fromIndex at or beyond len matches nothing. Return before converting it to an unsigned type.
-        if (n >= length)
-            return Value(-1);
-
         // a. Let k be n.
         k = (size_t)n;
     }
@@ -878,17 +850,6 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::index_of)
         // a. Let k be len + n.
         // b. If k < 0, set k to 0.
         k = max(length + n, 0);
-    }
-
-    // OPTIMIZATION: Simple packed arrays have an own data property for every index below their length,
-    // so HasProperty and Get cannot produce side effects or observe prototype indexed properties.
-    if (auto* array = as_if<Array>(*object); array && array->is_simple_packed_array() && array->indexed_array_like_size() == length) {
-        auto elements = array->indexed_packed_elements_span();
-        for (; k < elements.size(); ++k) {
-            if (is_strictly_equal(search_element, elements[k]))
-                return Value(k);
-        }
-        return Value(-1);
     }
 
     // 10. Repeat, while k < len,
@@ -926,29 +887,29 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::join)
     // This is not part of the spec, but all major engines do some kind of circular reference checks.
     // FWIW: engine262, a "100% spec compliant" ECMA-262 impl, aborts with "too much recursion".
     // Same applies to Array.prototype.toLocaleString().
-    if (array_join_seen_objects().contains(this_object))
-        return PrimitiveString::create(vm, Utf16String {});
-    array_join_seen_objects().set(this_object);
+    if (s_array_join_seen_objects.contains(this_object))
+        return PrimitiveString::create(vm, String {});
+    s_array_join_seen_objects.set(this_object);
     ArmedScopeGuard unsee_object_guard = [&] {
-        array_join_seen_objects().remove(this_object);
+        s_array_join_seen_objects.remove(this_object);
     };
 
     auto length = TRY(length_of_array_like(vm, this_object));
-    Utf16String separator = ","_utf16;
+    String separator = ","_string;
     if (!vm.argument(0).is_undefined())
-        separator = TRY(vm.argument(0).to_utf16_string(vm));
-    Utf16StringBuilder builder;
+        separator = TRY(vm.argument(0).to_string(vm));
+    StringBuilder builder;
     for (size_t i = 0; i < length; ++i) {
         if (i > 0)
-            builder.append(separator.utf16_view());
+            builder.append(separator);
         auto value = TRY(this_object->get(i));
         if (value.is_nullish())
             continue;
-        auto string = TRY(value.to_utf16_string(vm));
-        builder.append(string.utf16_view());
+        auto string = TRY(value.to_string(vm));
+        builder.append(string);
     }
 
-    return PrimitiveString::create(vm, builder.to_string());
+    return PrimitiveString::create(vm, builder.to_string_without_validation());
 }
 
 // 23.1.3.19 Array.prototype.keys ( ), https://tc39.es/ecma262/#sec-array.prototype.keys
@@ -999,11 +960,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::last_index_of)
     // 7. Else,
     else {
         //  a. Let k be len + n.
-        auto relative_k = static_cast<double>(length) + n;
-
-        // AD-HOC: A large negative fromIndex visits nothing. Clamp k to -1 rather than converting an
-        //         out-of-range value to a signed type.
-        k = relative_k < 0 ? -1 : static_cast<ssize_t>(relative_k);
+        k = (double)length + n;
     }
 
     // 8. Repeat, while k ≥ 0,
@@ -1349,8 +1306,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::shift)
     // - has intact prototype chain, which means we don't have to worry about getters/setters potentially defined for holes.
     // - has simple storage type, which means all values have default attributes (if some elements have configurable=false, we cannot use fast path, because delete operation will fail).
     // then we could take a fast path by directly taking first element from indexed storage.
-    if (auto* array = as_if<Array>(*this_object);
-        array && (can_use_packed_shift_fast_path(*array) || can_use_holey_shift_fast_path(*array))) {
+    if (auto* array = as_if<Array>(*this_object); array && array->is_simple_packed_array() && array->length_is_writable()) {
         auto first = array->indexed_take_first().value;
         if (first.is_special_empty_value())
             return js_undefined();
@@ -1495,8 +1451,8 @@ ThrowCompletionOr<void> array_merge_sort(VM& vm, Function<ThrowCompletionOr<doub
     if (arr_to_sort.size() <= 1)
         return {};
 
-    GC::RootVector<Value> left;
-    GC::RootVector<Value> right;
+    GC::RootVector<Value> left(vm.heap());
+    GC::RootVector<Value> right(vm.heap());
 
     left.ensure_capacity(arr_to_sort.size() / 2);
     right.ensure_capacity(arr_to_sort.size() / 2 + (arr_to_sort.size() & 1));
@@ -1815,11 +1771,11 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::to_locale_string)
     // 1. Let array be ? ToObject(this value).
     auto this_object = TRY(vm.this_value().to_object(vm));
 
-    if (array_join_seen_objects().contains(this_object))
-        return PrimitiveString::create(vm, Utf16String {});
-    array_join_seen_objects().set(this_object);
+    if (s_array_join_seen_objects.contains(this_object))
+        return PrimitiveString::create(vm, String {});
+    s_array_join_seen_objects.set(this_object);
     ArmedScopeGuard unsee_object_guard = [&] {
-        array_join_seen_objects().remove(this_object);
+        s_array_join_seen_objects.remove(this_object);
     };
 
     // 2. Let len be ? ToLength(? Get(array, "length")).
@@ -1829,7 +1785,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::to_locale_string)
     constexpr auto separator = ","sv;
 
     // 4. Let R be the empty String.
-    Utf16StringBuilder builder;
+    StringBuilder builder;
 
     // 5. Let k be 0.
     // 6. Repeat, while k < len,
@@ -1837,7 +1793,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::to_locale_string)
         // a. If k > 0, then
         if (i > 0) {
             // i. Set R to the string-concatenation of R and separator.
-            builder.append_ascii(separator);
+            builder.append(separator);
         }
 
         // b. Let nextElement be ? Get(array, ! ToString(k)).
@@ -1849,15 +1805,15 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayPrototype::to_locale_string)
             auto locale_string_result = TRY(value.invoke(vm, vm.names.toLocaleString, locales, options));
 
             // ii. Set R to the string-concatenation of R and S.
-            auto string = TRY(locale_string_result.to_utf16_string(vm));
-            builder.append(string.utf16_view());
+            auto string = TRY(locale_string_result.to_string(vm));
+            builder.append(string);
         }
 
         // d. Increase k by 1.
     }
 
     // 7. Return R.
-    return PrimitiveString::create(vm, builder.to_string());
+    return PrimitiveString::create(vm, builder.to_string_without_validation());
 }
 
 // 23.1.3.33 Array.prototype.toReversed ( ), https://tc39.es/ecma262/#sec-array.prototype.toreversed

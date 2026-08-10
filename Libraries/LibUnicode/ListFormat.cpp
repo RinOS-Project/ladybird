@@ -27,26 +27,15 @@ ListFormatType list_format_type_from_string(StringView list_format_type)
     VERIFY_NOT_REACHED();
 }
 
-ListFormatType list_format_type_from_string(Utf16View list_format_type)
-{
-    if (list_format_type == "conjunction"sv)
-        return ListFormatType::Conjunction;
-    if (list_format_type == "disjunction"sv)
-        return ListFormatType::Disjunction;
-    if (list_format_type == "unit"sv)
-        return ListFormatType::Unit;
-    VERIFY_NOT_REACHED();
-}
-
-Utf16String list_format_type_to_string(ListFormatType list_format_type)
+StringView list_format_type_to_string(ListFormatType list_format_type)
 {
     switch (list_format_type) {
     case ListFormatType::Conjunction:
-        return "conjunction"_utf16;
+        return "conjunction"sv;
     case ListFormatType::Disjunction:
-        return "disjunction"_utf16;
+        return "disjunction"sv;
     case ListFormatType::Unit:
-        return "unit"_utf16;
+        return "unit"sv;
     }
     VERIFY_NOT_REACHED();
 }
@@ -78,13 +67,13 @@ static constexpr UListFormatterWidth icu_list_format_width(Style style)
     VERIFY_NOT_REACHED();
 }
 
-static Utf16String icu_list_format_field_to_string(i32 field)
+static constexpr StringView icu_list_format_field_to_string(i32 field)
 {
     switch (field) {
     case ULISTFMT_LITERAL_FIELD:
-        return "literal"_utf16;
+        return "literal"sv;
     case ULISTFMT_ELEMENT_FIELD:
-        return "element"_utf16;
+        return "element"sv;
     }
     VERIFY_NOT_REACHED();
 }
@@ -157,11 +146,11 @@ private:
     NonnullOwnPtr<icu::ListFormatter> m_formatter;
 };
 
-NonnullOwnPtr<ListFormat> ListFormat::create(Utf16View locale, ListFormatType type, Style style)
+NonnullOwnPtr<ListFormat> ListFormat::create(StringView locale, ListFormatType type, Style style)
 {
     UErrorCode status = U_ZERO_ERROR;
 
-    auto locale_data = LocaleData::for_locale(locale.bytes());
+    auto locale_data = LocaleData::for_locale(locale);
     VERIFY(locale_data.has_value());
 
     auto formatter = adopt_own(*icu::ListFormatter::createInstance(locale_data->locale(), icu_list_format_type(type), icu_list_format_width(style), status));

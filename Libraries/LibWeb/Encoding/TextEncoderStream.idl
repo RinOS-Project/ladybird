@@ -1,3 +1,6 @@
+#import <Encoding/TextEncoder.idl>
+#import <Streams/GenericTransformStream.idl>
+
 // https://encoding.spec.whatwg.org/#textencoderstream
 [Exposed=*]
 interface TextEncoderStream {

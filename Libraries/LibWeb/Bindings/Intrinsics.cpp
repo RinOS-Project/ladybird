@@ -8,9 +8,9 @@
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/Object.h>
-#include <LibWeb/Bindings/InterfaceObject.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
+#include <LibWeb/Bindings/SyntheticHostDefined.h>
 
 namespace Web::Bindings {
 
@@ -45,31 +45,6 @@ GC::Ref<JS::NativeFunction> Intrinsics::ensure_web_unforgeable_function(
     auto function = JS::NativeFunction::create(*m_realm, move(behaviour), type == UnforgeableKey::Type::Setter ? 1 : 0, attribute_name, m_realm, type == UnforgeableKey::Type::Setter ? "set"sv : "get"sv);
     m_unforgeable_functions.set(key, *function);
     return *function;
-}
-
-JS::Object& Intrinsics::existing_web_prototype(Utf16FlyString const& class_name)
-{
-    auto it = m_prototypes.find(class_name);
-    VERIFY(it != m_prototypes.end());
-    return *it->value;
-}
-
-void Intrinsics::create_web_prototype_and_constructor(JS::Realm& realm, InterfaceObjectMetadata const& metadata)
-{
-    auto prototype = realm.create<InterfacePrototypeObject>(realm, metadata);
-    m_prototypes.set(Utf16FlyString::from_utf16(metadata.utf16_namespaced_name), prototype);
-
-    create_web_constructor(realm, metadata, prototype);
-}
-
-void Intrinsics::create_web_constructor(JS::Realm& realm, InterfaceObjectMetadata const& metadata, JS::Object& prototype)
-{
-    auto& vm = realm.vm();
-
-    auto constructor = realm.create<InterfaceConstructor>(realm, metadata);
-    m_constructors.set(Utf16FlyString::from_utf16(metadata.utf16_namespaced_name), constructor);
-
-    prototype.define_direct_property(vm.names.constructor, constructor.ptr(), JS::Attribute::Writable | JS::Attribute::Configurable);
 }
 
 }

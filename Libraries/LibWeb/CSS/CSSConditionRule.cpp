@@ -5,12 +5,14 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/CSSConditionRulePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSConditionRule.h>
 
 namespace Web::CSS {
 
-CSSConditionRule::CSSConditionRule(CSSRuleList& rules, Type type)
-    : CSSGroupingRule(rules, type)
+CSSConditionRule::CSSConditionRule(JS::Realm& realm, CSSRuleList& rules, Type type)
+    : CSSGroupingRule(realm, rules, type)
 {
 }
 
@@ -18,6 +20,12 @@ void CSSConditionRule::for_each_effective_rule(TraversalOrder order, Function<vo
 {
     if (condition_matches())
         CSSGroupingRule::for_each_effective_rule(order, callback);
+}
+
+void CSSConditionRule::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSConditionRule);
+    Base::initialize(realm);
 }
 
 }

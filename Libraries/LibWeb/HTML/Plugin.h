@@ -6,42 +6,37 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
-#include <AK/String.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/Forward.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/system-state.html#dom-plugin
-class Plugin : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(Plugin, Bindings::GCAllocatedWrappable);
+class Plugin : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(Plugin, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(Plugin);
 
 public:
-    [[nodiscard]] static GC::Ref<Plugin> create(Window&, String name);
-
     virtual ~Plugin() override;
 
-    Utf16FlyString const& name() const;
-    Utf16FlyString description() const;
-    Utf16FlyString filename() const;
+    String const& name() const;
+    String description() const;
+    String filename() const;
     size_t length() const;
     GC::Ptr<MimeType> item(u32 index) const;
-    GC::Ptr<MimeType> named_item(Utf16FlyString const& name) const;
+    GC::Ptr<MimeType> named_item(FlyString const& name) const;
 
 private:
-    Plugin(Window&, String name);
-
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    Plugin(JS::Realm&, String name);
 
     // https://html.spec.whatwg.org/multipage/system-state.html#concept-plugin-name
-    Utf16FlyString m_name;
+    String m_name;
 
-    GC::Ref<Window> m_window;
+    virtual void initialize(JS::Realm&) override;
 
-    // ^Bindings::Wrappable
-    virtual Vector<Utf16FlyString> supported_property_names() const override;
+    // ^Bindings::PlatformObject
+    virtual Vector<FlyString> supported_property_names() const override;
+    virtual Optional<JS::Value> item_value(size_t index) const override;
+    virtual JS::Value named_item_value(FlyString const& name) const override;
 };
 
 }

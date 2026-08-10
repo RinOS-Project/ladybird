@@ -4,13 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
-#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/DOM/Document.h>
-#include <LibWeb/HTML/LocalNavigable.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
+#include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/Scripting/WindowEnvironmentSettingsObject.h>
 #include <LibWeb/HTML/Window.h>
 
@@ -22,7 +19,6 @@ WindowEnvironmentSettingsObject::WindowEnvironmentSettingsObject(Window& window,
     : EnvironmentSettingsObject(move(execution_context))
     , m_window(window)
 {
-    m_window->set_environment_settings_object({}, *this);
 }
 
 WindowEnvironmentSettingsObject::~WindowEnvironmentSettingsObject() = default;
@@ -41,12 +37,11 @@ void WindowEnvironmentSettingsObject::setup(Page& page, URL::URL const& creation
     VERIFY(realm);
 
     // 2. Let window be realm's global object.
-    auto* window = window_from_global_object(realm->global_object());
-    VERIFY(window);
+    auto& window = as<HTML::Window>(realm->global_object());
 
     // 3. Let settings object be a new environment settings object whose algorithms are defined as follows:
     // NOTE: See the functions defined for this class.
-    auto settings_object = realm->create<WindowEnvironmentSettingsObject>(*window, move(execution_context));
+    auto settings_object = realm->create<WindowEnvironmentSettingsObject>(window, move(execution_context));
 
     // 4. If reservedEnvironment is non-null, then:
     if (reserved_environment) {
@@ -57,7 +52,7 @@ void WindowEnvironmentSettingsObject::setup(Page& page, URL::URL const& creation
         settings_object->target_browsing_context = reserved_environment->target_browsing_context;
 
         // 2. Set reservedEnvironment's id to the empty string.
-        reserved_environment->id = Utf16String {};
+        reserved_environment->id = String {};
     }
 
     // 5. Otherwise, ...
@@ -66,7 +61,7 @@ void WindowEnvironmentSettingsObject::setup(Page& page, URL::URL const& creation
         //        settings object's target browsing context to null,
         //        and settings object's active service worker to null.
         static i64 next_id = 1;
-        settings_object->id = Utf16String::number(next_id++);
+        settings_object->id = String::number(next_id++);
         settings_object->target_browsing_context = nullptr;
     }
 
@@ -80,12 +75,12 @@ void WindowEnvironmentSettingsObject::setup(Page& page, URL::URL const& creation
     // 7. Set realm's [[HostDefined]] field to settings object.
     // Non-Standard: We store the ESO next to the web intrinsics in a custom HostDefined object
     auto intrinsics = realm->create<Bindings::Intrinsics>(*realm);
-    realm->set_host_defined(Bindings::create_principal_host_defined(settings_object, intrinsics, page));
-    Bindings::cache_global_object_wrapper(*realm);
+    auto host_defined = make<Bindings::PrincipalHostDefined>(settings_object, intrinsics, page);
+    realm->set_host_defined(move(host_defined));
 
     // Non-Standard: We cannot fully initialize window object until *after* the we set up
     //    the realm's [[HostDefined]] internal slot as the internal slot contains the web platform intrinsics
-    MUST(Bindings::initialize_window_web_interfaces(*window));
+    MUST(window.initialize_web_interfaces({}));
 }
 
 // https://html.spec.whatwg.org/multipage/window-object.html#script-settings-for-window-objects:responsible-document
@@ -117,7 +112,7 @@ bool WindowEnvironmentSettingsObject::has_cross_site_ancestor() const
         return false;
 
     // 2. Let parentDocument be window's navigable's parent's active document.
-    auto parent_document = as<LocalNavigable>(*m_window->navigable()->parent()).active_document();
+    auto parent_document = m_window->navigable()->parent()->active_document();
 
     // 3. If parentDocument's relevant settings object's has cross-site ancestor is true, then return true.
     if (parent_document->relevant_settings_object().has_cross_site_ancestor())

@@ -5,12 +5,12 @@
  */
 
 #include <AK/ScopeGuard.h>
-#include <AK/Utf16String.h>
 #include <LibCore/EventLoop.h>
 #include <LibGC/Heap.h>
-#include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/Realm.h>
-#include <LibWeb/Bindings/EventSource.h>
+#include <LibJS/Runtime/VM.h>
+#include <LibWeb/Bindings/EventSourcePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
@@ -24,63 +24,31 @@
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/EventSource.h>
 #include <LibWeb/HTML/MessageEvent.h>
-#include <LibWeb/HTML/MessagePort.h>
 #include <LibWeb/HTML/PotentialCORSRequest.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/WindowOrWorkerGlobalScope.h>
-#include <LibWeb/HighResolutionTime/TimeOrigin.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(EventSource);
 
-template<typename Callback>
-static void for_each_line(Utf16View string, Callback&& callback)
-{
-    size_t substart = 0;
-    bool last_was_cr = false;
-    for (size_t i = 0; i < string.length_in_code_units(); ++i) {
-        auto ch = string.code_unit_at(i);
-        if (ch == '\n') {
-            if (!last_was_cr)
-                callback(string.substring_view(substart, i - substart));
-            substart = i + 1;
-            last_was_cr = false;
-        } else if (ch == '\r') {
-            callback(string.substring_view(substart, i - substart));
-            substart = i + 1;
-            last_was_cr = true;
-        } else {
-            last_was_cr = false;
-        }
-    }
-    if (substart < string.length_in_code_units())
-        callback(string.substring_view(substart));
-}
-
-static GC::Ref<DOM::Event> create_message_event(JS::Realm& realm, Utf16FlyString const& type, Utf16View data, Utf16String const& last_event_id, URL::Origin const& origin)
-{
-    HTML::MessageEventInit init;
-    init.data = JS::PrimitiveString::create(realm.vm(), Utf16String::from_utf16(data));
-    init.last_event_id = last_event_id;
-    return HTML::MessageEvent::create(realm.global_object(), type, init, origin);
-}
-
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#dom-eventsource
-WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::create(WindowOrWorkerGlobalScopeMixin& global_scope, Utf16View url, EventSourceInit const& event_source_init)
+WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::construct_impl(JS::Realm& realm, StringView url, EventSourceInit event_source_init_dict)
 {
+    auto& vm = realm.vm();
+
     // 1. Let ev be a new EventSource object.
-    auto event_source = GC::Heap::the().allocate<EventSource>(global_scope.this_impl());
+    auto event_source = realm.create<EventSource>(realm);
 
     // 2. Let settings be ev's relevant settings object.
-    auto& settings = relevant_settings_object(global_scope);
+    auto& settings = relevant_settings_object(event_source);
 
     // 3. Let urlRecord be the result of encoding-parsing a URL given url, relative to settings.
     auto url_record = settings.encoding_parse_url(url);
 
     // 4. If urlRecord is failure, then throw a "SyntaxError" DOMException.
     if (!url_record.has_value())
-        return WebIDL::SyntaxError::create(Utf16String::formatted("Invalid URL '{}'", url));
+        return WebIDL::SyntaxError::create(realm, Utf16String::formatted("Invalid URL '{}'", url));
 
     // 5. Set ev's url to urlRecord.
     event_source->m_url = url_record.release_value();
@@ -90,13 +58,13 @@ WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::create(WindowOrWorkerGlob
 
     // 7. If the value of eventSourceInitDict's withCredentials member is true, then set corsAttributeState to Use Credentials
     //    and set ev's withCredentials attribute to true.
-    if (event_source_init.with_credentials) {
+    if (event_source_init_dict.with_credentials) {
         cors_attribute_state = CORSSettingAttribute::UseCredentials;
         event_source->m_with_credentials = true;
     }
 
     // 8. Let request be the result of creating a potential-CORS request given urlRecord, the empty string, and corsAttributeState.
-    auto request = create_potential_CORS_request(event_source->m_url, {}, cors_attribute_state);
+    auto request = create_potential_CORS_request(vm, event_source->m_url, {}, cors_attribute_state);
 
     // 9. Set request's client to settings.
     request->set_client(&settings);
@@ -126,11 +94,9 @@ WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::create(WindowOrWorkerGlob
     fetch_algorithms_input.process_response_end_of_body = move(process_event_source_end_of_body);
 
     fetch_algorithms_input.process_response = [event_source](GC::Ref<Fetch::Infrastructure::Response> response) {
-        auto& realm = HTML::relevant_realm(event_source->relevant_global_object());
-
-        // FIXME: If the response is CORS cross-origin, we must use its internal response to query any of its data. See:
-        //        https://github.com/whatwg/html/issues/9355
-        response = response->unsafe_response();
+        auto& realm = event_source->realm();
+        auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
+        auto internal_response = rooted_responses->internal_response();
 
         auto content_type_is_text_event_stream = [&]() {
             auto content_type = Fetch::Infrastructure::extract_mime_type(internal_response->header_list());
@@ -158,7 +124,8 @@ WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::create(WindowOrWorkerGlob
         else {
             event_source->announce_the_connection();
 
-            auto process_body_chunk = GC::create_function(GC::Heap::the(), [event_source, pending_data = ByteBuffer()](ByteBuffer body) mutable {
+            auto process_body_chunk = GC::create_function(realm.heap(), [event_source, rooted_responses, pending_data = ByteBuffer()](ByteBuffer body) mutable {
+                (void)rooted_responses;
                 if (pending_data.is_empty())
                     pending_data = move(body);
                 else
@@ -169,42 +136,50 @@ WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::create(WindowOrWorkerGlob
                     return;
 
                 auto end_index = *last_line_break + 1;
-                event_source->interpret_response(pending_data.bytes().slice(0, end_index));
+                event_source->interpret_response({ pending_data.bytes().slice(0, end_index) });
 
                 pending_data = MUST(pending_data.slice(end_index, pending_data.size() - end_index));
             });
 
-            auto process_end_of_body = GC::create_function(GC::Heap::the(), []() {
+            auto process_end_of_body = GC::create_function(realm.heap(), [rooted_responses]() {
+                (void)rooted_responses;
                 // This case is handled by `process_event_source_end_of_body` above.
             });
-            auto process_body_error = GC::create_function(GC::Heap::the(), [](JS::Value) {
+            auto process_body_error = GC::create_function(realm.heap(), [rooted_responses](JS::Value) {
+                (void)rooted_responses;
                 // This case is handled by `process_event_source_end_of_body` above.
             });
 
-            response->body()->incrementally_read(realm, process_body_chunk, process_end_of_body, process_body_error, { realm.global_object() });
+            VERIFY(internal_response->body());
+            // AD-HOC (RinOS Round 11): Pin ResponseReferenceHolder via the deterministic
+            // read-request GC edge so Response survives conservative-scan gaps.
+            internal_response->body()->incrementally_read(process_body_chunk, process_end_of_body, process_body_error, { realm.global_object() }, rooted_responses.ptr());
         }
     };
 
-    event_source->m_fetch_algorithms = Fetch::Infrastructure::FetchAlgorithms::create(move(fetch_algorithms_input));
-    event_source->m_fetch_controller = Fetch::Fetching::fetch(HTML::relevant_realm(global_scope), request, *event_source->m_fetch_algorithms);
+    event_source->m_fetch_algorithms = Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input));
+    event_source->m_fetch_controller = Fetch::Fetching::fetch(realm, request, *event_source->m_fetch_algorithms);
 
     // 16. Return ev.
     return event_source;
 }
 
-WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::create_for_constructor(JS::Object& relevant_global_object, Utf16View url, EventSourceInit const& event_source_init)
+EventSource::EventSource(JS::Realm& realm)
+    : EventTarget(realm)
 {
-    return create(relevant_window_or_worker_global_scope(relevant_global_object), url, event_source_init);
-}
-
-EventSource::EventSource(GC::Ref<DOM::EventTarget> relevant_global_object)
-    : EventTarget()
-    , m_global_object(relevant_global_object)
-{
-    relevant_global().register_event_source({}, *this);
 }
 
 EventSource::~EventSource() = default;
+
+void EventSource::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(EventSource);
+    Base::initialize(realm);
+
+    auto* relevant_global = HTML::window_or_worker_global_scope_mixin_from(HTML::relevant_global_object(*this));
+    VERIFY(relevant_global);
+    relevant_global->register_event_source({}, *this);
+}
 
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#garbage-collection
 void EventSource::finalize()
@@ -214,12 +189,13 @@ void EventSource::finalize()
     // If an EventSource object is garbage collected while its connection is still open, the user agent must abort any
     // instance of the fetch algorithm opened by this EventSource.
     if (m_ready_state != ReadyState::Closed) {
-        auto& realm = HTML::relevant_realm(relevant_global_object());
         if (m_fetch_controller)
-            m_fetch_controller->abort(realm, {});
+            m_fetch_controller->abort(realm(), {});
     }
 
-    relevant_global().unregister_event_source({}, *this);
+    auto* relevant_global = HTML::window_or_worker_global_scope_mixin_from(HTML::relevant_global_object(*this));
+    VERIFY(relevant_global);
+    relevant_global->unregister_event_source({}, *this);
 }
 
 void EventSource::visit_edges(Cell::Visitor& visitor)
@@ -228,7 +204,6 @@ void EventSource::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_request);
     visitor.visit(m_fetch_algorithms);
     visitor.visit(m_fetch_controller);
-    visitor.visit(m_global_object);
 }
 
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#handler-eventsource-onopen
@@ -272,9 +247,8 @@ void EventSource::close()
 {
     // The close() method must abort any instances of the fetch algorithm started for this EventSource object, and must
     // set the readyState attribute to CLOSED.
-    auto& realm = HTML::relevant_realm(relevant_global_object());
     if (m_fetch_controller)
-        m_fetch_controller->abort(realm, {});
+        m_fetch_controller->abort(realm(), {});
 
     m_ready_state = ReadyState::Closed;
 }
@@ -285,9 +259,8 @@ void EventSource::forcibly_close()
     // If a user agent is to forcibly close an EventSource object (this happens when a Document object goes away
     // permanently), the user agent must abort any instances of the fetch algorithm started for this EventSource
     // object, and must set the readyState attribute to CLOSED.
-    auto& realm = HTML::relevant_realm(relevant_global_object());
     if (m_fetch_controller)
-        m_fetch_controller->abort(realm, {});
+        m_fetch_controller->abort(realm(), {});
 
     m_ready_state = ReadyState::Closed;
 }
@@ -298,10 +271,10 @@ void EventSource::announce_the_connection()
     // When a user agent is to announce the connection, the user agent must queue a task which, if the readyState attribute
     // is set to a value other than CLOSED, sets the readyState attribute to OPEN and fires an event named open at the
     // EventSource object.
-    HTML::queue_a_task(HTML::Task::Source::RemoteEvent, nullptr, nullptr, GC::create_function(GC::Heap::the(), [this]() {
+    HTML::queue_a_task(HTML::Task::Source::RemoteEvent, nullptr, nullptr, GC::create_function(heap(), [this]() {
         if (m_ready_state != ReadyState::Closed) {
             m_ready_state = ReadyState::Open;
-            dispatch_event(create_associated_event(HTML::EventNames::open));
+            dispatch_event(DOM::Event::create(realm(), HTML::EventNames::open));
         }
     }));
 }
@@ -312,7 +285,7 @@ void EventSource::reestablish_the_connection()
     IGNORE_USE_IN_ESCAPING_LAMBDA bool initial_task_has_run { false };
 
     // 1. Queue a task to run the following steps:
-    HTML::queue_a_task(HTML::Task::Source::RemoteEvent, nullptr, nullptr, GC::create_function(GC::Heap::the(), [&]() {
+    HTML::queue_a_task(HTML::Task::Source::RemoteEvent, nullptr, nullptr, GC::create_function(heap(), [&]() {
         ScopeGuard guard { [&]() { initial_task_has_run = true; } };
 
         // 1. If the readyState attribute is set to CLOSED, abort the task.
@@ -323,11 +296,11 @@ void EventSource::reestablish_the_connection()
         m_ready_state = ReadyState::Connecting;
 
         // 3. Fire an event named error at the EventSource object.
-        dispatch_event(create_associated_event(HTML::EventNames::error));
+        dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error));
     }));
 
     // 2. Wait a delay equal to the reconnection time of the event source.
-    HTML::main_thread_event_loop().spin_until(GC::create_function(GC::Heap::the(), [&, delay_start = MonotonicTime::now()]() {
+    HTML::main_thread_event_loop().spin_until(GC::create_function(heap(), [&, delay_start = MonotonicTime::now()]() {
         return (MonotonicTime::now() - delay_start) >= m_reconnection_time;
     }));
 
@@ -338,11 +311,11 @@ void EventSource::reestablish_the_connection()
 
     // 4. Wait until the aforementioned task has run, if it has not yet run.
     if (!initial_task_has_run) {
-        HTML::main_thread_event_loop().spin_until(GC::create_function(GC::Heap::the(), [&]() { return initial_task_has_run; }));
+        HTML::main_thread_event_loop().spin_until(GC::create_function(heap(), [&]() { return initial_task_has_run; }));
     }
 
     // 5. Queue a task to run the following steps:
-    HTML::queue_a_task(HTML::Task::Source::RemoteEvent, nullptr, nullptr, GC::create_function(GC::Heap::the(), [this]() {
+    HTML::queue_a_task(HTML::Task::Source::RemoteEvent, nullptr, nullptr, GC::create_function(heap(), [this]() {
         // 1. If the EventSource object's readyState attribute is not set to CONNECTING, then return.
         if (m_ready_state != ReadyState::Connecting)
             return;
@@ -353,15 +326,13 @@ void EventSource::reestablish_the_connection()
         // 3. If the EventSource object's last event ID string is not the empty string, then:
         if (!m_last_event_id.is_empty()) {
             // 1. Let lastEventIDValue be the EventSource object's last event ID string, encoded as UTF-8.
-            auto last_event_id_value = m_last_event_id.to_utf8();
             // 2. Set (`Last-Event-ID`, lastEventIDValue) in request's header list.
-            auto header = HTTP::Header::isomorphic_encode("Last-Event-ID"sv, last_event_id_value);
+            auto header = HTTP::Header::isomorphic_encode("Last-Event-ID"sv, m_last_event_id);
             request->header_list()->set(move(header));
         }
 
         // 4. Fetch request and process the response obtained in this fashion, if any, as described earlier in this section.
-        auto& realm = HTML::relevant_realm(relevant_global_object());
-        m_fetch_controller = Fetch::Fetching::fetch(realm, request, *m_fetch_algorithms);
+        m_fetch_controller = Fetch::Fetching::fetch(realm(), request, *m_fetch_algorithms);
     }));
 }
 
@@ -371,21 +342,19 @@ void EventSource::fail_the_connection()
     // When a user agent is to fail the connection, the user agent must queue a task which, if the readyState attribute
     // is set to a value other than CLOSED, sets the readyState attribute to CLOSED and fires an event named error at the
     // EventSource object. Once the user agent has failed the connection, it does not attempt to reconnect.
-    HTML::queue_a_task(HTML::Task::Source::RemoteEvent, nullptr, nullptr, GC::create_function(GC::Heap::the(), [this]() {
+    HTML::queue_a_task(HTML::Task::Source::RemoteEvent, nullptr, nullptr, GC::create_function(heap(), [this]() {
         if (m_ready_state != ReadyState::Closed) {
             m_ready_state = ReadyState::Closed;
-            dispatch_event(create_associated_event(HTML::EventNames::error));
+            dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error));
         }
     }));
 }
 
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation
-void EventSource::interpret_response(ReadonlyBytes response)
+void EventSource::interpret_response(StringView response)
 {
-    auto response_string = Utf16String::from_utf8_with_replacement_character(response);
-
     // Lines must be processed, in the order they are received, as follows:
-    for_each_line(response_string.utf16_view(), [&](auto line) {
+    for (auto line : response.lines(StringView::ConsiderCarriageReturn::Yes)) {
         // -> If the line is empty (a blank line)
         if (line.is_empty()) {
             // Dispatch the event, as defined below.
@@ -396,7 +365,7 @@ void EventSource::interpret_response(ReadonlyBytes response)
             // Ignore the line.
         }
         // -> If the line contains a U+003A COLON character (:)
-        else if (auto index = line.find_code_unit_offset(':'); index.has_value()) {
+        else if (auto index = line.find(':'); index.has_value()) {
             // Collect the characters on the line before the first U+003A COLON character (:), and let field be that string.
             auto field = line.substring_view(0, *index);
 
@@ -416,32 +385,32 @@ void EventSource::interpret_response(ReadonlyBytes response)
             // string as the field value.
             process_field(line, {});
         }
-    });
+    }
 }
 
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#processField
-void EventSource::process_field(Utf16View field, Utf16View value)
+void EventSource::process_field(StringView field, StringView value)
 {
     // -> If the field name is "event"
-    if (field == u"event"sv) {
+    if (field == "event"sv) {
         // Set the event type buffer to the field value.
-        m_event_type = Utf16FlyString::from_utf16(value);
+        m_event_type = MUST(String::from_utf8(value));
     }
     // -> If the field name is "data"
-    else if (field == u"data"sv) {
+    else if (field == "data"sv) {
         // Append the field value to the data buffer, then append a single U+000A LINE FEED (LF) character to the data buffer.
         m_data.append(value);
-        m_data.append_ascii('\n');
+        m_data.append('\n');
     }
     // -> If the field name is "id"
-    else if (field == u"id"sv) {
+    else if (field == "id"sv) {
         // If the field value does not contain U+0000 NULL, then set the last event ID buffer to the field value.
         // Otherwise, ignore the field.
         if (!value.contains('\0'))
-            m_last_event_id = Utf16String::from_utf16(value);
+            m_last_event_id = MUST(String::from_utf8(value));
     }
     // -> If the field name is "retry"
-    else if (field == u"retry"sv) {
+    else if (field == "retry"sv) {
         // If the field value consists of only ASCII digits, then interpret the field value as an integer in base ten,
         // and set the event stream's reconnection time to that integer. Otherwise, ignore the field.
         if (auto retry = value.to_number<i64>(); retry.has_value())
@@ -462,17 +431,17 @@ void EventSource::dispatch_the_event()
     auto const& last_event_id = m_last_event_id;
 
     // 2. If the data buffer is an empty string, set the data buffer and the event type buffer to the empty string and return.
-    auto data_buffer = m_data.view();
+    auto data_buffer = m_data.string_view();
 
     if (data_buffer.is_empty()) {
-        m_event_type = Utf16FlyString {};
+        m_event_type = {};
         m_data.clear();
         return;
     }
 
     // 3. If the data buffer's last character is a U+000A LINE FEED (LF) character, then remove the last character from the data buffer.
     if (data_buffer.ends_with('\n'))
-        data_buffer = data_buffer.substring_view(0, data_buffer.length_in_code_units() - 1);
+        data_buffer = data_buffer.substring_view(0, data_buffer.length() - 1);
 
     // 4. Let event be the result of creating an event using MessageEvent, in the relevant realm of the EventSource object.
     // 5. Initialize event's type attribute to "message", its data attribute to data, its origin to the origin of the event
@@ -480,37 +449,24 @@ void EventSource::dispatch_the_event()
     //    the event source.
     // 6. If the event type buffer has a value other than the empty string, change the type of the newly created event to equal
     //    the value of the event type buffer.
-    auto& realm = HTML::relevant_realm(relevant_global_object());
+    MessageEventInit init {};
+    init.data = JS::PrimitiveString::create(vm(), data_buffer);
+    init.origin = m_url.origin();
+    init.last_event_id = last_event_id;
 
     auto type = m_event_type.is_empty() ? HTML::EventNames::message : m_event_type;
-    auto event = create_message_event(realm, type, data_buffer, last_event_id, m_url.origin());
+    auto event = MessageEvent::create(realm(), type, init);
 
     // 7. Set the data buffer and the event type buffer to the empty string.
-    m_event_type = Utf16FlyString {};
+    m_event_type = {};
     m_data.clear();
 
     // 8. Queue a task which, if the readyState attribute is set to a value other than CLOSED, dispatches the newly created
     //    event at the EventSource object.
-    HTML::queue_a_task(HTML::Task::Source::RemoteEvent, nullptr, nullptr, GC::create_function(GC::Heap::the(), [this, event]() {
+    HTML::queue_a_task(HTML::Task::Source::RemoteEvent, nullptr, nullptr, GC::create_function(heap(), [this, event]() {
         if (m_ready_state != ReadyState::Closed)
             dispatch_event(event);
     }));
-}
-
-JS::Object& EventSource::relevant_global_object() const
-{
-    return HTML::relevant_global_object(relevant_global());
-}
-
-GC::Ref<DOM::Event> EventSource::create_associated_event(Utf16FlyString const& event_name) const
-{
-    return DOM::Event::create(event_name,
-        HighResolutionTime::current_high_resolution_time(relevant_global_object()));
-}
-
-WindowOrWorkerGlobalScopeMixin& EventSource::relevant_global() const
-{
-    return HTML::relevant_window_or_worker_global_scope(*m_global_object);
 }
 
 }

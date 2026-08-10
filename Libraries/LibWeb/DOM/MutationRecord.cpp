@@ -5,7 +5,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/MutationRecordPrototype.h>
 #include <LibWeb/DOM/MutationRecord.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/NodeList.h>
@@ -14,13 +15,14 @@ namespace Web::DOM {
 
 GC_DEFINE_ALLOCATOR(MutationRecord);
 
-GC::Ref<MutationRecord> MutationRecord::create(Utf16FlyString const& type, Node const& target, NodeList& added_nodes, NodeList& removed_nodes, Node* previous_sibling, Node* next_sibling, Optional<Utf16FlyString> const& attribute_name, Optional<Utf16FlyString> const& attribute_namespace, Optional<Utf16String> const& old_value)
+GC::Ref<MutationRecord> MutationRecord::create(JS::Realm& realm, FlyString const& type, Node const& target, NodeList& added_nodes, NodeList& removed_nodes, Node* previous_sibling, Node* next_sibling, Optional<String> const& attribute_name, Optional<String> const& attribute_namespace, Optional<String> const& old_value)
 {
-    return GC::Heap::the().allocate<MutationRecord>(type, target, added_nodes, removed_nodes, previous_sibling, next_sibling, attribute_name, attribute_namespace, old_value);
+    return realm.create<MutationRecord>(realm, type, target, added_nodes, removed_nodes, previous_sibling, next_sibling, attribute_name, attribute_namespace, old_value);
 }
 
-MutationRecord::MutationRecord(Utf16FlyString const& type, Node const& target, NodeList& added_nodes, NodeList& removed_nodes, Node* previous_sibling, Node* next_sibling, Optional<Utf16FlyString> const& attribute_name, Optional<Utf16FlyString> const& attribute_namespace, Optional<Utf16String> const& old_value)
-    : m_type(type)
+MutationRecord::MutationRecord(JS::Realm& realm, FlyString const& type, Node const& target, NodeList& added_nodes, NodeList& removed_nodes, Node* previous_sibling, Node* next_sibling, Optional<String> const& attribute_name, Optional<String> const& attribute_namespace, Optional<String> const& old_value)
+    : PlatformObject(realm)
+    , m_type(type)
     , m_target(GC::make_root(target))
     , m_added_nodes(added_nodes)
     , m_removed_nodes(removed_nodes)
@@ -34,7 +36,13 @@ MutationRecord::MutationRecord(Utf16FlyString const& type, Node const& target, N
 
 MutationRecord::~MutationRecord() = default;
 
-void MutationRecord::visit_edges(GC::Cell::Visitor& visitor)
+void MutationRecord::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(MutationRecord);
+    Base::initialize(realm);
+}
+
+void MutationRecord::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_target);

@@ -1,4 +1,0 @@
-application/octet-stream: ""
-video/webm: "probably"
-audio/mpeg: "maybe"
-invalid non-ascii: ""

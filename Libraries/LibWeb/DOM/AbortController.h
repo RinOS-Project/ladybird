@@ -6,30 +6,31 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/DOM/AbortSignal.h>
 
 namespace Web::DOM {
 
 // https://dom.spec.whatwg.org/#abortcontroller
-class AbortController final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(AbortController, Bindings::GCAllocatedWrappable);
+class AbortController final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(AbortController, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(AbortController);
 
 public:
-    static GC::Ref<AbortController> create();
+    static WebIDL::ExceptionOr<GC::Ref<AbortController>> construct_impl(JS::Realm&);
 
     virtual ~AbortController() override;
 
     // https://dom.spec.whatwg.org/#dom-abortcontroller-signal
     GC::Ref<AbortSignal> signal() const { return *m_signal; }
 
-    void abort(JS::Realm&, Optional<JS::Value> reason);
+    void abort(JS::Value reason);
 
 private:
-    AbortController(GC::Ref<AbortSignal>);
+    AbortController(JS::Realm&, GC::Ref<AbortSignal>);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     // https://dom.spec.whatwg.org/#abortcontroller-signal
     GC::Ref<AbortSignal> m_signal;

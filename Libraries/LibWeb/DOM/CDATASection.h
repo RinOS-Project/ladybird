@@ -12,18 +12,19 @@
 namespace Web::DOM {
 
 class CDATASection final : public Text {
-    WEB_WRAPPABLE(CDATASection, Text);
+    WEB_PLATFORM_OBJECT(CDATASection, Text);
     GC_DECLARE_ALLOCATOR(CDATASection);
 
 public:
-    [[nodiscard]] static GC::Ref<CDATASection> create(Document&, Utf16String data);
     virtual ~CDATASection() override;
 
     // ^Node
-    virtual Utf16FlyString node_name() const override { return "#cdata-section"_utf16_fly_string; }
+    virtual FlyString node_name() const override { return "#cdata-section"_fly_string; }
 
 private:
     CDATASection(Document&, Utf16String);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 template<>

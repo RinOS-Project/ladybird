@@ -78,23 +78,10 @@ ErrorOr<NonnullRefPtr<AnonymousBufferImpl>> AnonymousBufferImpl::create(size_t s
 
 ErrorOr<NonnullRefPtr<AnonymousBufferImpl>> AnonymousBufferImpl::create(int fd, size_t size)
 {
-    void* data = nullptr;
-    // POSIX mmap rejects a zero length with EINVAL, so leave m_data null for zero-size buffers.
-    if (size > 0) {
-        data = mmap(nullptr, round_up_to_power_of_two(size, PAGE_SIZE), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        if (data == MAP_FAILED) {
-            auto error = Error::from_errno(errno);
-            close(fd);
-            return error;
-        }
-    }
-    auto impl_or_error = AK::adopt_nonnull_ref_or_enomem(new (nothrow) AnonymousBufferImpl(fd, size, data));
-    if (impl_or_error.is_error()) {
-        close(fd);
-        if (data != nullptr)
-            munmap(data, round_up_to_power_of_two(size, PAGE_SIZE));
-    }
-    return impl_or_error;
+    auto* data = mmap(nullptr, round_up_to_power_of_two(size, PAGE_SIZE), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (data == MAP_FAILED)
+        return Error::from_errno(errno);
+    return AK::adopt_nonnull_ref_or_enomem(new (nothrow) AnonymousBufferImpl(fd, size, data));
 }
 
 AnonymousBufferImpl::~AnonymousBufferImpl()
@@ -113,10 +100,8 @@ AnonymousBufferImpl::~AnonymousBufferImpl()
         auto rc = close(m_fd);
         VERIFY(rc == 0);
     }
-    if (m_data) {
-        auto rc = munmap(m_data, round_up_to_power_of_two(m_size, PAGE_SIZE));
-        VERIFY(rc == 0);
-    }
+    auto rc = munmap(m_data, round_up_to_power_of_two(m_size, PAGE_SIZE));
+    VERIFY(rc == 0);
 }
 
 ErrorOr<AnonymousBuffer> AnonymousBuffer::create_from_anon_fd(int fd, size_t size)

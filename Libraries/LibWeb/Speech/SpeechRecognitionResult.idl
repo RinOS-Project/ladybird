@@ -1,3 +1,5 @@
+#import <Speech/SpeechRecognitionAlternative.idl>
+
 // https://wicg.github.io/speech-api/#speechrecognitionresult
 [Exposed=Window]
 interface SpeechRecognitionResult {

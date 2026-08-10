@@ -2,7 +2,8 @@ Harness status: OK
 
 Found 13 tests
 
-13 Pass
+10 Pass
+3 Fail
 Pass	.default, .verticalWriting 1
 Pass	.default, .verticalWriting 2
 Pass	.default, .verticalWriting 3
@@ -11,8 +12,8 @@ Pass	.default, .verticalWriting 5
 Pass	.default, .verticalWriting 6
 Pass	.default, .verticalWriting 7
 Pass	.default, .verticalWriting 8
-Pass	.default, .verticalWriting 9
-Pass	.default, .verticalWriting 10
+Fail	.default, .verticalWriting 9
+Fail	.default, .verticalWriting 10
 Pass	.default, .verticalWriting 11
-Pass	.default, .verticalWriting 12
+Fail	.default, .verticalWriting 12
 Pass	.default, .verticalWriting 13

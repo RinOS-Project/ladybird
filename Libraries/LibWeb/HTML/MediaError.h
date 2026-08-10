@@ -6,13 +6,14 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <AK/String.h>
+#include <LibJS/Forward.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::HTML {
 
-class MediaError final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(MediaError, Bindings::GCAllocatedWrappable);
+class MediaError final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(MediaError, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(MediaError);
 
 public:
@@ -23,19 +24,19 @@ public:
         SrcNotSupported = 4,
     };
 
-    [[nodiscard]] static GC::Ref<MediaError> create(Code, Utf16String message);
-
     Code code() const { return m_code; }
-    Utf16String const& message() const { return m_message; }
+    String const& message() const { return m_message; }
 
 private:
-    MediaError(Code code, Utf16String message);
+    MediaError(JS::Realm&, Code code, String message);
+
+    virtual void initialize(JS::Realm&) override;
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-mediaerror-code
     Code m_code;
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-mediaerror-message
-    Utf16String m_message;
+    String m_message;
 };
 
 }

@@ -75,7 +75,6 @@ TimeZoneData::TimeZoneData(String time_zone_string)
 #else // !AK_OS_RINOS
 
 #include <AK/HashMap.h>
-#include <AK/NeverDestroyed.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/Utf16View.h>
 #include <LibUnicode/ICU.h>
@@ -88,24 +87,15 @@ TimeZoneData::TimeZoneData(String time_zone_string)
 
 namespace Unicode {
 
-static auto& locale_cache()
-{
-    static NeverDestroyed<HashMap<String, OwnPtr<LocaleData>>> cache;
-    return *cache;
-}
-
-static auto& time_zone_cache()
-{
-    static NeverDestroyed<HashMap<Utf16String, OwnPtr<TimeZoneData>>> cache;
-    return *cache;
-}
+static HashMap<String, OwnPtr<LocaleData>> s_locale_cache;
+static HashMap<String, OwnPtr<TimeZoneData>> s_time_zone_cache;
 
 Optional<LocaleData&> LocaleData::for_locale(StringView locale)
 {
-    auto locale_data = locale_cache().get(locale);
+    auto locale_data = s_locale_cache.get(locale);
 
     if (!locale_data.has_value()) {
-        locale_data = locale_cache().ensure(MUST(String::from_utf8(locale)), [&]() -> OwnPtr<LocaleData> {
+        locale_data = s_locale_cache.ensure(MUST(String::from_utf8(locale)), [&]() -> OwnPtr<LocaleData> {
             UErrorCode status = U_ZERO_ERROR;
 
             auto icu_locale = icu::Locale::forLanguageTag(icu_string_piece(locale), status);
@@ -126,7 +116,7 @@ LocaleData::LocaleData(icu::Locale locale)
 {
 }
 
-Utf16String LocaleData::canonicalize(StringView locale)
+String LocaleData::canonicalize(StringView locale)
 {
     auto locale_data = LocaleData::for_locale(locale);
     VERIFY(locale_data.has_value());
@@ -140,7 +130,7 @@ Utf16String LocaleData::canonicalize(StringView locale)
     //        for all keywords (and then remove "true" per UTS 35). Per CLDR BCP47 data, only specific keys define "yes"
     //        as an alias for "true" (kb, kc, kh, kk, kn). For other keys, "yes" must be preserved. See:
     //        https://unicode-org.atlassian.net/browse/ICU-21367
-    HashTable<Utf16String> keywords_with_yes;
+    HashTable<ByteString> keywords_with_yes;
 
     if (auto parsed = parse_unicode_locale_id(locale); parsed.has_value()) {
         parsed->for_each_extension_of_type<LocaleExtension>([&](auto const& extension) {
@@ -148,10 +138,9 @@ Utf16String LocaleData::canonicalize(StringView locale)
                 if (!keyword.value.equals_ignoring_ascii_case("yes"sv))
                     continue;
 
-                auto key = keyword.key.to_ascii_lowercase();
+                auto key = keyword.key.to_ascii_lowercase().to_byte_string();
 
-                auto key_bytes = MUST(key.utf16_view().to_byte_string());
-                if (auto const* legacy_key = uloc_toLegacyKey(key_bytes.characters())) {
+                if (auto const* legacy_key = uloc_toLegacyKey(key.characters())) {
                     if (auto const* value = uloc_toUnicodeLocaleType(legacy_key, "yes"); !value || value != "true"sv)
                         keywords_with_yes.set(move(key));
                 }
@@ -168,21 +157,21 @@ Utf16String LocaleData::canonicalize(StringView locale)
     verify_icu_success(status);
 
     if (keywords_with_yes.is_empty()) {
-        locale_data->m_canonical_locale_string = Utf16String::from_ascii_without_validation(result.string_view().bytes());
+        locale_data->m_canonical_locale_string = MUST(result.to_string());
     } else {
         auto parsed = parse_unicode_locale_id(result.string_view());
         VERIFY(parsed.has_value());
 
         parsed->for_each_extension_of_type<LocaleExtension>([&](auto& extension) {
             for (auto& keyword : extension.keywords) {
-                if (keyword.value.is_empty() && keywords_with_yes.contains(keyword.key))
-                    keyword.value = "yes"_utf16;
+                if (keyword.value.is_empty() && keywords_with_yes.contains(keyword.key.bytes_as_string_view()))
+                    keyword.value = "yes"_string;
             }
 
             return IterationDecision::Continue;
         });
 
-        locale_data->m_canonical_locale_string = parsed->to_utf16_string();
+        locale_data->m_canonical_locale_string = parsed->to_string();
     }
 
     return *locale_data->m_canonical_locale_string;
@@ -243,13 +232,12 @@ icu::TimeZoneNames& LocaleData::time_zone_names()
     return *m_time_zone_names;
 }
 
-Optional<TimeZoneData&> TimeZoneData::for_time_zone(Utf16View time_zone)
+Optional<TimeZoneData&> TimeZoneData::for_time_zone(StringView time_zone)
 {
-    auto time_zone_data = time_zone_cache().get(time_zone);
+    auto time_zone_data = s_time_zone_cache.get(time_zone);
 
     if (!time_zone_data.has_value()) {
-        auto time_zone_key = Utf16String::from_utf16(time_zone);
-        time_zone_data = time_zone_cache().ensure(move(time_zone_key), [&]() -> OwnPtr<TimeZoneData> {
+        time_zone_data = s_time_zone_cache.ensure(MUST(String::from_utf8(time_zone)), [&]() -> OwnPtr<TimeZoneData> {
             auto icu_time_zone = adopt_own_if_nonnull(icu::TimeZone::createTimeZone(icu_string(time_zone)));
             if (!icu_time_zone || *icu_time_zone == icu::TimeZone::getUnknown())
                 return nullptr;

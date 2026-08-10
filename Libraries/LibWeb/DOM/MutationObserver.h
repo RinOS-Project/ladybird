@@ -7,46 +7,34 @@
 
 #pragma once
 
-#include <AK/Optional.h>
-#include <AK/Utf16FlyString.h>
-#include <AK/Vector.h>
 #include <LibGC/Root.h>
-#include <LibWeb/Bindings/MutationObserver.h>
-#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/DOM/MutationRecord.h>
-#include <LibWeb/Export.h>
 #include <LibWeb/WebIDL/CallbackType.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
-namespace Web::HTML {
-
-struct SimilarOriginWindowAgent;
-
-}
-
 namespace Web::DOM {
 
-struct MutationObserverOptions {
-    Optional<Vector<Utf16FlyString>> attribute_filter;
-    Optional<bool> attribute_old_value;
+// https://dom.spec.whatwg.org/#dictdef-mutationobserverinit
+struct MutationObserverInit {
+    bool child_list { false };
     Optional<bool> attributes;
     Optional<bool> character_data;
-    Optional<bool> character_data_old_value;
-    bool child_list { false };
     bool subtree { false };
+    Optional<bool> attribute_old_value;
+    Optional<bool> character_data_old_value;
+    Optional<Vector<String>> attribute_filter;
 };
 
 // https://dom.spec.whatwg.org/#mutationobserver
-class MutationObserver final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(MutationObserver, Bindings::GCAllocatedWrappable);
+class MutationObserver final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(MutationObserver, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(MutationObserver);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<MutationObserver>> create(GC::Ptr<WebIDL::CallbackType>);
+    static WebIDL::ExceptionOr<GC::Ref<MutationObserver>> construct_impl(JS::Realm&, GC::Ptr<WebIDL::CallbackType>);
     virtual ~MutationObserver() override;
 
-    WebIDL::ExceptionOr<void> observe(Node& target, MutationObserverOptions options);
-    WebIDL::ExceptionOr<void> observe(Node& target, Bindings::MutationObserverInit const& options);
+    WebIDL::ExceptionOr<void> observe(Node& target, MutationObserverInit options = {});
     void disconnect();
     Vector<GC::Root<MutationRecord>> take_records();
 
@@ -61,9 +49,10 @@ public:
     }
 
 private:
-    explicit MutationObserver(GC::Ptr<WebIDL::CallbackType>);
+    MutationObserver(JS::Realm&, GC::Ptr<WebIDL::CallbackType>);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     // https://dom.spec.whatwg.org/#concept-mo-callback
     GC::Ptr<WebIDL::CallbackType> m_callback;
@@ -82,27 +71,27 @@ class RegisteredObserver : public JS::Cell {
     GC_DECLARE_ALLOCATOR(RegisteredObserver);
 
 public:
-    static GC::Ref<RegisteredObserver> create(MutationObserver&, MutationObserverOptions const&);
+    static GC::Ref<RegisteredObserver> create(MutationObserver&, MutationObserverInit const&);
     virtual ~RegisteredObserver() override;
 
     virtual bool is_transient() const { return false; }
 
     GC::Ref<MutationObserver> observer() const { return m_observer; }
 
-    MutationObserverOptions const& options() const { return m_options; }
-    void set_options(MutationObserverOptions options) { m_options = move(options); }
+    MutationObserverInit const& options() const { return m_options; }
+    void set_options(MutationObserverInit options) { m_options = move(options); }
 
     template<typename T>
     bool fast_is() const = delete;
 
 protected:
-    RegisteredObserver(MutationObserver& observer, MutationObserverOptions const& options);
+    RegisteredObserver(MutationObserver& observer, MutationObserverInit const& options);
 
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:
     GC::Ref<MutationObserver> m_observer;
-    MutationObserverOptions m_options;
+    MutationObserverInit m_options;
 };
 
 // https://dom.spec.whatwg.org/#transient-registered-observer
@@ -111,7 +100,7 @@ class TransientRegisteredObserver final : public RegisteredObserver {
     GC_DECLARE_ALLOCATOR(TransientRegisteredObserver);
 
 public:
-    static GC::Ref<TransientRegisteredObserver> create(MutationObserver&, MutationObserverOptions const&, RegisteredObserver& source);
+    static GC::Ref<TransientRegisteredObserver> create(MutationObserver&, MutationObserverInit const&, RegisteredObserver& source);
     virtual ~TransientRegisteredObserver() override;
 
     GC::Ref<RegisteredObserver> source() const { return m_source; }
@@ -119,7 +108,7 @@ public:
     virtual bool is_transient() const override { return true; }
 
 private:
-    TransientRegisteredObserver(MutationObserver& observer, MutationObserverOptions const& options, RegisteredObserver& source);
+    TransientRegisteredObserver(MutationObserver& observer, MutationObserverInit const& options, RegisteredObserver& source);
 
     virtual void visit_edges(Cell::Visitor&) override;
 
@@ -128,7 +117,5 @@ private:
 
 template<>
 inline bool RegisteredObserver::fast_is<TransientRegisteredObserver>() const { return is_transient(); }
-
-WEB_API void queue_mutation_observer_microtask(HTML::SimilarOriginWindowAgent&);
 
 }

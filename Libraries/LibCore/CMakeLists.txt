@@ -11,8 +11,7 @@ set(SOURCES
     EventLoopImplementation.cpp
     EventReceiver.cpp
     File.cpp
-    GeolocationProvider.cpp
-    ImmutableBytes.cpp
+    MappedFile.cpp
     MimeData.cpp
     Notifier.cpp
     ReportTime.cpp
@@ -25,24 +24,14 @@ set(SOURCES
     SystemServerTakeover.cpp
     ThreadEventQueue.cpp
     Timer.cpp
-    TimeZone.cpp
     Version.cpp
 )
-
-if (APPLE)
-    list(APPEND SOURCES GeolocationProviderCoreLocation.mm)
-    set_source_files_properties(GeolocationProviderCoreLocation.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
-else()
-    list(APPEND SOURCES GeolocationProviderUnimplemented.cpp)
-endif()
 
 if (WIN32)
     list(APPEND SOURCES
         AnonymousBufferWindows.cpp
         EventLoopImplementationWindows.cpp
-        FileWindows.cpp
         LocalServerWindows.cpp
-        MappedFileWindows.cpp
         ProcessWindows.cpp
         SocketWindows.cpp
         SocketpairWindows.cpp
@@ -54,9 +43,7 @@ else()
     list(APPEND SOURCES
         AnonymousBuffer.cpp
         EventLoopImplementationUnix.cpp
-        FilePosix.cpp
         LocalServer.cpp
-        MappedFile.cpp
         Process.cpp
         Socket.cpp
         System.cpp
@@ -104,7 +91,7 @@ if (APPLE)
 endif()
 
 ladybird_lib(LibCore core EXPLICIT_SYMBOL_EXPORT)
-target_link_libraries(LibCore PRIVATE LibSync Threads::Threads LibUnicode LibURL LibTextCodec)
+target_link_libraries(LibCore PRIVATE LibUnicode LibURL Threads::Threads LibTextCodec)
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "NetBSD")
     # NetBSD has its shm_open and shm_unlink functions in librt so we need to link that
@@ -121,7 +108,6 @@ endif()
 
 if (APPLE)
     target_link_libraries(LibCore PUBLIC "-framework CoreFoundation")
-    target_link_libraries(LibCore PUBLIC "-framework CoreLocation")
     target_link_libraries(LibCore PUBLIC "-framework CoreServices")
     target_link_libraries(LibCore PUBLIC "-framework Foundation")
     target_link_libraries(LibCore PUBLIC "-framework IOSurface")

@@ -41,8 +41,6 @@ struct ProcessSpawnOptions {
     StringView name {};
     ByteString executable {};
     bool search_for_executable_in_path { false };
-    // On supported platforms, ask the kernel to terminate this process when its parent dies.
-    bool die_with_parent { false };
     Vector<ByteString> const& arguments {};
 
     using FileActionType = Variant<FileAction::OpenFile, FileAction::CloseFile, FileAction::DupFd>;
@@ -65,14 +63,6 @@ public:
     static ErrorOr<Process> spawn(StringView path, ReadonlySpan<StringView> arguments);
 
     static ErrorOr<String> get_name();
-
-    [[noreturn]] static void terminate_immediately(int status);
-
-    enum class TerminationMode {
-        Graceful,
-        Forceful,
-    };
-    static ErrorOr<void> terminate_process(pid_t, TerminationMode);
 
     static void wait_for_debugger_and_break();
     static ErrorOr<bool> is_being_debugged();

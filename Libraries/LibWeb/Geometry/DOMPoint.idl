@@ -1,3 +1,5 @@
+#import <Geometry/DOMPointReadOnly.idl>
+
 // https://drafts.fxtf.org/geometry/#dompoint
 [Exposed=(Window,Worker), Serializable, LegacyWindowAlias=SVGPoint]
 interface DOMPoint : DOMPointReadOnly {
@@ -5,7 +7,7 @@ interface DOMPoint : DOMPointReadOnly {
     constructor(optional unrestricted double x = 0, optional unrestricted double y = 0,
                 optional unrestricted double z = 0, optional unrestricted double w = 1);
 
-    [ImplementedAs=dom_point_from_point, NewObject] static DOMPoint fromPoint(optional DOMPointInit other = {});
+    [NewObject] static DOMPoint fromPoint(optional DOMPointInit other = {});
 
     inherit attribute unrestricted double x;
     inherit attribute unrestricted double y;

@@ -7,25 +7,22 @@
 #pragma once
 
 #include <LibWeb/CSS/CSSTransformComponent.h>
-#include <LibWeb/Export.h>
-
-namespace Web::Bindings {
-
-struct CSSMatrixComponentOptions;
-
-}
 
 namespace Web::CSS {
 
+// https://drafts.css-houdini.org/css-typed-om-1/#dictdef-cssmatrixcomponentoptions
+struct CSSMatrixComponentOptions {
+    Optional<bool> is2d;
+};
+
 // https://drafts.css-houdini.org/css-typed-om-1/#cssmatrixcomponent
 class CSSMatrixComponent final : public CSSTransformComponent {
-    WEB_WRAPPABLE(CSSMatrixComponent, CSSTransformComponent);
+    WEB_PLATFORM_OBJECT(CSSMatrixComponent, CSSTransformComponent);
     GC_DECLARE_ALLOCATOR(CSSMatrixComponent);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSMatrixComponent> create(Is2D, GC::Ref<Geometry::DOMMatrix>);
-    static WebIDL::ExceptionOr<GC::Ref<CSSMatrixComponent>> create_from_dom_matrix_read_only(GC::Ref<Geometry::DOMMatrixReadOnly>, Optional<bool> is_2d = {});
-    static WebIDL::ExceptionOr<GC::Ref<CSSMatrixComponent>> create_for_constructor(GC::Ref<Geometry::DOMMatrixReadOnly>, Bindings::CSSMatrixComponentOptions const&);
+    [[nodiscard]] static GC::Ref<CSSMatrixComponent> create(JS::Realm&, Is2D, GC::Ref<Geometry::DOMMatrix>);
+    static WebIDL::ExceptionOr<GC::Ref<CSSMatrixComponent>> construct_impl(JS::Realm&, GC::Ref<Geometry::DOMMatrixReadOnly>, Optional<CSSMatrixComponentOptions> = {});
 
     virtual ~CSSMatrixComponent() override;
 
@@ -39,8 +36,10 @@ public:
     virtual WebIDL::ExceptionOr<NonnullRefPtr<TransformationStyleValue const>> create_style_value(PropertyNameAndID const&) const override;
 
 private:
-    explicit CSSMatrixComponent(Is2D, GC::Ref<Geometry::DOMMatrix>);
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    explicit CSSMatrixComponent(JS::Realm&, Is2D, GC::Ref<Geometry::DOMMatrix>);
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
     GC::Ref<Geometry::DOMMatrix> m_matrix;
 };

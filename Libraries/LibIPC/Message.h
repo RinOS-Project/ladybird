@@ -8,7 +8,6 @@
 #pragma once
 
 #include <AK/Error.h>
-#include <AK/StringView.h>
 #include <AK/Vector.h>
 #include <LibIPC/Attachment.h>
 #include <LibIPC/Forward.h>
@@ -45,6 +44,9 @@ public:
 private:
     MessageDataType m_data;
     Vector<Attachment> m_attachments;
+#ifdef AK_OS_WINDOWS
+    Vector<size_t> m_handle_offsets;
+#endif
 };
 
 enum class ErrorCode : u32 {
@@ -60,7 +62,7 @@ public:
 
     virtual u32 endpoint_magic() const = 0;
     virtual int message_id() const = 0;
-    virtual StringView message_name() const = 0;
+    virtual char const* message_name() const = 0;
     virtual ErrorOr<MessageBuffer> encode() const = 0;
 
 protected:

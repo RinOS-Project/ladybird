@@ -1,3 +1,7 @@
+#import <HighResolutionTime/DOMHighResTimeStamp.idl>
+#import <Gamepad/GamepadButton.idl>
+#import <Gamepad/GamepadHapticActuator.idl>
+
 // https://w3c.github.io/gamepad/#dom-gamepadmappingtype
 enum GamepadMappingType {
     "",

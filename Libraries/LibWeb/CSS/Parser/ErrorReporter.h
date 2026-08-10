@@ -1,21 +1,21 @@
 /*
- * Copyright (c) 2025-2026, Sam Atkins <sam@ladybird.org>
+ * Copyright (c) 2025, Sam Atkins <sam@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/FlyString.h>
 #include <AK/HashMap.h>
 #include <AK/String.h>
-#include <AK/Utf16FlyString.h>
 #include <LibWeb/Export.h>
 
 namespace Web::CSS::Parser {
 
 struct UnknownPropertyError {
-    Utf16FlyString rule_name { "style"_utf16_fly_string };
-    Utf16FlyString property_name;
+    FlyString rule_name { "style"_fly_string };
+    FlyString property_name;
     bool operator==(UnknownPropertyError const&) const = default;
     unsigned hash() const
     {
@@ -24,20 +24,20 @@ struct UnknownPropertyError {
 };
 
 struct UnknownRuleError {
-    Utf16FlyString rule_name;
+    FlyString rule_name;
     bool operator==(UnknownRuleError const&) const = default;
     unsigned hash() const { return rule_name.hash(); }
 };
 
 struct UnknownMediaFeatureError {
-    Utf16FlyString media_feature_name;
+    FlyString media_feature_name;
     bool operator==(UnknownMediaFeatureError const&) const = default;
     unsigned hash() const { return media_feature_name.hash(); }
 };
 
 struct UnknownPseudoClassOrElementError {
-    Utf16FlyString rule_name { "style"_utf16_fly_string };
-    Utf16FlyString name;
+    FlyString rule_name { "style"_fly_string };
+    FlyString name;
     bool operator==(UnknownPseudoClassOrElementError const&) const = default;
     unsigned hash() const
     {
@@ -46,8 +46,8 @@ struct UnknownPseudoClassOrElementError {
 };
 
 struct InvalidPropertyError {
-    Utf16FlyString rule_name { "style"_utf16_fly_string };
-    Utf16FlyString property_name;
+    FlyString rule_name { "style"_fly_string };
+    FlyString property_name;
     String value_string;
     String description;
     bool operator==(InvalidPropertyError const&) const = default;
@@ -58,7 +58,7 @@ struct InvalidPropertyError {
 };
 
 struct InvalidValueError {
-    Utf16FlyString value_type;
+    FlyString value_type;
     String value_string;
     String description;
     bool operator==(InvalidValueError const&) const = default;
@@ -69,7 +69,7 @@ struct InvalidValueError {
 };
 
 struct InvalidRuleError {
-    Utf16FlyString rule_name;
+    FlyString rule_name;
     String prelude;
     String description;
     bool operator==(InvalidRuleError const&) const = default;
@@ -80,7 +80,7 @@ struct InvalidRuleError {
 };
 
 struct InvalidQueryError {
-    Utf16FlyString query_type { "@media"_utf16_fly_string };
+    FlyString query_type { "@media"_fly_string };
     String value_string;
     String description;
     bool operator==(InvalidQueryError const&) const = default;
@@ -91,7 +91,7 @@ struct InvalidQueryError {
 };
 
 struct InvalidSelectorError {
-    Utf16FlyString rule_name { "style"_utf16_fly_string };
+    FlyString rule_name { "style"_fly_string };
     String value_string;
     String description;
     bool operator==(InvalidSelectorError const&) const = default;
@@ -102,7 +102,7 @@ struct InvalidSelectorError {
 };
 
 struct InvalidPseudoClassOrElementError {
-    Utf16FlyString name;
+    FlyString name;
     String value_string;
     String description;
     bool operator==(InvalidPseudoClassOrElementError const&) const = default;
@@ -113,8 +113,8 @@ struct InvalidPseudoClassOrElementError {
 };
 
 struct InvalidRuleLocationError {
-    Utf16FlyString outer_rule_name;
-    Utf16FlyString inner_rule_name;
+    FlyString outer_rule_name;
+    FlyString inner_rule_name;
     bool operator==(InvalidRuleLocationError const&) const = default;
     unsigned hash() const
     {

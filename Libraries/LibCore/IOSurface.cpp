@@ -66,17 +66,17 @@ IOSurfaceHandle IOSurfaceHandle::create(int width, int height)
     RefAutoRelease<CFNumberRef> bytes_per_element_number = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &bytes_per_element);
     RefAutoRelease<CFNumberRef> pixel_format_number = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &pixel_format);
 
-    RefAutoRelease<CFMutableDictionaryRef> props = CFDictionaryCreateMutable(kCFAllocatorDefault,
+    CFMutableDictionaryRef props = CFDictionaryCreateMutable(kCFAllocatorDefault,
         0,
         &kCFTypeDictionaryKeyCallBacks,
         &kCFTypeDictionaryValueCallBacks);
 
-    CFDictionarySetValue(props.ref(), kIOSurfaceWidth, width_number.ref());
-    CFDictionarySetValue(props.ref(), kIOSurfaceHeight, height_number.ref());
-    CFDictionarySetValue(props.ref(), kIOSurfaceBytesPerElement, bytes_per_element_number.ref());
-    CFDictionarySetValue(props.ref(), kIOSurfacePixelFormat, pixel_format_number.ref());
+    CFDictionarySetValue(props, kIOSurfaceWidth, width_number.ref());
+    CFDictionarySetValue(props, kIOSurfaceHeight, height_number.ref());
+    CFDictionarySetValue(props, kIOSurfaceBytesPerElement, bytes_per_element_number.ref());
+    CFDictionarySetValue(props, kIOSurfacePixelFormat, pixel_format_number.ref());
 
-    auto* ref = IOSurfaceCreate(props.ref());
+    auto* ref = IOSurfaceCreate(props);
     VERIFY(ref);
     return IOSurfaceHandle(make<IOSurfaceRefWrapper>(ref));
 }

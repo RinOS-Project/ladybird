@@ -5,6 +5,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/CSSStyleDeclarationPrototype.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSStyleDeclaration.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/DOM/Document.h>
@@ -14,10 +17,20 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSStyleDeclaration);
 
-CSSStyleDeclaration::CSSStyleDeclaration(Computed computed, Readonly readonly)
-    : m_computed(computed == Computed::Yes)
+CSSStyleDeclaration::CSSStyleDeclaration(JS::Realm& realm, Computed computed, Readonly readonly)
+    : PlatformObject(realm)
+    , m_computed(computed == Computed::Yes)
     , m_readonly(readonly == Readonly::Yes)
 {
+    m_legacy_platform_object_flags = LegacyPlatformObjectFlags {
+        .supports_indexed_properties = true,
+    };
+}
+
+void CSSStyleDeclaration::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSStyleDeclaration);
+    Base::initialize(realm);
 }
 
 // https://drafts.csswg.org/cssom/#update-style-attribute-for
@@ -42,7 +55,7 @@ void CSSStyleDeclaration::update_style_attribute()
 }
 
 // https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-csstext
-Utf16String CSSStyleDeclaration::css_text() const
+String CSSStyleDeclaration::css_text() const
 {
     // 1. If the computed flag is set, then return the empty string.
     if (is_computed())
@@ -52,7 +65,16 @@ Utf16String CSSStyleDeclaration::css_text() const
     return serialized();
 }
 
-void CSSStyleDeclaration::visit_edges(GC::Cell::Visitor& visitor)
+Optional<JS::Value> CSSStyleDeclaration::item_value(size_t index) const
+{
+    auto value = item(index);
+    if (value.is_empty())
+        return {};
+
+    return JS::PrimitiveString::create(vm(), value);
+}
+
+void CSSStyleDeclaration::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_parent_rule);

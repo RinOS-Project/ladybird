@@ -11,7 +11,7 @@
 namespace Web::HTML {
 
 class HTMLDListElement final : public HTMLElement {
-    WEB_WRAPPABLE(HTMLDListElement, HTMLElement);
+    WEB_PLATFORM_OBJECT(HTMLDListElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLDListElement);
 
 public:
@@ -19,6 +19,8 @@ public:
 
 private:
     HTMLDListElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

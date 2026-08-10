@@ -14,19 +14,18 @@ FAILURES=0
 set +e
 
 for cmd in \
-        Meta/Linters/check_debug_flags.sh \
-        Meta/Linters/check_flatpak.py \
-        Meta/Linters/check_html_doctype.py \
-        Meta/Linters/check_idl_files.py \
-        Meta/Linters/check_libweb_realm_mentions.py \
-        Meta/Linters/check_newlines_at_eof.py \
-        Meta/Linters/check_png_sizes.sh \
-        Meta/Linters/check_style.py \
-        Meta/Linters/check_vcpkg.py \
-        Meta/Linters/lint_executable_resources.sh \
-        Meta/Linters/lint_prettier.sh \
-        Meta/Linters/lint_python.sh \
-        Meta/Linters/lint_shell_scripts.sh; do
+        Meta/check-debug-flags.sh \
+        Meta/check-flatpak.py \
+        Meta/check-html-doctype.py \
+        Meta/check-idl-files.py \
+        Meta/check-newlines-at-eof.py \
+        Meta/check-png-sizes.sh \
+        Meta/check-style.py \
+        Meta/lint-executable-resources.sh \
+        Meta/lint-gn.sh \
+        Meta/lint-prettier.sh \
+        Meta/lint-python.sh \
+        Meta/lint-shell-scripts.sh; do
     if "${cmd}" "$@"; then
         echo -e "[${GREEN}OK${NC}]: ${cmd}"
     else
@@ -35,17 +34,21 @@ for cmd in \
     fi
 done
 
-if { git ls-files '*.ipc' | xargs Meta/Linters/lint_ipc.py; }; then
-    echo -e "[${GREEN}OK${NC}]: Meta/Linters/lint_ipc.py"
+if [ -x ./Build/lagom/bin/IPCMagicLinter ]; then
+    if { git ls-files '*.ipc' | xargs ./Build/lagom/bin/IPCMagicLinter; }; then
+        echo -e "[${GREEN}OK${NC}]: IPCMagicLinter (in Meta/lint-ci.sh)"
+    else
+        echo -e "[${BOLD_RED}FAIL${NC}]: IPCMagicLinter (in Meta/lint-ci.sh)"
+        ((FAILURES+=1))
+    fi
 else
-    echo -e "[${BOLD_RED}FAIL${NC}]: Meta/Linters/lint_ipc.py"
-    ((FAILURES+=1))
+    echo -e "[${GREEN}SKIP${NC}]: IPCMagicLinter (in Meta/lint-ci.sh)"
 fi
 
-if Meta/Linters/lint_clang_format.py --overwrite-inplace "$@" && git diff --exit-code -- ':*.cpp' ':*.h' ':*.mm'; then
-    echo -e "[${GREEN}OK${NC}]: Meta/Linters/lint_clang_format.py"
+if Meta/lint-clang-format.py --overwrite-inplace "$@" && git diff --exit-code -- ':*.cpp' ':*.h' ':*.mm'; then
+    echo -e "[${GREEN}OK${NC}]: Meta/lint-clang-format.py"
 else
-    echo -e "[${BOLD_RED}FAIL${NC}]: Meta/Linters/lint_clang_format.py"
+    echo -e "[${BOLD_RED}FAIL${NC}]: Meta/lint-clang-format.py"
     ((FAILURES+=1))
 fi
 

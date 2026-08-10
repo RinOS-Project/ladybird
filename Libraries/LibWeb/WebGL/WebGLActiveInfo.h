@@ -6,31 +6,32 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 typedef unsigned int GLenum;
 typedef int GLsizei;
 
 namespace Web::WebGL {
 
-class WebGLActiveInfo : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(WebGLActiveInfo, Bindings::GCAllocatedWrappable);
+class WebGLActiveInfo : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(WebGLActiveInfo, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(WebGLActiveInfo);
 
 public:
-    static GC::Ptr<WebGLActiveInfo> create(JS::Realm&, Utf16String name, GLenum type, GLsizei size);
+    static GC::Ptr<WebGLActiveInfo> create(JS::Realm&, String name, GLenum type, GLsizei size);
     virtual ~WebGLActiveInfo();
 
     GLsizei size() const { return m_size; }
     GLenum type() const { return m_type; }
-    Utf16String const& name() const { return m_name; }
+    String const& name() const { return m_name; }
 
 protected:
-    explicit WebGLActiveInfo(JS::Realm&, Utf16String name, GLenum type, GLsizei size);
+    explicit WebGLActiveInfo(JS::Realm&, String name, GLenum type, GLsizei size);
 
 private:
-    Utf16String m_name;
+    virtual void initialize(JS::Realm&) override;
+
+    String m_name;
     GLenum m_type { 0 };
     GLsizei m_size { 0 };
 };

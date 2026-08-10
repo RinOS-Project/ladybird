@@ -6,33 +6,40 @@
 
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/WebGLDrawBuffers.h>
+#include <LibWeb/Bindings/WebGLDrawBuffersPrototype.h>
 #include <LibWeb/WebGL/Extensions/WebGLDrawBuffers.h>
-#include <LibWeb/WebGL/WebGLContextProxy.h>
+#include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
+#define GL_GLEXT_PROTOTYPES 1
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 
-namespace Web::WebGL {
+namespace Web::WebGL::Extensions {
 
 GC_DEFINE_ALLOCATOR(WebGLDrawBuffers);
 
-GC::Ref<Bindings::Wrappable> WebGLDrawBuffers::create(GC::Ref<WebGLRenderingContextBase> context)
+JS::ThrowCompletionOr<GC::Ref<JS::Object>> WebGLDrawBuffers::create(JS::Realm& realm, GC::Ref<WebGLRenderingContextBase> context)
 {
-    auto& realm = context->realm();
     return realm.create<WebGLDrawBuffers>(realm, context);
 }
 
-WebGLDrawBuffers::WebGLDrawBuffers(JS::Realm&, GC::Ref<WebGLRenderingContextBase> context)
-    : m_context(context)
+WebGLDrawBuffers::WebGLDrawBuffers(JS::Realm& realm, GC::Ref<WebGLRenderingContextBase> context)
+    : PlatformObject(realm)
+    , m_context(context)
 {
 }
 
 void WebGLDrawBuffers::draw_buffers_webgl(Vector<GLenum> buffers)
 {
     m_context->context().make_current();
-    m_context->context().draw_buffers_ext(buffers.size(), buffers.data());
+    glDrawBuffersEXT(buffers.size(), buffers.data());
+}
+
+void WebGLDrawBuffers::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(WebGLDrawBuffers);
+    Base::initialize(realm);
 }
 
 void WebGLDrawBuffers::visit_edges(Visitor& visitor)

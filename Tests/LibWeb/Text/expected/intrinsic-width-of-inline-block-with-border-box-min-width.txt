@@ -1,3 +1,0 @@
-width under min-content: 50
-width under max-content: 50
-PASS: min-content and max-content widths agree

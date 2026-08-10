@@ -12,9 +12,11 @@
 namespace Web::Painting {
 
 class SVGMaskPaintable : public SVGGraphicsPaintable {
+    GC_CELL(SVGMaskPaintable, SVGGraphicsPaintable);
+    GC_DECLARE_ALLOCATOR(SVGMaskPaintable);
+
 public:
-    static NonnullRefPtr<SVGMaskPaintable> create(Layout::SVGMaskBox const&);
-    virtual StringView class_name() const override { return "SVGMaskPaintable"sv; }
+    static GC::Ref<SVGMaskPaintable> create(Layout::SVGMaskBox const&);
 
     bool forms_unconnected_subtree() const override
     {

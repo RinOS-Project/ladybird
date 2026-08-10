@@ -6,6 +6,7 @@
 
 #include <LibWeb/Animations/Animation.h>
 #include <LibWeb/Animations/AnimationTimeline.h>
+#include <LibWeb/Bindings/AnimationTimelinePrototype.h>
 #include <LibWeb/DOM/Document.h>
 
 namespace Web::Animations {
@@ -23,27 +24,15 @@ Optional<TimeValue> AnimationTimeline::current_time() const
 
 void AnimationTimeline::set_current_time(Optional<TimeValue> value)
 {
+    if (value == m_current_time)
+        return;
+
     if (m_is_monotonically_increasing && m_current_time.has_value() && (!value.has_value() || *value < *m_current_time)) {
         dbgln("AnimationTimeline::set_current_time({}): monotonically increasing timeline can only move forward", value);
         return;
     }
 
     m_current_time = value;
-
-    update_associated_animations();
-}
-
-void AnimationTimeline::update_associated_animations()
-{
-    // https://drafts.csswg.org/web-animations-1/#animation-frame-loop
-    // Note: Due to the hierarchical nature of the timing model, updating the current time of a timeline also involves:
-    // - Updating the current time of any animations associated with the timeline.
-    // - Running the update an animation's finished state procedure for any animations whose current time has been
-    //   updated.
-    // - Queueing animation events for any such animations.
-    // NB: Since we dispatch events for all animations regardless of whether they have a timeline we handle them all together in Document::update_animations_and_send_events()
-    for (auto& animation : m_associated_animations)
-        animation.update();
 }
 
 // https://drafts.csswg.org/web-animations-2/#timeline-duration
@@ -55,7 +44,16 @@ NullableCSSNumberish AnimationTimeline::duration_for_bindings() const
     // available time. For a monotonic timeline, there is no upper bound on current time, and timeline duration is
     // unresolved. For a non-monotonic (e.g. scroll) timeline, the duration has a fixed upper bound. In this case, the
     // timeline is a progress-based timeline, and its timeline duration is 100%.
-    return NullableCSSNumberish::from_optional_css_numberish_time(duration());
+    return NullableCSSNumberish::from_optional_css_numberish_time(realm(), duration());
+}
+
+void AnimationTimeline::set_associated_document(GC::Ptr<DOM::Document> document)
+{
+    if (document)
+        document->associate_with_timeline(*this);
+    if (m_associated_document)
+        m_associated_document->disassociate_with_timeline(*this);
+    m_associated_document = document;
 }
 
 // https://drafts.csswg.org/web-animations-1/#timeline
@@ -65,19 +63,25 @@ bool AnimationTimeline::is_inactive() const
     return !m_current_time.has_value();
 }
 
-AnimationTimeline::AnimationTimeline(GC::Ref<DOM::Document> document)
-    : m_associated_document(document)
+AnimationTimeline::AnimationTimeline(JS::Realm& realm)
+    : Bindings::PlatformObject(realm)
 {
-    m_associated_document->associate_with_timeline(*this);
 }
 
 void AnimationTimeline::finalize()
 {
     Base::finalize();
-    m_associated_document->disassociate_with_timeline(*this);
+    if (m_associated_document)
+        m_associated_document->disassociate_with_timeline(*this);
 }
 
-void AnimationTimeline::visit_edges(GC::Cell::Visitor& visitor)
+void AnimationTimeline::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(AnimationTimeline);
+    Base::initialize(realm);
+}
+
+void AnimationTimeline::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_associated_document);

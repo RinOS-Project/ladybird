@@ -6,28 +6,25 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/Forward.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::HTML {
 
-class UserActivation final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(UserActivation, Bindings::GCAllocatedWrappable);
+class UserActivation final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(UserActivation, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(UserActivation);
 
 public:
-    [[nodiscard]] static GC::Ref<UserActivation> create(Window&);
+    static WebIDL::ExceptionOr<GC::Ref<UserActivation>> construct_impl(JS::Realm&);
     virtual ~UserActivation() override = default;
 
     bool has_been_active() const;
     bool is_active() const;
 
 private:
-    explicit UserActivation(Window&);
+    UserActivation(JS::Realm&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
-
-    GC::Ref<Window> m_window;
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

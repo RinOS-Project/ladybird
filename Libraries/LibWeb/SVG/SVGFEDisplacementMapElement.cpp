@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/SVGFEDisplacementMapElementPrototype.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/SVG/SVGAnimatedEnumeration.h>
@@ -16,6 +17,12 @@ GC_DEFINE_ALLOCATOR(SVGFEDisplacementMapElement);
 SVGFEDisplacementMapElement::SVGFEDisplacementMapElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : SVGElement(document, qualified_name)
 {
+}
+
+void SVGFEDisplacementMapElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGFEDisplacementMapElement);
+    Base::initialize(realm);
 }
 
 void SVGFEDisplacementMapElement::visit_edges(Cell::Visitor& visitor)
@@ -33,7 +40,7 @@ void SVGFEDisplacementMapElement::visit_edges(Cell::Visitor& visitor)
 GC::Ref<SVGAnimatedString> SVGFEDisplacementMapElement::in1()
 {
     if (!m_in1)
-        m_in1 = SVGAnimatedString::create(*this, DOM::QualifiedName { AttributeNames::in, OptionalNone {}, OptionalNone {} });
+        m_in1 = SVGAnimatedString::create(realm(), *this, DOM::QualifiedName { AttributeNames::in, OptionalNone {}, OptionalNone {} });
 
     return *m_in1;
 }
@@ -42,7 +49,7 @@ GC::Ref<SVGAnimatedString> SVGFEDisplacementMapElement::in1()
 GC::Ref<SVGAnimatedString> SVGFEDisplacementMapElement::in2()
 {
     if (!m_in2)
-        m_in2 = SVGAnimatedString::create(*this, DOM::QualifiedName { AttributeNames::in2, OptionalNone {}, OptionalNone {} });
+        m_in2 = SVGAnimatedString::create(realm(), *this, DOM::QualifiedName { AttributeNames::in2, OptionalNone {}, OptionalNone {} });
 
     return *m_in2;
 }
@@ -51,13 +58,13 @@ GC::Ref<SVGAnimatedString> SVGFEDisplacementMapElement::in2()
 GC::Ref<SVGAnimatedNumber> SVGFEDisplacementMapElement::scale()
 {
     if (!m_scale)
-        m_scale = SVGAnimatedNumber::create(*this, DOM::QualifiedName { AttributeNames::scale, OptionalNone {}, OptionalNone {} }, 0.f);
+        m_scale = SVGAnimatedNumber::create(realm(), *this, DOM::QualifiedName { AttributeNames::scale, OptionalNone {}, OptionalNone {} }, 0.f);
 
     return *m_scale;
 }
 
 // https://drafts.csswg.org/filter-effects/#element-attrdef-fedisplacementmap-xchannelselector
-static SVGFEDisplacementMapElement::ChannelSelector parse_channel_selector(Utf16View value)
+static SVGFEDisplacementMapElement::ChannelSelector parse_channel_selector(String const& value)
 {
     if (value == "R"sv)
         return SVGFEDisplacementMapElement::ChannelSelector::Red;
@@ -79,7 +86,7 @@ GC::Ref<SVGAnimatedEnumeration> SVGFEDisplacementMapElement::x_channel_selector(
 {
     // FIXME: Support reflection, don't return a new object every time.
     auto x_channel_selector = parse_channel_selector(get_attribute_value(AttributeNames::xChannelSelector));
-    return SVGAnimatedEnumeration::create(to_underlying(x_channel_selector));
+    return SVGAnimatedEnumeration::create(realm(), to_underlying(x_channel_selector));
 }
 
 // https://drafts.csswg.org/filter-effects/#dom-svgfedisplacementmapelement-ychannelselector
@@ -87,7 +94,7 @@ GC::Ref<SVGAnimatedEnumeration> SVGFEDisplacementMapElement::y_channel_selector(
 {
     // FIXME: Support reflection, don't return a new object every time.
     auto y_channel_selector = parse_channel_selector(get_attribute_value(AttributeNames::yChannelSelector));
-    return SVGAnimatedEnumeration::create(to_underlying(y_channel_selector));
+    return SVGAnimatedEnumeration::create(realm(), to_underlying(y_channel_selector));
 }
 
 }

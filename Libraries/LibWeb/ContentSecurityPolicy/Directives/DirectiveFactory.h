@@ -6,8 +6,7 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16String.h>
+#include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibGC/Forward.h>
 #include <LibGC/Ptr.h>
@@ -15,6 +14,6 @@
 
 namespace Web::ContentSecurityPolicy::Directives {
 
-[[nodiscard]] GC::Ref<Directive> create_directive(GC::Heap&, Utf16FlyString name, Vector<Utf16String> value);
+[[nodiscard]] GC::Ref<Directive> create_directive(GC::Heap&, String name, Vector<String> value);
 
 }

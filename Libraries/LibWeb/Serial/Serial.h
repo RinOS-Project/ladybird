@@ -6,27 +6,34 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Serial.h>
 #include <LibWeb/DOM/EventTarget.h>
-#include <LibWeb/WebIDL/Promise.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::Serial {
 
-using SerialPortRequestOptions = Bindings::SerialPortRequestOptions;
+// https://wicg.github.io/serial/#serialportfilter-dictionary
+struct SerialPortFilter {
+    Optional<WebIDL::UnsignedShort> usb_vendor_id;
+    Optional<WebIDL::UnsignedShort> usb_product_id;
+    Optional<String> bluetooth_service_class_id;
+};
+
+// https://wicg.github.io/serial/#serialportrequestoptions-dictionary
+struct SerialPortRequestOptions {
+    Optional<Vector<SerialPortFilter>> filters;
+    Optional<Vector<String>> allowed_bluetooth_service_class_ids;
+};
 
 // https://wicg.github.io/serial/#serial-interface
 class Serial : public DOM::EventTarget {
-    WEB_WRAPPABLE(Serial, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(Serial, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(Serial);
 
 public:
-    [[nodiscard]] static GC::Ref<Serial> create();
-
     // https://wicg.github.io/serial/#requestport-method
-    void request_port(SerialPortRequestOptions const&, GC::Ref<WebIDL::Promise>);
+    WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> request_port(SerialPortRequestOptions = {});
     // https://wicg.github.io/serial/#getports-method
-    void get_ports(GC::Ref<WebIDL::Promise>);
+    GC::Ref<WebIDL::Promise> get_ports();
 
     // https://wicg.github.io/serial/#onconnect-attribute
     void set_onconnect(WebIDL::CallbackType*);
@@ -37,7 +44,9 @@ public:
     WebIDL::CallbackType* ondisconnect();
 
 private:
-    explicit Serial();
+    explicit Serial(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

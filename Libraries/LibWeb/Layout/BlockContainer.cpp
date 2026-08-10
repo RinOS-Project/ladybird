@@ -9,20 +9,26 @@
 
 namespace Web::Layout {
 
-BlockContainer::BlockContainer(DOM::Document& document, DOM::Node* node, NonnullRefPtr<CSS::ComputedValues const> computed_values)
+GC_DEFINE_ALLOCATOR(BlockContainer);
+
+BlockContainer::BlockContainer(DOM::Document& document, DOM::Node* node, GC::Ref<CSS::ComputedProperties> style)
+    : Box(document, node, move(style))
+{
+}
+
+BlockContainer::BlockContainer(DOM::Document& document, DOM::Node* node, NonnullOwnPtr<CSS::ComputedValues> computed_values)
     : Box(document, node, move(computed_values))
 {
 }
 
 BlockContainer::~BlockContainer() = default;
 
-RefPtr<Painting::PaintableWithLines const> BlockContainer::paintable_with_lines() const
+Painting::PaintableWithLines const* BlockContainer::paintable_with_lines() const
 {
-    auto paintable_box = Box::paintable_box();
-    return as_if<Painting::PaintableWithLines>(paintable_box.ptr());
+    return as_if<Painting::PaintableWithLines>(Box::paintable_box());
 }
 
-RefPtr<Painting::Paintable> BlockContainer::create_paintable() const
+GC::Ptr<Painting::Paintable> BlockContainer::create_paintable() const
 {
     return Painting::PaintableWithLines::create(*this);
 }

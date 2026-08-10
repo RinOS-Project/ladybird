@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/JsonObjectSerializer.h>
-#include <AK/Utf16StringBuilder.h>
 #include <AK/Vector.h>
 #include <LibGC/CellAllocator.h>
 #include <LibJS/Heap/Cell.h>
@@ -20,7 +19,7 @@ class AccessibilityTreeNode final : public JS::Cell {
     GC_DECLARE_ALLOCATOR(AccessibilityTreeNode);
 
 public:
-    static GC::Ref<AccessibilityTreeNode> create(DOM::Node const*);
+    static GC::Ref<AccessibilityTreeNode> create(Document*, DOM::Node const*);
     virtual ~AccessibilityTreeNode() override = default;
 
     GC::Ptr<DOM::Node const> value() const { return m_value; }
@@ -28,7 +27,7 @@ public:
     Vector<GC::Ptr<AccessibilityTreeNode>> children() const { return m_children; }
     void append_child(AccessibilityTreeNode* child) { m_children.append(child); }
 
-    void serialize_tree_as_json(JsonObjectSerializer<Utf16StringBuilder>& object, Document const&) const;
+    void serialize_tree_as_json(JsonObjectSerializer<StringBuilder>& object, Document const&) const;
 
 protected:
     virtual void visit_edges(Visitor&) override;

@@ -11,7 +11,6 @@ namespace Web::DOM {
 #define ENUMERATE_STYLE_INVALIDATION_REASONS(X)     \
     X(AdoptedStyleSheetsList)                       \
     X(BaseURLChanged)                               \
-    X(CounterStyleCacheInvalidated)                 \
     X(CSSFontLoaded)                                \
     X(CSSImportRule)                                \
     X(CSSStylePropertiesRemoveProperty)             \
@@ -19,14 +18,12 @@ namespace Web::DOM {
     X(CSSStylePropertiesSetPropertyStyleValue)      \
     X(CSSStylePropertiesTextChange)                 \
     X(CustomElementStateChange)                     \
-    X(CustomPropertyRegistrationChange)             \
     X(CustomStateSetChange)                         \
     X(EditingInsertion)                             \
     X(EditingDeletion)                              \
     X(ElementAttributeChange)                       \
     X(ElementSetShadowRoot)                         \
     X(ElementSetActive)                             \
-    X(FormControlValidityChange)                    \
     X(Fullscreen)                                   \
     X(HTMLDialogElementSetIsModal)                  \
     X(HTMLDetailsOrDialogOpenAttributeChange)       \
@@ -44,19 +41,15 @@ namespace Web::DOM {
     X(MediaQueryChangedMatchState)                  \
     X(NavigableSetViewportSize)                     \
     X(NodeInsertBefore)                             \
-    X(NodeMove)                                     \
     X(NodeRemove)                                   \
     X(NodeSetTextContent)                           \
     X(Other)                                        \
-    X(PseudoClassStateChange)                       \
     X(SetSelectorText)                              \
     X(SettingsChange)                               \
-    X(StyleSheetDisabledStateChange)                \
     X(StyleSheetDeleteRule)                         \
     X(StyleSheetInsertRule)                         \
     X(StyleSheetListAddSheet)                       \
-    X(StyleSheetListRemoveSheet)                    \
-    X(StyleSheetReplace)
+    X(StyleSheetListRemoveSheet)
 
 enum class StyleInvalidationReason {
 #define __ENUMERATE_STYLE_INVALIDATION_REASON(reason) reason,
@@ -66,7 +59,6 @@ enum class StyleInvalidationReason {
 
 struct StyleInvalidationOptions {
     bool invalidate_self { false };
-    bool invalidate_self_from_property_plan { true };
 };
 
 }

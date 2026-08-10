@@ -7,21 +7,15 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/LexicalPath.h>
 #include <AK/NeverDestroyed.h>
 #include <AK/Platform.h>
-#include <AK/QuickSort.h>
-#include <AK/ScopeGuard.h>
 #include <AK/StringBuilder.h>
-#include <AK/Utf16String.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/ConfigFile.h>
 #include <LibCore/StandardPaths.h>
-#include <LibCrypto/Hash/SHA2.h>
-#include <LibJS/Bytecode/Debug.h>
+#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Console.h>
 #include <LibJS/Contrib/Test262/GlobalObject.h>
-#include <LibJS/Debugger.h>
 #include <LibJS/Print.h>
 #include <LibJS/Runtime/ConsoleObject.h>
 #include <LibJS/Runtime/DeclarativeEnvironment.h>
@@ -29,7 +23,6 @@
 #include <LibJS/Runtime/JSONObject.h>
 #include <LibJS/Runtime/Reference.h>
 #include <LibJS/Runtime/StringPrototype.h>
-#include <LibJS/Runtime/VM.h>
 #include <LibJS/Runtime/ValueInlines.h>
 #include <LibJS/RustFFI.h>
 #include <LibJS/Script.h>
@@ -38,12 +31,11 @@
 #include <LibJS/Token.h>
 #include <LibMain/Main.h>
 #include <LibTextCodec/Decoder.h>
+#include <signal.h>
 
-#if !defined(AK_OS_WINDOWS) && !defined(AK_OS_ANDROID)
-#    include <editline/readline.h>
+#if !defined(AK_OS_WINDOWS)
+#    include <LibLine/Editor.h>
 #endif
-#include <stdlib.h>
-#include <string.h>
 
 // FIXME: https://github.com/LadybirdBrowser/ladybird/issues/2412
 //    We should be able to destroy the VM on process exit.
@@ -72,7 +64,6 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(load_json);
     JS_DECLARE_NATIVE_FUNCTION(last_value_getter);
     JS_DECLARE_NATIVE_FUNCTION(print);
-    JS_DECLARE_NATIVE_FUNCTION(gc);
 };
 
 GC_DEFINE_ALLOCATOR(ReplObject);
@@ -93,7 +84,6 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(load_ini);
     JS_DECLARE_NATIVE_FUNCTION(load_json);
     JS_DECLARE_NATIVE_FUNCTION(print);
-    JS_DECLARE_NATIVE_FUNCTION(gc);
 };
 
 GC_DEFINE_ALLOCATOR(ScriptObject);
@@ -104,209 +94,17 @@ static bool s_print_last_result = false;
 static bool s_strip_ansi = false;
 static bool s_raw_strings = false;
 static bool s_disable_source_location_hints = false;
-#if !defined(AK_OS_WINDOWS) && !defined(AK_OS_ANDROID)
-static JS::Realm* s_repl_realm;
-static JS::GlobalEnvironment* s_repl_global_environment;
+#if !defined(AK_OS_WINDOWS)
+static RefPtr<Line::Editor> s_editor;
 #endif
 static String s_history_path = String {};
 [[maybe_unused]] static int s_repl_line_level = 0;
-[[maybe_unused]] static bool s_keep_running_repl = true;
+static bool s_keep_running_repl = true;
 static int s_exit_code = 0;
-
-static StringView debugger_pause_reason(JS::Debugger::PauseReason reason)
-{
-    switch (reason) {
-    case JS::Debugger::PauseReason::Entry:
-        return "entry"sv;
-    case JS::Debugger::PauseReason::Breakpoint:
-        return "breakpoint"sv;
-    case JS::Debugger::PauseReason::DebuggerStatement:
-        return "debugger statement"sv;
-    }
-    VERIFY_NOT_REACHED();
-}
-
-struct BreakpointLocation {
-    Utf16String filename;
-    u32 line { 0 };
-    Optional<u32> column;
-};
-
-static Utf16String breakpoint_filename(StringView filename, Utf16View current_filename)
-{
-    if (!current_filename.is_empty()) {
-        auto canonical_filename = LexicalPath::canonicalized_path(filename);
-        auto canonical_current_filename = LexicalPath::canonicalized_path(current_filename.to_utf8_but_should_be_ported_to_utf16().to_byte_string());
-        if (canonical_filename == canonical_current_filename)
-            return Utf16String::from_utf16(current_filename);
-    }
-    return Utf16String::from_utf8_with_replacement_character(filename);
-}
-
-static Optional<BreakpointLocation> parse_breakpoint_location(StringView input, Utf16View current_filename)
-{
-    input = input.trim_whitespace();
-    if (auto line = input.to_number<u32>(); line.has_value()) {
-        if (*line == 0)
-            return {};
-        return BreakpointLocation { Utf16String::from_utf16(current_filename), *line, {} };
-    }
-
-    auto last_colon = input.find_last(':');
-    if (!last_colon.has_value())
-        return {};
-
-    auto final_component = input.substring_view(*last_colon + 1).to_number<u32>();
-    if (!final_component.has_value())
-        return {};
-
-    auto prefix = input.substring_view(0, *last_colon);
-    if (auto line = prefix.to_number<u32>(); line.has_value()) {
-        if (*line == 0)
-            return {};
-        return BreakpointLocation { Utf16String::from_utf16(current_filename), *line, *final_component };
-    }
-
-    if (auto preceding_colon = prefix.find_last(':'); preceding_colon.has_value()) {
-        if (auto line = prefix.substring_view(*preceding_colon + 1).to_number<u32>(); line.has_value()) {
-            auto filename = prefix.substring_view(0, *preceding_colon);
-            if (filename.is_empty() || *line == 0)
-                return {};
-            return BreakpointLocation { breakpoint_filename(filename, current_filename), *line, *final_component };
-        }
-    }
-
-    if (prefix.is_empty() || *final_component == 0)
-        return {};
-    return BreakpointLocation { breakpoint_filename(prefix, current_filename), *final_component, {} };
-}
-
-static void print_breakpoint(JS::Breakpoint const& breakpoint)
-{
-    auto const* state = g_vm->debugger()->is_breakpoint_resolved(breakpoint.id) ? "resolved" : "pending";
-    if (breakpoint.column.has_value())
-        outln("{}: {}:{}:{} ({})", breakpoint.id, breakpoint.filename, breakpoint.line, *breakpoint.column, state);
-    else
-        outln("{}: {}:{} ({})", breakpoint.id, breakpoint.filename, breakpoint.line, state);
-}
-
-static void print_debugger_help()
-{
-    outln("Debugger commands:");
-    outln("    .break <line>[:column]");
-    outln("    .break <file>:<line>[:column]");
-    outln("    .breakpoints");
-    outln("    .continue");
-    outln("    .delete <id>");
-    outln("    .help");
-}
-
-static void run_debugger_prompt(JS::Debugger::PauseInfo const& pause_info)
-{
-    if (pause_info.source_range.has_value()) {
-        auto const& range = *pause_info.source_range;
-        if (range.start.line > 0)
-            outln("Paused at {}:{}:{} ({})", range.filename(), range.start.line, range.start.column, debugger_pause_reason(pause_info.reason));
-        else
-            outln("Paused in {} ({})", range.filename(), debugger_pause_reason(pause_info.reason));
-    } else {
-        outln("Paused at bytecode offset {} ({})", pause_info.bytecode_offset, debugger_pause_reason(pause_info.reason));
-    }
-
-    for (;;) {
-#if defined(AK_OS_WINDOWS) || defined(AK_OS_ANDROID)
-        out("(debug) ");
-        (void)fflush(stdout);
-
-        Array<char, 4096> buffer;
-        auto* raw_line = fgets(buffer.data(), buffer.size(), stdin);
-        if (!raw_line) {
-            g_vm->debugger()->continue_execution();
-            return;
-        }
-        auto command = StringView { raw_line, strlen(raw_line) }.trim_whitespace();
-#else
-        auto* raw_line = readline("(debug) ");
-        if (!raw_line) {
-            g_vm->debugger()->continue_execution();
-            return;
-        }
-        ArmedScopeGuard free_raw_line = [&] {
-            free(raw_line);
-        };
-        auto command = StringView { raw_line, strlen(raw_line) }.trim_whitespace();
-#endif
-
-        if (command == ".continue"sv) {
-            g_vm->debugger()->continue_execution();
-            return;
-        }
-
-        if (command == ".help"sv) {
-            print_debugger_help();
-            continue;
-        }
-
-        if (command == ".breakpoints"sv) {
-            auto breakpoints = g_vm->debugger()->breakpoints();
-            if (breakpoints.is_empty()) {
-                outln("No breakpoints.");
-                continue;
-            }
-            quick_sort(breakpoints, [](auto const& lhs, auto const& rhs) {
-                return lhs.id < rhs.id;
-            });
-            for (auto const& breakpoint : breakpoints)
-                print_breakpoint(breakpoint);
-            continue;
-        }
-
-        if (command.starts_with(".break "sv)) {
-            Utf16String current_filename;
-            if (pause_info.source_range.has_value())
-                current_filename = pause_info.source_range->filename();
-
-            auto location = parse_breakpoint_location(command.substring_view(7), current_filename);
-            if (!location.has_value() || location->filename.is_empty()) {
-                warnln("Usage: .break <line>[:column] or .break <file>:<line>[:column]");
-                continue;
-            }
-
-            auto breakpoint_id = g_vm->debugger()->add_breakpoint(location->filename, location->line, location->column);
-            if (breakpoint_id.is_error()) {
-                warnln("Unable to set breakpoint: {}", breakpoint_id.error());
-                continue;
-            }
-
-            auto breakpoint = g_vm->debugger()->breakpoints().find_if([&](auto const& breakpoint) {
-                return breakpoint.id == breakpoint_id.value();
-            });
-            VERIFY(!breakpoint.is_end());
-            print_breakpoint(*breakpoint);
-            continue;
-        }
-
-        if (command.starts_with(".delete "sv)) {
-            auto breakpoint_id = command.substring_view(8).trim_whitespace().to_number<JS::BreakpointID>();
-            if (!breakpoint_id.has_value()) {
-                warnln("Usage: .delete <id>");
-                continue;
-            }
-            if (!g_vm->debugger()->remove_breakpoint(*breakpoint_id)) {
-                warnln("No breakpoint with id {}.", *breakpoint_id);
-                continue;
-            }
-            outln("Deleted breakpoint {}.", *breakpoint_id);
-            continue;
-        }
-
-        warnln("Unknown debugger command '{}'. Enter .help for a list of commands.", command);
-    }
-}
 
 static ErrorOr<void> print_inline(JS::Value value, Stream& stream)
 {
-    JS::PrintContext print_context { .vm = *g_vm, .stream = &stream, .strip_ansi = s_strip_ansi, .raw_strings = s_raw_strings };
+    JS::PrintContext print_context { .vm = *g_vm, .stream = stream, .strip_ansi = s_strip_ansi, .raw_strings = s_raw_strings };
     return JS::print(value, print_context);
 }
 
@@ -361,10 +159,13 @@ static ErrorOr<void> print_all_arguments(JS::VM const& vm, PrintTarget target = 
     return {};
 }
 
+static size_t s_ctrl_c_hit_count = 0;
 [[maybe_unused]] static ErrorOr<String> prompt_for_level(int level)
 {
     static StringBuilder prompt_builder;
     prompt_builder.clear();
+    if (s_ctrl_c_hit_count > 0)
+        prompt_builder.append("(Use Ctrl+C again to exit)\n"sv);
     prompt_builder.append("> "sv);
 
     for (auto i = 0; i < level; ++i)
@@ -394,40 +195,43 @@ static ErrorOr<bool> parse_and_run(JS::Realm& realm, StringView source, StringVi
     auto& vm = realm.vm();
 
     JS::ThrowCompletionOr<JS::Value> result { JS::js_undefined() };
-    auto utf16_source = Utf16String::from_utf8(source);
 
     if (!s_as_module) {
-        auto script_or_error = JS::Script::parse(utf16_source.utf16_view(), realm, source_name);
+        auto script_or_error = JS::Script::parse(source, realm, source_name);
         if (script_or_error.is_error()) {
+            auto utf16_source = Utf16String::from_utf8(source);
+
             auto error = script_or_error.error()[0];
             auto hint = error.source_location_hint(utf16_source);
             if (!hint.is_empty())
                 outln("{}", hint);
 
-            auto error_string = error.to_utf16_string();
+            auto error_string = error.to_string();
             outln("{}", error_string);
             result = vm.throw_completion<JS::SyntaxError>(move(error_string));
         } else {
             auto script = script_or_error.release_value();
 
             if (!parse_only)
-                result = vm.run(*script);
+                result = vm.bytecode_interpreter().run(*script);
         }
     } else {
-        auto module_or_error = JS::SourceTextModule::parse(utf16_source.utf16_view(), realm, source_name);
+        auto module_or_error = JS::SourceTextModule::parse(source, realm, source_name);
         if (module_or_error.is_error()) {
+            auto utf16_source = Utf16String::from_utf8(source);
+
             auto error = module_or_error.error()[0];
             auto hint = error.source_location_hint(utf16_source);
             if (!hint.is_empty())
                 outln("{}", hint);
 
-            auto error_string = error.to_utf16_string();
+            auto error_string = error.to_string();
             outln("{}", error_string);
             result = vm.throw_completion<JS::SyntaxError>(move(error_string));
         } else {
             auto module = module_or_error.release_value();
             if (!parse_only)
-                result = vm.run(*module);
+                result = vm.bytecode_interpreter().run(*module);
         }
     }
 
@@ -459,21 +263,18 @@ static JS::ThrowCompletionOr<JS::Value> load_ini_impl(JS::VM& vm)
 {
     auto& realm = *vm.current_realm();
 
-    auto filename = TRY(vm.argument(0).to_utf16_string(vm)).to_utf8_but_should_be_ported_to_utf16().to_byte_string();
+    auto filename = TRY(vm.argument(0).to_byte_string(vm));
     auto file_or_error = Core::File::open(filename, Core::File::OpenMode::Read);
     if (file_or_error.is_error())
-        return vm.throw_completion<JS::Error>(Utf16String::formatted("Failed to open '{}': {}", filename, file_or_error.error()));
+        return vm.throw_completion<JS::Error>(TRY_OR_THROW_OOM(vm, String::formatted("Failed to open '{}': {}", filename, file_or_error.error())));
 
-    auto config_file_or_error = Core::ConfigFile::open(filename, file_or_error.release_value());
-    if (config_file_or_error.is_error())
-        return vm.throw_completion<JS::Error>(Utf16String::formatted("Failed to read '{}': {}", filename, config_file_or_error.error()));
-    auto config_file = config_file_or_error.release_value();
+    auto config_file = MUST(Core::ConfigFile::open(filename, file_or_error.release_value()));
     auto object = JS::Object::create(realm, realm.intrinsics().object_prototype());
     for (auto const& group : config_file->groups()) {
         auto group_object = JS::Object::create(realm, realm.intrinsics().object_prototype());
         for (auto const& key : config_file->keys(group)) {
             auto entry = config_file->read_entry(group, key);
-            group_object->define_direct_property(Utf16String::from_utf8(key), JS::PrimitiveString::create(vm, Utf16String::from_utf8(entry)), JS::Attribute::Enumerable | JS::Attribute::Configurable | JS::Attribute::Writable);
+            group_object->define_direct_property(Utf16String::from_utf8(key), JS::PrimitiveString::create(vm, move(entry)), JS::Attribute::Enumerable | JS::Attribute::Configurable | JS::Attribute::Writable);
         }
         object->define_direct_property(Utf16String::from_utf8(group), group_object, JS::Attribute::Enumerable | JS::Attribute::Configurable | JS::Attribute::Writable);
     }
@@ -482,21 +283,16 @@ static JS::ThrowCompletionOr<JS::Value> load_ini_impl(JS::VM& vm)
 
 static JS::ThrowCompletionOr<JS::Value> load_json_impl(JS::VM& vm)
 {
-    auto filename = TRY(vm.argument(0).to_utf16_string(vm)).to_utf8_but_should_be_ported_to_utf16();
+    auto filename = TRY(vm.argument(0).to_string(vm));
     auto file_or_error = Core::File::open(filename, Core::File::OpenMode::Read);
     if (file_or_error.is_error())
-        return vm.throw_completion<JS::Error>(Utf16String::formatted("Failed to open '{}': {}", filename, file_or_error.error()));
+        return vm.throw_completion<JS::Error>(TRY_OR_THROW_OOM(vm, String::formatted("Failed to open '{}': {}", filename, file_or_error.error())));
 
     auto file_contents_or_error = file_or_error.value()->read_until_eof();
     if (file_contents_or_error.is_error())
-        return vm.throw_completion<JS::Error>(Utf16String::formatted("Failed to read '{}': {}", filename, file_contents_or_error.error()));
+        return vm.throw_completion<JS::Error>(TRY_OR_THROW_OOM(vm, String::formatted("Failed to read '{}': {}", filename, file_contents_or_error.error())));
 
-    auto file_contents = file_contents_or_error.release_value();
-    auto json_text = Utf16String::try_from_utf8(StringView { file_contents.bytes() });
-    if (json_text.is_error())
-        return vm.throw_completion<JS::SyntaxError>(JS::ErrorType::JsonMalformed);
-
-    return JS::JSONObject::parse_json(vm, json_text.release_value());
+    return JS::JSONObject::parse_json(vm, file_contents_or_error.value());
 }
 
 void ReplObject::initialize(JS::Realm& realm)
@@ -511,7 +307,6 @@ void ReplObject::initialize(JS::Realm& realm)
     define_native_function(realm, "loadINI"_utf16_fly_string, load_ini, 1, attr);
     define_native_function(realm, "loadJSON"_utf16_fly_string, load_json, 1, attr);
     define_native_function(realm, "print"_utf16_fly_string, print, 1, attr);
-    define_native_function(realm, "gc"_utf16_fly_string, gc, 0, attr);
 
     define_native_accessor(
         realm,
@@ -538,7 +333,7 @@ JS_DEFINE_NATIVE_FUNCTION(ReplObject::save_to_file)
 {
     if (!vm.argument_count())
         return JS::Value(false);
-    auto const save_path = TRY(vm.argument(0).to_utf16_string(vm)).to_utf8_but_should_be_ported_to_utf16();
+    auto const save_path = TRY(vm.argument(0).to_string(vm));
     if (!write_to_file(save_path).is_error()) {
         return JS::Value(true);
     }
@@ -580,14 +375,8 @@ JS_DEFINE_NATIVE_FUNCTION(ReplObject::print)
 {
     auto result = print_all_arguments(vm);
     if (result.is_error())
-        return g_vm->throw_completion<JS::InternalError>(Utf16String::formatted("Failed to print value(s): {}", result.error()));
+        return g_vm->throw_completion<JS::InternalError>(TRY_OR_THROW_OOM(*g_vm, String::formatted("Failed to print value(s): {}", result.error())));
 
-    return JS::js_undefined();
-}
-
-JS_DEFINE_NATIVE_FUNCTION(ReplObject::gc)
-{
-    vm.heap().collect_garbage();
     return JS::js_undefined();
 }
 
@@ -600,7 +389,6 @@ void ScriptObject::initialize(JS::Realm& realm)
     define_native_function(realm, "loadINI"_utf16_fly_string, load_ini, 1, attr);
     define_native_function(realm, "loadJSON"_utf16_fly_string, load_json, 1, attr);
     define_native_function(realm, "print"_utf16_fly_string, print, 1, attr);
-    define_native_function(realm, "gc"_utf16_fly_string, gc, 0, attr);
 }
 
 JS_DEFINE_NATIVE_FUNCTION(ScriptObject::load_ini)
@@ -617,14 +405,8 @@ JS_DEFINE_NATIVE_FUNCTION(ScriptObject::print)
 {
     auto result = print_all_arguments(vm);
     if (result.is_error())
-        return g_vm->throw_completion<JS::InternalError>(Utf16String::formatted("Failed to print value(s): {}", result.error()));
+        return g_vm->throw_completion<JS::InternalError>(TRY_OR_THROW_OOM(*g_vm, String::formatted("Failed to print value(s): {}", result.error())));
 
-    return JS::js_undefined();
-}
-
-JS_DEFINE_NATIVE_FUNCTION(ScriptObject::gc)
-{
-    vm.heap().collect_garbage();
     return JS::js_undefined();
 }
 
@@ -706,199 +488,7 @@ private:
     int m_group_stack_depth { 0 };
 };
 
-#if !defined(AK_OS_WINDOWS) && !defined(AK_OS_ANDROID)
-static Vector<ByteString> complete_repl_line(StringView line)
-{
-    auto& realm = *s_repl_realm;
-    auto& global_environment = *s_repl_global_environment;
-    auto source_code = JS::SourceCode::create({}, Utf16String::from_utf8(line));
-    auto const& code_view = source_code->code_view();
-
-    enum {
-        Initial,
-        CompleteVariable,
-        CompleteNullProperty,
-        CompleteProperty,
-    } mode { Initial };
-
-    Utf16FlyString variable_name;
-    Utf16FlyString property_name;
-    bool last_token_has_trivia = false;
-
-    struct CompleteState {
-        decltype(mode)* current_mode;
-        Utf16FlyString* variable_name;
-        Utf16FlyString* property_name;
-        bool* last_token_has_trivia;
-        Utf16View const* code_view;
-    } complete_state { &mode, &variable_name, &property_name, &last_token_has_trivia, &code_view };
-
-    // We're only going to complete either
-    //    - <N>
-    //        where N is part of the name of a variable
-    //    - <N>.<P>
-    //        where N is the complete name of a variable and
-    //        P is part of the name of one of its properties
-    JS::FFI::rust_tokenize(source_code->utf16_data(), source_code->length_in_code_units(), &complete_state,
-        [](void* ctx, JS::FFI::FFIToken const* tok) {
-            auto& s = *static_cast<CompleteState*>(ctx);
-            auto type = static_cast<JS::TokenType>(tok->token_type);
-            auto category = static_cast<JS::TokenCategory>(tok->category);
-            if (type == JS::TokenType::Eof) {
-                *s.last_token_has_trivia = tok->trivia_length > 0;
-                return;
-            }
-
-            auto token_value = [&]() {
-                return Utf16FlyString::from_utf16(s.code_view->substring_view(tok->offset, tok->length));
-            };
-            bool is_identifier_name = type != JS::TokenType::PrivateIdentifier
-                && (category == JS::TokenCategory::Identifier || category == JS::TokenCategory::Keyword || category == JS::TokenCategory::ControlKeyword);
-
-            switch (*s.current_mode) {
-            case CompleteVariable:
-                if (type == JS::TokenType::Period)
-                    *s.current_mode = CompleteNullProperty;
-                else
-                    *s.current_mode = Initial;
-                break;
-            case CompleteNullProperty:
-                if (is_identifier_name) {
-                    *s.current_mode = CompleteProperty;
-                    *s.property_name = token_value();
-                } else {
-                    *s.current_mode = Initial;
-                }
-                break;
-            case CompleteProperty:
-            case Initial:
-                if (type == JS::TokenType::Identifier) {
-                    *s.current_mode = CompleteVariable;
-                    *s.variable_name = token_value();
-                } else {
-                    *s.current_mode = Initial;
-                }
-                break;
-            }
-        });
-
-    if (mode == CompleteNullProperty) {
-        mode = CompleteProperty;
-        property_name = Utf16FlyString {};
-        last_token_has_trivia = false; // <name> <dot> [tab] is sensible to complete.
-    }
-
-    if (mode == Initial || last_token_has_trivia)
-        return {}; // we do not know how to complete this
-
-    Vector<ByteString> results;
-
-    Function<void(JS::Shape const&, Utf16FlyString const&)> list_all_properties = [&results, &list_all_properties](JS::Shape const& shape, Utf16FlyString const& property_pattern) {
-        shape.for_each_property_in_insertion_order([&](auto const& property_key, auto const&) {
-            if (!property_key.is_string())
-                return;
-
-            auto key = property_key.as_string().to_utf16_string();
-
-            if (key.starts_with(property_pattern.view())) {
-                auto completion = key.to_byte_string();
-                if (!results.contains_slow(completion)) // hide duplicates
-                    results.append(move(completion));
-            }
-        });
-        if (auto const* prototype = shape.prototype()) {
-            list_all_properties(prototype->shape(), property_pattern);
-        }
-    };
-
-    switch (mode) {
-    case CompleteProperty: {
-        auto reference_or_error = g_vm->resolve_binding(variable_name, JS::Strict::No, &global_environment);
-        if (reference_or_error.is_error())
-            return {};
-        auto value_or_error = reference_or_error.value().get_value(*g_vm);
-        if (value_or_error.is_error())
-            return {};
-        auto variable = value_or_error.value();
-        VERIFY(!variable.is_special_empty_value());
-
-        if (auto object = variable.template as_if<JS::Object>()) {
-            auto const& shape = object->shape();
-            list_all_properties(shape, property_name);
-            for (auto& result : results) {
-                StringBuilder builder;
-                builder.append(MUST(variable_name.view().to_byte_string()));
-                builder.append('.');
-                builder.append(result);
-                result = builder.to_byte_string();
-            }
-        }
-        break;
-    }
-    case CompleteVariable: {
-        auto const& variable = realm.global_object();
-        list_all_properties(variable.shape(), variable_name);
-
-        for (auto const& name : global_environment.declarative_record().bindings()) {
-            if (name.view().starts_with(variable_name.view()))
-                results.empend(MUST(name.view().to_byte_string()));
-        }
-
-        break;
-    }
-    default:
-        VERIFY_NOT_REACHED();
-    }
-
-    return results;
-}
-
-static char** complete_repl_line_for_readline(char const*, int, int)
-{
-    if (!rl_line_buffer)
-        return nullptr;
-
-    rl_attempted_completion_over = 1;
-
-    auto completions = complete_repl_line(StringView { rl_line_buffer, strlen(rl_line_buffer) });
-    if (completions.is_empty())
-        return nullptr;
-
-    auto common_prefix = StringView { completions[0] };
-    for (size_t i = 1; i < completions.size(); ++i) {
-        size_t prefix_length = 0;
-        auto completion = StringView { completions[i] };
-        while (prefix_length < common_prefix.length()
-            && prefix_length < completion.length()
-            && common_prefix[prefix_length] == completion[prefix_length]) {
-            ++prefix_length;
-        }
-        common_prefix = common_prefix.substring_view(0, prefix_length);
-    }
-
-    auto** matches = static_cast<char**>(calloc(completions.size() + 2, sizeof(char*)));
-    if (!matches)
-        return nullptr;
-
-    matches[0] = strndup(common_prefix.characters_without_null_termination(), common_prefix.length());
-    if (!matches[0]) {
-        free(matches);
-        return nullptr;
-    }
-
-    for (size_t i = 0; i < completions.size(); ++i) {
-        matches[i + 1] = strdup(completions[i].characters());
-        if (!matches[i + 1]) {
-            for (size_t j = 0; j <= i; ++j)
-                free(matches[j]);
-            free(matches);
-            return nullptr;
-        }
-    }
-
-    return matches;
-}
-
+#if !defined(AK_OS_WINDOWS)
 static ErrorOr<String> read_next_piece()
 {
     StringBuilder piece;
@@ -906,22 +496,18 @@ static ErrorOr<String> read_next_piece()
     auto line_level_delta_for_next_line { 0 };
 
     do {
-        auto prompt = TRY(prompt_for_level(s_repl_line_level)).to_byte_string();
-        auto* raw_line = readline(prompt.characters());
+        auto line_result = s_editor->get_line(TRY(prompt_for_level(s_repl_line_level)).to_byte_string());
 
+        s_ctrl_c_hit_count = 0;
         line_level_delta_for_next_line = 0;
 
-        if (!raw_line) {
+        if (line_result.is_error()) {
             s_keep_running_repl = false;
             return String {};
         }
-        ArmedScopeGuard free_raw_line = [&] {
-            free(raw_line);
-        };
 
-        auto line = TRY(String::from_utf8(StringView { raw_line, strlen(raw_line) }));
-        if (!line.is_empty())
-            add_history(line.to_byte_string().characters());
+        auto& line = line_result.value();
+        s_editor->add_to_history(line);
 
         piece.append(line);
         piece.append('\n');
@@ -988,7 +574,7 @@ static ErrorOr<void> repl(JS::Realm& realm)
 {
     while (s_keep_running_repl) {
         auto const piece = TRY(read_next_piece());
-        if (Utf16String::from_utf8(piece).trim(JS::whitespace_characters).is_empty())
+        if (Utf8View { piece }.trim(JS::whitespace_characters).is_empty())
             continue;
 
         g_repl_statements.append(piece);
@@ -997,7 +583,7 @@ static ErrorOr<void> repl(JS::Realm& realm)
     return {};
 }
 
-static ErrorOr<int> run_repl(bool gc_on_every_allocation, [[maybe_unused]] bool syntax_highlight)
+static ErrorOr<int> run_repl(bool gc_on_every_allocation, bool syntax_highlight)
 {
     s_print_last_result = true;
 
@@ -1010,14 +596,239 @@ static ErrorOr<int> run_repl(bool gc_on_every_allocation, [[maybe_unused]] bool 
     g_vm->heap().set_should_collect_on_every_allocation(gc_on_every_allocation);
 
     auto& global_environment = realm.global_environment();
-    s_repl_realm = &realm;
-    s_repl_global_environment = &global_environment;
 
-    read_history(s_history_path.to_byte_string().characters());
-    rl_attempted_completion_function = complete_repl_line_for_readline;
+    s_editor = Line::Editor::construct();
+    s_editor->load_history(s_history_path.to_byte_string());
 
+    signal(SIGINT, [](int) {
+        if (!s_editor->is_editing())
+            exit(0);
+        s_editor->save_history(s_history_path.to_byte_string());
+    });
+
+    s_editor->register_key_input_callback(Line::ctrl('C'), [](Line::Editor& editor) -> bool {
+        if (editor.buffer_view().length() == 0 || s_ctrl_c_hit_count > 0) {
+            if (++s_ctrl_c_hit_count == 2) {
+                s_keep_running_repl = false;
+                editor.finish_edit();
+                return false;
+            }
+        }
+
+        return true;
+    });
+
+    s_editor->on_display_refresh = [syntax_highlight](Line::Editor& editor) {
+        auto stylize = [&](Line::Span span, Line::Style styles) {
+            if (syntax_highlight)
+                editor.stylize(span, styles);
+        };
+        editor.strip_styles();
+
+        size_t open_indents = s_repl_line_level;
+
+        auto line = editor.line();
+        auto source_code = JS::SourceCode::create({}, Utf16String::from_utf8(line));
+
+        struct HighlightState {
+            decltype(stylize)* stylize_fn;
+            size_t* open_indents;
+            bool indenters_starting_line { true };
+        } highlight_state { &stylize, &open_indents };
+
+        JS::FFI::rust_tokenize(source_code->utf16_data(), source_code->length_in_code_units(), &highlight_state,
+            [](void* ctx, JS::FFI::FFIToken const* tok) {
+                auto& state = *static_cast<HighlightState*>(ctx);
+                auto type = static_cast<JS::TokenType>(tok->token_type);
+                auto category = static_cast<JS::TokenCategory>(tok->category);
+                auto start = static_cast<size_t>(tok->offset);
+                auto end = start + tok->length;
+                if (type == JS::TokenType::Eof)
+                    return;
+
+                if (state.indenters_starting_line) {
+                    if (type != JS::TokenType::ParenClose && type != JS::TokenType::BracketClose && type != JS::TokenType::CurlyClose)
+                        state.indenters_starting_line = false;
+                    else
+                        --(*state.open_indents);
+                }
+
+                switch (category) {
+                case JS::TokenCategory::Invalid:
+                    (*state.stylize_fn)({ start, end, Line::Span::CodepointOriented }, { Line::Style::Foreground(Line::Style::XtermColor::Red), Line::Style::Underline });
+                    break;
+                case JS::TokenCategory::Number:
+                    (*state.stylize_fn)({ start, end, Line::Span::CodepointOriented }, { Line::Style::Foreground(Line::Style::XtermColor::Magenta) });
+                    break;
+                case JS::TokenCategory::String:
+                    (*state.stylize_fn)({ start, end, Line::Span::CodepointOriented }, { Line::Style::Foreground(Line::Style::XtermColor::Green), Line::Style::Bold });
+                    break;
+                case JS::TokenCategory::Punctuation:
+                case JS::TokenCategory::Operator:
+                    break;
+                case JS::TokenCategory::Keyword:
+                    if (type == JS::TokenType::BoolLiteral || type == JS::TokenType::NullLiteral)
+                        (*state.stylize_fn)({ start, end, Line::Span::CodepointOriented }, { Line::Style::Foreground(Line::Style::XtermColor::Yellow), Line::Style::Bold });
+                    else
+                        (*state.stylize_fn)({ start, end, Line::Span::CodepointOriented }, { Line::Style::Foreground(Line::Style::XtermColor::Blue), Line::Style::Bold });
+                    break;
+                case JS::TokenCategory::ControlKeyword:
+                    (*state.stylize_fn)({ start, end, Line::Span::CodepointOriented }, { Line::Style::Foreground(Line::Style::XtermColor::Cyan), Line::Style::Italic });
+                    break;
+                case JS::TokenCategory::Identifier:
+                    (*state.stylize_fn)({ start, end, Line::Span::CodepointOriented }, { Line::Style::Foreground(Line::Style::XtermColor::White), Line::Style::Bold });
+                    break;
+                default:
+                    break;
+                }
+            });
+
+        editor.set_prompt(prompt_for_level(open_indents).release_value_but_fixme_should_propagate_errors().to_byte_string());
+    };
+
+    auto complete = [&realm, &global_environment](Line::Editor const& editor) -> Vector<Line::CompletionSuggestion> {
+        auto line = editor.line(editor.cursor());
+        auto source_code = JS::SourceCode::create({}, Utf16String::from_utf8(line));
+        auto const& code_view = source_code->code_view();
+
+        enum {
+            Initial,
+            CompleteVariable,
+            CompleteNullProperty,
+            CompleteProperty,
+        } mode { Initial };
+
+        Utf16FlyString variable_name;
+        Utf16FlyString property_name;
+        bool last_token_has_trivia = false;
+
+        struct CompleteState {
+            decltype(mode)* current_mode;
+            Utf16FlyString* variable_name;
+            Utf16FlyString* property_name;
+            bool* last_token_has_trivia;
+            Utf16View const* code_view;
+        } complete_state { &mode, &variable_name, &property_name, &last_token_has_trivia, &code_view };
+
+        // we're only going to complete either
+        //    - <N>
+        //        where N is part of the name of a variable
+        //    - <N>.<P>
+        //        where N is the complete name of a variable and
+        //        P is part of the name of one of its properties
+        JS::FFI::rust_tokenize(source_code->utf16_data(), source_code->length_in_code_units(), &complete_state,
+            [](void* ctx, JS::FFI::FFIToken const* tok) {
+                auto& s = *static_cast<CompleteState*>(ctx);
+                auto type = static_cast<JS::TokenType>(tok->token_type);
+                auto category = static_cast<JS::TokenCategory>(tok->category);
+                if (type == JS::TokenType::Eof) {
+                    *s.last_token_has_trivia = tok->trivia_length > 0;
+                    return;
+                }
+
+                auto token_value = [&]() {
+                    return Utf16FlyString::from_utf16(s.code_view->substring_view(tok->offset, tok->length));
+                };
+                bool is_identifier_name = type != JS::TokenType::PrivateIdentifier
+                    && (category == JS::TokenCategory::Identifier || category == JS::TokenCategory::Keyword || category == JS::TokenCategory::ControlKeyword);
+
+                switch (*s.current_mode) {
+                case CompleteVariable:
+                    if (type == JS::TokenType::Period)
+                        *s.current_mode = CompleteNullProperty;
+                    else
+                        *s.current_mode = Initial;
+                    break;
+                case CompleteNullProperty:
+                    if (is_identifier_name) {
+                        *s.current_mode = CompleteProperty;
+                        *s.property_name = token_value();
+                    } else {
+                        *s.current_mode = Initial;
+                    }
+                    break;
+                case CompleteProperty:
+                case Initial:
+                    if (type == JS::TokenType::Identifier) {
+                        *s.current_mode = CompleteVariable;
+                        *s.variable_name = token_value();
+                    } else {
+                        *s.current_mode = Initial;
+                    }
+                    break;
+                }
+            });
+
+        if (mode == CompleteNullProperty) {
+            mode = CompleteProperty;
+            property_name = Utf16FlyString {};
+            last_token_has_trivia = false; // <name> <dot> [tab] is sensible to complete.
+        }
+
+        if (mode == Initial || last_token_has_trivia)
+            return {}; // we do not know how to complete this
+
+        Vector<Line::CompletionSuggestion> results;
+
+        Function<void(JS::Shape const&, Utf16FlyString const&)> list_all_properties = [&results, &list_all_properties](JS::Shape const& shape, Utf16FlyString const& property_pattern) {
+            for (auto const& descriptor : shape.property_table()) {
+                if (!descriptor.key.is_string())
+                    continue;
+
+                auto key = descriptor.key.as_string().to_utf16_string();
+
+                if (key.starts_with(property_pattern.view())) {
+                    Line::CompletionSuggestion completion { key.to_utf8_but_should_be_ported_to_utf16(), Line::CompletionSuggestion::ForSearch };
+                    if (!results.contains_slow(completion)) { // hide duplicates
+                        results.append(key.to_byte_string());
+                        results.last().invariant_offset = property_pattern.length_in_code_units();
+                    }
+                }
+            }
+            if (auto const* prototype = shape.prototype()) {
+                list_all_properties(prototype->shape(), property_pattern);
+            }
+        };
+
+        switch (mode) {
+        case CompleteProperty: {
+            auto reference_or_error = g_vm->resolve_binding(variable_name, JS::Strict::No, &global_environment);
+            if (reference_or_error.is_error())
+                return {};
+            auto value_or_error = reference_or_error.value().get_value(*g_vm);
+            if (value_or_error.is_error())
+                return {};
+            auto variable = value_or_error.value();
+            VERIFY(!variable.is_special_empty_value());
+
+            if (auto object = variable.template as_if<JS::Object>()) {
+                auto const& shape = object->shape();
+                list_all_properties(shape, property_name);
+            }
+            break;
+        }
+        case CompleteVariable: {
+            auto const& variable = realm.global_object();
+            list_all_properties(variable.shape(), variable_name);
+
+            for (auto const& name : global_environment.declarative_record().bindings()) {
+                if (name.view().starts_with(variable_name.view())) {
+                    results.empend(MUST(name.view().to_byte_string()));
+                    results.last().invariant_offset = variable_name.length_in_code_units();
+                }
+            }
+
+            break;
+        }
+        default:
+            VERIFY_NOT_REACHED();
+        }
+
+        return results;
+    };
+    s_editor->on_tab_complete = move(complete);
     TRY(repl(realm));
-    write_history(s_history_path.to_byte_string().characters());
+    s_editor->save_history(s_history_path.to_byte_string());
     return s_exit_code;
 }
 
@@ -1030,7 +841,6 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     bool disable_debug_printing = false;
     bool use_test262_global = false;
     bool parse_only = false;
-    bool debug = false;
     StringView evaluate_script;
     Vector<StringView> script_paths;
 
@@ -1047,7 +857,6 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     args_parser.add_option(s_raw_strings, "Display strings without quotes or escape sequences", "raw-strings", 'r');
     args_parser.add_option(disable_syntax_highlight, "Disable live syntax highlighting", "no-syntax-highlight", 's');
     args_parser.add_option(disable_debug_printing, "Disable debug output", "disable-debug-output", {});
-    args_parser.add_option(debug, "Run with the JavaScript debugger", "debug", {});
     args_parser.add_option(evaluate_script, "Evaluate argument as a script", "evaluate", 'c', "script");
     args_parser.add_option(use_test262_global, "Use test262 global ($262)", "use-test262-global", {});
     args_parser.add_positional_argument(script_paths, "Path to script files", "scripts", Core::ArgsParser::Required::No);
@@ -1064,12 +873,6 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     g_vm_storage.get() = JS::VM::create();
     g_vm = g_vm_storage->ptr();
     g_vm->set_dynamic_imports_allowed(true);
-
-    if (debug) {
-        g_vm->enable_debugging();
-        g_vm->debugger()->set_pause_callback(run_debugger_prompt);
-        g_vm->debugger()->request_pause_on_next_bytecode_execution();
-    }
 
     if (!disable_debug_printing) {
         // NOTE: These will print out both warnings when using something like Promise.reject().catch(...) -
@@ -1093,8 +896,8 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     // FIXME: Figure out some way to interrupt the interpreter now that vm.exception() is gone.
 
     if (evaluate_script.is_empty() && script_paths.is_empty()) {
-#if defined(AK_OS_WINDOWS) || defined(AK_OS_ANDROID)
-        dbgln("REPL functionality is not supported on this platform");
+#if defined(AK_OS_WINDOWS)
+        dbgln("REPL functionality is not supported on Windows");
         VERIFY_NOT_REACHED();
 #else
         return run_repl(gc_on_every_allocation, syntax_highlight);

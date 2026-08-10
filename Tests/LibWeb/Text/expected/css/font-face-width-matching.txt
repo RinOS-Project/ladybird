@@ -1,3 +1,0 @@
-reference fonts differ: true
-condensed uses HashSans: true
-normal uses Lato: true

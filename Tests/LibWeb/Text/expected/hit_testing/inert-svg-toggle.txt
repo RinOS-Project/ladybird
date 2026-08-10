@@ -1,3 +1,0 @@
-hit before inert: art
-hit with inert: body
-hit after inert removed: art

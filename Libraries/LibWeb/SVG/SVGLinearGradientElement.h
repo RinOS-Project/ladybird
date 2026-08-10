@@ -6,39 +6,35 @@
 
 #pragma once
 
-#include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
+#include <LibWeb/SVG/AttributeParser.h>
+#include <LibWeb/SVG/SVGAnimatedLength.h>
 #include <LibWeb/SVG/SVGGradientElement.h>
 
 namespace Web::SVG {
 
 class SVGLinearGradientElement : public SVGGradientElement {
-    WEB_WRAPPABLE(SVGLinearGradientElement, SVGGradientElement);
+    WEB_PLATFORM_OBJECT(SVGLinearGradientElement, SVGGradientElement);
     GC_DECLARE_ALLOCATOR(SVGLinearGradientElement);
 
 public:
     virtual ~SVGLinearGradientElement() override = default;
 
-    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
+    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
 
     virtual Optional<Painting::PaintStyle> to_gfx_paint_style(SVGPaintContext const&) const override;
 
-    // https://w3c.github.io/svgwg/svg2-draft/pservers.html#__svg__SVGLinearGradientElement__x1
-    REFLECT_ANIMATED_LENGTH_ATTRIBUTE(x1, Horizontal, CSS::PercentageStyleValue::create(CSS::Percentage { 0 }));
-
-    // https://w3c.github.io/svgwg/svg2-draft/pservers.html#__svg__SVGLinearGradientElement__y1
-    REFLECT_ANIMATED_LENGTH_ATTRIBUTE(y1, Vertical, CSS::PercentageStyleValue::create(CSS::Percentage { 0 }));
-
-    // https://w3c.github.io/svgwg/svg2-draft/pservers.html#__svg__SVGLinearGradientElement__x2
-    REFLECT_ANIMATED_LENGTH_ATTRIBUTE(x2, Horizontal, CSS::PercentageStyleValue::create(CSS::Percentage { 100 }));
-
-    // https://w3c.github.io/svgwg/svg2-draft/pservers.html#__svg__SVGLinearGradientElement__y2
-    REFLECT_ANIMATED_LENGTH_ATTRIBUTE(y2, Vertical, CSS::PercentageStyleValue::create(CSS::Percentage { 0 }));
+    GC::Ref<SVGAnimatedLength> x1() const;
+    GC::Ref<SVGAnimatedLength> y1() const;
+    GC::Ref<SVGAnimatedLength> x2() const;
+    GC::Ref<SVGAnimatedLength> y2() const;
 
 protected:
     SVGLinearGradientElement(DOM::Document&, DOM::QualifiedName);
 
+    virtual void initialize(JS::Realm&) override;
+
 private:
-    GC::Ptr<SVGLinearGradientElement const> linked_linear_gradient(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const
+    GC::Ptr<SVGLinearGradientElement const> linked_linear_gradient(HashTable<SVGGradientElement const*>& seen_gradients) const
     {
         if (auto gradient = linked_gradient(seen_gradients); gradient && is<SVGLinearGradientElement>(*gradient))
             return &as<SVGLinearGradientElement>(*gradient);
@@ -50,15 +46,17 @@ private:
     NumberPercentage end_x() const;
     NumberPercentage end_y() const;
 
-    NumberPercentage start_x_impl(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const;
-    NumberPercentage start_y_impl(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const;
-    NumberPercentage end_x_impl(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const;
-    NumberPercentage end_y_impl(GC::RootHashTable<SVGGradientElement const*>& seen_gradients) const;
+    NumberPercentage start_x_impl(HashTable<SVGGradientElement const*>& seen_gradients) const;
+    NumberPercentage start_y_impl(HashTable<SVGGradientElement const*>& seen_gradients) const;
+    NumberPercentage end_x_impl(HashTable<SVGGradientElement const*>& seen_gradients) const;
+    NumberPercentage end_y_impl(HashTable<SVGGradientElement const*>& seen_gradients) const;
 
     Optional<NumberPercentage> m_x1;
     Optional<NumberPercentage> m_y1;
     Optional<NumberPercentage> m_x2;
     Optional<NumberPercentage> m_y2;
+
+    mutable RefPtr<Painting::SVGLinearGradientPaintStyle> m_paint_style;
 };
 
 }

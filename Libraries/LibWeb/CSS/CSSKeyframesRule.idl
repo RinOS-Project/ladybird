@@ -1,12 +1,15 @@
+#import <CSS/CSSRule.idl>
+#import <CSS/CSSKeyframeRule.idl>
+
 // https://drafts.csswg.org/css-animations-1/#interface-csskeyframesrule
 [Exposed=Window]
 interface CSSKeyframesRule : CSSRule {
-    attribute Utf16CSSOMString name;
+    attribute CSSOMString name;
     readonly attribute CSSRuleList cssRules;
     readonly attribute unsigned long length;
 
     getter CSSKeyframeRule (unsigned long index);
-    undefined appendRule(Utf16CSSOMString rule);
-    undefined deleteRule(Utf16CSSOMString select);
-    CSSKeyframeRule? findRule(Utf16CSSOMString select);
+    [FIXME] undefined appendRule(CSSOMString rule);
+    [FIXME] undefined deleteRule(CSSOMString select);
+    [FIXME] CSSKeyframeRule? findRule(CSSOMString select);
 };

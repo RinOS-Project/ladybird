@@ -22,11 +22,11 @@
 
 namespace Web::CSS::Parser {
 
-Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_value(AtRuleID at_rule_id, DescriptorNameAndID const& descriptor_name_and_id, TokenStream<ComponentValue>& tokens)
+Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_value(AtRuleID at_rule_id, DescriptorNameAndID const& descriptor_name_and_id, TokenStream<ComponentValue>& unprocessed_tokens)
 {
     if (!at_rule_supports_descriptor(at_rule_id, descriptor_name_and_id.id())) {
         ErrorReporter::the().report(UnknownPropertyError {
-            .rule_name = Utf16FlyString::from_fly_string(to_string(at_rule_id)),
+            .rule_name = to_string(at_rule_id),
             .property_name = descriptor_name_and_id.name(),
         });
         return ParseError::SyntaxError;
@@ -34,52 +34,23 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
 
     auto context_guard = push_temporary_value_parsing_context(DescriptorContext { at_rule_id, descriptor_name_and_id.id() });
 
-    auto transaction = tokens.begin_transaction();
+    Vector<ComponentValue> component_values;
+    while (unprocessed_tokens.has_next_token()) {
+        if (unprocessed_tokens.peek_token().is(Token::Type::Semicolon))
+            break;
 
-    auto descriptor_value_start_index = tokens.current_index();
-    SubstitutionFunctionsPresence substitution_functions_presence {};
-
-    tokens.mark();
-    while (tokens.has_next_token()) {
-        auto const& token = tokens.consume_a_token();
-
-        if (token.is(Token::Type::Semicolon))
-            return ParseError::SyntaxError;
-
-        if (collect_arbitrary_substitution_function_presence(token, substitution_functions_presence).is_error())
-            return ParseError::SyntaxError;
+        auto const& token = unprocessed_tokens.consume_a_token();
+        component_values.append(token);
     }
-
-    auto metadata = get_descriptor_metadata(at_rule_id, descriptor_name_and_id.id());
-
-    if (substitution_functions_presence.has_any()) {
-        // https://drafts.csswg.org/css-values-5/#resolve-property
-        // Unless otherwise specified, arbitrary substitution functions can be used in place of any part of any
-        // property’s value (including within other functional notations); and are not valid in any other context.
-
-        // NB: Since we are not in a property value context we only allow ASFs if they are explicitly allowed in
-        //     Descriptors.json
-        if (!metadata.allow_arbitrary_substitution_functions) {
-            ErrorReporter::the().report(InvalidPropertyError {
-                .rule_name = Utf16FlyString::from_fly_string(to_string(at_rule_id)),
-                .property_name = descriptor_name_and_id.name(),
-                .value_string = tokens.dump_string(),
-                .description = "ASFs are not supported in this descriptor"_string,
-            });
-            return ParseError::SyntaxError;
-        }
-
-        return UnresolvedStyleValue::create(Vector<ComponentValue> { tokens.tokens_since(descriptor_value_start_index) }, substitution_functions_presence);
-    }
-
-    tokens.restore_a_mark();
 
     Optional<ComputationContext> computation_context = m_document
         ? ComputationContext { .length_resolution_context = Length::ResolutionContext::for_document(*m_document) }
         : Optional<ComputationContext> {};
 
+    TokenStream tokens { component_values };
+    auto metadata = get_descriptor_metadata(at_rule_id, descriptor_name_and_id.id());
     for (auto const& option : metadata.syntax) {
-        auto syntax_transaction = transaction.create_child();
+        auto transaction = tokens.begin_transaction();
         auto parsed_style_value = option.visit(
             [&](Keyword keyword) {
                 return parse_all_as_single_keyword_value(tokens, keyword);
@@ -89,8 +60,10 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
                 if (value_or_error.is_error())
                     return nullptr;
                 auto value_for_property = value_or_error.release_value();
-                // Some descriptors don't accept the CSS-wide keywords
-                if (value_for_property->is_css_wide_keyword() && !metadata.allow_css_wide_keywords)
+                // Descriptors don't accept the following, which properties do:
+                // - CSS-wide keywords
+                // - Arbitrary substitution functions (so, UnresolvedStyleValue)
+                if (value_for_property->is_css_wide_keyword() || value_for_property->is_unresolved())
                     return nullptr;
                 return value_for_property;
             },
@@ -147,7 +120,7 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
                         return CounterStyleSystemStyleValue::create(system.release_value());
 
                     if (keyword_value->to_keyword() == Keyword::Fixed) {
-                        auto integer_value = parse_integer_value(tokens, infinite_integer_range);
+                        auto integer_value = parse_integer_value(tokens);
 
                         return CounterStyleSystemStyleValue::create_fixed(integer_value);
                     }
@@ -198,10 +171,10 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
 
                     return parse_comma_separated_value_list(tokens, [&](TokenStream<ComponentValue>& tokens) -> RefPtr<StyleValue const> {
                         auto const parse_value = [&]() -> RefPtr<StyleValue const> {
-                            if (auto keyword_value = parse_specific_keyword_value(tokens, { { Keyword::Infinite } }))
+                            if (auto keyword_value = parse_keyword_value(tokens); keyword_value && keyword_value->to_keyword() == Keyword::Infinite)
                                 return keyword_value;
 
-                            if (auto integer_value = parse_integer_value(tokens, infinite_integer_range); integer_value)
+                            if (auto integer_value = parse_integer_value(tokens); integer_value)
                                 return integer_value;
 
                             return nullptr;
@@ -294,29 +267,39 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
                 }
                 case DescriptorMetadata::ValueType::FontWeightAbsolutePair: {
                     // <font-weight-absolute>{1,2}
-                    auto first = parse_font_weight_absolute_value(tokens);
+                    // <font-weight-absolute> = [ normal | bold | <number [1,1000]> ]
+                    // This is the same as the font-weight property, twice, without 'lighter' or 'bolder'.
+                    auto parse_absolute_font_weight = [&] -> RefPtr<StyleValue const> {
+                        auto value_for_property = parse_css_value_for_property(PropertyID::FontWeight, tokens);
+                        if (!value_for_property)
+                            return nullptr;
+                        if (value_for_property->is_css_wide_keyword() || value_for_property->is_unresolved())
+                            return nullptr;
+                        if (first_is_one_of(value_for_property->to_keyword(), Keyword::Lighter, Keyword::Bolder))
+                            return nullptr;
+                        return value_for_property;
+                    };
+                    auto first = parse_absolute_font_weight();
                     if (!first)
                         return nullptr;
                     tokens.discard_whitespace();
                     if (!tokens.has_next_token())
                         return StyleValueList::create({ first.release_nonnull() }, StyleValueList::Separator::Space);
-                    auto second = parse_font_weight_absolute_value(tokens);
+                    auto second = parse_absolute_font_weight();
                     if (!second)
                         return nullptr;
                     return StyleValueList::create({ first.release_nonnull(), second.release_nonnull() }, StyleValueList::Separator::Space);
                 }
                 case DescriptorMetadata::ValueType::Length:
-                    return parse_length_value(tokens, infinite_range);
+                    return parse_length_value(tokens);
                 case DescriptorMetadata::ValueType::OptionalDeclarationValue: {
                     tokens.discard_whitespace();
 
                     if (tokens.is_empty())
-                        return UnresolvedStyleValue::create({}, {});
+                        return UnresolvedStyleValue::create({});
 
-                    if (auto parsed_declaration_value = parse_declaration_value(tokens); parsed_declaration_value.has_value() && tokens.is_empty()) {
-                        // NB: We know this contains no substitution functions otherwise we would have returned earlier
-                        return UnresolvedStyleValue::create(parsed_declaration_value.release_value(), {});
-                    }
+                    if (auto parsed_declaration_value = parse_declaration_value(tokens); parsed_declaration_value.has_value() && tokens.is_empty())
+                        return UnresolvedStyleValue::create(parsed_declaration_value.release_value());
 
                     return nullptr;
                 }
@@ -329,11 +312,18 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
                         return value.release_nonnull();
 
                     // <length [0,∞]>{1,2}
-                    if (auto first_length = parse_length_value(tokens, non_negative_range)) {
+                    if (auto first_length = parse_length_value(tokens)) {
+                        if (first_length->is_length() && first_length->as_length().raw_value() < 0)
+                            return nullptr;
+
                         tokens.discard_whitespace();
 
-                        if (auto second_length = parse_length_value(tokens, non_negative_range))
+                        if (auto second_length = parse_length_value(tokens)) {
+                            if (second_length->is_length() && second_length->as_length().raw_value() < 0)
+                                return nullptr;
+
                             return StyleValueList::create(StyleValueVector { first_length.release_nonnull(), second_length.release_nonnull() }, StyleValueList::Separator::Space);
+                        }
 
                         return first_length.release_nonnull();
                     }
@@ -374,12 +364,13 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
                     return page_size ? page_size.release_nonnull() : orientation.release_nonnull();
                 }
                 case DescriptorMetadata::ValueType::PositivePercentage: {
-                    if (auto percentage_value = parse_percentage_value(tokens, non_negative_range)) {
-                        if (percentage_value->is_percentage())
+                    if (auto percentage_value = parse_percentage_value(tokens)) {
+                        if (percentage_value->is_percentage()) {
+                            if (percentage_value->as_percentage().raw_value() < 0)
+                                return nullptr;
                             return percentage_value.release_nonnull();
-
-                        // FIXME: Support relative lengths within calcs here (i.e. by absolutizing and clamping rather
-                        //        than rejecting anything that doesn't resolve at parse time)
+                        }
+                        // All calculations in descriptors must be resolvable at parse-time.
                         if (percentage_value->is_calculated()) {
                             auto percentage = percentage_value->as_calculated().resolve_percentage({});
                             if (percentage.has_value() && percentage->value() >= 0)
@@ -418,12 +409,12 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
             });
         if (!parsed_style_value || tokens.has_next_token())
             continue;
-        syntax_transaction.commit();
+        transaction.commit();
         return parsed_style_value.release_nonnull();
     }
 
     ErrorReporter::the().report(InvalidPropertyError {
-        .rule_name = Utf16FlyString::from_fly_string(to_string(at_rule_id)),
+        .rule_name = to_string(at_rule_id),
         .property_name = descriptor_name_and_id.name(),
         .value_string = tokens.dump_string(),
         .description = "Failed to parse."_string,

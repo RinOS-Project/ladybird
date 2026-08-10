@@ -1,2 +1,0 @@
-target visible before scrollIntoView: false
-target visible after scrollIntoView: true

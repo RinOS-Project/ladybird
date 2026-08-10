@@ -12,10 +12,11 @@
 namespace Web::Layout {
 
 class LegendBox final : public BlockContainer {
-    LAYOUT_NODE(LegendBox, BlockContainer);
+    GC_CELL(LegendBox, BlockContainer);
+    GC_DECLARE_ALLOCATOR(LegendBox);
 
 public:
-    LegendBox(DOM::Document&, DOM::Element&, NonnullRefPtr<CSS::ComputedValues const>);
+    LegendBox(DOM::Document&, DOM::Element&, GC::Ref<CSS::ComputedProperties>);
     virtual ~LegendBox() override;
 
     DOM::Element& dom_node() { return static_cast<DOM::Element&>(*Box::dom_node()); }

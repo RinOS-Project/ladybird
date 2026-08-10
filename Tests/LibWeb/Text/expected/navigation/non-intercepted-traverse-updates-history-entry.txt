@@ -1,3 +1,0 @@
-navigate destination=/r/programming current=/r/programming/comments/post location=/r/programming/comments/post
-currententrychange current=/r/programming location=/r/programming
-navigatesuccess current=/r/programming location=/r/programming

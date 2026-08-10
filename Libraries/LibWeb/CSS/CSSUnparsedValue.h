@@ -11,30 +11,33 @@
 
 namespace Web::CSS {
 
-using CSSUnparsedSegment = Variant<Utf16String, GC::Ref<CSSVariableReferenceValue>>;
+using CSSUnparsedSegment = Variant<String, GC::Ref<CSSVariableReferenceValue>>;
+using GCRootCSSUnparsedSegment = Variant<String, GC::Root<CSSVariableReferenceValue>>;
 
 // https://drafts.css-houdini.org/css-typed-om-1/#cssunparsedvalue
 class CSSUnparsedValue final : public CSSStyleValue {
-    WEB_WRAPPABLE(CSSUnparsedValue, CSSStyleValue);
+    WEB_PLATFORM_OBJECT(CSSUnparsedValue, CSSStyleValue);
     GC_DECLARE_ALLOCATOR(CSSUnparsedValue);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSUnparsedValue> create(ReadonlySpan<CSSUnparsedSegment>);
-    static WebIDL::ExceptionOr<GC::Ref<CSSUnparsedValue>> create_for_constructor(ReadonlySpan<CSSUnparsedSegment>);
+    [[nodiscard]] static GC::Ref<CSSUnparsedValue> create(JS::Realm&, Vector<GCRootCSSUnparsedSegment>);
+    static WebIDL::ExceptionOr<GC::Ref<CSSUnparsedValue>> construct_impl(JS::Realm&, Vector<GCRootCSSUnparsedSegment>);
 
     virtual ~CSSUnparsedValue() override;
 
     WebIDL::UnsignedLong length() const;
-    Optional<CSSUnparsedSegment> token_at(size_t index) const;
-    WebIDL::ExceptionOr<void> set_value_of_existing_indexed_property(u32, CSSUnparsedSegment);
-    WebIDL::ExceptionOr<void> set_value_of_new_indexed_property(u32, CSSUnparsedSegment);
+    virtual Optional<JS::Value> item_value(size_t index) const override;
+    virtual WebIDL::ExceptionOr<void> set_value_of_existing_indexed_property(u32, JS::Value) override;
+    virtual WebIDL::ExceptionOr<void> set_value_of_new_indexed_property(u32, JS::Value) override;
 
-    virtual WebIDL::ExceptionOr<Utf16String> to_string() const override;
+    virtual WebIDL::ExceptionOr<String> to_string() const override;
     virtual WebIDL::ExceptionOr<NonnullRefPtr<StyleValue const>> create_an_internal_representation(PropertyNameAndID const&, PerformTypeCheck) const override;
 
 private:
-    explicit CSSUnparsedValue(ReadonlySpan<CSSUnparsedSegment>);
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    explicit CSSUnparsedValue(JS::Realm&, Vector<CSSUnparsedSegment>);
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
     bool contains_unparsed_value(CSSUnparsedValue const&) const;
 

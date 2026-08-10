@@ -6,33 +6,25 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
 #include <LibWeb/Animations/AnimationTimeline.h>
 #include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
-namespace Web::Bindings {
-
-struct DocumentTimelineOptions;
-
-}
-
-namespace Web::HTML {
-
-class Window;
-
-}
-
 namespace Web::Animations {
+
+// https://www.w3.org/TR/web-animations-1/#dictdef-documenttimelineoptions
+struct DocumentTimelineOptions {
+    HighResolutionTime::DOMHighResTimeStamp origin_time { 0.0 };
+};
 
 // https://www.w3.org/TR/web-animations-1/#the-documenttimeline-interface
 class DocumentTimeline : public AnimationTimeline {
-    WEB_WRAPPABLE(DocumentTimeline, AnimationTimeline);
+    WEB_PLATFORM_OBJECT(DocumentTimeline, AnimationTimeline);
     GC_DECLARE_ALLOCATOR(DocumentTimeline);
 
 public:
-    static GC::Ref<DocumentTimeline> create(DOM::Document&, HighResolutionTime::DOMHighResTimeStamp origin_time);
-    static WebIDL::ExceptionOr<GC::Ref<DocumentTimeline>> create_for_constructor(JS::Object&, Bindings::DocumentTimelineOptions const&);
+    static GC::Ref<DocumentTimeline> create(JS::Realm&, DOM::Document&, HighResolutionTime::DOMHighResTimeStamp origin_time);
+    static WebIDL::ExceptionOr<GC::Ref<DocumentTimeline>> construct_impl(JS::Realm&, DocumentTimelineOptions options = {});
 
     virtual Optional<TimeValue> duration() const override { return {}; }
 
@@ -43,8 +35,10 @@ public:
     virtual bool can_convert_a_timeline_time_to_an_origin_relative_time() const override { return true; }
 
 private:
-    DocumentTimeline(DOM::Document&, HighResolutionTime::DOMHighResTimeStamp origin_time);
+    DocumentTimeline(JS::Realm&, DOM::Document&, HighResolutionTime::DOMHighResTimeStamp origin_time);
     virtual ~DocumentTimeline() override = default;
+
+    virtual void initialize(JS::Realm&) override;
 
     HighResolutionTime::DOMHighResTimeStamp m_origin_time;
 };

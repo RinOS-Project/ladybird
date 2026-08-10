@@ -6,22 +6,28 @@
  */
 
 #include <LibWeb/Layout/ListItemBox.h>
-#include <LibWeb/Painting/InlinePaintable.h>
+#include <LibWeb/Layout/ListItemMarkerBox.h>
 
 namespace Web::Layout {
 
-ListItemBox::ListItemBox(DOM::Document& document, DOM::Element* element, NonnullRefPtr<CSS::ComputedValues const> style)
-    : Layout::BlockContainer(document, element, style)
+GC_DEFINE_ALLOCATOR(ListItemBox);
+
+ListItemBox::ListItemBox(DOM::Document& document, DOM::Element* element, GC::Ref<CSS::ComputedProperties> style)
+    : Layout::BlockContainer(document, element, move(style))
 {
 }
 
 ListItemBox::~ListItemBox() = default;
 
-RefPtr<Painting::Paintable> ListItemBox::create_paintable() const
+void ListItemBox::visit_edges(Cell::Visitor& visitor)
 {
-    if (is_fragmented_inline())
-        return Painting::InlinePaintable::create(*this);
-    return BlockContainer::create_paintable();
+    Base::visit_edges(visitor);
+    visitor.visit(m_marker);
+}
+
+void ListItemBox::set_marker(GC::Ptr<ListItemMarkerBox> marker)
+{
+    m_marker = move(marker);
 }
 
 }

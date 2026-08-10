@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/SVGStyleElementPrototype.h>
 #include <LibWeb/SVG/SVGStyleElement.h>
 
 namespace Web::SVG {
@@ -17,46 +18,34 @@ SVGStyleElement::SVGStyleElement(DOM::Document& document, DOM::QualifiedName qua
 
 SVGStyleElement::~SVGStyleElement() = default;
 
+void SVGStyleElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGStyleElement);
+    Base::initialize(realm);
+}
+
 void SVGStyleElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visit_style_element_edges(visitor);
 }
 
-void SVGStyleElement::adopted_from(DOM::Document& old_document)
-{
-    Base::adopted_from(old_document);
-
-    retarget_style_load_event_delayer(document());
-}
-
 void SVGStyleElement::children_changed(ChildrenChangedMetadata const& metadata)
 {
     Base::children_changed(metadata);
-    update_a_style_block_for_dynamic_change();
+    update_a_style_block();
 }
 
 void SVGStyleElement::inserted()
 {
+    update_a_style_block();
     Base::inserted();
-    update_a_style_block_for_dynamic_change();
 }
 
-void SVGStyleElement::removed_from(IsSubtreeRoot is_subtree_root, Node* old_ancestor, Node& old_root)
+void SVGStyleElement::removed_from(Node* old_parent, Node& old_root)
 {
-    Base::removed_from(is_subtree_root, old_ancestor, old_root);
-    update_a_style_block_for_dynamic_change();
-}
-
-void SVGStyleElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
-{
-    Base::attribute_changed(name, old_value, value, namespace_);
-    style_element_attribute_changed(name, value);
-}
-
-bool SVGStyleElement::contributes_a_script_blocking_style_sheet() const
-{
-    return style_element_contributes_a_script_blocking_style_sheet();
+    update_a_style_block();
+    Base::removed_from(old_parent, old_root);
 }
 
 }

@@ -29,8 +29,7 @@ public:
     virtual ErrorOr<Bytes> read_some(Bytes) = 0;
     /// Tries to fill the entire buffer through reading. Returns whether the
     /// buffer was filled without an error.
-    // NOTE: See the note on FixedMemoryStream::read_some() for why this needs explicit default visibility.
-    [[gnu::visibility("default")]] virtual ErrorOr<void> read_until_filled(Bytes buffer)
+    virtual ErrorOr<void> read_until_filled(Bytes buffer)
     {
         size_t nread = 0;
         while (nread < buffer.size()) {

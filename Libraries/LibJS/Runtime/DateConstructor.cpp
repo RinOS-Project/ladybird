@@ -2,14 +2,13 @@
  * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2020, Nico Weber <thakis@chromium.org>
  * Copyright (c) 2021, Petróczi Zoltán <petroczizoltan@tutanota.com>
- * Copyright (c) 2022-2026, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2022-2024, Tim Flynn <trflynn89@ladybird.org>
  * Copyright (c) 2025, Manuel Zahariev <manuel@duck.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Time.h>
-#include <AK/Utf16View.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/DateConstructor.h>
@@ -24,7 +23,7 @@ namespace JS {
 
 GC_DEFINE_ALLOCATOR(DateConstructor);
 
-static double parse_date_string(VM& vm, Utf16View date_string)
+static double parse_date_string(VM& vm, StringView date_string)
 {
     double result = DateParser::parse(date_string);
     if (result == NAN)
@@ -61,7 +60,7 @@ ThrowCompletionOr<Value> DateConstructor::call()
     auto& vm = this->vm();
 
     // 1. If NewTarget is undefined, return ToDateString(SystemUTCEpochMilliseconds()).
-    return PrimitiveString::create(vm, to_date_string(Temporal::system_utc_epoch_milliseconds()));
+    return PrimitiveString::create(vm, to_date_string(Temporal::system_utc_epoch_milliseconds(vm)));
 }
 
 // 21.4.2.1 Date ( ...values ), https://tc39.es/ecma262/#sec-date
@@ -76,7 +75,7 @@ ThrowCompletionOr<GC::Ref<Object>> DateConstructor::construct(FunctionObject& ne
     // 3. If numberOfArgs = 0, then
     if (vm.argument_count() == 0) {
         // a. Let dv be SystemUTCEpochMilliseconds().
-        date_value = Temporal::system_utc_epoch_milliseconds();
+        date_value = Temporal::system_utc_epoch_milliseconds(vm);
     }
     // 4. Else if numberOfArgs = 1, then
     else if (vm.argument_count() == 1) {
@@ -98,7 +97,7 @@ ThrowCompletionOr<GC::Ref<Object>> DateConstructor::construct(FunctionObject& ne
             if (primitive.is_string()) {
                 // 1. Assert: The next step never returns an abrupt completion because Type(v) is String.
                 // 2. Let tv be the result of parsing v as a date, in exactly the same manner as for the parse method (21.4.3.2).
-                time_value = parse_date_string(vm, primitive.as_string().utf16_string_view());
+                time_value = parse_date_string(vm, primitive.as_string().utf8_string_view());
             }
             // iii. Else,
             else {
@@ -164,7 +163,7 @@ ThrowCompletionOr<GC::Ref<Object>> DateConstructor::construct(FunctionObject& ne
 JS_DEFINE_NATIVE_FUNCTION(DateConstructor::now)
 {
     // 1. Return SystemUTCEpochMilliseconds().
-    return Temporal::system_utc_epoch_milliseconds();
+    return Temporal::system_utc_epoch_milliseconds(vm);
 }
 
 // 21.4.3.2 Date.parse ( string ), https://tc39.es/ecma262/#sec-date.parse
@@ -175,7 +174,7 @@ JS_DEFINE_NATIVE_FUNCTION(DateConstructor::parse)
 
     // This function applies the ToString operator to its argument. If ToString results in an abrupt completion the
     // Completion Record is immediately returned.
-    auto date_string = TRY(vm.argument(0).to_utf16_string(vm));
+    auto date_string = TRY(vm.argument(0).to_string(vm));
 
     // Otherwise, this function interprets the resulting String as a date and time; it returns a Number, the UTC time
     // value corresponding to the date and time.

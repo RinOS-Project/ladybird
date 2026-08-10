@@ -1,3 +1,0 @@
-timer active before replacement: true
-timer active after replacement: true
-timer active after hiding: true

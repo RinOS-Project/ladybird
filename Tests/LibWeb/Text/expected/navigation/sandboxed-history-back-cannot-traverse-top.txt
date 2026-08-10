@@ -1,3 +1,0 @@
-location=?second
-ui-current=?second
-ui-buttons=true,false

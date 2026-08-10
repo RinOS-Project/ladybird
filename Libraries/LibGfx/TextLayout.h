@@ -28,12 +28,6 @@ struct DrawGlyph {
     size_t length_in_code_units { 0 };
     float glyph_width { 0.0 };
     u32 glyph_id { 0 };
-    bool should_paint { true };
-};
-
-struct ShapedGlyphs {
-    Vector<DrawGlyph> glyphs;
-    float width { 0 };
 };
 
 class GlyphRun : public AtomicRefCounted<GlyphRun> {
@@ -53,6 +47,7 @@ public:
     [[nodiscard]] TextType text_type() const { return m_text_type; }
     [[nodiscard]] Vector<DrawGlyph> const& glyphs() const { return m_glyphs; }
     [[nodiscard]] Vector<DrawGlyph>& glyphs() { return m_glyphs; }
+    [[nodiscard]] bool is_empty() const { return m_glyphs.is_empty(); }
     [[nodiscard]] float width() const { return m_width; }
 
     [[nodiscard]] NonnullRefPtr<GlyphRun> slice(size_t start, size_t length) const;

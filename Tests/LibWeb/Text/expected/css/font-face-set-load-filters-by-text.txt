@@ -1,4 +1,0 @@
-MultiFont face count: 3
-range=U+41 status=loaded
-range=U+42 status=unloaded
-range=U+43 status=unloaded

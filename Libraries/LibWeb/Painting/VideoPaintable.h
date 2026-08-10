@@ -8,14 +8,16 @@
 #pragma once
 
 #include <LibWeb/Forward.h>
-#include <LibWeb/Painting/Paintable.h>
+#include <LibWeb/Painting/PaintableBox.h>
 
 namespace Web::Painting {
 
-class VideoPaintable final : public Paintable {
+class VideoPaintable final : public PaintableBox {
+    GC_CELL(VideoPaintable, PaintableBox);
+    GC_DECLARE_ALLOCATOR(VideoPaintable);
+
 public:
-    static NonnullRefPtr<VideoPaintable> create(Layout::VideoBox const&);
-    virtual StringView class_name() const override { return "VideoPaintable"sv; }
+    static GC::Ref<VideoPaintable> create(Layout::VideoBox const&);
 
     virtual void paint(DisplayListRecordingContext&, PaintPhase) const override;
 

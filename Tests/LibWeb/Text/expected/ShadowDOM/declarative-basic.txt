@@ -23,13 +23,3 @@ null
 <template shadowrootmode="open" shadowrootserializable="">open</template>
 
 
-manual
-null
-<template shadowrootmode="open" shadowrootserializable="" shadowrootslotassignment="manual"><slot name="slot"></slot></template>
-
-<span slot="slot">manual</span>
-
-named
-manual
-named
-named

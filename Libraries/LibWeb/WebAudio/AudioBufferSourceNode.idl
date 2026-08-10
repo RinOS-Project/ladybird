@@ -1,3 +1,8 @@
+#import <WebAudio/AudioBuffer.idl>
+#import <WebAudio/AudioParam.idl>
+#import <WebAudio/AudioScheduledSourceNode.idl>
+#import <WebAudio/BaseAudioContext.idl>
+
 dictionary AudioBufferSourceOptions {
     AudioBuffer? buffer;
     float detune = 0;

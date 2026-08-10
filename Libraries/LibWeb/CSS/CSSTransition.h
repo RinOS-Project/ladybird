@@ -8,12 +8,14 @@
 #pragma once
 
 #include <LibWeb/Animations/Animation.h>
+#include <LibWeb/CSS/Interpolation.h>
+#include <LibWeb/CSS/PseudoElement.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
 
 namespace Web::CSS {
 
 class CSSTransition : public Animations::Animation {
-    WEB_WRAPPABLE(CSSTransition, Animations::Animation);
+    WEB_PLATFORM_OBJECT(CSSTransition, Animations::Animation);
     GC_DECLARE_ALLOCATOR(CSSTransition);
 
 public:
@@ -29,13 +31,14 @@ public:
         NonnullRefPtr<StyleValue const> reversing_adjusted_start_value,
         double reversing_shortening_factor);
 
-    Utf16FlyString const& transition_property() const;
+    StringView transition_property() const;
 
     virtual Animations::AnimationClass animation_class() const override;
     virtual int class_specific_composite_order(GC::Ref<Animations::Animation> other) const override;
 
     double transition_start_time() const { return m_start_time; }
     double transition_end_time() const { return m_end_time; }
+    NonnullRefPtr<StyleValue const> transition_start_value() const { return m_start_value; }
     NonnullRefPtr<StyleValue const> transition_end_value() const { return m_end_value; }
     NonnullRefPtr<StyleValue const> reversing_adjusted_start_value() const { return m_reversing_adjusted_start_value; }
     double reversing_shortening_factor() const { return m_reversing_shortening_factor; }
@@ -55,7 +58,7 @@ public:
 
 private:
     CSSTransition(
-        HTML::EnvironmentSettingsObject&,
+        JS::Realm&,
         DOM::AbstractElement,
         PropertyID,
         size_t transition_generation,
@@ -65,8 +68,9 @@ private:
         NonnullRefPtr<StyleValue const> start_value,
         NonnullRefPtr<StyleValue const> end_value,
         NonnullRefPtr<StyleValue const> reversing_adjusted_start_value,
-        double reversing_shortening_factor,
-        GC::Ref<Animations::KeyframeEffect>);
+        double reversing_shortening_factor);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     virtual bool is_css_transition() const override { return true; }

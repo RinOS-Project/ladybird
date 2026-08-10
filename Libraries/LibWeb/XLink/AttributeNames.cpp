@@ -9,7 +9,7 @@
 namespace Web::XLink::AttributeNames {
 
 #define __ENUMERATE_XLINK_ATTRIBUTE(name) \
-    Utf16FlyString name = #name##_utf16_fly_string;
+    FlyString name = #name##_fly_string;
 ENUMERATE_XLINK_ATTRIBUTES
 #undef __ENUMERATE_XLINK_ATTRIBUTE
 

@@ -6,20 +6,18 @@
 
 #pragma once
 
-#include <AK/Vector.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibJS/Forward.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/media.html#time-ranges
-class TimeRanges final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(TimeRanges, Bindings::GCAllocatedWrappable);
+class TimeRanges final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(TimeRanges, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(TimeRanges);
 
 public:
-    [[nodiscard]] static GC::Ref<TimeRanges> create();
-
     // https://html.spec.whatwg.org/multipage/media.html#dom-timeranges-length
     size_t length() const;
 
@@ -33,7 +31,9 @@ public:
     bool in_range(double);
 
 private:
-    explicit TimeRanges();
+    explicit TimeRanges(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 
     struct Range {
         double start;

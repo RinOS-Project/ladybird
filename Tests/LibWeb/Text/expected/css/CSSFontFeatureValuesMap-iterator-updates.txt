@@ -1,6 +1,0 @@
--- CSSFontFeatureValuesMap iterator updates --
-one: 1
-two: 20,21
-three: 3
-four: 4
-done: true

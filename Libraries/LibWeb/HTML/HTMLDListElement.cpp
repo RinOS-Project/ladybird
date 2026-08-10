@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLDListElementPrototype.h>
 #include <LibWeb/HTML/HTMLDListElement.h>
 #include <LibWeb/HTML/Window.h>
 
@@ -17,5 +18,11 @@ HTMLDListElement::HTMLDListElement(DOM::Document& document, DOM::QualifiedName q
 }
 
 HTMLDListElement::~HTMLDListElement() = default;
+
+void HTMLDListElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLDListElement);
+    Base::initialize(realm);
+}
 
 }

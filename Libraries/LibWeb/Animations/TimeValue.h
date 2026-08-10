@@ -12,7 +12,7 @@
 namespace Web::Animations {
 
 struct TimeValue {
-    static TimeValue from_css_numberish(CSS::CSSNumberish const&, CSS::ComputationContext const&);
+    static TimeValue from_css_numberish(CSS::CSSNumberish const&, DOM::AbstractElement const&);
     static TimeValue create_zero(GC::Ptr<AnimationTimeline> const& timeline);
 
     enum class Type : u8 {
@@ -71,17 +71,17 @@ struct TimeValue {
         return type == other.type && value == other.value;
     }
 
-    CSS::CSSNumberish as_css_numberish() const;
+    CSS::CSSNumberish as_css_numberish(JS::Realm& realm) const;
 };
 
 // Nullable CSSNumberish is Variant<double, GC::Root<CSSNumericValue>, Empty> where Empty represents null.
 struct NullableCSSNumberish : FlattenVariant<Variant<Empty>, CSS::CSSNumberish> {
     using Variant::Variant;
 
-    static NullableCSSNumberish from_optional_css_numberish_time(Optional<TimeValue> const& value)
+    static NullableCSSNumberish from_optional_css_numberish_time(JS::Realm& realm, Optional<TimeValue> const& value)
     {
         if (value.has_value())
-            return value->as_css_numberish();
+            return value->as_css_numberish(realm);
 
         return {};
     }

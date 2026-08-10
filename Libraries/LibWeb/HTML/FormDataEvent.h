@@ -6,32 +6,32 @@
 
 #pragma once
 
-#include <LibJS/Forward.h>
-#include <LibWeb/Bindings/FormDataEvent.h>
 #include <LibWeb/DOM/Event.h>
-#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibWeb/XHR/FormData.h>
 
 namespace Web::HTML {
 
-using FormDataEventInit = Bindings::FormDataEventInit;
+struct FormDataEventInit : public DOM::EventInit {
+    GC::Ptr<XHR::FormData> form_data {};
+};
 
 class FormDataEvent final : public DOM::Event {
-    WEB_WRAPPABLE(FormDataEvent, DOM::Event);
+    WEB_PLATFORM_OBJECT(FormDataEvent, DOM::Event);
     GC_DECLARE_ALLOCATOR(FormDataEvent);
 
 public:
-    static GC::Ref<FormDataEvent> create(FlyString const& event_name, FormDataEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
-    static GC::Ref<FormDataEvent> create(Utf16FlyString const& event_name, FormDataEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    static WebIDL::ExceptionOr<GC::Ref<FormDataEvent>> construct_impl(JS::Realm&, FlyString const& event_name, FormDataEventInit const& event_init);
 
     virtual ~FormDataEvent() override;
 
     GC::Ptr<XHR::FormData> form_data() const { return m_form_data; }
 
 private:
-    FormDataEvent(FlyString const& event_name, FormDataEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
+    FormDataEvent(JS::Realm&, FlyString const& event_name, FormDataEventInit const& event_init);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    void initialize(JS::Realm&) override;
+
+    virtual void visit_edges(Cell::Visitor&) override;
 
     GC::Ptr<XHR::FormData> m_form_data;
 };

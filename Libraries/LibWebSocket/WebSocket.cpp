@@ -8,14 +8,11 @@
 #include <AK/Base64.h>
 #include <AK/Endian.h>
 #include <AK/Random.h>
-#include <LibCore/Timer.h>
 #include <LibCrypto/Hash/HashManager.h>
 #include <LibWebSocket/Impl/WebSocketImplSerenity.h>
 #include <LibWebSocket/WebSocket.h>
 
 namespace WebSocket {
-
-static constexpr int s_closing_handshake_timeout_ms = 30'000;
 
 // Note : The websocket protocol is defined by RFC 6455, found at https://tools.ietf.org/html/rfc6455
 // In this file, section numbers will refer to the RFC 6455
@@ -50,7 +47,8 @@ void WebSocket::start()
             discard_connection();
             return;
         }
-        fail_connection(to_underlying(CloseStatusCode::AbnormalClosure), WebSocket::Error::CouldNotEstablishConnection, "Connection error (underlying socket)");
+        dbgln("WebSocket: Connection error (underlying socket)");
+        fatal_error(WebSocket::Error::CouldNotEstablishConnection);
     };
     m_impl->on_connected = [this] {
         if (m_state != WebSocket::InternalState::EstablishingProtocolConnection)
@@ -125,8 +123,8 @@ void WebSocket::close(u16 code, ByteString const& message)
     case InternalState::WaitingForServerHandshake:
         // "If the WebSocket connection is not yet established [WSP]
         // Fail the WebSocket connection and set this’s ready state to CLOSING (2)."
+        // FIXME: Fail the connection.
         set_state(InternalState::Closing);
-        fail_connection(to_underlying(CloseStatusCode::AbnormalClosure), WebSocket::Error::CouldNotEstablishConnection, "Closing connection that's not yet established");
         break;
     case InternalState::Open: {
         // "If the WebSocket closing handshake has not yet been started [WSP]
@@ -176,7 +174,7 @@ void WebSocket::drain_read()
     case InternalState::Closing: {
         auto result = m_impl->read(65536);
         if (result.is_error()) {
-            fail_connection(to_underlying(CloseStatusCode::AbnormalClosure), WebSocket::Error::ServerClosedSocket, {});
+            fatal_error(WebSocket::Error::ServerClosedSocket);
             return;
         }
         auto bytes = result.release_value();
@@ -263,12 +261,10 @@ void WebSocket::send_client_handshake()
 
 void WebSocket::fail_connection(u16 close_status_code, WebSocket::Error error_code, ByteString const& reason)
 {
-    if (!reason.is_empty())
-        dbgln("WebSocket: {}", reason);
-    set_state(WebSocket::InternalState::Errored);
-    notify_error(error_code);
+    dbgln("WebSocket: {}", reason);
+    set_state(WebSocket::InternalState::Closed);
+    fatal_error(error_code);
     notify_close(close_status_code, reason, false);
-    discard_connection();
 }
 
 // The server handshake message is defined in the third list of section 4.1
@@ -643,6 +639,9 @@ void WebSocket::send_frame(WebSocket::OpCode op_code, ReadonlyBytes payload, boo
         fill_with_random(masking_key);
         buf.overwrite(offset, masking_key, 4);
         offset += 4;
+        // don't try to send empty payload
+        if (payload.size() == 0)
+            return;
         // Mask the payload
         auto masked_payload = buf.span().slice(offset, payload.size());
         for (size_t i = 0; i < payload.size(); ++i) {
@@ -654,6 +653,13 @@ void WebSocket::send_frame(WebSocket::OpCode op_code, ReadonlyBytes payload, boo
         offset += payload.size();
     }
     m_impl->send(buf.span().slice(0, offset));
+}
+
+void WebSocket::fatal_error(WebSocket::Error error)
+{
+    set_state(WebSocket::InternalState::Errored);
+    notify_error(error);
+    discard_connection();
 }
 
 void WebSocket::discard_connection()
@@ -706,21 +712,6 @@ void WebSocket::set_state(InternalState state)
         return;
     auto old_ready_state = ready_state();
     m_state = state;
-
-    if (state == InternalState::Closing) {
-        if (!m_closing_handshake_timer) {
-            m_closing_handshake_timer = Core::Timer::create_single_shot(s_closing_handshake_timeout_ms, [this] {
-                if (m_state != InternalState::Closing)
-                    return;
-                fail_connection(to_underlying(CloseStatusCode::AbnormalClosure), WebSocket::Error::ServerClosedSocket, "Timed out waiting for the peer's close frame");
-            });
-        } else {
-            m_closing_handshake_timer->restart(s_closing_handshake_timeout_ms);
-        }
-    } else if (m_closing_handshake_timer) {
-        m_closing_handshake_timer->stop();
-    }
-
     auto new_ready_state = ready_state();
     if (old_ready_state != new_ready_state) {
         if (on_ready_state_change)

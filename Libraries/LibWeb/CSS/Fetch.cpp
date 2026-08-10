@@ -10,28 +10,18 @@
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/HTML/SharedResourceRequest.h>
-#include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/Painting/ViewportPaintable.h>
 
 namespace Web::CSS {
 
 // https://drafts.csswg.org/css-values-4/#style-resource-base-url
 
-struct StyleResourceContext {
+struct StyleSheetAndURL {
     GC::Ptr<CSSStyleSheet> sheet;
-    Optional<bool> parent_style_sheet_origin_clean;
     ::URL::URL url;
 };
-static StyleResourceContext style_resource_context(RuleOrDeclaration css_rule_or_declaration)
+static StyleSheetAndURL style_resource_base_url(RuleOrDeclaration css_rule_or_declaration)
 {
-    if (css_rule_or_declaration.style_resource_base_url.has_value()) {
-        return {
-            nullptr,
-            css_rule_or_declaration.parent_style_sheet_origin_clean,
-            css_rule_or_declaration.style_resource_base_url.value()
-        };
-    }
-
     // 1. Let sheet be null.
     GC::Ptr<CSSStyleSheet> sheet;
 
@@ -52,36 +42,35 @@ static StyleResourceContext style_resource_context(RuleOrDeclaration css_rule_or
     if (sheet) {
         // 1. If sheet’s stylesheet base URL is not null, return sheet’s stylesheet base URL.
         if (auto base_url = sheet->base_url(); base_url.has_value())
-            return { sheet, sheet->is_origin_clean(), base_url.value() };
+            return { sheet, base_url.value() };
 
         // 2. If sheet’s location is not null, return sheet’s location.
         if (auto location = sheet->location(); location.has_value())
-            return { sheet, sheet->is_origin_clean(), location.value() };
+            return { sheet, location.value() };
     }
 
     // 5. Return cssRuleOrDeclaration’s relevant settings object’s API base URL.
-    auto api_base_url = css_rule_or_declaration.environment_settings_object->api_base_url();
-    if (sheet)
-        return { sheet, sheet->is_origin_clean(), api_base_url };
-    return { nullptr, {}, api_base_url };
+    return { sheet, css_rule_or_declaration.environment_settings_object->api_base_url() };
 }
 
 // https://drafts.csswg.org/css-values-4/#resolve-a-style-resource-url
 static Optional<::URL::URL> resolve_a_style_resource_url(StyleResourceURL const& url_value, RuleOrDeclaration css_rule_or_declaration)
 {
     // 1. Let baseURL be the style resource base URL given cssRuleOrDeclaration.
-    auto base_url = style_resource_context(css_rule_or_declaration).url;
+    auto [_, base_url] = style_resource_base_url(css_rule_or_declaration);
 
     // 2. Return the result of the URL parser steps with urlValue’s url and base.
     auto url_string = url_value.visit(
         [](::URL::URL const& url) { return url.to_string(); },
         [](CSS::URL const& url) { return url.url(); });
-    return DOMURL::parse_from_byte_string(url_string.bytes_as_string_view(), base_url);
+    return DOMURL::parse(url_string, base_url);
 }
 
 // https://drafts.csswg.org/css-values-4/#fetch-a-style-resource
 static GC::Ptr<Fetch::Infrastructure::Request> fetch_a_style_resource_impl(StyleResourceURL const& url_value, RuleOrDeclaration css_rule_or_declaration, Fetch::Infrastructure::Request::Destination destination, CorsMode cors_mode)
 {
+    auto& vm = css_rule_or_declaration.environment_settings_object->vm();
+
     // 1. Let parsedUrl be the result of resolving urlValue given cssRuleOrDeclaration. If that failed, return.
     auto parsed_url = resolve_a_style_resource_url(url_value, css_rule_or_declaration);
     if (!parsed_url.has_value())
@@ -93,7 +82,7 @@ static GC::Ptr<Fetch::Infrastructure::Request> fetch_a_style_resource_impl(Style
     // 3. Let req be a new request whose url is parsedUrl, whose destination is destination, mode is corsMode,
     //    origin is environmentSettings’s origin, credentials mode is "same-origin", use-url-credentials flag is set,
     //    client is environmentSettings, and whose referrer is environmentSettings’s API base URL.
-    auto request = Fetch::Infrastructure::Request::create();
+    auto request = Fetch::Infrastructure::Request::create(vm);
     request->set_url(parsed_url.release_value());
     request->set_destination(destination);
     request->set_mode(cors_mode == CorsMode::Cors ? Fetch::Infrastructure::Request::Mode::CORS : Fetch::Infrastructure::Request::Mode::NoCORS);
@@ -114,13 +103,13 @@ static GC::Ptr<Fetch::Infrastructure::Request> fetch_a_style_resource_impl(Style
     // 6. If req’s mode is "cors", and sheet is not null, then set req’s referrer to the style resource base URL given cssRuleOrDeclaration. [CSSOM]
     // FIXME: Spec issue - sheet is not defined as a variable, we use the sheet determined from 'style resource base URL' instead.
     //        https://github.com/w3c/csswg-drafts/issues/12288
-    auto context = style_resource_context(css_rule_or_declaration);
-    if (request->mode() == Fetch::Infrastructure::Request::Mode::CORS && (context.sheet || context.parent_style_sheet_origin_clean.has_value()))
-        request->set_referrer(context.url);
+    auto [sheet, base_url] = style_resource_base_url(css_rule_or_declaration);
+    if (request->mode() == Fetch::Infrastructure::Request::Mode::CORS && sheet)
+        request->set_referrer(base_url);
 
     // 7. If sheet’s origin-clean flag is set, set req’s initiator type to "css". [CSSOM]
-    if (context.sheet || context.parent_style_sheet_origin_clean.has_value()) {
-        if (context.parent_style_sheet_origin_clean.value_or(false))
+    if (sheet) {
+        if (sheet->is_origin_clean())
             request->set_initiator_type(Fetch::Infrastructure::Request::InitiatorType::CSS);
     } else {
         // AD-HOC: If the resource is not associated with a stylesheet, we must still set an initiator type in order
@@ -141,19 +130,17 @@ GC::Ptr<Fetch::Infrastructure::FetchController> fetch_a_style_resource(StyleReso
         return {};
 
     auto& environment_settings = *css_rule_or_declaration.environment_settings_object;
+    auto& vm = environment_settings.vm();
 
     Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
     fetch_algorithms_input.process_response_consume_body = move(process_response);
 
-    return Fetch::Fetching::fetch(environment_settings.realm(), *request, Fetch::Infrastructure::FetchAlgorithms::create(move(fetch_algorithms_input)));
+    return Fetch::Fetching::fetch(environment_settings.realm(), *request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
 }
 
 // https://drafts.csswg.org/css-images-4/#fetch-an-external-image-for-a-stylesheet
 GC::Ptr<HTML::SharedResourceRequest> fetch_an_external_image_for_a_stylesheet(StyleResourceURL const& url_value, RuleOrDeclaration declaration, DOM::Document& document)
 {
-    if (!ResourceLoader::is_initialized())
-        return {};
-
     // To fetch an external image for a stylesheet, given a <url> url and a CSS declaration block declaration, fetch a
     // style resource given url, with ruleOrDeclaration being declaration, destination "image", CORS mode "no-cors",
     // and processResponse being the following steps given response res and null, failure or a byte stream byteStream:
@@ -166,10 +153,22 @@ GC::Ptr<HTML::SharedResourceRequest> fetch_an_external_image_for_a_stylesheet(St
     if (!request)
         return {};
 
-    auto shared_resource_request = HTML::SharedResourceRequest::get_or_create(document, request->url());
+    auto& realm = document.realm();
+
+    auto shared_resource_request = HTML::SharedResourceRequest::get_or_create(realm, document.page(), request->url());
+    shared_resource_request->add_callbacks(
+        [&document, weak_document = GC::Weak { document }] {
+            if (!weak_document)
+                return;
+
+            if (auto navigable = document.navigable()) {
+                document.notify_css_background_image_loaded();
+            }
+        },
+        nullptr);
 
     if (shared_resource_request->needs_fetching())
-        shared_resource_request->fetch_resource(*request);
+        shared_resource_request->fetch_resource(realm, *request);
 
     return shared_resource_request;
 }

@@ -8,18 +8,17 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/TypedArray.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/DOM/IDLEventListener.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/MessageEvent.h>
 #include <LibWeb/HTML/MessagePort.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
+#include <LibWeb/HTML/StructuredSerializeOptions.h>
 #include <LibWeb/Streams/AbstractOperations.h>
-#include <LibWeb/Streams/BindingsGlue.h>
 #include <LibWeb/Streams/QueuingStrategy.h>
 #include <LibWeb/Streams/ReadableStream.h>
 #include <LibWeb/Streams/ReadableStreamDefaultController.h>
@@ -27,10 +26,10 @@
 #include <LibWeb/Streams/WritableStream.h>
 #include <LibWeb/Streams/WritableStreamDefaultController.h>
 #include <LibWeb/Streams/WritableStreamOperations.h>
+#include <LibWeb/WebIDL/AbstractOperations.h>
 #include <LibWeb/WebIDL/Buffers.h>
 #include <LibWeb/WebIDL/CallbackType.h>
 #include <LibWeb/WebIDL/DOMException.h>
-#include <LibWeb/WebIDL/ExceptionOrUtils.h>
 
 namespace Web::Streams {
 
@@ -46,38 +45,25 @@ WebIDL::ExceptionOr<double> extract_high_water_mark(QueuingStrategy const& strat
 
     // 3. If highWaterMark is NaN or highWaterMark < 0, throw a RangeError exception.
     if (isnan(high_water_mark) || high_water_mark < 0)
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Invalid value for high water mark"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Invalid value for high water mark"sv };
 
     // 4. Return highWaterMark.
     return high_water_mark;
 }
 
 // https://streams.spec.whatwg.org/#make-size-algorithm-from-size-function
-GC::Ref<SizeAlgorithm> extract_size_algorithm(JS::VM&, QueuingStrategy const& strategy)
+GC::Ref<SizeAlgorithm> extract_size_algorithm(JS::VM& vm, QueuingStrategy const& strategy)
 {
     // 1. If strategy["size"] does not exist, return an algorithm that returns 1.
     if (!strategy.size)
-        return GC::create_function(GC::Heap::the(), [](JS::Value) { return JS::normal_completion(JS::Value(1)); });
+        return GC::create_function(vm.heap(), [](JS::Value) { return JS::normal_completion(JS::Value(1)); });
 
     // 2. Return an algorithm that performs the following steps, taking a chunk argument:
-    return GC::create_function(GC::Heap::the(), [size = strategy.size](JS::Value chunk) {
+    return GC::create_function(vm.heap(), [size = strategy.size](JS::Value chunk) {
         // 1. Return the result of invoking strategy["size"] with argument list « chunk ».
-        return Bindings::invoke_queuing_strategy_size_callback(*size, chunk);
+        return WebIDL::invoke_callback(*size, {}, { { chunk } });
     });
 }
-
-}
-
-namespace Web::Bindings {
-
-JS::Completion invoke_queuing_strategy_size_callback(WebIDL::CallbackType& callback, JS::Value chunk)
-{
-    return WebIDL::invoke_callback(callback, {}, { { chunk } });
-}
-
-}
-
-namespace Web::Streams {
 
 struct PromiseHolder : public JS::Cell {
     GC_CELL(PromiseHolder, JS::Cell);
@@ -99,19 +85,18 @@ struct PromiseHolder : public JS::Cell {
 
 GC_DEFINE_ALLOCATOR(PromiseHolder);
 
-static void add_message_event_listener(JS::Realm& realm, HTML::MessagePort& port, Utf16FlyString const& name, Function<void(JS::VM&, HTML::MessageEvent const&)> handler)
+static void add_message_event_listener(JS::Realm& realm, HTML::MessagePort& port, FlyString const& name, Function<void(JS::VM&, HTML::MessageEvent const&)> handler)
 {
-    auto behavior = [handler = GC::create_function(GC::Heap::the(), move(handler))](JS::VM& vm) {
-        auto* message_event = Bindings::impl_from<HTML::MessageEvent>(&vm.argument(0).as_object());
-        VERIFY(message_event);
-        handler->function()(vm, *message_event);
+    auto behavior = [handler = GC::create_function(realm.heap(), move(handler))](JS::VM& vm) {
+        auto& message_event = vm.argument(0).as<HTML::MessageEvent>();
+        handler->function()(vm, message_event);
 
         return JS::js_undefined();
     };
 
     auto function = JS::NativeFunction::create(realm, move(behavior), 1, Utf16FlyString {}, &realm);
-    auto callback = GC::Heap::the().allocate<WebIDL::CallbackType>(function, realm);
-    auto listener = DOM::IDLEventListener::create(callback);
+    auto callback = realm.heap().allocate<WebIDL::CallbackType>(function, realm);
+    auto listener = DOM::IDLEventListener::create(realm, callback);
 
     port.add_event_listener_without_options(name, listener);
 }
@@ -132,7 +117,7 @@ WebIDL::ExceptionOr<void> pack_and_post_message(JS::Realm& realm, HTML::MessageP
     auto message = JS::Object::create(realm, nullptr);
 
     // 2. Perform ! CreateDataProperty(message, "type", type).
-    MUST(message->create_data_property(vm.names.type, JS::PrimitiveString::create(vm, Utf16String::from_ascii_without_validation(type.bytes()))));
+    MUST(message->create_data_property(vm.names.type, JS::PrimitiveString::create(vm, type)));
 
     // 3. Perform ! CreateDataProperty(message, "value", value).
     MUST(message->create_data_property(vm.names.value, value));
@@ -141,10 +126,10 @@ WebIDL::ExceptionOr<void> pack_and_post_message(JS::Realm& realm, HTML::MessageP
     auto target_port = port.entangled_port();
 
     // 5. Let options be «[ "transfer" → « » ]».
-    HTML::StructuredSerializeOptions options;
+    HTML::StructuredSerializeOptions options { .transfer = {} };
 
     // 6. Run the message port post message steps providing targetPort, message, and options.
-    return port.message_port_post_message_steps(realm, target_port, message, options);
+    return port.message_port_post_message_steps(target_port, message, options);
 }
 
 // https://streams.spec.whatwg.org/#abstract-opdef-packandpostmessagehandlingerror
@@ -155,7 +140,7 @@ WebIDL::ExceptionOr<void> pack_and_post_message_handling_error(JS::Realm& realm,
 
     // 2. If result is an abrupt completion,
     if (result.is_exception()) {
-        auto error = WebIDL::exception_to_throw_completion(realm.vm(), realm, result.release_error());
+        auto error = Bindings::exception_to_throw_completion(realm.vm(), result.release_error());
 
         // 1. Perform ! CrossRealmTransformSendError(port, result.[[Value]]).
         cross_realm_transform_send_error(realm, port, error.value());
@@ -168,17 +153,15 @@ WebIDL::ExceptionOr<void> pack_and_post_message_handling_error(JS::Realm& realm,
 // https://streams.spec.whatwg.org/#abstract-opdef-setupcrossrealmtransformreadable
 void set_up_cross_realm_transform_readable(JS::Realm& realm, ReadableStream& stream, HTML::MessagePort& port)
 {
-    stream.set_realm(realm);
-
     // 1. Perform ! InitializeReadableStream(stream).
     initialize_readable_stream(stream);
 
     // 2. Let controller be a new ReadableStreamDefaultController.
-    auto controller = GC::Heap::the().allocate<ReadableStreamDefaultController>();
+    auto controller = realm.create<ReadableStreamDefaultController>(realm);
 
     // 3. Add a handler for port’s message event with the following steps:
     add_message_event_listener(realm, port, HTML::EventNames::message,
-        [&realm, &port, controller](JS::VM& vm, HTML::MessageEvent const& message) {
+        [&port, controller](JS::VM& vm, HTML::MessageEvent const& message) {
             // 1. Let data be the data of the message.
             auto data = message.data();
 
@@ -192,12 +175,12 @@ void set_up_cross_realm_transform_readable(JS::Realm& realm, ReadableStream& str
             auto value = MUST(data.get(vm, vm.names.value));
 
             // 5. Assert: type is a String.
-            auto type_string = type.as_string().utf16_string_view();
+            auto type_string = type.as_string().utf8_string_view();
 
             // 6. If type is "chunk",
             if (type_string == "chunk"sv) {
                 // 1. Perform ! ReadableStreamDefaultControllerEnqueue(controller, value).
-                MUST(readable_stream_default_controller_enqueue(realm, controller, value));
+                MUST(readable_stream_default_controller_enqueue(controller, value));
             }
             // 7. Otherwise, if type is "close",
             else if (type_string == "close"sv) {
@@ -221,14 +204,13 @@ void set_up_cross_realm_transform_readable(JS::Realm& realm, ReadableStream& str
     add_message_event_listener(realm, port, HTML::EventNames::messageerror,
         [&realm, &port, controller](JS::VM&, HTML::MessageEvent const&) {
             // 1. Let error be a new "DataCloneError" DOMException.
-            auto error = WebIDL::DataCloneError::create("Unable to transfer stream"_utf16);
-            auto error_value = throw_completion(realm, error).value();
+            auto error = WebIDL::DataCloneError::create(realm, "Unable to transfer stream"_utf16);
 
             // 2. Perform ! CrossRealmTransformSendError(port, error).
-            cross_realm_transform_send_error(realm, port, error_value);
+            cross_realm_transform_send_error(realm, port, error);
 
             // 3. Perform ! ReadableStreamDefaultControllerError(controller, error).
-            readable_stream_default_controller_error(controller, error_value);
+            readable_stream_default_controller_error(controller, error);
 
             // 4. Disentangle port.
             port.disentangle();
@@ -238,12 +220,12 @@ void set_up_cross_realm_transform_readable(JS::Realm& realm, ReadableStream& str
     port.enable();
 
     // 6. Let startAlgorithm be an algorithm that returns undefined.
-    auto start_algorithm = GC::create_function(GC::Heap::the(), []() -> WebIDL::ExceptionOr<JS::Value> {
+    auto start_algorithm = GC::create_function(realm.heap(), []() -> WebIDL::ExceptionOr<JS::Value> {
         return JS::js_undefined();
     });
 
     // 7. Let pullAlgorithm be the following steps:
-    auto pull_algorithm = GC::create_function(GC::Heap::the(), [&realm, &port]() -> GC::Ref<WebIDL::Promise> {
+    auto pull_algorithm = GC::create_function(realm.heap(), [&realm, &port]() -> GC::Ref<WebIDL::Promise> {
         // 1. Perform ! PackAndPostMessage(port, "pull", undefined).
         MUST(pack_and_post_message(realm, port, "pull"sv, JS::js_undefined()));
 
@@ -252,7 +234,7 @@ void set_up_cross_realm_transform_readable(JS::Realm& realm, ReadableStream& str
     });
 
     // 8. Let cancelAlgorithm be the following steps, taking a reason argument:
-    auto cancel_algorithm = GC::create_function(GC::Heap::the(), [&realm, &port](JS::Value reason) -> GC::Ref<WebIDL::Promise> {
+    auto cancel_algorithm = GC::create_function(realm.heap(), [&realm, &port](JS::Value reason) -> GC::Ref<WebIDL::Promise> {
         // 1. Let result be PackAndPostMessageHandlingError(port, "error", reason).
         auto result = pack_and_post_message_handling_error(realm, port, "error"sv, reason);
 
@@ -268,12 +250,12 @@ void set_up_cross_realm_transform_readable(JS::Realm& realm, ReadableStream& str
     });
 
     // 9. Let sizeAlgorithm be an algorithm that returns 1.
-    auto size_algorithm = GC::create_function(GC::Heap::the(), [](JS::Value) -> JS::Completion {
+    auto size_algorithm = GC::create_function(realm.heap(), [](JS::Value) -> JS::Completion {
         return JS::Value { 1 };
     });
 
     // 10. Perform ! SetUpReadableStreamDefaultController(stream, controller, startAlgorithm, pullAlgorithm, cancelAlgorithm, 0, sizeAlgorithm).
-    MUST(set_up_readable_stream_default_controller(realm, stream, controller, start_algorithm, pull_algorithm, cancel_algorithm, 0, size_algorithm));
+    MUST(set_up_readable_stream_default_controller(stream, controller, start_algorithm, pull_algorithm, cancel_algorithm, 0, size_algorithm));
 }
 
 // https://streams.spec.whatwg.org/#abstract-opdef-setupcrossrealmtransformwritable
@@ -283,14 +265,14 @@ void set_up_cross_realm_transform_writable(JS::Realm& realm, WritableStream& str
     initialize_writable_stream(stream);
 
     // 2. Let controller be a new WritableStreamDefaultController.
-    auto controller = GC::Heap::the().allocate<WritableStreamDefaultController>();
+    auto controller = realm.create<WritableStreamDefaultController>(realm);
 
     // 3. Let backpressurePromise be a new promise.
-    auto backpressure_promise = GC::Heap::the().allocate<PromiseHolder>(WebIDL::create_promise(realm));
+    auto backpressure_promise = realm.heap().allocate<PromiseHolder>(WebIDL::create_promise(realm));
 
     // 4. Add a handler for port’s message event with the following steps:
     add_message_event_listener(realm, port, HTML::EventNames::message,
-        [controller, backpressure_promise](JS::VM& vm, HTML::MessageEvent const& message) {
+        [&realm, controller, backpressure_promise](JS::VM& vm, HTML::MessageEvent const& message) {
             // 1. Let data be the data of the message.
             auto data = message.data();
 
@@ -304,14 +286,14 @@ void set_up_cross_realm_transform_writable(JS::Realm& realm, WritableStream& str
             auto value = MUST(data.get(vm, vm.names.value));
 
             // 5. Assert: type is a String.
-            auto type_string = type.as_string().utf16_string_view();
+            auto type_string = type.as_string().utf8_string_view();
 
             // 6. If type is "pull",
             if (type_string == "pull"sv) {
                 // 1. If backpressurePromise is not undefined,
                 if (backpressure_promise->promise) {
                     // 1. Resolve backpressurePromise with undefined.
-                    WebIDL::resolve_promise(*backpressure_promise->promise);
+                    WebIDL::resolve_promise(realm, *backpressure_promise->promise, JS::js_undefined());
 
                     // 2. Set backpressurePromise to undefined.
                     backpressure_promise->promise = nullptr;
@@ -325,7 +307,7 @@ void set_up_cross_realm_transform_writable(JS::Realm& realm, WritableStream& str
                 // 2. If backpressurePromise is not undefined,
                 if (backpressure_promise->promise) {
                     // 1. Resolve backpressurePromise with undefined.
-                    WebIDL::resolve_promise(*backpressure_promise->promise);
+                    WebIDL::resolve_promise(realm, *backpressure_promise->promise, JS::js_undefined());
 
                     // 2. Set backpressurePromise to undefined.
                     backpressure_promise->promise = nullptr;
@@ -337,14 +319,13 @@ void set_up_cross_realm_transform_writable(JS::Realm& realm, WritableStream& str
     add_message_event_listener(realm, port, HTML::EventNames::messageerror,
         [&realm, &port, controller](JS::VM&, HTML::MessageEvent const&) {
             // 1. Let error be a new "DataCloneError" DOMException
-            auto error = WebIDL::DataCloneError::create("Unable to transfer stream"_utf16);
-            auto error_value = throw_completion(realm, error).value();
+            auto error = WebIDL::DataCloneError::create(realm, "Unable to transfer stream"_utf16);
 
             // 2. Perform ! CrossRealmTransformSendError(port, error).
-            cross_realm_transform_send_error(realm, port, error_value);
+            cross_realm_transform_send_error(realm, port, error);
 
             // 3. Perform ! WritableStreamDefaultControllerErrorIfNeeded(controller, error).
-            writable_stream_default_controller_error_if_needed(controller, error_value);
+            writable_stream_default_controller_error_if_needed(controller, error);
 
             // 4. Disentangle port.
             port.disentangle();
@@ -354,12 +335,12 @@ void set_up_cross_realm_transform_writable(JS::Realm& realm, WritableStream& str
     port.enable();
 
     // 7. Let startAlgorithm be an algorithm that returns undefined.
-    auto start_algorithm = GC::create_function(GC::Heap::the(), []() -> WebIDL::ExceptionOr<JS::Value> {
+    auto start_algorithm = GC::create_function(realm.heap(), []() -> WebIDL::ExceptionOr<JS::Value> {
         return JS::js_undefined();
     });
 
     // 8. Let writeAlgorithm be the following steps, taking a chunk argument:
-    auto write_algorithm = GC::create_function(GC::Heap::the(), [&realm, &port, backpressure_promise](JS::Value chunk) -> GC::Ref<WebIDL::Promise> {
+    auto write_algorithm = GC::create_function(realm.heap(), [&realm, &port, backpressure_promise](JS::Value chunk) -> GC::Ref<WebIDL::Promise> {
         // 1. If backpressurePromise is undefined, set backpressurePromise to a promise resolved with undefined.
         if (!backpressure_promise->promise)
             backpressure_promise->promise = WebIDL::create_resolved_promise(realm, JS::js_undefined());
@@ -368,11 +349,11 @@ void set_up_cross_realm_transform_writable(JS::Realm& realm, WritableStream& str
         //        a promise on-the-fly. But in order for the error from PackAndPostMessageHandlingError to be propagated
         //        back to the original ReadableStream, we must actually fulfill the promise created from reacting to the
         //        backpressure promise. This is explicitly tested by WPT.
-        auto reaction_promise = GC::Heap::the().allocate<PromiseHolder>(nullptr);
+        auto reaction_promise = realm.heap().allocate<PromiseHolder>(nullptr);
 
         // 2. Return the result of reacting to backpressurePromise with the following fulfillment steps:
         reaction_promise->promise = WebIDL::upon_fulfillment(*backpressure_promise->promise,
-            GC::create_function(GC::Heap::the(), [&realm, &port, backpressure_promise, reaction_promise, chunk](JS::Value) -> WebIDL::ExceptionOr<JS::Value> {
+            GC::create_function(realm.heap(), [&realm, &port, backpressure_promise, reaction_promise, chunk](JS::Value) -> WebIDL::ExceptionOr<JS::Value> {
                 // 1. Set backpressurePromise to a new promise.
                 backpressure_promise->promise = WebIDL::create_promise(realm);
 
@@ -385,12 +366,12 @@ void set_up_cross_realm_transform_writable(JS::Realm& realm, WritableStream& str
                     port.disentangle();
 
                     // 2. Return a promise rejected with result.[[Value]].
-                    auto error = WebIDL::exception_to_throw_completion(realm.vm(), realm, result.release_error());
-                    WebIDL::reject_promise(*reaction_promise->promise, error.value());
+                    auto error = Bindings::exception_to_throw_completion(realm.vm(), result.release_error());
+                    WebIDL::reject_promise(realm, *reaction_promise->promise, error.value());
                 }
                 // 4. Otherwise, return a promise resolved with undefined.
                 else {
-                    WebIDL::resolve_promise(*reaction_promise->promise);
+                    WebIDL::resolve_promise(realm, *reaction_promise->promise, JS::js_undefined());
                 }
 
                 return reaction_promise->promise;
@@ -400,7 +381,7 @@ void set_up_cross_realm_transform_writable(JS::Realm& realm, WritableStream& str
     });
 
     // 9. Let closeAlgorithm be the following steps:
-    auto close_algorithm = GC::create_function(GC::Heap::the(), [&realm, &port]() -> GC::Ref<WebIDL::Promise> {
+    auto close_algorithm = GC::create_function(realm.heap(), [&realm, &port]() -> GC::Ref<WebIDL::Promise> {
         // 1. Perform ! PackAndPostMessage(port, "close", undefined).
         MUST(pack_and_post_message(realm, port, "close"sv, JS::js_undefined()));
 
@@ -412,7 +393,7 @@ void set_up_cross_realm_transform_writable(JS::Realm& realm, WritableStream& str
     });
 
     // 10. Let abortAlgorithm be the following steps, taking a reason argument:
-    auto abort_algorithm = GC::create_function(GC::Heap::the(), [&realm, &port](JS::Value reason) -> GC::Ref<WebIDL::Promise> {
+    auto abort_algorithm = GC::create_function(realm.heap(), [&realm, &port](JS::Value reason) -> GC::Ref<WebIDL::Promise> {
         // 1. Let result be PackAndPostMessageHandlingError(port, "error", reason).
         auto result = pack_and_post_message_handling_error(realm, port, "error"sv, reason);
 
@@ -428,12 +409,12 @@ void set_up_cross_realm_transform_writable(JS::Realm& realm, WritableStream& str
     });
 
     // 11. Let sizeAlgorithm be an algorithm that returns 1.
-    auto size_algorithm = GC::create_function(GC::Heap::the(), [](JS::Value) -> JS::Completion {
+    auto size_algorithm = GC::create_function(realm.heap(), [](JS::Value) -> JS::Completion {
         return JS::Value { 1 };
     });
 
     // 12. Perform ! SetUpWritableStreamDefaultController(stream, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, 1, sizeAlgorithm).
-    MUST(set_up_writable_stream_default_controller(realm, stream, controller, start_algorithm, write_algorithm, close_algorithm, abort_algorithm, 1, size_algorithm));
+    MUST(set_up_writable_stream_default_controller(stream, controller, start_algorithm, write_algorithm, close_algorithm, abort_algorithm, 1, size_algorithm));
 }
 
 // https://streams.spec.whatwg.org/#can-transfer-array-buffer
@@ -483,16 +464,17 @@ WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> transfer_array_buffer(JS::Realm& r
 
     // 2. Let arrayBufferData be O.[[ArrayBufferData]].
     // 3. Let arrayBufferByteLength be O.[[ArrayBufferByteLength]].
+    auto array_buffer = buffer.buffer();
+
     // 4. Perform ? DetachArrayBuffer(O).
-    // NB: We steal the underlying data block and detach atomically so the transfer is zero-copy.
-    auto block = TRY(buffer.detach_and_take_data_block(vm));
+    TRY(JS::detach_array_buffer(vm, buffer));
 
     // 5. Return a new ArrayBuffer object, created in the current Realm, whose [[ArrayBufferData]] internal slot value is arrayBufferData and whose [[ArrayBufferByteLength]] internal slot value is arrayBufferByteLength.
-    return JS::ArrayBuffer::create(realm, move(block));
+    return JS::ArrayBuffer::create(realm, move(array_buffer));
 }
 
 // https://streams.spec.whatwg.org/#abstract-opdef-cloneasuint8array
-WebIDL::ExceptionOr<JS::Value> clone_as_uint8_array(JS::Realm& realm, WebIDL::ArrayBufferView view)
+WebIDL::ExceptionOr<JS::Value> clone_as_uint8_array(JS::Realm& realm, WebIDL::ArrayBufferView& view)
 {
     auto& vm = realm.vm();
 

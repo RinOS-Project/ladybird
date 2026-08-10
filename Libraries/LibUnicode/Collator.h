@@ -7,8 +7,7 @@
 #pragma once
 
 #include <AK/NonnullOwnPtr.h>
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
+#include <AK/StringView.h>
 
 namespace Unicode {
 
@@ -16,8 +15,8 @@ enum class Usage {
     Sort,
     Search,
 };
-Usage usage_from_string(Utf16View);
-Utf16String usage_to_string(Usage);
+Usage usage_from_string(StringView);
+StringView usage_to_string(Usage);
 
 enum class Sensitivity {
     Base,
@@ -25,23 +24,23 @@ enum class Sensitivity {
     Case,
     Variant,
 };
-Sensitivity sensitivity_from_string(Utf16View);
-Utf16String sensitivity_to_string(Sensitivity);
+Sensitivity sensitivity_from_string(StringView);
+StringView sensitivity_to_string(Sensitivity);
 
 enum class CaseFirst {
     Upper,
     Lower,
     False,
 };
-CaseFirst case_first_from_string(Utf16View);
-Utf16String case_first_to_string(CaseFirst);
+CaseFirst case_first_from_string(StringView);
+StringView case_first_to_string(CaseFirst);
 
 class Collator {
 public:
     static NonnullOwnPtr<Collator> create(
-        Utf16View locale,
+        StringView locale,
         Usage,
-        Utf16View collation,
+        StringView collation,
         Optional<Sensitivity>,
         CaseFirst,
         bool numeric,

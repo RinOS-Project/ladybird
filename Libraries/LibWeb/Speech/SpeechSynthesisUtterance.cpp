@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SpeechSynthesisUtterancePrototype.h>
 #include <LibWeb/Speech/SpeechSynthesisUtterance.h>
 #include <LibWeb/Speech/SpeechSynthesisVoice.h>
 
@@ -12,18 +14,24 @@ namespace Web::Speech {
 
 GC_DEFINE_ALLOCATOR(SpeechSynthesisUtterance);
 
-GC::Ref<SpeechSynthesisUtterance> SpeechSynthesisUtterance::create(Utf16String const& text)
+WebIDL::ExceptionOr<GC::Ref<SpeechSynthesisUtterance>> SpeechSynthesisUtterance::construct_impl(JS::Realm& realm, String const& text)
 {
-    return GC::Heap::the().allocate<SpeechSynthesisUtterance>(text);
+    return realm.create<SpeechSynthesisUtterance>(realm, text);
 }
 
-SpeechSynthesisUtterance::SpeechSynthesisUtterance(Utf16String const& text)
-    : DOM::EventTarget()
+SpeechSynthesisUtterance::SpeechSynthesisUtterance(JS::Realm& realm, String const& text)
+    : DOM::EventTarget(realm)
     , m_text(text)
 {
 }
 
 SpeechSynthesisUtterance::~SpeechSynthesisUtterance() = default;
+
+void SpeechSynthesisUtterance::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SpeechSynthesisUtterance);
+    Base::initialize(realm);
+}
 
 void SpeechSynthesisUtterance::visit_edges(Cell::Visitor& visitor)
 {

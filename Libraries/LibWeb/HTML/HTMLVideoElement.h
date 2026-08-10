@@ -8,7 +8,6 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <LibGfx/DecodedImageFrame.h>
 #include <LibGfx/Forward.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/Forward.h>
@@ -23,7 +22,7 @@ struct VideoFrame {
 };
 
 class HTMLVideoElement final : public HTMLMediaElement {
-    WEB_WRAPPABLE(HTMLVideoElement, HTMLMediaElement);
+    WEB_PLATFORM_OBJECT(HTMLVideoElement, HTMLMediaElement);
     GC_DECLARE_ALLOCATOR(HTMLVideoElement);
 
 public:
@@ -34,13 +33,11 @@ public:
     Layout::VideoBox* layout_node();
     Layout::VideoBox const* layout_node() const;
 
-    void set_intrinsic_video_dimensions(Optional<Gfx::Size<u32>>);
+    void set_video_width(u32 video_width) { m_video_width = video_width; }
     u32 video_width() const;
-    u32 video_height() const;
 
-    virtual void update_natural_dimensions() override;
-    Optional<Gfx::Size<u32>> natural_media_size() const;
-    Optional<CSSPixelSize> natural_element_size() const;
+    void set_video_height(u32 video_height) { m_video_height = video_height; }
+    u32 video_height() const;
 
     RefPtr<Gfx::Bitmap> const& poster_frame() const { return m_poster_frame; }
 
@@ -59,41 +56,34 @@ public:
     };
     Representation current_representation() const;
 
-    Optional<Gfx::DecodedImageFrame> current_decoded_image_frame() const;
+    // FIXME: This is a hack for images used as CanvasImageSource. Do something more elegant.
+    RefPtr<Gfx::ImmutableBitmap> bitmap() const;
 
 private:
     HTMLVideoElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void finalize() override;
     virtual void visit_edges(Cell::Visitor&) override;
-    virtual void adopted_from(DOM::Document&) override;
 
-    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
+    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
 
     // https://html.spec.whatwg.org/multipage/media.html#the-video-element:dimension-attributes
     virtual bool supports_dimension_attributes() const override { return true; }
 
-    virtual bool is_html_video_element() const override { return true; }
+    virtual GC::Ptr<Layout::Node> create_layout_node(GC::Ref<CSS::ComputedProperties>) override;
 
-    virtual RefPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::ComputedValues const>) override;
-
-    WebIDL::ExceptionOr<void> determine_element_poster_frame(Optional<Utf16String> const& poster);
+    WebIDL::ExceptionOr<void> determine_element_poster_frame(Optional<String> const& poster);
 
     GC::Ptr<HTML::VideoTrack> m_video_track;
     VideoFrame m_current_frame;
     RefPtr<Gfx::Bitmap> m_poster_frame;
 
-    Optional<Gfx::Size<u32>> m_intrinsic_video_dimensions;
-    Optional<CSSPixelSize> m_natural_dimensions;
+    u32 m_video_width { 0 };
+    u32 m_video_height { 0 };
 
     GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
     Optional<DOM::DocumentLoadEventDelayer> m_load_event_delayer;
 };
-
-}
-
-namespace Web::DOM {
-
-template<>
-inline bool Node::fast_is<HTML::HTMLVideoElement>() const { return is_html_video_element(); }
 
 }

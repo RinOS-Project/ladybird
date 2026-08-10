@@ -1,3 +1,6 @@
+#import <DOM/Event.idl>
+#import <CookieStore/CookieStore.idl>
+
 dictionary CookieChangeEventInit : EventInit {
     CookieList changed;
     CookieList deleted;

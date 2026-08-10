@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/HashTable.h>
 #include <AK/TypeCasts.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/WeakMapPrototype.h>
@@ -53,7 +54,7 @@ JS_DEFINE_NATIVE_FUNCTION(WeakMapPrototype::delete_)
     //         ii. Set p.[[Value]] to empty.
     //         iii. Return true.
     // 5. Return false.
-    return Value(weak_map->weak_map_remove(&key.as_cell()));
+    return Value(weak_map->values().remove(&key.as_cell()));
 }
 
 // 24.3.3.3 WeakMap.prototype.get ( key ), https://tc39.es/ecma262/#sec-weakmap.prototype.get
@@ -71,8 +72,10 @@ JS_DEFINE_NATIVE_FUNCTION(WeakMapPrototype::get)
 
     // 4. For each Record { [[Key]], [[Value]] } p of M.[[WeakMapData]], do
     //     a. If p.[[Key]] is not empty and SameValue(p.[[Key]], key) is true, return p.[[Value]].
-    if (auto result = weak_map->weak_map_get(&key.as_cell()); result.has_value())
-        return *result;
+    auto& values = weak_map->values();
+    auto result = values.find(&key.as_cell());
+    if (result != values.end())
+        return result->value;
 
     // 5. Return undefined.
     return js_undefined();
@@ -92,15 +95,17 @@ JS_DEFINE_NATIVE_FUNCTION(WeakMapPrototype::get_or_insert)
     if (!can_be_held_weakly(key))
         return vm.throw_completion<TypeError>(ErrorType::CannotBeHeldWeakly, key);
 
+    auto& values = weak_map->values();
+
     // 4. For each Record { [[Key]], [[Value]] } p of M.[[WeakMapData]], do
-    if (auto result = weak_map->weak_map_get(&key.as_cell()); result.has_value()) {
+    if (auto result = values.find(&key.as_cell()); result != values.end()) {
         // a. If p.[[Key]] is not empty and SameValue(p.[[Key]], key) is true, return p.[[Value]].
-        return *result;
+        return result->value;
     }
 
     // 5. Let p be the Record { [[Key]]: key, [[Value]]: value }.
     // 6. Append p to M.[[WeakMapData]].
-    weak_map->weak_map_set(&key.as_cell(), value);
+    values.set(&key.as_cell(), value);
 
     // 7. Return value.
     return value;
@@ -124,10 +129,12 @@ JS_DEFINE_NATIVE_FUNCTION(WeakMapPrototype::get_or_insert_computed)
     if (!callback.is_function())
         return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback);
 
+    auto& values = weak_map->values();
+
     // 5. For each Record { [[Key]], [[Value]] } p of M.[[WeakMapData]], do
-    if (auto result = weak_map->weak_map_get(&key.as_cell()); result.has_value()) {
+    if (auto result = values.find(&key.as_cell()); result != values.end()) {
         // a. If p.[[Key]] is not empty and SameValue(p.[[Key]], key) is true, return p.[[Value]].
-        return *result;
+        return result->value;
     }
 
     // 6. Let value be ? Call(callback, undefined, « key »).
@@ -141,7 +148,7 @@ JS_DEFINE_NATIVE_FUNCTION(WeakMapPrototype::get_or_insert_computed)
     //         ii. Return value.
     // 9. Let p be the Record { [[Key]]: key, [[Value]]: value }.
     // 10. Append p to M.[[WeakMapData]].
-    weak_map->weak_map_set(&key.as_cell(), value);
+    values.set(&key.as_cell(), value);
 
     // 11. Return value.
     return value;
@@ -162,7 +169,9 @@ JS_DEFINE_NATIVE_FUNCTION(WeakMapPrototype::has)
 
     // 4. For each Record { [[Key]], [[Value]] } p of M.[[WeakMapData]], do
     //     a. If p.[[Key]] is not empty and SameValue(p.[[Key]], key) is true, return true.
-    if (weak_map->weak_map_has(&key.as_cell()))
+    auto& values = weak_map->values();
+    auto result = values.find(&key.as_cell());
+    if (result != values.end())
         return Value(true);
 
     // 5. Return false.
@@ -189,7 +198,7 @@ JS_DEFINE_NATIVE_FUNCTION(WeakMapPrototype::set)
     //        ii. Return M.
     // 5. Let p be the Record { [[Key]]: key, [[Value]]: value }.
     // 6. Append p to M.[[WeakMapData]].
-    weak_map->weak_map_set(&key.as_cell(), value);
+    weak_map->values().set(&key.as_cell(), value);
 
     // 7. Return M.
     return weak_map;

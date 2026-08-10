@@ -1,3 +1,0 @@
-hit-before=second
-hit-after=second
-PASS

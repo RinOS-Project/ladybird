@@ -6,36 +6,34 @@
 
 #pragma once
 
-#include <AK/HashTable.h>
-#include <AK/Utf16FlyString.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/Export.h>
+#include <LibJS/Runtime/Set.h>
+#include <LibJS/Runtime/SetIterator.h>
+#include <LibWeb/Bindings/CustomStateSetPrototype.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/custom-elements.html#customstateset
-class CustomStateSet final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(CustomStateSet, Bindings::GCAllocatedWrappable);
+class CustomStateSet final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(CustomStateSet, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(CustomStateSet);
 
 public:
-    [[nodiscard]] static GC::Ref<CustomStateSet> create(GC::Ref<DOM::Element>);
+    [[nodiscard]] static GC::Ref<CustomStateSet> create(JS::Realm&, GC::Ref<DOM::Element>);
     virtual ~CustomStateSet() override = default;
 
-    size_t set_size() const { return m_states.size(); }
-    OrderedHashTable<Utf16FlyString> const& states() const { return m_states; }
-    bool has_state(Utf16FlyString const&) const;
-    void add_state(Utf16FlyString const&);
-    bool remove_state(Utf16FlyString const&);
-    void clear_states();
-    DOM::Element& element() { return *m_element; }
+    GC::Ref<JS::Set> set_entries() const { return m_set_entries; }
+    bool has_state(FlyString const&) const;
+
+    void on_set_modified_from_js(Badge<Bindings::CustomStateSetPrototype>);
 
 private:
-    CustomStateSet(GC::Ref<DOM::Element>);
+    CustomStateSet(JS::Realm&, GC::Ref<DOM::Element>);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    OrderedHashTable<Utf16FlyString> m_states;
+    GC::Ref<JS::Set> m_set_entries;
     GC::Ref<DOM::Element> m_element;
 };
 

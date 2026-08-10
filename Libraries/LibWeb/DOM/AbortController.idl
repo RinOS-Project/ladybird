@@ -1,3 +1,5 @@
+#import <DOM/AbortSignal.idl>
+
 // https://dom.spec.whatwg.org/#interface-abortcontroller
 [Exposed=*]
 interface AbortController {

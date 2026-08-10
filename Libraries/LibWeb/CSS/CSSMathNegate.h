@@ -12,26 +12,28 @@ namespace Web::CSS {
 
 // https://drafts.css-houdini.org/css-typed-om-1/#cssmathnegate
 class CSSMathNegate final : public CSSMathValue {
-    WEB_WRAPPABLE(CSSMathNegate, CSSMathValue);
+    WEB_PLATFORM_OBJECT(CSSMathNegate, CSSMathValue);
     GC_DECLARE_ALLOCATOR(CSSMathNegate);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSMathNegate> create(NumericType, GC::Ref<CSSNumericValue>);
-    static GC::Ref<CSSMathNegate> create_from_numberish(CSSNumberish);
+    [[nodiscard]] static GC::Ref<CSSMathNegate> create(JS::Realm&, NumericType, GC::Ref<CSSNumericValue>);
+    static GC::Ref<CSSMathNegate> construct_impl(JS::Realm&, CSSNumberish);
 
     virtual ~CSSMathNegate() override;
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
     GC::Ref<CSSNumericValue> value() const;
 
-    virtual void serialize_math_value(Utf16StringBuilder&, Nested, Parens) const override;
+    virtual void serialize_math_value(StringBuilder&, Nested, Parens) const override;
     virtual bool is_equal_numeric_value(GC::Ref<CSSNumericValue> other) const override;
     virtual Optional<SumValue> create_a_sum_value() const override;
 
-    virtual WebIDL::ExceptionOr<CalcNodeRef> create_calculation_node(CalculationContext const&) const override;
+    virtual WebIDL::ExceptionOr<NonnullRefPtr<CalculationNode const>> create_calculation_node(CalculationContext const&) const override;
 
 private:
-    CSSMathNegate(NumericType, GC::Ref<CSSNumericValue>);
+    CSSMathNegate(JS::Realm&, NumericType, GC::Ref<CSSNumericValue>);
     GC::Ref<CSSNumericValue> m_value;
 };
 

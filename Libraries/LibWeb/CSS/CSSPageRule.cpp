@@ -4,50 +4,49 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/CSSPageRulePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSPageRule.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/Serialize.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
-#include <AK/Utf16StringBuilder.h>
-
 namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSPageRule);
 
-GC::Ref<CSSPageRule> CSSPageRule::create(PageSelectorList&& selectors, GC::Ref<CSSPageDescriptors> style, CSSRuleList& rules)
+GC::Ref<CSSPageRule> CSSPageRule::create(JS::Realm& realm, PageSelectorList&& selectors, GC::Ref<CSSPageDescriptors> style, CSSRuleList& rules)
 {
-    return GC::Heap::the().allocate<CSSPageRule>(move(selectors), style, rules);
+    return realm.create<CSSPageRule>(realm, move(selectors), style, rules);
 }
 
-CSSPageRule::CSSPageRule(PageSelectorList&& selectors, GC::Ref<CSSPageDescriptors> style, CSSRuleList& rules)
-    : CSSGroupingRule(rules, Type::Page)
+CSSPageRule::CSSPageRule(JS::Realm& realm, PageSelectorList&& selectors, GC::Ref<CSSPageDescriptors> style, CSSRuleList& rules)
+    : CSSGroupingRule(realm, rules, Type::Page)
     , m_selectors(move(selectors))
     , m_style(style)
 {
     m_style->set_parent_rule(*this);
 }
 
-// https://drafts.csswg.org/cssom/#dom-csspagerule-selectortext
-Utf16String CSSPageRule::selector_text() const
+void CSSPageRule::initialize(JS::Realm& realm)
 {
-    Utf16StringBuilder builder;
-
-    bool first = true;
-    for (auto const& selector : m_selectors) {
-        if (!first)
-            builder.append_ascii(", "sv);
-        first = false;
-        selector.serialize_to(builder);
-    }
-
-    return builder.to_string();
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSPageRule);
+    Base::initialize(realm);
 }
 
 // https://drafts.csswg.org/cssom/#dom-csspagerule-selectortext
-void CSSPageRule::set_selector_text(Utf16View text)
+String CSSPageRule::selector_text() const
+{
+    // The selectorText attribute, on getting, must return the result of serializing the associated selector list.
+
+    // https://www.w3.org/TR/cssom/#serialize-a-group-of-selectors
+    // To serialize a group of selectors serialize each selector in the group of selectors and then serialize a comma-separated list of these serializations.
+    return MUST(String::join(", "sv, m_selectors));
+}
+
+// https://drafts.csswg.org/cssom/#dom-csspagerule-selectortext
+void CSSPageRule::set_selector_text(StringView text)
 {
     // On setting the selectorText attribute these steps must be run:
     // 1. Run the parse a list of CSS page selectors algorithm on the given value.
@@ -61,38 +60,36 @@ void CSSPageRule::set_selector_text(Utf16View text)
 }
 
 // https://drafts.csswg.org/cssom/#ref-for-csspagerule
-Utf16String CSSPageRule::serialized() const
+String CSSPageRule::serialized() const
 {
     auto& descriptors = *m_style;
 
-    Utf16StringBuilder builder;
+    StringBuilder builder;
 
     // AD-HOC: There's no spec for this yet, but Chrome puts declarations before margin rules.
-    builder.append_ascii("@page "sv);
-    if (auto selector = selector_text(); !selector.is_empty()) {
-        builder.append(selector);
-        builder.append_ascii(' ');
-    }
-    builder.append_ascii("{ "sv);
+    builder.append("@page "sv);
+    if (auto selector = selector_text(); !selector.is_empty())
+        builder.appendff("{} ", selector);
+    builder.append("{ "sv);
     if (descriptors.length() > 0) {
         builder.append(descriptors.serialized());
-        builder.append_ascii(' ');
+        builder.append(' ');
     }
     for (size_t i = 0; i < css_rules().length(); i++) {
         auto rule = css_rules().item(i);
-        auto result = rule->serialized();
+        auto result = rule->css_text();
 
         if (result.is_empty())
             continue;
 
         builder.appendff("{} ", result);
     }
-    builder.append_ascii("}"sv);
+    builder.append("}"sv);
 
-    return builder.to_string();
+    return builder.to_string_without_validation();
 }
 
-void CSSPageRule::visit_edges(GC::Cell::Visitor& visitor)
+void CSSPageRule::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_style);
@@ -103,7 +100,7 @@ void CSSPageRule::dump(StringBuilder& builder, int indent_levels) const
     Base::dump(builder, indent_levels);
 
     dump_indent(builder, indent_levels + 1);
-    builder.appendff("Selector: {}\n", selector_text().to_utf8());
+    builder.appendff("Selector: {}\n", selector_text());
     dump_descriptors(builder, descriptors(), indent_levels + 1);
 
     dump_indent(builder, indent_levels + 1);

@@ -1,3 +1,0 @@
-naturalWidth: 2
-naturalHeight: 1
-complete: true

@@ -28,12 +28,29 @@ pub struct RustRegexFlags {
     pub has_indices: bool,
 }
 
-fn compile_pattern(
-    pattern: Vec<char>,
+/// Compile a regex pattern. Returns an opaque handle, or null on error.
+/// On error, writes the error message to `error_out` and `error_len_out`.
+/// The caller must free the error string with `rust_regex_free_error`.
+///
+/// # Safety
+/// `pattern` must be a valid pointer to `pattern_len` bytes of UTF-8.
+/// `error_out` and `error_len_out` must be valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_regex_compile(
+    pattern: *const u8,
+    pattern_len: usize,
     flags: RustRegexFlags,
     error_out: *mut *const u8,
     error_len_out: *mut usize,
 ) -> *mut RustRegex {
+    if pattern.is_null() {
+        return std::ptr::null_mut();
+    }
+    let pattern_bytes = unsafe { slice::from_raw_parts(pattern, pattern_len) };
+    let Ok(pattern_str) = std::str::from_utf8(pattern_bytes) else {
+        return std::ptr::null_mut();
+    };
+
     let flags = Flags {
         global: flags.global,
         ignore_case: flags.ignore_case,
@@ -45,7 +62,7 @@ fn compile_pattern(
         has_indices: flags.has_indices,
     };
 
-    match Regex::compile_chars(pattern, flags) {
+    match Regex::compile(pattern_str, flags) {
         Ok(regex) => Box::into_raw(Box::new(RustRegex(regex))),
         Err(e) => {
             if !error_out.is_null() && !error_len_out.is_null() {
@@ -59,58 +76,6 @@ fn compile_pattern(
             std::ptr::null_mut()
         }
     }
-}
-
-/// Compile a regex pattern. Returns an opaque handle, or null on error.
-/// On error, writes the error message to `error_out` and `error_len_out`.
-/// The caller must free the error string with `rust_regex_free_error`.
-///
-/// # Safety
-/// `pattern` must be a valid pointer to `pattern_len` UTF-16 code units.
-/// `error_out` and `error_len_out` must be valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rust_regex_compile(
-    pattern: *const u16,
-    pattern_len: usize,
-    flags: RustRegexFlags,
-    error_out: *mut *const u8,
-    error_len_out: *mut usize,
-) -> *mut RustRegex {
-    if pattern.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let code_units = unsafe { slice::from_raw_parts(pattern, pattern_len) };
-    let pattern = char::decode_utf16(code_units.iter().copied())
-        .map(|result| result.unwrap_or(char::REPLACEMENT_CHARACTER))
-        .collect();
-
-    compile_pattern(pattern, flags, error_out, error_len_out)
-}
-
-/// Compile an ASCII-only regex pattern. Returns an opaque handle, or null on error.
-/// On error, writes the error message to `error_out` and `error_len_out`.
-/// The caller must free the error string with `rust_regex_free_error`.
-///
-/// # Safety
-/// `pattern` must be a valid pointer to `pattern_len` ASCII bytes.
-/// `error_out` and `error_len_out` must be valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rust_regex_compile_ascii(
-    pattern: *const u8,
-    pattern_len: usize,
-    flags: RustRegexFlags,
-    error_out: *mut *const u8,
-    error_len_out: *mut usize,
-) -> *mut RustRegex {
-    if pattern.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let bytes = unsafe { slice::from_raw_parts(pattern, pattern_len) };
-    let pattern = bytes.iter().map(|byte| *byte as char).collect();
-
-    compile_pattern(pattern, flags, error_out, error_len_out)
 }
 
 /// Free an error string returned by `rust_regex_compile`.
@@ -418,7 +383,10 @@ pub unsafe extern "C" fn rust_regex_get_named_groups(
 /// # Safety
 /// `groups` must be a pointer returned by `rust_regex_get_named_groups`, or null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rust_regex_free_named_groups(groups: *mut RustRegexNamedGroup, count: u32) {
+pub unsafe extern "C" fn rust_regex_free_named_groups(
+    groups: *mut RustRegexNamedGroup,
+    count: u32,
+) {
     if !groups.is_null() {
         let len = count as usize;
         drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(groups, len)) });

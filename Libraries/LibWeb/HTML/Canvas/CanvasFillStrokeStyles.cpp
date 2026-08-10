@@ -9,35 +9,56 @@
  */
 
 #include "CanvasFillStrokeStyles.h"
+#include <AK/String.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/CanvasGradient.h>
 #include <LibWeb/HTML/CanvasPattern.h>
 #include <LibWeb/HTML/CanvasRenderingContext2D.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
-#include <LibWeb/HTML/OffscreenCanvas.h>
 #include <LibWeb/HTML/OffscreenCanvasRenderingContext2D.h>
 
 namespace Web::HTML {
 
-void CanvasFillStrokeStyles::set_fill_style(FillOrStrokeStyleVariant style)
+template<typename IncludingClass>
+void CanvasFillStrokeStyles<IncludingClass>::set_fill_style(FillOrStrokeStyleVariant style)
 {
     // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-fillstyle
     style.visit(
         // 1. If the given value is a string, then:
-        [&](Utf16String const& string) {
+        [&](String const& string) {
             // 1. Let context be this's canvas attribute's value, if that is an element; otherwise null.
+            HTMLCanvasElement* context = my_canvas_element().visit(
+                [&](HTMLCanvasElement* canvas_element) -> HTMLCanvasElement* {
+                    return canvas_element;
+                },
+                [&](OffscreenCanvas*) -> HTMLCanvasElement* {
+                    return nullptr;
+                });
 
             // 2. Let parsedValue be the result of parsing the given value with context if non-null.
-            auto parsed_value = parse_a_css_color_value(string);
+            // FIXME: Parse a color value
+            // https://drafts.csswg.org/css-color/#parse-a-css-color-value
+            auto style_value = parse_css_value(CSS::Parser::ParsingParams(), string, CSS::PropertyID::Color);
+            if (style_value && style_value->has_color()) {
+                CSS::ColorResolutionContext color_resolution_context {};
 
-            // 3. If parsedValue is failure, then return.
+                if (context) {
+                    DOM::AbstractElement abstract_element { *context };
+                    context->document().update_style_if_needed_for_element(abstract_element);
+                    if (context->computed_properties())
+                        color_resolution_context = CSS::ColorResolutionContext::for_element(abstract_element);
+                }
 
-            if (!parsed_value.has_value())
+                auto parsedValue = style_value->to_color(color_resolution_context).value_or(Color::Black);
+
+                // 4. Set this's fill style to parsedValue.
+                my_drawing_state().fill_style = parsedValue;
+            } else {
+                // 3. If parsedValue is failure, then return.
                 return;
-
-            // 4. Set this's fill style to parsedValue.
-            drawing_state().fill_style = parsed_value.value();
+            }
 
             // 5. Return.
             return;
@@ -46,33 +67,55 @@ void CanvasFillStrokeStyles::set_fill_style(FillOrStrokeStyleVariant style)
             // FIXME: 2. If the given value is a CanvasPattern object that is marked as not origin-clean, then set this's origin-clean flag to false.
 
             // 3. Set this's fill style to the given value.
-            drawing_state().fill_style = GC::Ref { *fill_or_stroke_style };
+            my_drawing_state().fill_style = GC::Ref { *fill_or_stroke_style };
         });
 }
 
-CanvasFillStrokeStyles::FillOrStrokeStyleVariant CanvasFillStrokeStyles::fill_style() const
+template<typename IncludingClass>
+CanvasFillStrokeStyles<IncludingClass>::FillOrStrokeStyleVariant CanvasFillStrokeStyles<IncludingClass>::fill_style() const
 {
-    return drawing_state().fill_style.to_js_fill_or_stroke_style();
+    return my_drawing_state().fill_style.to_js_fill_or_stroke_style();
 }
 
-void CanvasFillStrokeStyles::set_stroke_style(FillOrStrokeStyleVariant style)
+template<typename IncludingClass>
+void CanvasFillStrokeStyles<IncludingClass>::set_stroke_style(FillOrStrokeStyleVariant style)
 {
     // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-strokestyle
 
     style.visit(
         // 1. If the given value is a string, then:
-        [&](Utf16String const& string) {
+        [&](String const& string) {
             // 1. Let context be this's canvas attribute's value, if that is an element; otherwise null.
+            HTMLCanvasElement* context = my_canvas_element().visit(
+                [&](HTMLCanvasElement* canvas_element) -> HTMLCanvasElement* {
+                    return canvas_element;
+                },
+                [&](OffscreenCanvas*) -> HTMLCanvasElement* {
+                    return nullptr;
+                });
 
             // 2. Let parsedValue be the result of parsing the given value with context if non-null.
-            auto parsed_value = parse_a_css_color_value(string);
+            // FIXME: Parse a color value
+            // https://drafts.csswg.org/css-color/#parse-a-css-color-value
+            auto style_value = parse_css_value(CSS::Parser::ParsingParams(), string, CSS::PropertyID::Color);
+            if (style_value && style_value->has_color()) {
+                CSS::ColorResolutionContext color_resolution_context {};
 
-            // 3. If parsedValue is failure, then return.
-            if (!parsed_value.has_value())
+                if (context) {
+                    DOM::AbstractElement abstract_element { *context };
+                    context->document().update_style_if_needed_for_element(abstract_element);
+                    if (context->computed_properties())
+                        color_resolution_context = CSS::ColorResolutionContext::for_element(abstract_element);
+                }
+
+                auto parsedValue = style_value->to_color(color_resolution_context).value_or(Color::Black);
+
+                // 4. Set this's stroke style to parsedValue.
+                my_drawing_state().stroke_style = parsedValue;
+            } else {
+                // 3. If parsedValue is failure, then return.
                 return;
-
-            // 4. Set this's stroke style to parsedValue.
-            drawing_state().stroke_style = parsed_value.value();
+            }
 
             // 5. Return.
             return;
@@ -81,32 +124,61 @@ void CanvasFillStrokeStyles::set_stroke_style(FillOrStrokeStyleVariant style)
             // FIXME: 2. If the given value is a CanvasPattern object that is marked as not origin-clean, then set this's origin-clean flag to false.
 
             // 3. Set this's stroke style to the given value.
-            drawing_state().stroke_style = GC::Ref { *fill_or_stroke_style };
+            my_drawing_state().fill_style = GC::Ref { *fill_or_stroke_style };
         });
 }
 
-CanvasFillStrokeStyles::FillOrStrokeStyleVariant CanvasFillStrokeStyles::stroke_style() const
+template<typename IncludingClass>
+CanvasFillStrokeStyles<IncludingClass>::FillOrStrokeStyleVariant CanvasFillStrokeStyles<IncludingClass>::stroke_style() const
 {
-    return drawing_state().stroke_style.to_js_fill_or_stroke_style();
+    return my_drawing_state().stroke_style.to_js_fill_or_stroke_style();
+}
+template<typename IncludingClass>
+Variant<HTMLCanvasElement*, OffscreenCanvas*> CanvasFillStrokeStyles<IncludingClass>::my_canvas_element()
+{
+    return &static_cast<IncludingClass&>(*this).canvas_element();
 }
 
-WebIDL::ExceptionOr<GC::Ref<CanvasGradient>> CanvasFillStrokeStyles::create_radial_gradient(double x0, double y0, double r0, double x1, double y1, double r1)
+template<typename IncludingClass>
+CanvasState::DrawingState& CanvasFillStrokeStyles<IncludingClass>::my_drawing_state()
 {
-    return CanvasGradient::create_radial(x0, y0, r0, x1, y1, r1);
-}
-WebIDL::ExceptionOr<GC::Ref<CanvasGradient>> CanvasFillStrokeStyles::create_linear_gradient(double x0, double y0, double x1, double y1)
-{
-    return CanvasGradient::create_linear(x0, y0, x1, y1);
+    return static_cast<IncludingClass&>(*this).drawing_state();
 }
 
-WebIDL::ExceptionOr<GC::Ref<CanvasGradient>> CanvasFillStrokeStyles::create_conic_gradient(double start_angle, double x, double y)
+template<typename IncludingClass>
+CanvasState::DrawingState const& CanvasFillStrokeStyles<IncludingClass>::my_drawing_state() const
 {
-    return CanvasGradient::create_conic(start_angle, x, y);
+    return static_cast<IncludingClass const&>(*this).drawing_state();
 }
 
-WebIDL::ExceptionOr<GC::Ptr<CanvasPattern>> CanvasFillStrokeStyles::create_pattern(CanvasImageSource const& image, Utf16FlyString const& repetition)
+template<typename IncludingClass>
+WebIDL::ExceptionOr<GC::Ref<CanvasGradient>> CanvasFillStrokeStyles<IncludingClass>::create_radial_gradient(double x0, double y0, double r0, double x1, double y1, double r1)
 {
-    return CanvasPattern::create(image, repetition);
+    auto& realm = static_cast<IncludingClass&>(*this).realm();
+    return CanvasGradient::create_radial(realm, x0, y0, r0, x1, y1, r1);
 }
+template<typename IncludingClass>
+GC::Ref<CanvasGradient> CanvasFillStrokeStyles<IncludingClass>::create_linear_gradient(double x0, double y0, double x1, double y1)
+{
+    auto& realm = static_cast<IncludingClass&>(*this).realm();
+    return CanvasGradient::create_linear(realm, x0, y0, x1, y1).release_value_but_fixme_should_propagate_errors();
+}
+
+template<typename IncludingClass>
+GC::Ref<CanvasGradient> CanvasFillStrokeStyles<IncludingClass>::create_conic_gradient(double start_angle, double x, double y)
+{
+    auto& realm = static_cast<IncludingClass&>(*this).realm();
+    return CanvasGradient::create_conic(realm, start_angle, x, y).release_value_but_fixme_should_propagate_errors();
+}
+
+template<typename IncludingClass>
+WebIDL::ExceptionOr<GC::Ptr<CanvasPattern>> CanvasFillStrokeStyles<IncludingClass>::create_pattern(CanvasImageSource const& image, StringView repetition)
+{
+    auto& realm = static_cast<IncludingClass&>(*this).realm();
+    return CanvasPattern::create(realm, image, repetition);
+}
+
+template class CanvasFillStrokeStyles<CanvasRenderingContext2D>;
+template class CanvasFillStrokeStyles<OffscreenCanvasRenderingContext2D>;
 
 }

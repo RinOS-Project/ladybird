@@ -1,5 +1,5 @@
-$f74c5409 tagged-template-if-register-order.js:2:1
-  Registers: 11
+$400d186a tagged-template-if-register-order.js:1:1
+  Registers: 10
   Blocks:    3
   Constants:
     [0] = String("use strict")
@@ -8,24 +8,24 @@ $f74c5409 tagged-template-if-register-order.js:2:1
     [3] = Undefined
 
 block0:
-  [   0] GetGlobal dst:reg5, `String`
-  [  10] GetById dst:reg6, base:reg5, `raw` (String.raw)
-  [  28] GetTemplateObject dst:reg7, strings:[String("hello"), String("hello")]
-  [  48] Call dst:reg8, callee:reg6, this_value:reg5, arguments:[reg7]
-  [  70] DynamicInitializeLexicalBinding `x`, src:reg8
-  [  80] DynamicInitializeLexicalBinding `y`, src:Null
-  [  90] GetGlobal dst:reg8, `x`
-  [  a0] StrictlyEquals dst:reg6, lhs:reg8, rhs:String("hello")
-  [  b0] MovSrcUndefined dst:reg8
-  [  b8] JumpFalse condition:reg6, target:block2
+  [   0] GetLexicalEnvironment dst:reg4
+  [   8] GetGlobal dst:reg5, `String`
+  [  20] GetById dst:reg6, base:reg5, `raw` (String.raw)
+  [  40] GetTemplateObject dst:reg7, strings:[String("hello"), String("hello")]
+  [  60] Call dst:reg8, callee:reg6, this_value:reg5, arguments:[reg7]
+  [  88] InitializeLexicalBinding `x`, src:reg8
+  [  a0] InitializeLexicalBinding `y`, src:Null
+  [  b8] GetGlobal dst:reg5, `x`
+  [  d0] StrictlyEquals dst:reg6, lhs:reg5, rhs:String("hello")
+  [  e0] Mov dst:reg5, src:Undefined
+  [  f0] JumpFalse condition:reg6, target:block2
 
 block1:
-  [  c8] ResolveBinding dst:reg7, `y`
-  [  d8] GetGlobal dst:reg9, `x`
-  [  e8] GetById dst:reg10, base:reg9, `toUpperCase` (x.toUpperCase)
-  [ 100] Call dst:reg5, callee:reg10, this_value:reg9, x.toUpperCase
-  [ 120] SetResolvedBinding environment:reg7, `y`, src:reg5
-  [ 130] Mov dst:reg8, src:reg5
+  [ 100] GetGlobal dst:reg8, `x`
+  [ 118] GetById dst:reg9, base:reg8, `toUpperCase` (x.toUpperCase)
+  [ 138] Call dst:reg7, callee:reg9, this_value:reg8, x.toUpperCase
+  [ 158] SetGlobal `y`, src:reg7
+  [ 170] Mov dst:reg5, src:reg7
 
 block2:
-  [ 140] End value:reg8
+  [ 180] End value:reg5

@@ -4,10 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/Runtime/ExternalMemory.h>
+#include <LibJS/AST.h>
 #include <LibJS/Runtime/SharedFunctionInstanceData.h>
-#include <LibJS/RustIntegration.h>
-#include <LibJS/SourceCode.h>
+#include <LibJS/Runtime/VM.h>
 
 namespace JS {
 
@@ -31,11 +30,13 @@ SharedFunctionInstanceData::SharedFunctionInstanceData(
     Utf16View source_text,
     bool strict,
     bool is_arrow_function,
-    bool has_simple_parameter_list,
-    Vector<Utf16FlyString> parameter_names_for_mapped_arguments,
-    SharedFunctionInstanceDataList& owner_shared_function_data_list,
-    void* rust_function_ast)
-    : m_name(move(name))
+    FunctionParsingInsights const& parsing_insights,
+    Vector<LocalVariable> local_variables_names)
+    : m_formal_parameters(move(formal_parameters))
+    , m_ecmascript_code(move(ecmascript_code))
+    , m_name(move(name))
+    , m_source_text(move(source_text))
+    , m_local_variables_names(move(local_variables_names))
     , m_function_length(function_length)
     , m_kind(kind)
     , m_strict(strict)
@@ -44,38 +45,6 @@ SharedFunctionInstanceData::SharedFunctionInstanceData(
     , m_is_arrow_function(is_arrow_function)
     , m_uses_this(parsing_insights.uses_this)
 {
-    initialize_after_construction();
-    owner_shared_function_data_list.append(*this);
-}
-
-SharedFunctionInstanceData::SharedFunctionInstanceData(
-    VM&,
-    FunctionKind kind,
-    Utf16FlyString name,
-    i32 function_length,
-    u32 formal_parameter_count,
-    bool strict,
-    bool is_arrow_function,
-    bool has_simple_parameter_list,
-    Vector<Utf16FlyString> parameter_names_for_mapped_arguments,
-    NoSharedFunctionDataList,
-    void* rust_function_ast)
-    : m_name(move(name))
-    , m_function_length(function_length)
-    , m_formal_parameter_count(formal_parameter_count)
-    , m_parameter_names_for_mapped_arguments(move(parameter_names_for_mapped_arguments))
-    , m_kind(kind)
-    , m_strict(strict)
-    , m_is_arrow_function(is_arrow_function)
-    , m_has_simple_parameter_list(has_simple_parameter_list)
-    , m_rust_function_ast(rust_function_ast)
-    , m_use_rust_compilation(true)
-{
-    initialize_after_construction();
-}
-
-void SharedFunctionInstanceData::initialize_after_construction()
-{
     if (m_is_arrow_function)
         m_this_mode = ThisMode::Lexical;
     else if (m_strict)
@@ -83,190 +52,296 @@ void SharedFunctionInstanceData::initialize_after_construction()
     else
         m_this_mode = ThisMode::Global;
 
-    update_can_inline_call();
+    m_formal_parameter_count = m_formal_parameters->size();
+
+    // 15.1.3 Static Semantics: IsSimpleParameterList, https://tc39.es/ecma262/#sec-static-semantics-issimpleparameterlist
+    m_has_simple_parameter_list = all_of(m_formal_parameters->parameters(), [&](auto& parameter) {
+        if (parameter.is_rest)
+            return false;
+        if (parameter.default_value)
+            return false;
+        if (!parameter.binding.template has<NonnullRefPtr<Identifier const>>())
+            return false;
+        return true;
+    });
+
+    // Pre-extract parameter names for create_mapped_arguments_object.
+    // NB: Mapped arguments are only used for non-strict functions with simple parameter lists.
+    if (m_has_simple_parameter_list) {
+        m_parameter_names_for_mapped_arguments.ensure_capacity(m_formal_parameter_count);
+        for (auto const& parameter : m_formal_parameters->parameters())
+            m_parameter_names_for_mapped_arguments.append(parameter.binding.get<NonnullRefPtr<Identifier const>>()->string());
+    }
+
+    // NOTE: The following steps are from FunctionDeclarationInstantiation that could be executed once
+    //       and then reused in all subsequent function instantiations.
+
+    // 2. Let code be func.[[ECMAScriptCode]].
+    ScopeNode const* scope_body = nullptr;
+    if (is<ScopeNode>(*m_ecmascript_code))
+        scope_body = static_cast<ScopeNode const*>(m_ecmascript_code.ptr());
+    m_has_scope_body = scope_body != nullptr;
+
+    // 3. Let strict be func.[[Strict]].
+
+    // 4. Let formals be func.[[FormalParameters]].
+    auto const& formals = *m_formal_parameters;
+
+    // 5. Let parameterNames be the BoundNames of formals.
+    // 6. If parameterNames has any duplicate entries, let hasDuplicates be true. Otherwise, let hasDuplicates be false.
+
+    size_t parameters_in_environment = 0;
+
+    // NOTE: This loop performs step 5, 6, and 8.
+    for (auto const& parameter : formals.parameters()) {
+        if (parameter.default_value)
+            m_has_parameter_expressions = true;
+
+        parameter.binding.visit(
+            [&](Identifier const& identifier) {
+                if (m_parameter_names.set(identifier.string(), identifier.is_local() ? ParameterIsLocal::Yes : ParameterIsLocal::No) != AK::HashSetResult::InsertedNewEntry)
+                    m_has_duplicates = true;
+                else if (!identifier.is_local())
+                    ++parameters_in_environment;
+            },
+            [&](NonnullRefPtr<BindingPattern const> const& pattern) {
+                if (pattern->contains_expression())
+                    m_has_parameter_expressions = true;
+
+                // NOTE: Nothing in the callback throws an exception.
+                MUST(pattern->for_each_bound_identifier([&](auto& identifier) {
+                    if (m_parameter_names.set(identifier.string(), identifier.is_local() ? ParameterIsLocal::Yes : ParameterIsLocal::No) != AK::HashSetResult::InsertedNewEntry)
+                        m_has_duplicates = true;
+                    else if (!identifier.is_local())
+                        ++parameters_in_environment;
+                }));
+            });
+    }
+
+    // 15. Let argumentsObjectNeeded be true.
+    m_arguments_object_needed = m_might_need_arguments_object;
+
+    // 16. If func.[[ThisMode]] is lexical, then
+    if (m_this_mode == ThisMode::Lexical) {
+        // a. NOTE: Arrow functions never have an arguments object.
+        // b. Set argumentsObjectNeeded to false.
+        m_arguments_object_needed = false;
+    }
+    // 17. Else if parameterNames contains "arguments", then
+    else if (m_parameter_names.contains(vm.names.arguments.as_string())) {
+        // a. Set argumentsObjectNeeded to false.
+        m_arguments_object_needed = false;
+    }
+
+    // 18. Else if hasParameterExpressions is false, then
+    //     a. If functionNames contains "arguments" or lexicalNames contains "arguments", then
+    //         i. Set argumentsObjectNeeded to false.
+    // NOTE: The block below is a combination of step 14 and step 18.
+    if (!scope_body) {
+        m_arguments_object_needed = false;
+    } else {
+        scope_body->ensure_function_scope_data();
+        auto const& function_scope_data = *scope_body->function_scope_data();
+
+        for (auto const& decl : function_scope_data.functions_to_initialize) {
+            auto shared_data = create_for_function_node(vm, *decl);
+            auto const& name_id = *decl->name_identifier();
+            m_functions_to_initialize.append({
+                .shared_data = shared_data,
+                .name = decl->name(),
+                .local = to_function_local(name_id),
+            });
+        }
+
+        if (!m_has_parameter_expressions && function_scope_data.has_function_named_arguments)
+            m_arguments_object_needed = false;
+
+        if (!m_has_parameter_expressions && m_arguments_object_needed && function_scope_data.has_lexically_declared_arguments)
+            m_arguments_object_needed = false;
+    }
+
+    auto arguments_object_needs_binding = m_arguments_object_needed && !m_local_variables_names.contains([](auto const& local) { return local.declaration_kind == LocalVariable::DeclarationKind::ArgumentsObject; });
+
+    size_t* environment_size = nullptr;
+    size_t parameter_environment_bindings_count = 0;
+    // 19. If strict is true or hasParameterExpressions is false, then
+    if (strict || !m_has_parameter_expressions) {
+        // a. NOTE: Only a single Environment Record is needed for the parameters, since calls to eval in strict mode code cannot create new bindings which are visible outside of the eval.
+        // b. Let env be the LexicalEnvironment of calleeContext
+        // NOTE: Here we are only interested in the size of the environment.
+        environment_size = &m_function_environment_bindings_count;
+    }
+    // 20. Else,
+    else {
+        // a. NOTE: A separate Environment Record is needed to ensure that bindings created by direct eval calls in the formal parameter list are outside the environment where parameters are declared.
+        // b. Let calleeEnv be the LexicalEnvironment of calleeContext.
+        // c. Let env be NewDeclarativeEnvironment(calleeEnv).
+        environment_size = &parameter_environment_bindings_count;
+    }
+
+    *environment_size += parameters_in_environment;
+
+    // 22. If argumentsObjectNeeded is true, then
+    if (arguments_object_needs_binding)
+        (*environment_size)++;
+
+    size_t* var_environment_size = nullptr;
+
+    if (scope_body) {
+        auto const& function_scope_data = *scope_body->function_scope_data();
+
+        // 27. If hasParameterExpressions is false, then
+        if (!m_has_parameter_expressions) {
+            // Use pre-computed non_local_var_count for environment size.
+            *environment_size += function_scope_data.non_local_var_count;
+
+            // Directly iterate vars_to_initialize - already deduplicated by parser.
+            for (auto const& var : function_scope_data.vars_to_initialize) {
+                // Skip vars that shadow parameters or "arguments" if needed.
+                if (var.is_parameter)
+                    continue;
+                if (var.identifier.string() == vm.names.arguments.as_string() && m_arguments_object_needed)
+                    continue;
+
+                m_var_names_to_initialize_binding.append({
+                    .name = var.identifier.string(),
+                    .local = to_function_local(var.identifier),
+                });
+            }
+
+            // d. Let varEnv be env
+            var_environment_size = environment_size;
+        } else {
+            // a. NOTE: A separate Environment Record is needed to ensure that closures created by
+            //          expressions in the formal parameter list do not have visibility of declarations in the function body.
+
+            // b. Let varEnv be NewDeclarativeEnvironment(env).
+            var_environment_size = &m_var_environment_bindings_count;
+
+            // Use pre-computed non_local_var_count_for_parameter_expressions for environment size.
+            *var_environment_size += function_scope_data.non_local_var_count_for_parameter_expressions;
+
+            // Directly iterate vars_to_initialize - already deduplicated by parser.
+            for (auto const& var : function_scope_data.vars_to_initialize) {
+                bool is_in_parameter_bindings = var.is_parameter || (var.identifier.string() == vm.names.arguments.as_string() && m_arguments_object_needed);
+                m_var_names_to_initialize_binding.append({
+                    .name = var.identifier.string(),
+                    .local = to_function_local(var.identifier),
+                    .parameter_binding = is_in_parameter_bindings,
+                    .function_name = var.is_function_name,
+                });
+            }
+        }
+
+        // 29. NOTE: Annex B.3.2.1 adds additional steps at this point.
+        // B.3.2.1 Changes to FunctionDeclarationInstantiation, https://tc39.es/ecma262/#sec-web-compat-functiondeclarationinstantiation
+        if (!m_strict) {
+            HashTable<Utf16FlyString> annexB_seen_names;
+            MUST(scope_body->for_each_function_hoistable_with_annexB_extension([&](FunctionDeclaration& function_declaration) {
+                auto function_name = function_declaration.name();
+
+                // Check if function name is in parameter_bindings (parameters + "arguments" if needed).
+                if (m_parameter_names.contains(function_name))
+                    return;
+                if (function_name == vm.names.arguments.as_string() && m_arguments_object_needed)
+                    return;
+
+                // Check if function name is already a var or already processed by AnnexB.
+                if (!function_scope_data.var_names.contains(function_name) && !annexB_seen_names.contains(function_name)) {
+                    m_function_names_to_initialize_binding.append(function_name);
+                    annexB_seen_names.set(function_name);
+                    (*var_environment_size)++;
+                }
+
+                function_declaration.set_should_do_additional_annexB_steps();
+            }));
+        }
+    } else {
+        var_environment_size = environment_size;
+    }
+
+    size_t* lex_environment_size = nullptr;
+
+    // 30. If strict is false, then
+    if (scope_body)
+        m_has_non_local_lexical_declarations = scope_body->has_non_local_lexical_declarations();
+    if (!m_strict) {
+        bool can_elide_declarative_environment = !m_contains_direct_call_to_eval && !m_has_non_local_lexical_declarations;
+        if (can_elide_declarative_environment) {
+            lex_environment_size = var_environment_size;
+        } else {
+            // a. Let lexEnv be NewDeclarativeEnvironment(varEnv).
+            lex_environment_size = &m_lex_environment_bindings_count;
+        }
+    } else {
+        // a. let lexEnv be varEnv.
+        // NOTE: Here we are only interested in the size of the environment.
+        lex_environment_size = var_environment_size;
+    }
+
+    if (scope_body) {
+        MUST(scope_body->for_each_lexically_scoped_declaration([&](Declaration const& declaration) {
+            MUST(declaration.for_each_bound_identifier([&](auto const& id) {
+                if (!id.is_local()) {
+                    (*lex_environment_size)++;
+                    m_lexical_bindings.append({
+                        .name = id.string(),
+                        .is_constant = declaration.is_constant_declaration(),
+                    });
+                }
+            }));
+        }));
+    }
+
+    m_function_environment_needed = arguments_object_needs_binding || m_function_environment_bindings_count > 0 || m_var_environment_bindings_count > 0 || m_lex_environment_bindings_count > 0 || parsing_insights.uses_this_from_environment || m_contains_direct_call_to_eval;
 }
 
 void SharedFunctionInstanceData::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_executable);
-    visitor.visit(m_function_environment_shape);
-    visitor.visit(m_var_environment_shape);
     for (auto& function : m_functions_to_initialize)
         visitor.visit(function.shared_data);
     m_class_field_initializer_name.visit([&](PropertyKey const& key) { key.visit_edges(visitor); }, [](auto&) {});
 }
 
-size_t SharedFunctionInstanceData::external_memory_size() const
-{
-    size_t size = utf16_string_external_memory_size(m_source_text_owner);
-    size = saturating_add_external_memory_size(size, vector_external_memory_size(m_local_variables_names));
-    size = saturating_add_external_memory_size(size, vector_external_memory_size(m_parameter_names_for_mapped_arguments));
-    size = saturating_add_external_memory_size(size, hash_map_external_memory_size(m_parameter_names));
-    size = saturating_add_external_memory_size(size, vector_external_memory_size(m_functions_to_initialize));
-    size = saturating_add_external_memory_size(size, vector_external_memory_size(m_var_names_to_initialize_binding));
-    size = saturating_add_external_memory_size(size, vector_external_memory_size(m_function_names_to_initialize_binding));
-    size = saturating_add_external_memory_size(size, vector_external_memory_size(m_lexical_bindings));
-    return size;
-}
-
-Utf16String SharedFunctionInstanceData::source_text() const
-{
-    if (!m_source_text_owner.is_empty())
-        return m_source_text_owner;
-
-    if (!m_source_code)
-        return {};
-
-    auto old_external_memory_size = utf16_string_external_memory_size(m_source_text_owner);
-    m_source_text_owner = m_source_code->source_text_from_offsets(m_source_text_offset, m_source_text_length);
-    auto new_external_memory_size = utf16_string_external_memory_size(m_source_text_owner);
-    if (new_external_memory_size > old_external_memory_size)
-        heap().did_allocate_external_memory(new_external_memory_size - old_external_memory_size);
-    return m_source_text_owner;
-}
-
-void SharedFunctionInstanceData::set_source_text(Utf16View source_text)
-{
-    m_source_text_owner = Utf16String::from_utf16(source_text);
-    m_source_code = nullptr;
-    m_source_text_offset = 0;
-    m_source_text_length = 0;
-}
-
-void SharedFunctionInstanceData::set_source_text_range(SourceCode const& source_code, size_t source_text_offset, size_t source_text_length)
-{
-    m_source_text_owner = {};
-    m_source_code = &source_code;
-    m_source_text_offset = source_text_offset;
-    m_source_text_length = source_text_length;
-}
-
 SharedFunctionInstanceData::~SharedFunctionInstanceData() = default;
 
-void SharedFunctionInstanceData::set_executable(GC::Ptr<Bytecode::Executable> executable)
+GC::Ref<SharedFunctionInstanceData> SharedFunctionInstanceData::create_for_function_node(VM& vm, FunctionNode const& node)
 {
-    m_executable = executable;
-    update_can_inline_call();
+    return create_for_function_node(vm, node, node.name());
 }
 
-void SharedFunctionInstanceData::set_is_class_constructor()
+GC::Ref<SharedFunctionInstanceData> SharedFunctionInstanceData::create_for_function_node(VM& vm, FunctionNode const& node, Utf16FlyString name)
 {
-    m_is_class_constructor = true;
-    update_can_inline_call();
-}
+    auto data = vm.heap().allocate<SharedFunctionInstanceData>(
+        vm,
+        node.kind(),
+        move(name),
+        node.function_length(),
+        node.parameters(),
+        *node.body_ptr(),
+        node.source_text(),
+        node.is_strict_mode(),
+        node.is_arrow_function(),
+        node.parsing_insights(),
+        node.local_variables_names());
 
-void SharedFunctionInstanceData::update_asm_call_metadata()
-{
-    m_asm_call_metadata = m_formal_parameter_count;
-    if (m_can_inline_call)
-        m_asm_call_metadata |= asm_call_metadata_can_inline_call;
-    if (m_function_environment_needed || m_this_value_needs_environment_resolution)
-        m_asm_call_metadata |= asm_call_metadata_needs_environment_or_this_value_resolution;
-    if (m_uses_this)
-        m_asm_call_metadata |= asm_call_metadata_uses_this;
-    if (m_strict)
-        m_asm_call_metadata |= asm_call_metadata_strict;
-}
+    // NB: Keep the SourceCode alive so that m_source_text (a Utf16View into it) remains valid
+    //     even after the AST is dropped.
+    data->m_source_code = &node.body().source_code();
 
-void SharedFunctionInstanceData::finalize()
-{
-    if (m_owner_shared_function_data_list)
-        m_owner_shared_function_data_list->remove(*this);
-
-    Base::finalize();
-    RustIntegration::free_function_ast(m_rust_function_ast);
-    m_rust_function_ast = nullptr;
-    RustIntegration::free_cached_bytecode_executable(m_cached_bytecode_executable);
-    m_cached_bytecode_executable = nullptr;
-    RustIntegration::free_precompiled_bytecode_executable(m_precompiled_bytecode_executable);
-    m_precompiled_bytecode_executable = nullptr;
+    return data;
 }
 
 void SharedFunctionInstanceData::clear_compile_inputs()
 {
-    clear_non_bytecode_cache_compile_inputs();
-    RustIntegration::free_cached_bytecode_executable(m_cached_bytecode_executable);
-    m_cached_bytecode_executable = nullptr;
-}
-
-void SharedFunctionInstanceData::clear_non_bytecode_cache_compile_inputs()
-{
+    VERIFY(m_executable);
+    m_formal_parameters = nullptr;
+    m_ecmascript_code = nullptr;
     m_functions_to_initialize.clear();
     m_var_names_to_initialize_binding.clear();
     m_lexical_bindings.clear();
-    RustIntegration::free_function_ast(m_rust_function_ast);
-    m_rust_function_ast = nullptr;
-    RustIntegration::free_precompiled_bytecode_executable(m_precompiled_bytecode_executable);
-    m_precompiled_bytecode_executable = nullptr;
-}
-
-void SharedFunctionInstanceData::update_can_inline_call()
-{
-    m_can_inline_call = m_executable && m_kind == FunctionKind::Normal && !m_is_class_constructor;
-    update_asm_call_metadata();
-}
-
-SharedFunctionInstanceDataList::~SharedFunctionInstanceDataList()
-{
-    clear();
-}
-
-void SharedFunctionInstanceDataList::append(SharedFunctionInstanceData& shared_data)
-{
-    if (shared_data.m_owner_shared_function_data_list == this)
-        return;
-    if (shared_data.m_owner_shared_function_data_list)
-        shared_data.m_owner_shared_function_data_list->remove(shared_data);
-    VERIFY(!shared_data.m_script_or_module_list_node.is_in_list());
-
-    m_list.append(shared_data);
-    shared_data.m_owner_shared_function_data_list = this;
-}
-
-void SharedFunctionInstanceDataList::visit_edges(GC::Cell::Visitor& visitor)
-{
-    for (auto& shared_data : m_list)
-        visitor.visit(shared_data);
-}
-
-void SharedFunctionInstanceDataList::clear_non_bytecode_cache_compile_inputs()
-{
-    for (auto& shared_data : m_list)
-        shared_data.clear_non_bytecode_cache_compile_inputs();
-}
-
-bool SharedFunctionInstanceDataList::contains_rust_function_ast() const
-{
-    for (auto const& shared_data : m_list) {
-        if (shared_data.m_rust_function_ast)
-            return true;
-    }
-    return false;
-}
-
-bool SharedFunctionInstanceDataList::contains_precompiled_bytecode() const
-{
-    for (auto const& shared_data : m_list) {
-        if (shared_data.m_precompiled_bytecode_executable)
-            return true;
-    }
-    return false;
-}
-
-void SharedFunctionInstanceDataList::clear()
-{
-    while (!m_list.is_empty()) {
-        auto* shared_data = m_list.first();
-        remove(*shared_data);
-    }
-}
-
-void SharedFunctionInstanceDataList::remove(SharedFunctionInstanceData& shared_data)
-{
-    VERIFY(shared_data.m_owner_shared_function_data_list == this);
-    m_list.remove(shared_data);
-    shared_data.m_owner_shared_function_data_list = nullptr;
 }
 
 }

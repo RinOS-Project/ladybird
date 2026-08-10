@@ -6,11 +6,10 @@
 
 #pragma once
 
-#include <AK/IntrusiveList.h>
-#include <AK/Utf16String.h>
-#include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
+#include <AK/FlyString.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/DOM/DocumentObserver.h>
+#include <LibWeb/SVG/SVGAnimatedLength.h>
 #include <LibWeb/SVG/SVGGraphicsElement.h>
 #include <LibWeb/SVG/SVGURIReference.h>
 
@@ -19,57 +18,40 @@ namespace Web::SVG {
 class SVGUseElement final
     : public SVGGraphicsElement
     , public SVGURIReferenceMixin<SupportsXLinkHref::Yes> {
-    WEB_WRAPPABLE(SVGUseElement, SVGGraphicsElement);
+    WEB_PLATFORM_OBJECT(SVGUseElement, SVGGraphicsElement);
     GC_DECLARE_ALLOCATOR(SVGUseElement);
 
 public:
-    static constexpr bool OVERRIDES_FINALIZE = true;
-
     virtual ~SVGUseElement() override = default;
 
-    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
+    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
 
     void svg_element_changed(SVGElement&);
-    void svg_element_changed_before_document_complete(SVGElement&);
     void svg_element_removed(SVGElement&);
 
-    // AD-HOC: The spec states that the x, y, width and height IDL attributes reflect the respective computed values and their
-    //         corresponding presentation attributes but other browsers reflect the attribute values instead - see
-    //         https://github.com/w3c/svgwg/issues/1153
-
-    // https://w3c.github.io/svgwg/svg2-draft/struct.html#__svg__SVGUseElement__x
-    REFLECT_ANIMATED_LENGTH_ATTRIBUTE(x, Horizontal, CSS::NumberStyleValue::create(0));
-
-    // https://w3c.github.io/svgwg/svg2-draft/struct.html#__svg__SVGUseElement__y
-    REFLECT_ANIMATED_LENGTH_ATTRIBUTE(y, Vertical, CSS::NumberStyleValue::create(0));
-
-    // https://w3c.github.io/svgwg/svg2-draft/struct.html#__svg__SVGUseElement__width
-    REFLECT_ANIMATED_LENGTH_ATTRIBUTE(width, Horizontal, CSS::NumberStyleValue::create(0));
-
-    // https://w3c.github.io/svgwg/svg2-draft/struct.html#__svg__SVGUseElement__height
-    REFLECT_ANIMATED_LENGTH_ATTRIBUTE(height, Vertical, CSS::NumberStyleValue::create(0));
+    GC::Ref<SVGAnimatedLength> x() const;
+    GC::Ref<SVGAnimatedLength> y() const;
+    GC::Ref<SVGAnimatedLength> width() const;
+    GC::Ref<SVGAnimatedLength> height() const;
 
     GC::Ptr<SVGElement> instance_root() const;
+    GC::Ptr<SVGElement> animated_instance_root() const;
 
     virtual Gfx::AffineTransform element_transform() const override;
 
 private:
     SVGUseElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual void initialize_element() override;
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
-    virtual void finalize() override;
-    virtual void adopted_from(DOM::Document&) override;
-    virtual void inserted() override;
-    virtual void removed_from(IsSubtreeRoot, Node* old_ancestor, Node& old_root) override;
-    virtual void moved_from(IsSubtreeRoot, GC::Ptr<Node> old_ancestor) override;
 
     virtual bool is_svg_use_element() const override { return true; }
 
-    virtual RefPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::ComputedValues const>) override;
+    virtual GC::Ptr<Layout::Node> create_layout_node(GC::Ref<CSS::ComputedProperties>) override;
 
-    void process_the_url(Optional<Utf16String> const& href);
-    Optional<Utf16String> href_value() const;
+    void process_the_url(Optional<String> const& href);
+
+    static Optional<FlyString> parse_id_from_href(StringView);
 
     GC::Ptr<DOM::Element> referenced_element() const;
 
@@ -80,23 +62,15 @@ private:
     bool is_valid_reference_element(Element const& reference_element) const;
     bool would_create_circular_reference(Element const& target) const;
     bool would_create_circular_reference_impl(Element const& target, GC::HeapHashTable<GC::Ref<Element const>>& visited) const;
-    void register_for_referenced_element_changes();
-    void unregister_for_referenced_element_changes();
 
-    Optional<NumberPercentage> m_x;
-    Optional<NumberPercentage> m_y;
-    bool m_needs_document_complete_reclone { false };
+    Optional<float> m_x;
+    Optional<float> m_y;
 
     Optional<URL::URL> m_href;
 
     GC::Ptr<DOM::DocumentObserver> m_document_observer;
     GC::Ptr<HTML::SharedResourceRequest> m_resource_request;
     Optional<DOM::DocumentLoadEventDelayer> m_load_event_delayer;
-
-    IntrusiveListNode<SVGUseElement> m_list_node;
-
-public:
-    using DocumentUseElementList = IntrusiveList<&SVGUseElement::m_list_node>;
 };
 
 }

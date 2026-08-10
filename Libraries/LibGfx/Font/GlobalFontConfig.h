@@ -6,15 +6,7 @@
 
 #pragma once
 
-#include <LibGfx/Font/Font.h>
 #include <fontconfig/fontconfig.h>
-
-namespace AK {
-
-template<typename T>
-class NeverDestroyed;
-
-}
 
 namespace Gfx {
 
@@ -23,11 +15,7 @@ public:
     static GlobalFontConfig& the();
     FcConfig* get();
 
-    FontHintingOptions hinting_for_font(FlyString const& family, float pixel_size, u16 weight, u8 slope);
-
 private:
-    friend class AK::NeverDestroyed<GlobalFontConfig>;
-
     GlobalFontConfig();
     ~GlobalFontConfig();
 

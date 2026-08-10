@@ -8,9 +8,11 @@
 
 namespace Web::Painting {
 
-NonnullRefPtr<SVGClipPaintable> SVGClipPaintable::create(Layout::SVGClipBox const& layout_box)
+GC_DEFINE_ALLOCATOR(SVGClipPaintable);
+
+GC::Ref<SVGClipPaintable> SVGClipPaintable::create(Layout::SVGClipBox const& layout_box)
 {
-    return adopt_ref(*new SVGClipPaintable(layout_box));
+    return layout_box.heap().allocate<SVGClipPaintable>(layout_box);
 }
 
 SVGClipPaintable::SVGClipPaintable(Layout::SVGClipBox const& layout_box)

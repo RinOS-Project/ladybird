@@ -6,8 +6,8 @@
 
 #include <LibGC/Heap.h>
 #include <LibGfx/Bitmap.h>
-#include <LibJS/Runtime/ExternalMemory.h>
-#include <LibWeb/CSS/ComputedValues.h>
+#include <LibGfx/ImmutableBitmap.h>
+#include <LibJS/Runtime/Realm.h>
 #include <LibWeb/HTML/BitmapDecodedImageData.h>
 #include <LibWeb/Painting/DisplayListRecorder.h>
 #include <LibWeb/Painting/DisplayListRecordingContext.h>
@@ -16,57 +16,57 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(BitmapDecodedImageData);
 
-ErrorOr<GC::Ref<BitmapDecodedImageData>> BitmapDecodedImageData::create(Vector<Frame>&& frames, size_t loop_count, bool animated)
+ErrorOr<GC::Ref<BitmapDecodedImageData>> BitmapDecodedImageData::create(JS::Realm& realm, Vector<Frame>&& frames, size_t loop_count, bool animated)
 {
-    (void)loop_count;
-    (void)animated;
-    if (frames.is_empty())
-        return Error::from_string_literal("Bitmap image has no frames");
-    return GC::Heap::the().allocate<BitmapDecodedImageData>(move(frames[0].frame));
+    return realm.create<BitmapDecodedImageData>(move(frames), loop_count, animated);
 }
 
-BitmapDecodedImageData::BitmapDecodedImageData(Gfx::DecodedImageFrame&& frame)
-    : m_frame(move(frame))
+BitmapDecodedImageData::BitmapDecodedImageData(Vector<Frame>&& frames, size_t loop_count, bool animated)
+    : m_frames(move(frames))
+    , m_loop_count(loop_count)
+    , m_animated(animated)
 {
 }
 
 BitmapDecodedImageData::~BitmapDecodedImageData() = default;
 
-size_t BitmapDecodedImageData::external_memory_size() const
+RefPtr<Gfx::ImmutableBitmap> BitmapDecodedImageData::bitmap(size_t frame_index, Gfx::IntSize) const
 {
-    return m_frame.bitmap().data_size();
+    if (frame_index >= m_frames.size())
+        return nullptr;
+    return m_frames[frame_index].bitmap;
 }
 
-Optional<Gfx::DecodedImageFrame> BitmapDecodedImageData::current_frame(Gfx::IntSize) const
+int BitmapDecodedImageData::frame_duration(size_t frame_index) const
 {
-    return m_frame;
-}
-
-Optional<Gfx::DecodedImageFrame> BitmapDecodedImageData::default_frame(Gfx::IntSize) const
-{
-    return m_frame;
+    if (frame_index >= m_frames.size())
+        return 0;
+    return m_frames[frame_index].duration;
 }
 
 Optional<CSSPixels> BitmapDecodedImageData::intrinsic_width() const
 {
-    return m_frame.width();
+    return m_frames.first().bitmap->width();
 }
 
 Optional<CSSPixels> BitmapDecodedImageData::intrinsic_height() const
 {
-    return m_frame.height();
+    return m_frames.first().bitmap->height();
 }
 
 Optional<CSSPixelFraction> BitmapDecodedImageData::intrinsic_aspect_ratio() const
 {
-    return CSSPixels(m_frame.width()) / CSSPixels(m_frame.height());
+    return CSSPixels(m_frames.first().bitmap->width()) / CSSPixels(m_frames.first().bitmap->height());
 }
 
-void BitmapDecodedImageData::paint(DisplayListRecordingContext& context, Gfx::IntRect dst_rect, CSS::ImageRendering image_rendering, CSS::PreferredColorScheme) const
+Optional<Gfx::IntRect> BitmapDecodedImageData::frame_rect(size_t frame_index) const
 {
-    auto scaling_mode = CSS::to_gfx_scaling_mode(image_rendering, m_frame.size(), dst_rect.size());
+    return m_frames[frame_index].bitmap->rect();
+}
 
-    context.display_list_recorder().draw_scaled_decoded_image_frame(dst_rect, m_frame, scaling_mode);
+void BitmapDecodedImageData::paint(DisplayListRecordingContext& context, size_t frame_index, Gfx::IntRect dst_rect, Gfx::IntRect clip_rect, Gfx::ScalingMode scaling_mode) const
+{
+    context.display_list_recorder().draw_scaled_immutable_bitmap(dst_rect, clip_rect, *m_frames[frame_index].bitmap, scaling_mode);
 }
 
 }

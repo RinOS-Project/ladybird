@@ -1,2 +1,0 @@
-texImage3D error: NO_ERROR
-framebuffer status: FRAMEBUFFER_COMPLETE

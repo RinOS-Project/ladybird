@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/DistinctNumeric.h>
 #include <AK/HashMap.h>
 #include <AK/Optional.h>
 #include <AK/Span.h>
@@ -73,8 +72,5 @@ concept Optional = SpecializationOf<T, AK::Optional>;
 
 template<typename T>
 concept Variant = SpecializationOf<T, AK::Variant>;
-
-template<typename T>
-concept DistinctNumeric = SpecializationOf<T, AK::DistinctNumeric>;
 
 }

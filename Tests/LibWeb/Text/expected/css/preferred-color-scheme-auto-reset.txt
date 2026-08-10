@@ -1,2 +1,0 @@
-Forced dark: true
-Reset to auto: false

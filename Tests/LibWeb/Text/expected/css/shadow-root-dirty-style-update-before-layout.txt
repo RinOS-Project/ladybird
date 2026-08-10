@@ -1,1 +1,0 @@
-Slot color after forced layout: rgb(0, 0, 255)

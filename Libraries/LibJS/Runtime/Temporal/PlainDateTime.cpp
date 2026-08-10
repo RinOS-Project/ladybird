@@ -6,7 +6,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/NeverDestroyed.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/Temporal/Calendar.h>
@@ -23,7 +22,7 @@ namespace JS::Temporal {
 
 GC_DEFINE_ALLOCATOR(PlainDateTime);
 
-PlainDateTime::PlainDateTime(ISODateTime const& iso_date_time, Utf16String calendar, Object& prototype)
+PlainDateTime::PlainDateTime(ISODateTime const& iso_date_time, String calendar, Object& prototype)
     : Object(ConstructWithPrototypeTag::Tag, prototype)
     , m_iso_date_time(iso_date_time)
     , m_calendar(move(calendar))
@@ -52,18 +51,10 @@ ISODateTime combine_iso_date_and_time_record(ISODate iso_date, Time const& time)
 }
 
 // nsMinInstant - nsPerDay
-static auto const& datetime_nanoseconds_min()
-{
-    static NeverDestroyed<Crypto::SignedBigInteger> value { "-8640000086400000000000"_sbigint };
-    return *value;
-}
+static auto const DATETIME_NANOSECONDS_MIN = "-8640000086400000000000"_sbigint;
 
 // nsMaxInstant + nsPerDay
-static auto const& datetime_nanoseconds_max()
-{
-    static NeverDestroyed<Crypto::SignedBigInteger> value { "8640000086400000000000"_sbigint };
-    return *value;
-}
+static auto const DATETIME_NANOSECONDS_MAX = "8640000086400000000000"_sbigint;
 
 // 5.5.4 ISODateTimeWithinLimits ( isoDateTime ), https://tc39.es/proposal-temporal/#sec-temporal-isodatetimewithinlimits
 bool iso_date_time_within_limits(ISODateTime const& iso_date_time)
@@ -76,11 +67,11 @@ bool iso_date_time_within_limits(ISODateTime const& iso_date_time)
     auto nanoseconds = get_utc_epoch_nanoseconds(iso_date_time);
 
     // 3. If ns ≤ nsMinInstant - nsPerDay, return false.
-    if (nanoseconds <= datetime_nanoseconds_min())
+    if (nanoseconds <= DATETIME_NANOSECONDS_MIN)
         return false;
 
     // 4. If ns ≥ nsMaxInstant + nsPerDay, return false.
-    if (nanoseconds >= datetime_nanoseconds_max())
+    if (nanoseconds >= DATETIME_NANOSECONDS_MAX)
         return false;
 
     // 5. Return true.
@@ -88,7 +79,7 @@ bool iso_date_time_within_limits(ISODateTime const& iso_date_time)
 }
 
 // 5.5.5 InterpretTemporalDateTimeFields ( calendar, fields, overflow ), https://tc39.es/proposal-temporal/#sec-temporal-interprettemporaldatetimefields
-ThrowCompletionOr<ISODateTime> interpret_temporal_date_time_fields(VM& vm, Utf16View calendar, CalendarFields& fields, Overflow overflow)
+ThrowCompletionOr<ISODateTime> interpret_temporal_date_time_fields(VM& vm, String const& calendar, CalendarFields& fields, Overflow overflow)
 {
     // 1. Let isoDate be ? CalendarDateFromFields(calendar, fields, overflow).
     auto iso_date = TRY(calendar_date_from_fields(vm, calendar, fields, overflow));
@@ -175,16 +166,17 @@ ThrowCompletionOr<GC::Ref<PlainDateTime>> to_temporal_date_time(VM& vm, Value it
         return vm.throw_completion<TypeError>(ErrorType::TemporalInvalidPlainDateTime);
 
     // 4. Let result be ? ParseISODateTime(item, « TemporalDateTimeString[~Zoned] »).
-    auto result = TRY(parse_iso_date_time(vm, item.as_string().utf16_string_view(), { { Production::TemporalDateTimeString } }));
+    auto result = TRY(parse_iso_date_time(vm, item.as_string().utf8_string_view(), { { Production::TemporalDateTimeString } }));
 
     // 5. If result.[[Time]] is START-OF-DAY, let time be MidnightTimeRecord(); else let time be result.[[Time]].
     auto time = result.time.has<ParsedISODateTime::StartOfDay>() ? midnight_time_record() : result.time.get<Time>();
 
     // 6. Let calendar be result.[[Calendar]].
     // 7. If calendar is empty, set calendar to "iso8601".
-    auto calendar = result.calendar.has_value()
-        ? TRY(canonicalize_calendar(vm, *result.calendar))
-        : TRY(canonicalize_calendar(vm, ISO8601_CALENDAR));
+    auto calendar = result.calendar.value_or("iso8601"_string);
+
+    // 8. Set calendar to ? CanonicalizeCalendar(calendar).
+    calendar = TRY(canonicalize_calendar(vm, calendar));
 
     // 9. Let resolvedOptions be ? GetOptionsObject(options).
     auto resolved_options = TRY(get_options_object(vm, options));
@@ -216,7 +208,7 @@ ISODateTime balance_iso_date_time(double year, double month, double day, double 
 }
 
 // 5.5.8 CreateTemporalDateTime ( isoDateTime, calendar [ , newTarget ] ), https://tc39.es/proposal-temporal/#sec-temporal-createtemporaldatetime
-ThrowCompletionOr<GC::Ref<PlainDateTime>> create_temporal_date_time(VM& vm, ISODateTime const& iso_date_time, Utf16String calendar, GC::Ptr<FunctionObject> new_target)
+ThrowCompletionOr<GC::Ref<PlainDateTime>> create_temporal_date_time(VM& vm, ISODateTime const& iso_date_time, String calendar, GC::Ptr<FunctionObject> new_target)
 {
     auto& realm = *vm.current_realm();
 
@@ -238,7 +230,7 @@ ThrowCompletionOr<GC::Ref<PlainDateTime>> create_temporal_date_time(VM& vm, ISOD
 }
 
 // 5.5.9 ISODateTimeToString ( isoDateTime, calendar, precision, showCalendar ), https://tc39.es/proposal-temporal/#sec-temporal-isodatetimetostring
-Utf16String iso_date_time_to_string(ISODateTime const& iso_date_time, Utf16View calendar, SecondsStringPrecision::Precision precision, ShowCalendar show_calendar)
+String iso_date_time_to_string(ISODateTime const& iso_date_time, String const& calendar, SecondsStringPrecision::Precision precision, ShowCalendar show_calendar)
 {
     // 1. Let yearString be PadISOYear(isoDateTime.[[ISODate]].[[Year]]).
     auto year_string = pad_iso_year(iso_date_time.iso_date.year);
@@ -260,7 +252,7 @@ Utf16String iso_date_time_to_string(ISODateTime const& iso_date_time, Utf16View 
 
     // 7. Return the string-concatenation of yearString, the code unit 0x002D (HYPHEN-MINUS), monthString, the code unit 0x002D (HYPHEN-MINUS),
     //    dayString, 0x0054 (LATIN CAPITAL LETTER T), timeString, and calendarString.
-    return Utf16String::formatted("{}-{:02}-{:02}T{}{}", year_string, month, day, time_string, calendar_string);
+    return MUST(String::formatted("{}-{:02}-{:02}T{}{}", year_string, month, day, time_string, calendar_string));
 }
 
 // 5.5.10 CompareISODateTime ( isoDateTime1, isoDateTime2 ), https://tc39.es/proposal-temporal/#sec-temporal-compareisodatetime
@@ -294,7 +286,7 @@ ISODateTime round_iso_date_time(ISODateTime const& iso_date_time, u64 increment,
 }
 
 // 5.5.12 DifferenceISODateTime ( isoDateTime1, isoDateTime2, calendar, largestUnit ), https://tc39.es/proposal-temporal/#sec-temporal-differenceisodatetime
-InternalDuration difference_iso_date_time(VM& vm, ISODateTime const& iso_date_time1, ISODateTime const& iso_date_time2, Utf16View calendar, Unit largest_unit)
+InternalDuration difference_iso_date_time(VM& vm, ISODateTime const& iso_date_time1, ISODateTime const& iso_date_time2, String const& calendar, Unit largest_unit)
 {
     // 1. Assert: ISODateTimeWithinLimits(isoDateTime1) is true.
     VERIFY(iso_date_time_within_limits(iso_date_time1));
@@ -343,7 +335,7 @@ InternalDuration difference_iso_date_time(VM& vm, ISODateTime const& iso_date_ti
 }
 
 // 5.5.13 DifferencePlainDateTimeWithRounding ( isoDateTime1, isoDateTime2, calendar, largestUnit, roundingIncrement, smallestUnit, roundingMode ), https://tc39.es/proposal-temporal/#sec-temporal-differenceplaindatetimewithrounding
-ThrowCompletionOr<InternalDuration> difference_plain_date_time_with_rounding(VM& vm, ISODateTime const& iso_date_time1, ISODateTime const& iso_date_time2, Utf16View calendar, Unit largest_unit, u64 rounding_increment, Unit smallest_unit, RoundingMode rounding_mode)
+ThrowCompletionOr<InternalDuration> difference_plain_date_time_with_rounding(VM& vm, ISODateTime const& iso_date_time1, ISODateTime const& iso_date_time2, String const& calendar, Unit largest_unit, u64 rounding_increment, Unit smallest_unit, RoundingMode rounding_mode)
 {
     // 1. If CompareISODateTime(isoDateTime1, isoDateTime2) = 0, return CombineDateAndTimeDuration(ZeroDateDuration(), 0).
     if (compare_iso_date_time(iso_date_time1, iso_date_time2) == 0)
@@ -372,7 +364,7 @@ ThrowCompletionOr<InternalDuration> difference_plain_date_time_with_rounding(VM&
 }
 
 // 5.5.14 DifferencePlainDateTimeWithTotal ( isoDateTime1, isoDateTime2, calendar, unit ), https://tc39.es/proposal-temporal/#sec-temporal-differenceplaindatetimewithtotal
-ThrowCompletionOr<Crypto::BigFraction> difference_plain_date_time_with_total(VM& vm, ISODateTime const& iso_date_time1, ISODateTime const& iso_date_time2, Utf16View calendar, Unit unit)
+ThrowCompletionOr<Crypto::BigFraction> difference_plain_date_time_with_total(VM& vm, ISODateTime const& iso_date_time1, ISODateTime const& iso_date_time2, String const& calendar, Unit unit)
 {
     // 1. If CompareISODateTime(isoDateTime1, isoDateTime2) = 0, return 0.
     if (compare_iso_date_time(iso_date_time1, iso_date_time2) == 0)

@@ -1,3 +1,0 @@
-After '1': value="1"
-After '.': value="1"
-After '5': value="1.5"

@@ -1,8 +1,10 @@
 name: 'Web benchmarks'
 
 on:
-  push:
+  workflow_run:
+    workflows: ['CI']
     branches: [master]
+    types: [completed]
 
 env:
   LADYBIRD_SOURCE_DIR: ${{ github.workspace }}
@@ -12,9 +14,8 @@ env:
 jobs:
   web-benchmarks:
     runs-on: ${{ fromJSON(matrix.runner_labels) }}
-    if: ${{ github.repository == 'LadybirdBrowser/ladybird' }}
+    if: ${{ github.repository == 'LadybirdBrowser/ladybird' && github.event.workflow_run.conclusion == 'success' }}
     name: ${{ matrix.os_name }}, ${{ matrix.arch }}
-    container: ${{ fromJSON(matrix.container) }}
 
     strategy:
       fail-fast: false
@@ -22,13 +23,11 @@ jobs:
         os_name: ['Linux']
         arch: ['x86_64']
         runner_labels: ['["ubuntu-24.04-internal", "web-benchmarks", "self-hosted"]']
-        container: [&ci_container '{"image":"ghcr.io/ladybirdbrowser/ladybird-ci:2026.07.29"}']
 
         include:
           - os_name: 'macOS'
             arch: 'arm64'
-            runner_labels: '["macos-26", "web-benchmarks", "self-hosted"]'
-            container: 'null'
+            runner_labels: '["macos-15", "web-benchmarks", "self-hosted"]'
 
     permissions:
       actions: read
@@ -36,18 +35,18 @@ jobs:
 
     steps:
       - name: 'Checkout ladybird'
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v6.0.2
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: 'Determine ladybird commit hash'
         id: ladybird-commit
         shell: bash
         run: |
-          echo "sha=${{ github.sha }}" >> "${GITHUB_OUTPUT}"
+          echo "sha=${{ github.event.workflow_run.head_sha }}" >> "${GITHUB_OUTPUT}"
 
       - name: 'Checkout LadybirdBrowser/web-benchmarks'
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v6.0.2
         with:
           repository: LadybirdBrowser/web-benchmarks
           path: web-benchmarks
@@ -61,8 +60,8 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: 'Set Up Environment'
-        id: 'setup'
         uses: ./.github/actions/setup
+        id: 'setup'
         with:
           os: ${{ matrix.os_name }}
           arch: ${{ matrix.arch }}
@@ -72,20 +71,22 @@ jobs:
         uses: ./.github/actions/cache-restore
         id: 'cache-restore'
         with:
+          runner_labels: ${{ matrix.runner_labels }}
           os: ${{ matrix.os_name }}
           arch: ${{ matrix.arch }}
           toolchain: 'Clang'
           cache_key_extra: 'Distribution'
-          ccache_path: ${{ steps.setup.outputs.ccache_path }}
-          vcpkg_cache_path: ${{ steps.setup.outputs.vcpkg_cache_path }}
+          ccache_path: ${{ env.CCACHE_DIR }}
+          download_cache_path: ${{ github.workspace }}/Build/caches
+          vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
 
       - name: 'Assign Build Parameters'
         id: 'build-parameters'
         shell: bash
         run: |
           if ${{ matrix.os_name == 'Linux' }} ; then
-            echo "host_cc=clang" >> "$GITHUB_OUTPUT"
-            echo "host_cxx=clang++" >> "$GITHUB_OUTPUT"
+            echo "host_cc=clang-${{ steps.setup.outputs.llvm_version }}" >> "$GITHUB_OUTPUT"
+            echo "host_cxx=clang++-${{ steps.setup.outputs.llvm_version }}" >> "$GITHUB_OUTPUT"
           elif ${{ matrix.os_name == 'macOS' }} ; then
             echo "host_cc=$(xcrun --find clang)" >> "$GITHUB_OUTPUT"
             echo "host_cxx=$(xcrun --find clang++)" >> "$GITHUB_OUTPUT"
@@ -104,15 +105,16 @@ jobs:
         working-directory: ${{ github.workspace }}/Build
         run: |
           cmake --build .
-          cmake --install . --strip --prefix "${GITHUB_WORKSPACE}/Install"
+          cmake --install . --strip --prefix ${{ github.workspace }}/Install
 
       - name: 'Save Caches'
         uses: ./.github/actions/cache-save
         with:
+          runner_labels: ${{ matrix.runner_labels }}
           arch: ${{ matrix.arch }}
-          ccache_path: ${{ steps.setup.outputs.ccache_path }}
+          ccache_path: ${{ env.CCACHE_DIR }}
           ccache_primary_key: ${{ steps.cache-restore.outputs.ccache_primary_key }}
-          vcpkg_cache_path: ${{ steps.setup.outputs.vcpkg_cache_path }}
+          vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
           vcpkg_cache_primary_key: ${{ steps.cache-restore.outputs.vcpkg_cache_primary_key }}
 
       - name: 'Run the benchmarks'
@@ -123,16 +125,13 @@ jobs:
           source .venv/bin/activate
           python3 -m pip install -r requirements.txt
 
-          if [ "${{ matrix.os_name }}" = "macOS" ]; then
-            executable="${GITHUB_WORKSPACE}/Install/bundle/Ladybird.app/Contents/MacOS/Ladybird"
-          else
-            executable="${GITHUB_WORKSPACE}/Install/bin/Ladybird"
-          fi
+          run_options='--iterations=5'
+          run_options="${run_options} --executable=${{ github.workspace }}/Install/bin/Ladybird"
 
-          ./run.py --iterations=5 --executable="${executable}"
+          ./run.py ${run_options}
 
       - name: 'Save results as an artifact'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         with:
           name: web-benchmarks-results-${{ matrix.os_name }}-${{ matrix.arch }}
           path: web-benchmarks/results.json
@@ -147,7 +146,7 @@ jobs:
               "os": "${{ matrix.os_name }}",
               "arch": "${{ matrix.arch }}",
               "artifact": "web-benchmarks-results-${{ matrix.os_name }}-${{ matrix.arch }}",
-              "artifact_run_id": "${{ github.run_id }}"
+              "artifact_run_id": "${{ github.run_id }}",
           }' > request.json
           curl \
               --fail \

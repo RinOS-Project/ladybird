@@ -681,7 +681,7 @@ ThrowCompletionOr<GC::RootVector<Value>> ProxyObject::internal_own_property_keys
     auto trap_result_array = TRY(call(vm, *trap, m_handler, m_target));
 
     // 8. Let trapResult be ? CreateListFromArrayLike(trapResultArray, « String, Symbol »).
-    GC::ConservativeHashTable<PropertyKey> unique_keys;
+    HashTable<PropertyKey> unique_keys;
     auto trap_result = TRY(create_list_from_array_like(vm, trap_result_array, [&](auto value) -> ThrowCompletionOr<void> {
         if (!value.is_string() && !value.is_symbol())
             return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysNotStringOrSymbol);
@@ -704,10 +704,10 @@ ThrowCompletionOr<GC::RootVector<Value>> ProxyObject::internal_own_property_keys
     // 13. Assert: targetKeys contains no duplicate entries.
 
     // 14. Let targetConfigurableKeys be a new empty List.
-    GC::RootVector<Value> target_configurable_keys;
+    auto target_configurable_keys = GC::RootVector<Value> { heap() };
 
     // 15. Let targetNonconfigurableKeys be a new empty List.
-    GC::RootVector<Value> target_nonconfigurable_keys;
+    auto target_nonconfigurable_keys = GC::RootVector<Value> { heap() };
 
     // 16. For each element key of targetKeys, do
     for (auto& key : target_keys) {
@@ -735,7 +735,7 @@ ThrowCompletionOr<GC::RootVector<Value>> ProxyObject::internal_own_property_keys
     }
 
     // 18. Let uncheckedResultKeys be a List whose elements are the elements of trapResult.
-    GC::RootVector<Value> unchecked_result_keys;
+    auto unchecked_result_keys = GC::RootVector<Value> { heap() };
     unchecked_result_keys.extend(trap_result);
 
     // 19. For each element key of targetNonconfigurableKeys, do
@@ -882,9 +882,9 @@ void ProxyObject::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_handler);
 }
 
-void ProxyObject::get_stack_frame_info(size_t& registers_and_locals_count, ReadonlySpan<Value>& constants, size_t& argument_count)
+void ProxyObject::get_stack_frame_size(size_t& registers_and_locals_count, size_t& constants_count, size_t& argument_count)
 {
-    as<FunctionObject>(*m_target).get_stack_frame_info(registers_and_locals_count, constants, argument_count);
+    as<FunctionObject>(*m_target).get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
 }
 
 Utf16String ProxyObject::name_for_call_stack() const

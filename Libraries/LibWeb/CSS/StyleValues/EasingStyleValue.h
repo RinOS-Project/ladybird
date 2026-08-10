@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <LibWeb/CSS/CalculatedOr.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
 #include <LibWeb/Export.h>
 
@@ -29,16 +30,17 @@ public:
 
         bool operator==(Linear const&) const = default;
 
-        void serialize(Utf16StringBuilder&, SerializationMode) const;
+        bool is_computationally_independent() const
+        {
+            return all_of(stops, [](Stop const& stop) { return stop.output->is_computationally_independent() && (!stop.input || stop.input->is_computationally_independent()); });
+        }
+
+        void serialize(StringBuilder&, SerializationMode) const;
         String to_string(SerializationMode mode) const
         {
-            return to_utf16_string(mode).to_utf8();
-        }
-        Utf16String to_utf16_string(SerializationMode mode) const
-        {
-            Utf16StringBuilder builder;
+            StringBuilder builder;
             serialize(builder, mode);
-            return builder.to_string();
+            return builder.to_string_without_validation();
         }
     };
 
@@ -61,16 +63,17 @@ public:
             return x1 == other.x1 && y1 == other.y1 && x2 == other.x2 && y2 == other.y2;
         }
 
-        void serialize(Utf16StringBuilder&, SerializationMode) const;
+        bool is_computationally_independent() const
+        {
+            return x1->is_computationally_independent() && y1->is_computationally_independent() && x2->is_computationally_independent() && y2->is_computationally_independent();
+        }
+
+        void serialize(StringBuilder&, SerializationMode) const;
         String to_string(SerializationMode mode) const
         {
-            return to_utf16_string(mode).to_utf8();
-        }
-        Utf16String to_utf16_string(SerializationMode mode) const
-        {
-            Utf16StringBuilder builder;
+            StringBuilder builder;
             serialize(builder, mode);
-            return builder.to_string();
+            return builder.to_string_without_validation();
         }
     };
 
@@ -80,16 +83,17 @@ public:
 
         bool operator==(Steps const&) const = default;
 
-        void serialize(Utf16StringBuilder&, SerializationMode) const;
+        bool is_computationally_independent() const
+        {
+            return number_of_intervals->is_computationally_independent();
+        }
+
+        void serialize(StringBuilder&, SerializationMode) const;
         String to_string(SerializationMode mode) const
         {
-            return to_utf16_string(mode).to_utf8();
-        }
-        Utf16String to_utf16_string(SerializationMode mode) const
-        {
-            Utf16StringBuilder builder;
+            StringBuilder builder;
             serialize(builder, mode);
-            return builder.to_string();
+            return builder.to_string_without_validation();
         }
     };
 
@@ -97,7 +101,6 @@ public:
         using Variant::Variant;
 
         void serialize(StringBuilder&, SerializationMode) const;
-        void serialize(Utf16StringBuilder&, SerializationMode) const;
     };
 
     static ValueComparingNonnullRefPtr<EasingStyleValue const> create(Function const& function)
@@ -106,34 +109,26 @@ public:
     }
     virtual ~EasingStyleValue() override = default;
 
-    Function const& function() const;
+    Function const& function() const { return m_function; }
 
-    void serialize(StringBuilder& builder, SerializationMode mode) const { function().serialize(builder, mode); }
-    void serialize(Utf16StringBuilder& builder, SerializationMode mode) const { function().serialize(builder, mode); }
+    virtual void serialize(StringBuilder& builder, SerializationMode mode) const override { m_function.serialize(builder, mode); }
 
-    ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const&) const;
+    virtual ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const&) const override;
 
-    bool properties_equal(EasingStyleValue const& other) const { return function() == other.function(); }
+    bool properties_equal(EasingStyleValue const& other) const { return m_function == other.m_function; }
+
+    virtual bool is_computationally_independent() const override
+    {
+        return m_function.visit([](auto const& function) { return function.is_computationally_independent(); });
+    }
 
 private:
-    friend class StyleValue;
-
     EasingStyleValue(Function const& function)
-        : StyleValueWithDefaultOperators(Type::Easing, make_easing_data(function))
+        : StyleValueWithDefaultOperators(Type::Easing)
         , m_function(function)
     {
     }
 
-    explicit EasingStyleValue(StyleValueFFI::StyleValueData const*);
-
-    static StyleValueFFI::StyleValueData const* make_easing_data(Function const&);
-
-    // NB: The materialized function is a cache of the Rust-owned value data; it also carries the
-    //     cubic-bezier sample cache. The Rust allocation stays authoritative.
-    // NB: Eagerly materialized copy of the Rust-owned data, stored so function() can return a
-    //     stable reference; immutable after construction, so sharing across style workers is
-    //     safe (the cubic-bezier sample cache inside is only touched by main-thread animation
-    //     evaluation).
     Function m_function;
 };
 

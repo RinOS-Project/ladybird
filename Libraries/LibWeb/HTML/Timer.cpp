@@ -5,20 +5,22 @@
  */
 
 #include <LibCore/Timer.h>
-#include <LibGC/Heap.h>
+#include <LibJS/Runtime/Object.h>
 #include <LibWeb/HTML/Timer.h>
+#include <LibWeb/HTML/Window.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(Timer);
 
-GC::Ref<Timer> Timer::create(i32 milliseconds, Function<void()> callback, i32 id, Repeating repeating)
+GC::Ref<Timer> Timer::create(JS::Object& window_or_worker_global_scope, i32 milliseconds, Function<void()> callback, i32 id, Repeating repeating)
 {
-    return GC::Heap::the().allocate<Timer>(milliseconds, move(callback), id, repeating);
+    return window_or_worker_global_scope.heap().allocate<Timer>(window_or_worker_global_scope, milliseconds, move(callback), id, repeating);
 }
 
-Timer::Timer(i32 milliseconds, Function<void()> callback, i32 id, Repeating repeating)
-    : m_id(id)
+Timer::Timer(JS::Object& window_or_worker_global_scope, i32 milliseconds, Function<void()> callback, i32 id, Repeating repeating)
+    : m_window_or_worker_global_scope(window_or_worker_global_scope)
+    , m_id(id)
 {
     if (repeating == Repeating::Yes)
         m_timer = Core::Timer::create_repeating(milliseconds, move(callback));
@@ -29,6 +31,7 @@ Timer::Timer(i32 milliseconds, Function<void()> callback, i32 id, Repeating repe
 void Timer::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
+    visitor.visit(m_window_or_worker_global_scope);
     visitor.visit_possible_values(m_timer->on_timeout.raw_capture_range());
 }
 

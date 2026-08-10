@@ -1,2 +1,0 @@
-B sampled A's intermediate state (red): true
-A has its final state (blue): true

@@ -31,7 +31,7 @@ struct LoadedModuleRequest {
 };
 
 // https://tc39.es/ecma262/#modulerequest-record
-struct JS_API ModuleRequest {
+struct ModuleRequest {
     ModuleRequest() = default;
 
     explicit ModuleRequest(Utf16FlyString specifier)

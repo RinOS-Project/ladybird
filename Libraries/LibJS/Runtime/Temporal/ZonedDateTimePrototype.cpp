@@ -6,7 +6,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Utf16String.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/Intl/DateTimeFormat.h>
 #include <LibJS/Runtime/Intl/DateTimeFormatConstructor.h>
@@ -37,7 +36,7 @@ void ZonedDateTimePrototype::initialize(Realm& realm)
     auto& vm = this->vm();
 
     // 6.3.2 Temporal.ZonedDateTime.prototype[ %Symbol.toStringTag% ], https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype-%symbol.tostringtag%
-    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Temporal.ZonedDateTime"_utf16_fly_string), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Temporal.ZonedDateTime"_string), Attribute::Configurable);
 
     define_native_accessor(realm, vm.names.calendarId, calendar_id_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.timeZoneId, time_zone_id_getter, {}, Attribute::Configurable);
@@ -204,7 +203,8 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::month_code_getter)
     auto iso_date_time = get_iso_date_time_for(zoned_date_time->time_zone(), zoned_date_time->epoch_nanoseconds()->big_integer());
 
     // 4. Return CalendarISOToDate(zonedDateTime.[[Calendar]], isoDateTime.[[ISODate]]).[[MonthCode]].
-    return PrimitiveString::create(vm, calendar_iso_to_date(zoned_date_time->calendar(), iso_date_time.iso_date).month_code);
+    auto month_code = calendar_iso_to_date(zoned_date_time->calendar(), iso_date_time.iso_date).month_code;
+    return PrimitiveString::create(vm, move(month_code));
 }
 
 // 6.3.11 get Temporal.ZonedDateTime.prototype.hour, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.hour
@@ -692,14 +692,14 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::round)
         // e. Let endNs be ? GetStartOfDay(timeZone, dateEnd).
         auto end_nanoseconds = TRY(get_start_of_day(vm, time_zone, date_end));
 
-        // f. Set thisNs to min(thisNs, endNs - 1).
-        auto this_nanoseconds_clamped = min(this_nanoseconds, end_nanoseconds.minus(1_bigint));
+        // f. Assert: thisNs < endNs.
+        VERIFY(this_nanoseconds < end_nanoseconds);
 
         // g. Let dayLengthNs be ℝ(endNs - startNs).
         auto day_length_nanoseconds = end_nanoseconds.minus(start_nanoseconds);
 
         // h. Let dayProgressNs be TimeDurationFromEpochNanosecondsDifference(thisNs, startNs).
-        auto day_progress_nanoseconds = time_duration_from_epoch_nanoseconds_difference(this_nanoseconds_clamped, start_nanoseconds);
+        auto day_progress_nanoseconds = time_duration_from_epoch_nanoseconds_difference(this_nanoseconds, start_nanoseconds);
 
         // i. Let roundedDayNs be ! RoundTimeDurationToIncrement(dayProgressNs, dayLengthNs, roundingMode).
         auto rounded_day_nanoseconds = MUST(round_time_duration_to_increment(vm, day_progress_nanoseconds, day_length_nanoseconds.unsigned_value(), rounding_mode));
@@ -805,7 +805,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_locale_string)
     auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let dateTimeFormat be ? CreateDateTimeFormat(%Intl.DateTimeFormat%, locales, options, ANY, ALL, zonedDateTime.[[TimeZone]]).
-    auto date_time_format = TRY(Intl::create_date_time_format(vm, realm.intrinsics().intl_date_time_format_constructor(), locales, options, Intl::OptionRequired::Any, Intl::OptionDefaults::All, zoned_date_time->time_zone().utf16_view()));
+    auto date_time_format = TRY(Intl::create_date_time_format(vm, realm.intrinsics().intl_date_time_format_constructor(), locales, options, Intl::OptionRequired::Any, Intl::OptionDefaults::All, zoned_date_time->time_zone()));
 
     // 4. If zonedDateTime.[[Calendar]] is not "iso8601" and CalendarEquals(zonedDateTime.[[Calendar]], dateTimeFormat.[[Calendar]]) is false, throw a RangeError exception.
     if (zoned_date_time->calendar() != ISO8601_CALENDAR && !calendar_equals(zoned_date_time->calendar(), date_time_format->calendar()))

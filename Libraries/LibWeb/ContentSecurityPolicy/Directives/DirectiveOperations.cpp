@@ -5,7 +5,8 @@
  */
 
 #include <AK/Base64.h>
-#include <AK/Utf16FlyString.h>
+#include <AK/FlyString.h>
+#include <AK/HashMap.h>
 #include <AK/Vector.h>
 #include <LibCrypto/Hash/SHA2.h>
 #include <LibWeb/ContentSecurityPolicy/Directives/DirectiveOperations.h>
@@ -20,78 +21,69 @@
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/Fetch/Infrastructure/URL.h>
 #include <LibWeb/HTML/HTMLScriptElement.h>
-#include <LibWeb/HTML/HTMLStyleElement.h>
 #include <LibWeb/Infra/Strings.h>
 #include <LibWeb/SRI/SRI.h>
 #include <LibWeb/SVG/SVGElement.h>
 #include <LibWeb/SVG/SVGScriptElement.h>
-#include <LibWeb/SVG/SVGStyleElement.h>
 
 namespace Web::ContentSecurityPolicy::Directives {
 
-static bool equals_ignoring_ascii_case(Utf16View a, StringView b)
-{
-    if (a.length_in_code_units() != b.length())
-        return false;
+// https://w3c.github.io/webappsec-csp/#directive-fallback-list
+// Will return an ordered set of the fallback directives for a specific directive.
+// The returned ordered set is sorted from most relevant to least relevant and it includes the effective directive
+// itself.
+static HashMap<StringView, Vector<StringView>> fetch_directive_fallback_list {
+    // "script-src-elem"
+    //      1. Return << "script-src-elem", "script-src", "default-src" >>.
+    { "script-src-elem"sv, { "script-src-elem"sv, "script-src"sv, "default-src"sv } },
 
-    for (size_t i = 0; i < b.length(); ++i) {
-        auto a_code_unit = a.code_unit_at(i);
-        if (a_code_unit > 0x7f)
-            return false;
-        if (to_ascii_lowercase(static_cast<char>(a_code_unit)) != to_ascii_lowercase(b[i]))
-            return false;
-    }
+    // "script-src-attr"
+    //      1. Return << "script-src-attr", "script-src", "default-src" >>.
+    { "script-src-attr"sv, { "script-src-attr"sv, "script-src"sv, "default-src"sv } },
 
-    return true;
-}
+    // "style-src-elem"
+    //      1. Return << "style-src-elem", "style-src", "default-src" >>.
+    { "style-src-elem"sv, { "style-src-elem"sv, "style-src"sv, "default-src"sv } },
 
-static bool equals_ignoring_ascii_case(StringView a, Utf16View b)
-{
-    return equals_ignoring_ascii_case(b, a);
-}
+    // "style-src-attr"
+    //      1. Return << "style-src-attr", "style-src", "default-src" >>.
+    { "style-src-attr"sv, { "style-src-attr"sv, "style-src"sv, "default-src"sv } },
 
-static bool equals(Utf16View a, StringView b)
-{
-    if (a.length_in_code_units() != b.length())
-        return false;
+    // "worker-src"
+    //      1. Return << "worker-src", "child-src", "script-src", "default-src" >>.
+    { "worker-src"sv, { "worker-src"sv, "child-src"sv, "script-src"sv, "default-src"sv } },
 
-    for (size_t i = 0; i < b.length(); ++i) {
-        if (a.code_unit_at(i) != static_cast<u8>(b[i]))
-            return false;
-    }
+    // "connect-src"
+    //      1. Return << "connect-src", "default-src" >>.
+    { "connect-src"sv, { "connect-src"sv, "default-src"sv } },
 
-    return true;
-}
+    // "manifest-src"
+    //      1. Return << "manifest-src", "default-src" >>.
+    { "manifest-src"sv, { "manifest-src"sv, "default-src"sv } },
 
-static bool starts_with(Utf16View view, StringView prefix)
-{
-    if (view.length_in_code_units() < prefix.length())
-        return false;
+    // "object-src"
+    //      1. Return << "object-src", "default-src" >>.
+    { "object-src"sv, { "object-src"sv, "default-src"sv } },
 
-    for (size_t i = 0; i < prefix.length(); ++i) {
-        if (view.code_unit_at(i) != static_cast<u8>(prefix[i]))
-            return false;
-    }
+    // "frame-src"
+    //      1. Return << "frame-src", "child-src", "default-src" >>.
+    { "frame-src"sv, { "frame-src"sv, "child-src"sv, "default-src"sv } },
 
-    return true;
-}
+    // "media-src"
+    //      1. Return << "media-src", "default-src" >>.
+    { "media-src"sv, { "media-src"sv, "default-src"sv } },
 
-static bool ends_with_ignoring_ascii_case(StringView view, Utf16View suffix)
-{
-    if (view.length() < suffix.length_in_code_units())
-        return false;
+    // "font-src"
+    //      1. Return << "font-src", "default-src" >>.
+    { "font-src"sv, { "font-src"sv, "default-src"sv } },
 
-    return equals_ignoring_ascii_case(view.substring_view(view.length() - suffix.length_in_code_units()), suffix);
-}
-
-static Utf16View substring_view(Utf16View view, size_t start)
-{
-    VERIFY(start <= view.length_in_code_units());
-    return view.substring_view(start, view.length_in_code_units() - start);
-}
+    // "img-src"
+    //      1. Return << "img-src", "default-src" >>.
+    { "img-src"sv, { "img-src"sv, "default-src"sv } },
+};
 
 // https://w3c.github.io/webappsec-csp/#effective-directive-for-a-request
-Optional<Utf16FlyString> get_the_effective_directive_for_request(GC::Ref<Fetch::Infrastructure::Request const> request)
+Optional<FlyString> get_the_effective_directive_for_request(GC::Ref<Fetch::Infrastructure::Request const> request)
 {
     // Each fetch directive controls a specific destination of request. Given a request request, the following algorithm
     // returns either null or the name of the request’s effective directive:
@@ -106,16 +98,6 @@ Optional<Utf16FlyString> get_the_effective_directive_for_request(GC::Ref<Fetch::
         return Names::ConnectSrc;
 
     switch (request->destination().value()) {
-    // https://html.spec.whatwg.org/multipage/browsing-the-web.html#process-a-navigate-fetch
-    // destination
-    //     "document" (NOTE: The destination is updated below when navigable has a container.)
-    // If navigable's container is non-null:
-    //     2. Set request's destination to navigable's container's local name.
-    // AD-HOC: CSP's effective directive algorithm does not have a "document" case, but falling through to connect-src
-    //         applies fetch directives to top-level document navigations. Treat these navigation requests as not having
-    //         a fetch directive.
-    case Fetch::Infrastructure::Request::Destination::Document:
-        return OptionalNone {};
     // "manifest"
     //      1. Return manifest-src.
     case Fetch::Infrastructure::Request::Destination::Manifest:
@@ -189,79 +171,20 @@ Optional<Utf16FlyString> get_the_effective_directive_for_request(GC::Ref<Fetch::
 }
 
 // https://w3c.github.io/webappsec-csp/#directive-fallback-list
-// Will return an ordered set of the fallback directives for a specific directive.
-// The returned ordered set is sorted from most relevant to least relevant and it includes the effective directive
-// itself.
-Vector<Utf16FlyString> get_fetch_directive_fallback_list(Optional<Utf16FlyString> directive_name)
+Vector<StringView> get_fetch_directive_fallback_list(Optional<FlyString> directive_name)
 {
     if (!directive_name.has_value())
         return {};
 
-    // "script-src-elem"
-    //      1. Return << "script-src-elem", "script-src", "default-src" >>.
-    if (directive_name == Names::ScriptSrcElem)
-        return { Names::ScriptSrcElem, Names::ScriptSrc, Names::DefaultSrc };
+    auto list_iterator = fetch_directive_fallback_list.find(directive_name.value());
+    if (list_iterator == fetch_directive_fallback_list.end())
+        return {};
 
-    // "script-src-attr"
-    //      1. Return << "script-src-attr", "script-src", "default-src" >>.
-    if (directive_name == Names::ScriptSrcAttr)
-        return { Names::ScriptSrcAttr, Names::ScriptSrc, Names::DefaultSrc };
-
-    // "style-src-elem"
-    //      1. Return << "style-src-elem", "style-src", "default-src" >>.
-    if (directive_name == Names::StyleSrcElem)
-        return { Names::StyleSrcElem, Names::StyleSrc, Names::DefaultSrc };
-
-    // "style-src-attr"
-    //      1. Return << "style-src-attr", "style-src", "default-src" >>.
-    if (directive_name == Names::StyleSrcAttr)
-        return { Names::StyleSrcAttr, Names::StyleSrc, Names::DefaultSrc };
-
-    // "worker-src"
-    //      1. Return << "worker-src", "child-src", "script-src", "default-src" >>.
-    if (directive_name == Names::WorkerSrc)
-        return { Names::WorkerSrc, Names::ChildSrc, Names::ScriptSrc, Names::DefaultSrc };
-
-    // "connect-src"
-    //      1. Return << "connect-src", "default-src" >>.
-    if (directive_name == Names::ConnectSrc)
-        return { Names::ConnectSrc, Names::DefaultSrc };
-
-    // "manifest-src"
-    //      1. Return << "manifest-src", "default-src" >>.
-    if (directive_name == Names::ManifestSrc)
-        return { Names::ManifestSrc, Names::DefaultSrc };
-
-    // "object-src"
-    //      1. Return << "object-src", "default-src" >>.
-    if (directive_name == Names::ObjectSrc)
-        return { Names::ObjectSrc, Names::DefaultSrc };
-
-    // "frame-src"
-    //      1. Return << "frame-src", "child-src", "default-src" >>.
-    if (directive_name == Names::FrameSrc)
-        return { Names::FrameSrc, Names::ChildSrc, Names::DefaultSrc };
-
-    // "media-src"
-    //      1. Return << "media-src", "default-src" >>.
-    if (directive_name == Names::MediaSrc)
-        return { Names::MediaSrc, Names::DefaultSrc };
-
-    // "font-src"
-    //      1. Return << "font-src", "default-src" >>.
-    if (directive_name == Names::FontSrc)
-        return { Names::FontSrc, Names::DefaultSrc };
-
-    // "img-src"
-    //      1. Return << "img-src", "default-src" >>.
-    if (directive_name == Names::ImgSrc)
-        return { Names::ImgSrc, Names::DefaultSrc };
-
-    return {};
+    return list_iterator->value;
 }
 
 // https://w3c.github.io/webappsec-csp/#should-directive-execute
-ShouldExecute should_fetch_directive_execute(Optional<Utf16FlyString> effective_directive_name, Utf16FlyString const& directive_name, GC::Ref<Policy const> policy)
+ShouldExecute should_fetch_directive_execute(Optional<FlyString> effective_directive_name, FlyString const& directive_name, GC::Ref<Policy const> policy)
 {
     // 1. Let directive fallback list be the result of executing § 6.8.3 Get fetch directive fallback list on effective
     //    directive name.
@@ -283,7 +206,7 @@ ShouldExecute should_fetch_directive_execute(Optional<Utf16FlyString> effective_
 }
 
 // https://w3c.github.io/webappsec-csp/#effective-directive-for-inline-check
-Utf16FlyString get_the_effective_directive_for_inline_checks(Directive::InlineType type)
+FlyString get_the_effective_directive_for_inline_checks(Directive::InlineType type)
 {
     // Spec Note: While the effective directive is only defined for requests, in this algorithm it is used similarly to
     //            mean the directive that is most relevant to a particular type of inline check.
@@ -353,40 +276,13 @@ static MatchResult scheme_part_matches(StringView a, StringView b)
     return MatchResult::DoesNotMatch;
 }
 
-static MatchResult scheme_part_matches(Utf16View a, StringView b)
-{
-    // 1. If one of the following is true, return "Matches":
-    //    1. A is an ASCII case-insensitive match for B.
-    if (equals_ignoring_ascii_case(a, b))
-        return MatchResult::Matches;
-
-    //    2. A is an ASCII case-insensitive match for "http", and B is an ASCII case-insensitive match for "https".
-    if (a.equals_ignoring_ascii_case(u"http"sv) && b.equals_ignoring_ascii_case("https"sv))
-        return MatchResult::Matches;
-
-    //    3. A is an ASCII case-insensitive match for "ws", and B is an ASCII case-insensitive match for "wss", "http", or "https".
-    if (a.equals_ignoring_ascii_case(u"ws"sv)
-        && (b.equals_ignoring_ascii_case("wss"sv)
-            || b.equals_ignoring_ascii_case("http"sv)
-            || b.equals_ignoring_ascii_case("https"sv))) {
-        return MatchResult::Matches;
-    }
-
-    //    4. A is an ASCII case-insensitive match for "wss", and B is an ASCII case-insensitive match for "https".
-    if (a.equals_ignoring_ascii_case(u"wss"sv) && b.equals_ignoring_ascii_case("https"sv))
-        return MatchResult::Matches;
-
-    // 2. Return "Does Not Match".
-    return MatchResult::DoesNotMatch;
-}
-
 // https://w3c.github.io/webappsec-csp/#host-part-match
 // An ASCII string host-part matches a host if a CSP source expression that contained the first as a host-part could
 // potentially match the latter. For example, we say that "www.example.com" host-part matches "www.example.com".
 // More formally, ASCII string pattern and host host are said to host-part match if the following algorithm returns "Matches":
 // Spec Note: The matching relation is asymmetric. That is, pattern matching host does not mean that host will match pattern.
 //            For example, *.example.com host-part matches www.example.com, but www.example.com does not host-part match *.example.com.
-static MatchResult host_part_matches(Utf16View pattern, Optional<URL::Host> const& maybe_host)
+static MatchResult host_part_matches(StringView pattern, Optional<URL::Host> const& maybe_host)
 {
     // 1. If host is not a domain, return "Does Not Match".
     // Spec Note: A future version of this specification may allow literal IPv6 and IPv4 addresses, depending on usage and demand.
@@ -401,19 +297,21 @@ static MatchResult host_part_matches(Utf16View pattern, Optional<URL::Host> cons
         return MatchResult::DoesNotMatch;
 
     // 2. If pattern is "*", return "Matches".
-    if (equals(pattern, "*"sv))
+    if (pattern == "*"sv)
         return MatchResult::Matches;
 
     VERIFY(host.has<String>());
     auto host_string = host.get<String>();
 
     // 3. If pattern starts with "*.":
-    if (starts_with(pattern, "*."sv)) {
+    if (pattern.starts_with("*."sv)) {
         // 1. Let remaining be pattern with the leading U+002A (*) removed and ASCII lowercased.
-        auto remaining_without_asterisk = substring_view(pattern, 1);
+        auto remaining_without_asterisk = pattern.substring_view(1);
+        auto remaining = remaining_without_asterisk.to_ascii_lowercase_string();
 
         // 2. If host to ASCII lowercase ends with remaining, then return "Matches".
-        if (ends_with_ignoring_ascii_case(host_string.bytes_as_string_view(), remaining_without_asterisk))
+        auto lowercase_host = host_string.to_ascii_lowercase();
+        if (lowercase_host.ends_with_bytes(remaining))
             return MatchResult::Matches;
 
         // 3. Return "Does Not Match".
@@ -421,7 +319,7 @@ static MatchResult host_part_matches(Utf16View pattern, Optional<URL::Host> cons
     }
 
     // 4. If pattern is not an ASCII case-insensitive match for host, return "Does Not Match".
-    if (!equals_ignoring_ascii_case(pattern, host_string.bytes_as_string_view()))
+    if (!pattern.equals_ignoring_ascii_case(host_string))
         return MatchResult::DoesNotMatch;
 
     // 5. Return "Matches".
@@ -432,30 +330,26 @@ static MatchResult host_part_matches(Utf16View pattern, Optional<URL::Host> cons
 // An ASCII string input port-part matches URL url if a CSP source expression that contained the first as a port-part
 // could potentially match a URL containing the latter’s port and scheme. For example, "80" port-part matches
 // matches http://example.com.
-static MatchResult port_part_matches(Optional<Utf16View> input, URL::URL const& url)
+static MatchResult port_part_matches(Optional<StringView> input, URL::URL const& url)
 {
     // FIXME: 1. Assert: input is the empty string, "*", or a sequence of ASCII digits.
 
     // 2. If input is equal to "*", return "Matches".
-    if (input.has_value() && equals(input.value(), "*"sv))
+    if (input == "*"sv)
         return MatchResult::Matches;
 
     // 3. Let normalizedInput be null if input is the empty string; otherwise input interpreted as decimal number.
     Optional<u16> normalized_input;
     if (input.has_value()) {
         VERIFY(!input.value().is_empty());
-        u32 port = 0;
-        for (size_t i = 0; i < input->length_in_code_units(); ++i) {
-            auto code_unit = input->code_unit_at(i);
-            VERIFY(is_ascii_digit(code_unit));
-            port = port * 10 + (code_unit - '0');
+        auto maybe_port = input.value().to_number<u16>(TrimWhitespace::No);
 
-            // If the port overflows u16, it can never match the URL's port, which is only within the u16 range.
-            if (port > NumericLimits<u16>::max())
-                return MatchResult::DoesNotMatch;
-        }
+        // If the port is empty here, then it's because the input overflowed the u16. Since this means it's bigger than
+        // a u16, it can never match the URL's port, which is only within the u16 range.
+        if (!maybe_port.has_value())
+            return MatchResult::DoesNotMatch;
 
-        normalized_input = static_cast<u16>(port);
+        normalized_input = maybe_port.value();
     }
 
     // 4. If normalizedInput equals url’s port, return "Matches".
@@ -482,7 +376,7 @@ static MatchResult port_part_matches(Optional<Utf16View> input, URL::URL const& 
 // "/subdirectory/" path-part matches "/subdirectory/file".
 // Spec Note: The matching relation is asymmetric. That is, path A matching path B does not mean that path B will
 //            match path A.
-static MatchResult path_part_matches(Utf16View a, StringView b)
+static MatchResult path_part_matches(StringView a, StringView b)
 {
     // 1. If path A is the empty string, return "Matches".
     if (a.is_empty())
@@ -490,17 +384,16 @@ static MatchResult path_part_matches(Utf16View a, StringView b)
 
     // 2. If path A consists of one character that is equal to the U+002F SOLIDUS character (/) and path B is the empty
     //    string, return "Matches".
-    if (equals(a, "/"sv) && b.is_empty())
+    if (a == "/"sv && b.is_empty())
         return MatchResult::Matches;
 
     // 3. Let exact match be false if the final character of path A is the U+002F SOLIDUS character (/), and true
     //    otherwise.
-    auto exact_match = !a.ends_with(u'/');
+    auto exact_match = !a.ends_with('/');
 
     // 4. Let path list A and path list B be the result of strictly splitting path A and path B respectively on the
     //    U+002F SOLIDUS character (/).
-    auto path_part = MUST(a.to_utf8());
-    auto path_list_a = path_part.bytes_as_string_view().split_view('/', SplitBehavior::KeepEmpty);
+    auto path_list_a = a.split_view('/', SplitBehavior::KeepEmpty);
     auto path_list_b = b.split_view('/', SplitBehavior::KeepEmpty);
 
     // 5. If path list A has more items than path list B, return "Does Not Match".
@@ -544,7 +437,7 @@ static MatchResult path_part_matches(Utf16View a, StringView b)
 }
 
 // https://w3c.github.io/webappsec-csp/#match-url-to-source-expression
-MatchResult does_url_match_expression_in_origin_with_redirect_count(URL::URL const& url, Utf16View expression, URL::Origin const& origin, u8 redirect_count)
+MatchResult does_url_match_expression_in_origin_with_redirect_count(URL::URL const& url, String const& expression, URL::Origin const& origin, u8 redirect_count)
 {
     // Spec Note: origin is the origin of the resource relative to which the expression should be resolved.
     //            "'self'", for instance, will have distinct meaning depending on that bit of context.
@@ -559,7 +452,7 @@ MatchResult does_url_match_expression_in_origin_with_redirect_count(URL::URL con
     if (!origin.is_opaque() && origin.scheme().has_value())
         origin_scheme = origin.scheme()->bytes_as_string_view();
 
-    if (equals(expression, "*"sv) && (Fetch::Infrastructure::is_http_or_https_scheme(url.scheme()) || url.scheme() == origin_scheme))
+    if (expression == "*"sv && (Fetch::Infrastructure::is_http_or_https_scheme(url.scheme()) || url.scheme() == origin_scheme))
         return MatchResult::Matches;
 
     // 2. If expression matches the scheme-source or host-source grammar:
@@ -631,7 +524,7 @@ MatchResult does_url_match_expression_in_origin_with_redirect_count(URL::URL con
     //            when it is safe to do so. We limit these upgrades to endpoints running on the default port for a
     //            particular scheme or a port that matches the origin of the protected resource, as this seems
     //            sufficient to deal with upgrades that can be reasonably expected to succeed.
-    if (expression.equals_ignoring_ascii_case(KeywordSources::Self.view())) {
+    if (expression.equals_ignoring_ascii_case(KeywordSources::Self)) {
         // 1. origin is the same as url’s origin
         if (origin.is_same_origin(url.origin()))
             return MatchResult::Matches;
@@ -665,7 +558,7 @@ MatchResult does_url_match_expression_in_origin_with_redirect_count(URL::URL con
 }
 
 // https://w3c.github.io/webappsec-csp/#match-url-to-source-list
-MatchResult does_url_match_source_list_in_origin_with_redirect_count(URL::URL const& url, Vector<Utf16String> const& source_list, URL::Origin const& origin, u8 redirect_count)
+MatchResult does_url_match_source_list_in_origin_with_redirect_count(URL::URL const& url, Vector<String> const& source_list, URL::Origin const& origin, u8 redirect_count)
 {
     // 1. Assert: source list is not null.
     // NOTE: Already done by source_list being passed by reference.
@@ -681,7 +574,7 @@ MatchResult does_url_match_source_list_in_origin_with_redirect_count(URL::URL co
     // Spec Note: The 'none' keyword has no effect when other source expressions are present. That is, the list « 'none' »
     //            does not match any URL. A list consisting of « 'none', https://example.com », on the other hand, would
     //            match https://example.com/.
-    if (source_list.size() == 1 && source_list.first().equals_ignoring_ascii_case(u"'none'"sv))
+    if (source_list.size() == 1 && source_list.first().equals_ignoring_ascii_case("'none'"sv))
         return MatchResult::DoesNotMatch;
 
     // 4. For each expression of source list:
@@ -697,7 +590,7 @@ MatchResult does_url_match_source_list_in_origin_with_redirect_count(URL::URL co
 }
 
 // https://w3c.github.io/webappsec-csp/#match-request-to-source-list
-MatchResult does_request_match_source_list(GC::Ref<Fetch::Infrastructure::Request const> request, Vector<Utf16String> const& source_list, GC::Ref<Policy const> policy)
+MatchResult does_request_match_source_list(GC::Ref<Fetch::Infrastructure::Request const> request, Vector<String> const& source_list, GC::Ref<Policy const> policy)
 {
     // Given a request request, a source list source list, and a policy policy, this algorithm returns the result of
     // executing § 6.7.2.7 Does url match source list in origin with redirect count? on request’s current url, source
@@ -708,7 +601,7 @@ MatchResult does_request_match_source_list(GC::Ref<Fetch::Infrastructure::Reques
 }
 
 // https://w3c.github.io/webappsec-csp/#match-response-to-source-list
-MatchResult does_response_match_source_list(GC::Ref<Fetch::Infrastructure::Response const> response, GC::Ref<Fetch::Infrastructure::Request const> request, Vector<Utf16String> const& source_list, GC::Ref<Policy const> policy)
+MatchResult does_response_match_source_list(GC::Ref<Fetch::Infrastructure::Response const> response, GC::Ref<Fetch::Infrastructure::Request const> request, Vector<String> const& source_list, GC::Ref<Policy const> policy)
 {
     // Given a request request, and a source list source list, and a policy policy, this algorithm returns the result
     // of executing § 6.7.2.7 Does url match source list in origin with redirect count? on response’s url, source list,
@@ -721,7 +614,7 @@ MatchResult does_response_match_source_list(GC::Ref<Fetch::Infrastructure::Respo
 }
 
 // https://w3c.github.io/webappsec-csp/#match-nonce-to-source-list
-MatchResult does_nonce_match_source_list(Utf16View nonce, Vector<Utf16String> const& source_list)
+MatchResult does_nonce_match_source_list(String const& nonce, Vector<String> const& source_list)
 {
     // 1. Assert: source list is not null.
     // Already done by only accept references.
@@ -750,7 +643,7 @@ MatchResult does_nonce_match_source_list(Utf16View nonce, Vector<Utf16String> co
 // Spec Note: Here, we verify only whether the integrity metadata is a non-empty subset of the hash-source sources in
 //            source list. We rely on the browser’s enforcement of Subresource Integrity [SRI] to block non-matching
 //            resources upon response.
-static MatchResult does_integrity_metadata_match_source_list(Utf16View integrity_metadata, Vector<Utf16String> const& source_list)
+static MatchResult does_integrity_metadata_match_source_list(String const& integrity_metadata, Vector<String> const& source_list)
 {
     // 1. Assert: source list is not null.
     // NOTE: This is already done by passing in source_list by reference.
@@ -819,7 +712,7 @@ Directive::Result script_directives_pre_request_check(GC::Ref<Fetch::Infrastruct
         // Spec Note: "'strict-dynamic'" is explained in more detail in § 8.2 Usage of "'strict-dynamic'".
         //            https://w3c.github.io/webappsec-csp/#strict-dynamic-usage
         auto maybe_strict_dynamic = directive->value().find_if([](auto const& directive_value) {
-            return directive_value.equals_ignoring_ascii_case(KeywordSources::StrictDynamic.view());
+            return directive_value.equals_ignoring_ascii_case(KeywordSources::StrictDynamic);
         });
 
         if (!maybe_strict_dynamic.is_end()) {
@@ -859,7 +752,7 @@ Directive::Result script_directives_post_request_check(GC::Ref<Fetch::Infrastruc
         // 3. If directive’s value contains "'strict-dynamic'":
         // FIXME: Should this be case insensitive?
         auto maybe_strict_dynamic = directive->value().find_if([](auto const& directive_value) {
-            return directive_value.equals_ignoring_ascii_case(KeywordSources::StrictDynamic.view());
+            return directive_value.equals_ignoring_ascii_case(KeywordSources::StrictDynamic);
         });
 
         if (!maybe_strict_dynamic.is_end()) {
@@ -886,7 +779,7 @@ enum class [[nodiscard]] AllowsResult {
     Allows,
 };
 
-static AllowsResult does_a_source_list_allow_all_inline_behavior_for_type(Vector<Utf16String> const& source_list, Directive::InlineType type)
+static AllowsResult does_a_source_list_allow_all_inline_behavior_for_type(Vector<String> const& source_list, Directive::InlineType type)
 {
     // 1. Let allow all inline be false.
     bool allow_all_inline = false;
@@ -905,13 +798,13 @@ static AllowsResult does_a_source_list_allow_all_inline_behavior_for_type(Vector
         // 2. If type is "script", "script attribute" or "navigation" and expression matches the keyword-source
         //    "'strict-dynamic'", return "Does Not Allow".
         if (type == Directive::InlineType::Script || type == Directive::InlineType::ScriptAttribute || type == Directive::InlineType::Navigation) {
-            if (expression.equals_ignoring_ascii_case(KeywordSources::StrictDynamic.view()))
+            if (expression.equals_ignoring_ascii_case(KeywordSources::StrictDynamic))
                 return AllowsResult::DoesNotAllow;
         }
 
         // 3. If expression is an ASCII case-insensitive match for the keyword-source "'unsafe-inline'", set allow all
         //    inline to true.
-        if (expression.equals_ignoring_ascii_case(KeywordSources::UnsafeInline.view()))
+        if (expression.equals_ignoring_ascii_case(KeywordSources::UnsafeInline))
             allow_all_inline = true;
     }
 
@@ -954,14 +847,14 @@ enum class NonceableResult {
 
             // 1. If attribute’s name contains an ASCII case-insensitive match for "<script" or "<style", return
             //    "Not Nonceable".
-            auto attribute_name = attribute->name().view();
-            if (attribute_name.find_code_unit_offset_ignoring_case("<script"sv).has_value() || attribute_name.find_code_unit_offset_ignoring_case("<style"sv).has_value())
+            auto attribute_name = attribute->name().to_string();
+            if (attribute_name.contains("<script"sv, CaseSensitivity::CaseInsensitive) || attribute_name.contains("<style"sv, CaseSensitivity::CaseInsensitive))
                 return NonceableResult::NotNonceable;
 
             // 2. If attribute’s value contains an ASCII case-insensitive match for "<script" or "<style", return
             //    "Not Nonceable".
-            auto attribute_value = attribute->value();
-            if (attribute_value.find_code_unit_offset_ignoring_case("<script"sv).has_value() || attribute_value.find_code_unit_offset_ignoring_case("<style"sv).has_value())
+            auto const& attribute_value = attribute->value();
+            if (attribute_value.contains("<script"sv, CaseSensitivity::CaseInsensitive) || attribute_value.contains("<style"sv, CaseSensitivity::CaseInsensitive))
                 return NonceableResult::NotNonceable;
         }
     }
@@ -977,7 +870,7 @@ enum class NonceableResult {
 }
 
 // https://w3c.github.io/webappsec-csp/#match-element-to-source-list
-MatchResult does_element_match_source_list_for_type_and_source(GC::Ptr<DOM::Element const> element, Vector<Utf16String> const& source_list, Directive::InlineType type, Utf16View source)
+MatchResult does_element_match_source_list_for_type_and_source(GC::Ptr<DOM::Element const> element, Vector<String> const& source_list, Directive::InlineType type, String const& source)
 {
     // Spec Note: Regardless of the encoding of the document, source will be converted to UTF-8 before applying any
     //            hashing algorithms.
@@ -994,13 +887,7 @@ MatchResult does_element_match_source_list_for_type_and_source(GC::Ptr<DOM::Elem
     // FIXME: File spec issue that this algorithm doesn't handle `element` being null, which is it when doing a
     //        javascript: URL navigation. For now, we say that the element is not nonceable if it's null, because
     //        we simply can't pull a nonce attribute value from a null element.
-    // AD-HOC: For interoperability, match a style element's internal nonce without requiring a nonce content
-    // attribute. This allows styles whose nonce was set through the IDL attribute, which intentionally does not update
-    // the content attribute. Keep applying the nonceability checks above to script elements to prevent dangling markup
-    // attacks.
-    auto is_nonceable = (type == Directive::InlineType::Style && element && (is<HTML::HTMLStyleElement>(element.ptr()) || is<SVG::SVGStyleElement>(element.ptr())))
-        || (type == Directive::InlineType::Script && is_element_nonceable(element) == NonceableResult::Nonceable);
-    if (is_nonceable) {
+    if ((type == Directive::InlineType::Script || type == Directive::InlineType::Style) && is_element_nonceable(element) == NonceableResult::Nonceable) {
         // 1. For each expression of list:
         for (auto const& expression : source_list) {
             // 1. If expression matches the nonce-source grammar, and element has a nonce attribute whose value is
@@ -1010,7 +897,7 @@ MatchResult does_element_match_source_list_for_type_and_source(GC::Ptr<DOM::Elem
                 VERIFY(element);
                 VERIFY(is<HTML::HTMLElement>(element.ptr()) || is<SVG::SVGElement>(element.ptr()));
 
-                Utf16String element_nonce;
+                String element_nonce;
                 if (auto* html_element = as_if<HTML::HTMLElement>(element.ptr())) {
                     element_nonce = html_element->nonce();
                 } else {
@@ -1018,7 +905,7 @@ MatchResult does_element_match_source_list_for_type_and_source(GC::Ptr<DOM::Elem
                     element_nonce = svg_element.nonce();
                 }
 
-                if (element_nonce == nonce_source_parse_result->base64_value.value())
+                if (nonce_source_parse_result->base64_value == element_nonce)
                     return MatchResult::Matches;
             }
         }
@@ -1031,7 +918,7 @@ MatchResult does_element_match_source_list_for_type_and_source(GC::Ptr<DOM::Elem
     for (auto const& expression : source_list) {
         // 1. If expression is an ASCII case-insensitive match for the keyword-source "'unsafe-hashes'", set
         //    unsafe-hashes flag to true. Break out of the loop.
-        if (expression.equals_ignoring_ascii_case(KeywordSources::UnsafeHashes.view())) {
+        if (expression.equals_ignoring_ascii_case(KeywordSources::UnsafeHashes)) {
             unsafe_hashes_flag = true;
             break;
         }
@@ -1044,15 +931,14 @@ MatchResult does_element_match_source_list_for_type_and_source(GC::Ptr<DOM::Elem
         // 1. Set source to the result of executing UTF-8 encode on the result of executing JavaScript string
         //    converting on source.
         auto converted_source = MUST(Infra::convert_to_scalar_value_string(source));
-        auto converted_source_utf8 = converted_source.to_utf8(AllowLonelySurrogates::No);
 
-        // NOTE: converted_source_utf8 is already UTF-8 encoded.
-        auto converted_source_bytes = converted_source_utf8.bytes();
+        // NOTE: converted_source is already UTF-8 encoded.
+        auto converted_source_bytes = converted_source.bytes();
 
         // 2. For each expression of list:
         for (auto const& expression : source_list) {
             // 1. If expression is the "'strict-dynamic'" keyword-source:
-            if (expression.equals_ignoring_ascii_case(KeywordSources::StrictDynamic.view())) {
+            if (expression.equals_ignoring_ascii_case(KeywordSources::StrictDynamic)) {
                 // 1. If type is "script", and element is not parser-inserted, return "Matches".
                 if (type == Directive::InlineType::Script && element) {
                     if (auto const* html_script_element = as_if<HTML::HTMLScriptElement>(element.ptr())) {
@@ -1076,17 +962,17 @@ MatchResult does_element_match_source_list_for_type_and_source(GC::Ptr<DOM::Elem
                 VERIFY(hash_source_parse_result->hash_algorithm.has_value());
                 auto hash_algorithm_from_expression = hash_source_parse_result->hash_algorithm.value();
 
-                if (hash_algorithm_from_expression.equals_ignoring_ascii_case(u"sha256"sv))
+                if (hash_algorithm_from_expression.equals_ignoring_ascii_case("sha256"sv))
                     algorithm = "SHA-256"sv;
 
                 // 3. If expression’s hash-algorithm part is an ASCII case-insensitive match for "sha384", set
                 //    algorithm to SHA-384.
-                if (hash_algorithm_from_expression.equals_ignoring_ascii_case(u"sha384"sv))
+                if (hash_algorithm_from_expression.equals_ignoring_ascii_case("sha384"sv))
                     algorithm = "SHA-384"sv;
 
                 // 4. If expression’s hash-algorithm part is an ASCII case-insensitive match for "sha512", set
                 //    algorithm to SHA-512.
-                if (hash_algorithm_from_expression.equals_ignoring_ascii_case(u"sha512"sv))
+                if (hash_algorithm_from_expression.equals_ignoring_ascii_case("sha512"sv))
                     algorithm = "SHA-512"sv;
 
                 // 5. If algorithm is not null:
@@ -1118,7 +1004,7 @@ MatchResult does_element_match_source_list_for_type_and_source(GC::Ptr<DOM::Elem
                     // Spec Note: This replacement normalizes hashes expressed in base64url encoding into base64
                     //            encoding for matching.
                     VERIFY(hash_source_parse_result->base64_value.has_value());
-                    auto base64_value_string = MUST(hash_source_parse_result->base64_value->to_utf8());
+                    auto base64_value_string = MUST(String::from_utf8(hash_source_parse_result->base64_value.value()));
 
                     auto expected = MUST(base64_value_string.replace("-"sv, "+"sv, ReplaceMode::All));
                     expected = MUST(expected.replace("_"sv, "/"sv, ReplaceMode::All));

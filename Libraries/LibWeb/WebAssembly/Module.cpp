@@ -5,11 +5,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibJS/Runtime/VM.h>
-#include <LibWeb/Bindings/Module.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/ModulePrototype.h>
 #include <LibWeb/WebAssembly/Module.h>
 #include <LibWeb/WebAssembly/WebAssembly.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
@@ -19,27 +19,27 @@ namespace Web::WebAssembly {
 
 GC_DEFINE_ALLOCATOR(Module);
 
-WebIDL::ExceptionOr<GC::Ref<Module>> Module::create(JS::Realm& realm, WebIDL::BufferSource bytes)
+WebIDL::ExceptionOr<GC::Ref<Module>> Module::construct_impl(JS::Realm& realm, GC::Root<WebIDL::BufferSource>& bytes)
 {
     auto& vm = realm.vm();
 
-    auto stable_bytes_or_error = WebIDL::get_buffer_source_copy(bytes);
+    auto stable_bytes_or_error = WebIDL::get_buffer_source_copy(bytes->raw_object());
     if (stable_bytes_or_error.is_error()) {
         VERIFY(stable_bytes_or_error.error().code() == ENOMEM);
         return vm.throw_completion<JS::InternalError>(vm.error_message(JS::VM::ErrorMessage::OutOfMemory));
     }
     auto stable_bytes = stable_bytes_or_error.release_value();
 
-    auto compiled_module = TRY(Detail::compile_a_webassembly_module(realm, move(stable_bytes)));
-    return GC::Heap::the().allocate<Module>(move(compiled_module));
+    auto compiled_module = TRY(Detail::compile_a_webassembly_module(vm, move(stable_bytes)));
+    return realm.create<Module>(realm, move(compiled_module));
 }
 
 // https://webassembly.github.io/threads/js-api/index.html#dom-module-imports
-WebIDL::ExceptionOr<Vector<Bindings::ModuleImportDescriptor>> Module::imports(GC::Ref<Module> module_object)
+WebIDL::ExceptionOr<Vector<ModuleImportDescriptor>> Module::imports(JS::VM&, GC::Ref<Module> module_object)
 {
     // 1. Let module be moduleObject.[[Module]].
     // 2. Let imports be « ».
-    Vector<Bindings::ModuleImportDescriptor> import_objects;
+    Vector<ModuleImportDescriptor> import_objects;
 
     // 3. For each (moduleName, name, type) of module_imports(module),
     auto& imports = module_object->m_compiled_module->module->import_section().imports();
@@ -60,10 +60,10 @@ WebIDL::ExceptionOr<Vector<Bindings::ModuleImportDescriptor>> Module::imports(GC
             [](Wasm::TagType) -> Bindings::ImportExportKind { TODO(); });
 
         // 3.2. Let obj be «[ "module" → moduleName, "name" → name, "kind" → kind ]».
-        Bindings::ModuleImportDescriptor descriptor {
+        ModuleImportDescriptor descriptor {
+            .module = String::from_utf8_with_replacement_character(import.module()),
+            .name = String::from_utf8_with_replacement_character(import.name()),
             .kind = kind,
-            .module = Utf16String::from_utf8_with_replacement_character(import.module()),
-            .name = Utf16String::from_utf8_with_replacement_character(import.name()),
         };
 
         // 3.3. Append obj to imports.
@@ -74,11 +74,11 @@ WebIDL::ExceptionOr<Vector<Bindings::ModuleImportDescriptor>> Module::imports(GC
 }
 
 // https://webassembly.github.io/threads/js-api/index.html#dom-module-exports
-WebIDL::ExceptionOr<Vector<Bindings::ModuleExportDescriptor>> Module::exports(GC::Ref<Module> module_object)
+WebIDL::ExceptionOr<Vector<ModuleExportDescriptor>> Module::exports(JS::VM&, GC::Ref<Module> module_object)
 {
     // 1. Let module be moduleObject.[[Module]].
     // 2. Let exports be « ».
-    Vector<Bindings::ModuleExportDescriptor> export_objects;
+    Vector<ModuleExportDescriptor> export_objects;
 
     // 3. For each (name, type) of module_exports(module),
     auto& exports = module_object->m_compiled_module->module->export_section().entries();
@@ -97,9 +97,9 @@ WebIDL::ExceptionOr<Vector<Bindings::ModuleExportDescriptor>> Module::exports(GC
             [](Wasm::GlobalIndex) { return Bindings::ImportExportKind::Global; },
             [](Wasm::TagIndex) -> Bindings::ImportExportKind { TODO(); });
         // 3.2. Let obj be «[ "name" → name, "kind" → kind ]».
-        Bindings::ModuleExportDescriptor descriptor {
+        ModuleExportDescriptor descriptor {
+            .name = String::from_utf8_with_replacement_character(entry.name()),
             .kind = kind,
-            .name = Utf16String::from_utf8_with_replacement_character(entry.name()),
         };
         // 3.3. Append obj to exports.
         export_objects.append(move(descriptor));
@@ -108,41 +108,39 @@ WebIDL::ExceptionOr<Vector<Bindings::ModuleExportDescriptor>> Module::exports(GC
     return export_objects;
 }
 
-WebIDL::ExceptionOr<Vector<ByteBuffer>> Module::custom_sections(GC::Ref<Module> module_object, Utf16String section_name)
-{
-    Vector<ByteBuffer> matching_sections;
-
-    auto& custom_sections = module_object->m_compiled_module->module->custom_sections();
-    for (auto& section : custom_sections) {
-        auto name = Utf16String::from_utf8_with_replacement_character(section.name());
-        if (section_name == name)
-            matching_sections.append(MUST(ByteBuffer::copy(section.contents())));
-    }
-
-    return matching_sections;
-}
-
 // https://webassembly.github.io/threads/js-api/index.html#dom-module-customsections
-WebIDL::ExceptionOr<GC::RootVector<GC::Ref<JS::ArrayBuffer>>> Module::custom_sections(JS::Realm& realm, GC::Ref<Module> module_object, Utf16String section_name)
+WebIDL::ExceptionOr<GC::RootVector<GC::Ref<JS::ArrayBuffer>>> Module::custom_sections(JS::VM& vm, GC::Ref<Module> module_object, String section_name)
 {
     // 1. Let bytes be moduleObject.[[Bytes]].
     // 2. Let customSections be « ».
-    GC::RootVector<GC::Ref<JS::ArrayBuffer>> array_buffers;
+    GC::RootVector<GC::Ref<JS::ArrayBuffer>> array_buffers { vm.heap() };
 
     // 3. For each custom section customSection of bytes, interpreted according to the module grammar,
-    auto custom_sections = TRY(Module::custom_sections(module_object, move(section_name)));
+    auto& custom_sections = module_object->m_compiled_module->module->custom_sections();
     for (auto& section : custom_sections) {
-        // 3.3.1. Append a new ArrayBuffer containing a copy of the bytes in bytes for the range matched by this customsec production to customSections.
-        array_buffers.append(JS::ArrayBuffer::create(realm, move(section)));
+        // 3.1. Let name be the name of customSection, decoded as UTF-8.
+        // 3.2. Assert: name is not failure (moduleObject.[[Module]] is valid).
+        auto name = MUST(String::from_utf8(section.name().bytes()));
+        // 3.3. If name equals sectionName as string values,
+        if (section_name == name) {
+            // 3.3.1. Append a new ArrayBuffer containing a copy of the bytes in bytes for the range matched by this customsec production to customSections.
+            array_buffers.append(JS::ArrayBuffer::create(module_object->realm(), section.contents()));
+        }
     }
-
     // 4. Return customSections.
     return array_buffers;
 }
 
-Module::Module(NonnullRefPtr<Detail::CompiledWebAssemblyModule> compiled_module)
-    : m_compiled_module(move(compiled_module))
+Module::Module(JS::Realm& realm, NonnullRefPtr<Detail::CompiledWebAssemblyModule> compiled_module)
+    : Bindings::PlatformObject(realm)
+    , m_compiled_module(move(compiled_module))
 {
+}
+
+void Module::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE_WITH_CUSTOM_NAME(Module, WebAssembly.Module);
+    Base::initialize(realm);
 }
 
 }

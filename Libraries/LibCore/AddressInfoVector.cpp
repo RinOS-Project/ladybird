@@ -18,26 +18,16 @@ namespace Core::System {
 
 AddressInfoVector::AddressInfoVector(Vector<struct addrinfo> addresses, struct addrinfo* ptr)
     : m_addresses(move(addresses))
-    , m_ptr(ptr)
+    , m_ptr(adopt_own_if_nonnull(ptr))
 {
 }
 
-AddressInfoVector::AddressInfoVector(AddressInfoVector&& other)
-    : m_addresses(move(other.m_addresses))
-    , m_ptr(exchange(other.m_ptr, nullptr))
-{
-}
+AddressInfoVector::~AddressInfoVector() = default;
 
-AddressInfoVector::~AddressInfoVector()
+void AddressInfoVector::AddrInfoDeleter::operator()(struct addrinfo* ptr)
 {
-    if (m_ptr)
-        ::freeaddrinfo(m_ptr);
-}
-
-void AddressInfoVector::swap(AddressInfoVector& other)
-{
-    AK::swap(m_addresses, other.m_addresses);
-    AK::swap(m_ptr, other.m_ptr);
+    if (ptr)
+        ::freeaddrinfo(ptr);
 }
 
 }

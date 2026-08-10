@@ -1,6 +1,7 @@
 set(URL_TEST_SOURCES
     TestURL.cpp
     TestURLPattern.cpp
+    TestURLPatternConstructorStringParser.cpp
     TestPublicSuffix.cpp
 )
 

@@ -7,62 +7,40 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/ScopeGuard.h>
-#include <LibGfx/DecodedImageFrame.h>
-#include <LibGfx/Path.h>
 #include <LibWeb/CSS/Sizing.h>
-#include <LibWeb/HTML/LocalNavigable.h>
+#include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/TextNode.h>
 #include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Painting/BackgroundPainting.h>
 #include <LibWeb/Painting/Blending.h>
-#include <LibWeb/Painting/BorderRadiusCornerClipper.h>
 #include <LibWeb/Painting/DisplayList.h>
 #include <LibWeb/Painting/DisplayListRecorder.h>
-#include <LibWeb/Painting/DisplayListRecordingContext.h>
-#include <LibWeb/Painting/InlinePaintable.h>
 #include <LibWeb/Painting/PaintableWithLines.h>
 
 namespace Web::Painting {
 
-static Gfx::FloatRect source_rect_for_visible_image_part(Gfx::IntRect const& visible_rect, Gfx::IntRect const& image_rect, Gfx::IntSize const& source_size)
+static RefPtr<DisplayList> compute_text_clip_paths(DisplayListRecordingContext& context, Paintable const& paintable, CSSPixelPoint containing_block_location)
 {
-    auto scale_x = static_cast<float>(source_size.width()) / static_cast<float>(image_rect.width());
-    auto scale_y = static_cast<float>(source_size.height()) / static_cast<float>(image_rect.height());
-    return {
-        static_cast<float>(visible_rect.x() - image_rect.x()) * scale_x,
-        static_cast<float>(visible_rect.y() - image_rect.y()) * scale_y,
-        static_cast<float>(visible_rect.width()) * scale_x,
-        static_cast<float>(visible_rect.height()) * scale_y,
-    };
-}
-
-static void append_text_clip_paths(DisplayListRecordingContext& context, Paintable const& paintable)
-{
-    auto& display_list_recorder = context.display_list_recorder();
-
-    auto append_fragment = [&](PaintableFragment const& fragment) {
-        if (!is<Layout::TextNode>(fragment.layout_node()))
-            return;
+    auto text_clip_paths = DisplayList::create(AccumulatedVisualContextTree::create());
+    DisplayListRecorder display_list_recorder(*text_clip_paths);
+    // Remove containing block offset, so executing the display list will produce mask at (0, 0)
+    display_list_recorder.translate(-context.floored_device_point(containing_block_location).to_type<int>());
+    auto add_text_clip_path = [&](PaintableFragment const& fragment) {
         auto glyph_run = fragment.glyph_run();
         if (!glyph_run || glyph_run->glyphs().is_empty())
             return;
+
         auto fragment_absolute_rect = fragment.absolute_rect();
         auto fragment_absolute_device_rect = context.enclosing_device_rect(fragment_absolute_rect);
+
         auto scale = context.device_pixels_per_css_pixel();
         auto baseline_start = Gfx::FloatPoint {
             fragment_absolute_rect.x().to_float(),
             fragment_absolute_rect.y().to_float() + fragment.baseline().to_float(),
         } * scale;
-        display_list_recorder.draw_glyph_run(baseline_start, *glyph_run, Gfx::Color::Black, fragment_absolute_device_rect.template to_type<int>(), scale, fragment.orientation());
+        display_list_recorder.draw_glyph_run(baseline_start, *glyph_run, Gfx::Color::Black, fragment_absolute_device_rect.to_type<int>(), scale, fragment.orientation());
     };
-
-    if (auto const* inline_paintable = as_if<InlinePaintable>(paintable)) {
-        inline_paintable->for_each_piece_fragment([&](InlineBoxPiece const&, PaintableFragment const& fragment) {
-            append_fragment(fragment);
-        });
-    }
 
     paintable.for_each_in_inclusive_subtree([&](auto& sub_paintable) {
         // https://drafts.csswg.org/css-backgrounds-4/#valdef-background-clip-text
@@ -71,12 +49,16 @@ static void append_text_clip_paths(DisplayListRecordingContext& context, Paintab
             if (!layout_node.is_in_flow() && !layout_node.is_floating())
                 return TraversalDecision::SkipChildrenAndContinue;
         }
-        if (auto const* paintable_lines = as_if<PaintableWithLines>(sub_paintable)) {
-            for (auto const& fragment : paintable_lines->fragments())
-                append_fragment(fragment);
+        if (auto* paintable_lines = as_if<PaintableWithLines>(sub_paintable)) {
+            for (auto const& fragment : paintable_lines->fragments()) {
+                if (is<Layout::TextNode>(fragment.layout_node()))
+                    add_text_clip_path(fragment);
+            }
         }
         return TraversalDecision::Continue;
     });
+
+    return text_clip_paths;
 }
 
 static BackgroundBox get_box(CSS::BackgroundBox box_clip, BackgroundBox border_box, auto const& paintable_box)
@@ -100,7 +82,7 @@ static BackgroundBox get_box(CSS::BackgroundBox box_clip, BackgroundBox border_b
 }
 
 // https://www.w3.org/TR/css-backgrounds-3/#backgrounds
-void paint_background(DisplayListRecordingContext& context, Paintable const& paintable_box, CSS::ImageRendering image_rendering, ResolvedBackground const& resolved_background, BorderRadiiData const& border_radii)
+void paint_background(DisplayListRecordingContext& context, PaintableBox const& paintable_box, CSS::ImageRendering image_rendering, ResolvedBackground const& resolved_background, BorderRadiiData const& border_radii)
 {
     auto& display_list_recorder = context.display_list_recorder();
 
@@ -112,22 +94,17 @@ void paint_background(DisplayListRecordingContext& context, Paintable const& pai
     auto paint_into_isolated_group = any_of(resolved_background.layers, [](auto const& layer) {
         return layer.blend_mode != CSS::MixBlendMode::Normal;
     });
-    // OPTIMIZATION: An opaque color covering the border box already isolates a single background layer from the
-    //               element's backdrop.
-    Optional<Color> isolated_backdrop_color;
-    if (paint_into_isolated_group && resolved_background.layers.size() == 1
-        && resolved_background.color.alpha() == 255
-        && resolved_background.color_box.rect == resolved_background.background_rect) {
-        paint_into_isolated_group = false;
-        isolated_backdrop_color = resolved_background.color;
-    }
 
     bool is_root_element = paintable_box.layout_node().is_root_element();
     bool needs_text_clip = resolved_background.needs_text_clip && !is_root_element;
 
+    RefPtr<DisplayList> text_clip_display_list;
+    Gfx::IntRect text_clip_rect;
     if (needs_text_clip) {
+        text_clip_display_list = compute_text_clip_paths(context, paintable_box, resolved_background.background_rect.location());
+        text_clip_rect = context.rounded_device_rect(resolved_background.background_rect).to_type<int>();
         display_list_recorder.save();
-        display_list_recorder.add_clip_rect(context.rounded_device_rect(resolved_background.background_rect).to_type<int>());
+        display_list_recorder.add_clip_rect(text_clip_rect);
         display_list_recorder.save_layer();
     }
 
@@ -181,7 +158,7 @@ void paint_background(DisplayListRecordingContext& context, Paintable const& pai
 
         CSSPixelRect const& css_clip_rect = clip_box.rect;
         auto clip_rect = context.rounded_device_rect(css_clip_rect);
-        ScopedCornerRadiusClip corner_clip { context, context.rounded_device_rect(css_clip_rect), clip_box.radii, Gfx::CornerClip::Outside, !is_root_element };
+        ScopedCornerRadiusClip corner_clip { context, context.rounded_device_rect(css_clip_rect), clip_box.radii, CornerClip::Outside, !is_root_element };
         if (!is_root_element) {
             display_list_recorder.add_clip_rect(clip_rect.to_type<int>());
 
@@ -196,15 +173,9 @@ void paint_background(DisplayListRecordingContext& context, Paintable const& pai
         auto image_rect = layer.image_rect;
         auto background_positioning_area = layer.background_positioning_area;
 
-        auto original_context = display_list_recorder.accumulated_visual_context();
-        ScopeGuard restore_context = [&] {
-            display_list_recorder.set_accumulated_visual_context(original_context);
-        };
-
         switch (layer.attachment) {
         case CSS::BackgroundAttachment::Fixed:
-            if (auto fixed_context = paintable_box.fixed_background_visual_context(); fixed_context.has_value())
-                display_list_recorder.set_accumulated_visual_context(*fixed_context);
+            background_positioning_area.set_location(paintable_box.layout_node().root().navigable()->viewport_scroll_offset());
             break;
         case CSS::BackgroundAttachment::Local:
             if (!paintable_box.is_viewport_paintable()) {
@@ -294,7 +265,7 @@ void paint_background(DisplayListRecordingContext& context, Paintable const& pai
         CSSPixels initial_image_x = image_rect.x();
         CSSPixels image_y = image_rect.y();
 
-        image.resolve_for_size(paintable_box.layout_node(), image_rect.size());
+        image.resolve_for_size(paintable_box.layout_node_with_style_and_box_metrics(), image_rect.size());
 
         auto for_each_image_device_rect = [&](auto callback) {
             while (image_y < css_clip_rect.bottom()) {
@@ -323,28 +294,11 @@ void paint_background(DisplayListRecordingContext& context, Paintable const& pai
         };
 
         Gfx::CompositingAndBlendingOperator compositing_and_blending_operator = mix_blend_mode_to_compositing_and_blending_operator(layer.blend_mode);
-        bool applied_blend_layer = false;
-        auto apply_blend_layer = [&] {
-            if (compositing_and_blending_operator == Gfx::CompositingAndBlendingOperator::Normal)
-                return;
-            display_list_recorder.apply_effects(compositing_and_blending_operator);
-            applied_blend_layer = true;
-        };
+        if (compositing_and_blending_operator != Gfx::CompositingAndBlendingOperator::Normal) {
+            display_list_recorder.apply_effects(1.0f, compositing_and_blending_operator);
+        }
 
-        // Past this (super-large) tile count, the non-image branch below covers the area with a single repeating
-        // pattern whose command count is independent of the tile count. Otherwise, recording one painting command per
-        // tile for a super-large tile count can produce enough commands that we overflow the display list and crash.
-        constexpr double max_tiles_before_pattern_fallback = 1000;
-        auto tile_columns = (repeat_x && x_step > 0) ? ceil((css_clip_rect.right() - initial_image_x).to_double() / x_step.to_double()) : 1.0;
-        auto tile_rows = (repeat_y && y_step > 0) ? ceil((css_clip_rect.bottom() - image_y).to_double() / y_step.to_double()) : 1.0;
-        auto tile_count = tile_columns * tile_rows;
-
-        auto const& document = paintable_box.layout_node().document();
-        // An SVG used as an image resolves `prefers-color-scheme` from the used `color-scheme` of
-        // the element referencing it.
-        auto const color_scheme = paintable_box.computed_values().color_scheme();
-        if (auto color = image.color_if_single_pixel_bitmap(document); color.has_value()) {
-            apply_blend_layer();
+        if (auto color = image.color_if_single_pixel_bitmap(); color.has_value()) {
             // OPTIMIZATION: If the image is a single pixel, we can just fill the whole area with it.
             //               However, we must first figure out the real coverage area, taking repeat etc into account.
 
@@ -354,9 +308,7 @@ void paint_background(DisplayListRecordingContext& context, Paintable const& pai
                 fill_rect.unite(image_device_rect);
             });
             display_list_recorder.fill_rect(fill_rect.to_type<int>(), color.value());
-        } else if (is<CSS::ImageStyleValue>(image)
-            && ((repeat_x || repeat_y) || compositing_and_blending_operator != Gfx::CompositingAndBlendingOperator::Normal)
-            && !repeat_x_has_gap && !repeat_y_has_gap) {
+        } else if (is<CSS::ImageStyleValue>(image) && (repeat_x || repeat_y) && !repeat_x_has_gap && !repeat_y_has_gap) {
             // Use a dedicated painting command for repeated images instead of recording a separate command for each instance
             // of a repeated background, so the painter has the opportunity to optimize the painting of repeated images.
             auto dest_rect = context.rounded_device_rect(image_rect);
@@ -367,77 +319,16 @@ void paint_background(DisplayListRecordingContext& context, Paintable const& pai
             if (dest_rect.height() == 0)
                 dest_rect.set_height(1);
 
-            auto const& image_style_value = static_cast<CSS::ImageStyleValue const&>(image);
-            if (auto display_list = image_style_value.record_display_list(context, document, dest_rect, color_scheme); display_list.has_value()) {
-                apply_blend_layer();
-                auto dest_int_rect = dest_rect.to_type<int>();
-                auto scaling_mode = to_gfx_scaling_mode(image_rendering, dest_int_rect.size(), dest_int_rect.size());
-                context.display_list_recorder().draw_repeated_display_list(dest_int_rect, clip_rect.to_type<int>(), *display_list, scaling_mode, repeat_x, repeat_y);
-            } else {
-                auto frame = image_style_value.current_frame(document, dest_rect);
-                if (!frame.has_value())
-                    return;
-                auto tile_device_rect = dest_rect.to_type<int>();
-                auto clip_device_rect = clip_rect.to_type<int>();
-                auto visible_rect = tile_device_rect.intersected(clip_device_rect);
-                if (tile_count == 1) {
-                    auto source_rect = source_rect_for_visible_image_part(visible_rect, tile_device_rect, frame->size());
-                    auto scaling_mode = to_gfx_scaling_mode(image_rendering, source_rect.size().to_rounded<int>(), visible_rect.size());
-                    context.display_list_recorder().draw_scaled_decoded_image_frame(visible_rect, source_rect, *frame, scaling_mode, compositing_and_blending_operator, isolated_backdrop_color);
-                } else if (tile_count > 1) {
-                    auto scaling_mode = to_gfx_scaling_mode(image_rendering, frame->size(), tile_device_rect.size());
-                    context.display_list_recorder().draw_repeated_decoded_image_frame(tile_device_rect, clip_device_rect, *frame, scaling_mode, repeat_x, repeat_y, compositing_and_blending_operator, isolated_backdrop_color);
-                }
-            }
-        } else if ((repeat_x || repeat_y) && !repeat_x_has_gap && !repeat_y_has_gap && tile_count > max_tiles_before_pattern_fallback) {
-            apply_blend_layer();
-            // A not-decoded-image repeating background otherwise records a separate painting command for every tile —
-            // which for very-large tile counts can lead to enough commands that we crash. So, instead record a single
-            // tile into a nested display list, and fill the area with a repeating pattern. The painter does the tiling.
-            auto tile_device_rect = context.rounded_device_rect(image_rect);
-            // If the tile's dimensions were rounded to zero then they need to be restored to avoid a crash.
-            if (tile_device_rect.width() == 0)
-                tile_device_rect.set_width(1);
-            if (tile_device_rect.height() == 0)
-                tile_device_rect.set_height(1);
-
-            auto visual_context_tree = AccumulatedVisualContextTree::create_with_content_offset(-tile_device_rect.location().to_type<int>());
-            auto tile_display_list = DisplayList::create(visual_context_tree);
-            DisplayListRecorder tile_recorder(*tile_display_list, visual_context_tree, display_list_recorder.resource_storage());
-            auto tile_context = context.clone(tile_recorder);
-            image.paint(tile_context, document, tile_device_rect, image_rendering, color_scheme);
-
-            // A pattern repeats along both axes. On any non-repeating axis, constrain the coverage to a single tile.
-            auto coverage = clip_rect;
-            if (!repeat_x) {
-                coverage.set_x(tile_device_rect.x());
-                coverage.set_width(tile_device_rect.width());
-            }
-            if (!repeat_y) {
-                coverage.set_y(tile_device_rect.y());
-                coverage.set_height(tile_device_rect.height());
-            }
-
-            auto coverage_float = coverage.to_type<int>().to_type<float>();
-            Gfx::Path path;
-            path.move_to({ coverage_float.x(), coverage_float.y() });
-            path.line_to({ coverage_float.x() + coverage_float.width(), coverage_float.y() });
-            path.line_to({ coverage_float.x() + coverage_float.width(), coverage_float.y() + coverage_float.height() });
-            path.line_to({ coverage_float.x(), coverage_float.y() + coverage_float.height() });
-            path.close();
-            display_list_recorder.fill_path({
-                .path = move(path),
-                .paint_style_or_color = PaintStyle { PatternPaintStyle { { *tile_display_list, move(visual_context_tree) }, tile_device_rect.to_type<int>().to_type<float>(), {} } },
-                .winding_rule = Gfx::WindingRule::Nonzero,
-            });
+            auto const* bitmap = static_cast<CSS::ImageStyleValue const&>(image).current_frame_bitmap(dest_rect);
+            auto scaling_mode = to_gfx_scaling_mode(image_rendering, bitmap->size(), dest_rect.size().to_type<int>());
+            context.display_list_recorder().draw_repeated_immutable_bitmap(dest_rect.to_type<int>(), clip_rect.to_type<int>(), *bitmap, scaling_mode, repeat_x, repeat_y);
         } else {
-            apply_blend_layer();
             for_each_image_device_rect([&](auto const& image_device_rect) {
-                image.paint(context, document, image_device_rect, image_rendering, color_scheme);
+                image.paint(context, image_device_rect, image_rendering);
             });
         }
 
-        if (applied_blend_layer) {
+        if (compositing_and_blending_operator != Gfx::CompositingAndBlendingOperator::Normal) {
             display_list_recorder.restore();
         }
     }
@@ -446,15 +337,15 @@ void paint_background(DisplayListRecordingContext& context, Paintable const& pai
         display_list_recorder.restore();
 
     if (needs_text_clip) {
-        display_list_recorder.apply_effects(Gfx::CompositingAndBlendingOperator::DestinationIn);
-        append_text_clip_paths(context, paintable_box);
+        display_list_recorder.apply_effects(1.0f, Gfx::CompositingAndBlendingOperator::DestinationIn);
+        display_list_recorder.paint_nested_display_list(move(text_clip_display_list), text_clip_rect);
         display_list_recorder.restore();
         display_list_recorder.restore();
         display_list_recorder.restore();
     }
 }
 
-ResolvedBackground resolve_background_layers(Vector<CSS::BackgroundLayerData> const& layers, Paintable const& paintable_box, Color background_color, CSS::BackgroundBox background_color_clip, CSSPixelRect const& border_rect, BorderRadiiData const& border_radii)
+ResolvedBackground resolve_background_layers(Vector<CSS::BackgroundLayerData> const& layers, PaintableBox const& paintable_box, Color background_color, CSS::BackgroundBox background_color_clip, CSSPixelRect const& border_rect, BorderRadiiData const& border_radii)
 {
     BackgroundBox border_box {
         border_rect,
@@ -465,38 +356,23 @@ ResolvedBackground resolve_background_layers(Vector<CSS::BackgroundLayerData> co
 
     Vector<ResolvedBackgroundLayerData> resolved_layers;
     for (auto const& layer : layers) {
-        if (!layer.background_image)
-            continue;
-        auto const& document = paintable_box.layout_node().document();
-        if (!layer.background_image->is_paintable(document))
+        if (!layer.background_image->is_paintable())
             continue;
 
         auto background_positioning_area = get_box(layer.origin, border_box, paintable_box).rect;
-
-        // https://drafts.csswg.org/css-backgrounds-3/#background-origin
-        // If the background-attachment value for this layer is fixed, then this property has no effect: in this case
-        // the background positioning area is the initial containing block.
-        if (layer.attachment == CSS::BackgroundAttachment::Fixed
-            && paintable_box.fixed_background_visual_context().has_value()) {
-            if (auto navigable = paintable_box.navigable()) {
-                auto viewport_size = navigable->viewport_rect().size();
-                background_positioning_area = CSSPixelRect { { 0, 0 }, viewport_size };
-            }
-        }
-
         auto const& image = *layer.background_image;
 
         Optional<CSSPixels> specified_width {};
         Optional<CSSPixels> specified_height {};
         if (layer.size_type == CSS::BackgroundSize::LengthPercentage) {
             if (!layer.size_x.is_auto())
-                specified_width = layer.size_x.length_percentage().to_px(background_positioning_area.width());
+                specified_width = layer.size_x.length_percentage().to_px(paintable_box.layout_node(), background_positioning_area.width());
             if (!layer.size_y.is_auto())
-                specified_height = layer.size_y.length_percentage().to_px(background_positioning_area.height());
+                specified_height = layer.size_y.length_percentage().to_px(paintable_box.layout_node(), background_positioning_area.height());
         }
         auto concrete_image_size = CSS::run_default_sizing_algorithm(
             specified_width, specified_height,
-            { image.natural_width(document), image.natural_height(document), image.natural_aspect_ratio(document) },
+            { image.natural_width(), image.natural_height(), image.natural_aspect_ratio() },
             background_positioning_area.size());
 
         // If the image has no size, there's nothing to paint.
@@ -571,10 +447,10 @@ ResolvedBackground resolve_background_layers(Vector<CSS::BackgroundLayerData> co
         CSSPixels space_x = background_positioning_area.width() - image_rect.width();
         CSSPixels space_y = background_positioning_area.height() - image_rect.height();
 
-        CSSPixels position_x = layer.position_x.to_px(space_x);
-        CSSPixels position_y = layer.position_y.to_px(space_y);
+        CSSPixels position_x = layer.position_x.to_px(paintable_box.layout_node(), space_x);
+        CSSPixels position_y = layer.position_y.to_px(paintable_box.layout_node(), space_y);
 
-        resolved_layers.append({ .background_image = *layer.background_image,
+        resolved_layers.append({ .background_image = layer.background_image,
             .attachment = layer.attachment,
             .clip = layer.clip,
             .position_x = position_x,

@@ -10,7 +10,6 @@
 #include <LibCore/Socket.h>
 #include <LibCore/StandardPaths.h>
 #include <LibCore/System.h>
-#include <LibFileSystem/FileSystem.h>
 #include <LibWebView/Process.h>
 
 #include <fcntl.h>
@@ -48,7 +47,6 @@ ErrorOr<Process::ProcessAndIPCTransport> Process::spawn_and_connect_to_process(C
     Array<int, 2> stderr_pipe {};
 
     Core::ProcessSpawnOptions spawn_options = options;
-    spawn_options.die_with_parent = true;
 
 #if defined(AK_OS_RINOS)
     if (capture_output)
@@ -78,7 +76,7 @@ ErrorOr<Process::ProcessAndIPCTransport> Process::spawn_and_connect_to_process(C
     auto port_b_recv = TRY(Core::MachPort::create_with_right(Core::MachPort::PortRight::Receive));
     auto port_b_send = TRY(port_b_recv.insert_right(Core::MachPort::MessageRight::MakeSend));
 
-    Sync::MutexLocker child_registration_locker(Application::transport_bootstrap_server().child_registration_lock());
+    Threading::MutexLocker child_registration_locker(Application::transport_bootstrap_server().child_registration_lock());
     auto process = TRY(Core::Process::spawn(spawn_options));
 
     Application::transport_bootstrap_server().register_child_transport(process.pid(), IPC::TransportBootstrapMachPorts { move(port_b_recv), move(port_a_send) });
@@ -140,7 +138,7 @@ ErrorOr<Process::ProcessAndIPCTransport> Process::spawn_and_connect_to_process(C
 
 ErrorOr<Optional<pid_t>> Process::get_process_pid(StringView process_name, StringView pid_path)
 {
-    if (!FileSystem::exists(pid_path))
+    if (Core::System::stat(pid_path).is_error())
         return OptionalNone {};
 
     Optional<pid_t> pid;
@@ -162,7 +160,7 @@ ErrorOr<Optional<pid_t>> Process::get_process_pid(StringView process_name, Strin
 
     if (!pid.has_value()) {
         warnln("{} PID file '{}' exists, but with an invalid PID", process_name, pid_path);
-        TRY(FileSystem::remove(pid_path, FileSystem::RecursionMode::Disallowed));
+        TRY(Core::System::unlink(pid_path));
         return OptionalNone {};
     }
 
@@ -187,7 +185,7 @@ ErrorOr<Optional<pid_t>> Process::get_process_pid(StringView process_name, Strin
 
     if (process_not_found) {
         warnln("{} PID file '{}' exists with PID {}, but process cannot be found", process_name, pid_path, *pid);
-        TRY(FileSystem::remove(pid_path, FileSystem::RecursionMode::Disallowed));
+        TRY(Core::System::unlink(pid_path));
         return OptionalNone {};
     }
 
@@ -197,12 +195,13 @@ ErrorOr<Optional<pid_t>> Process::get_process_pid(StringView process_name, Strin
 // This is heavily based on how SystemServer's Service creates its socket.
 ErrorOr<int> Process::create_ipc_socket(ByteString const& socket_path)
 {
-    if (FileSystem::exists(socket_path))
-        TRY(FileSystem::remove(socket_path, FileSystem::RecursionMode::Disallowed));
+    if (!Core::System::stat(socket_path).is_error())
+        TRY(Core::System::unlink(socket_path));
 
 #if defined(AK_OS_WINDOWS)
     auto socket_fd = TRY(Core::System::socket(AF_LOCAL, SOCK_STREAM, 0));
-    TRY(Core::System::set_socket_blocking(socket_fd, false));
+    int option = 1;
+    TRY(Core::System::ioctl(socket_fd, FIONBIO, &option));
     if (SetHandleInformation(to_handle(socket_fd), HANDLE_FLAG_INHERIT, 0) == 0)
         return Error::from_windows_error();
 #else
@@ -230,8 +229,9 @@ ErrorOr<int> Process::create_ipc_socket(ByteString const& socket_path)
     return socket_fd;
 }
 
-ErrorOr<Process::ProcessPaths> Process::paths_for_process(StringView process_name, StringView runtime_directory)
+ErrorOr<Process::ProcessPaths> Process::paths_for_process(StringView process_name)
 {
+    auto runtime_directory = TRY(Core::StandardPaths::runtime_directory());
     auto socket_path = ByteString::formatted("{}/{}.socket", runtime_directory, process_name);
     auto pid_path = ByteString::formatted("{}/{}.pid", runtime_directory, process_name);
 

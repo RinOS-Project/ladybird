@@ -5,6 +5,7 @@
  */
 
 #include <LibWeb/ARIA/Roles.h>
+#include <LibWeb/Bindings/HTMLAreaElementPrototype.h>
 #include <LibWeb/DOM/DOMTokenList.h>
 #include <LibWeb/HTML/HTMLAreaElement.h>
 #include <LibWeb/HTML/Window.h>
@@ -20,13 +21,19 @@ HTMLAreaElement::HTMLAreaElement(DOM::Document& document, DOM::QualifiedName qua
 
 HTMLAreaElement::~HTMLAreaElement() = default;
 
+void HTMLAreaElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLAreaElement);
+    Base::initialize(realm);
+}
+
 void HTMLAreaElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_rel_list);
 }
 
-void HTMLAreaElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
+void HTMLAreaElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
 {
     Base::attribute_changed(name, old_value, value, namespace_);
 
@@ -34,7 +41,7 @@ void HTMLAreaElement::attribute_changed(Utf16FlyString const& name, Optional<Utf
         set_the_url();
     } else if (name == HTML::AttributeNames::rel) {
         if (m_rel_list)
-            m_rel_list->associated_attribute_changed(value.has_value() ? value->utf16_view() : u""sv);
+            m_rel_list->associated_attribute_changed(value.value_or(String {}));
     }
 }
 

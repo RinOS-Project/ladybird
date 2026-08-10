@@ -36,15 +36,12 @@ public:
 public slots:
 
 private:
-    virtual bool event(QEvent*) override;
     virtual void keyPressEvent(QKeyEvent*) override;
     virtual void focusInEvent(QFocusEvent*) override;
     virtual void showEvent(QShowEvent*) override;
     virtual void hideEvent(QHideEvent*) override;
 
-    void close_bar();
     void find_text_changed();
-    void update_chrome_style();
 
     Tab* m_tab { nullptr };
     WebContentView* m_content_view { nullptr };
@@ -55,7 +52,6 @@ private:
     QPushButton* m_exit_button { nullptr };
     QCheckBox* m_match_case { nullptr };
     QLabel* m_result_label { nullptr };
-    bool m_is_updating_chrome_style { false };
 };
 
 }

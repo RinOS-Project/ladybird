@@ -5,7 +5,6 @@
  */
 
 #include <AK/HashMap.h>
-#include <AK/NeverDestroyed.h>
 #include <LibUnicode/CurrencyCode.h>
 
 namespace Unicode {
@@ -14,7 +13,7 @@ static auto const& ensure_currency_codes()
 {
     // https://www.iso.org/iso-4217-currency-codes.html
     // https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/amendments/lists/list_one.xml
-    static NeverDestroyed<HashMap<StringView, CurrencyCode>> currency_codes { HashMap<StringView, CurrencyCode> {
+    static HashMap<StringView, CurrencyCode> currency_codes {
         { "AED"sv, { 2 } },
         { "AFN"sv, { 2 } },
         { "ALL"sv, { 2 } },
@@ -194,9 +193,9 @@ static auto const& ensure_currency_codes()
         { "ZAR"sv, { 2 } },
         { "ZMW"sv, { 2 } },
         { "ZWL"sv, { 2 } },
-    } };
+    };
 
-    return *currency_codes;
+    return currency_codes;
 }
 
 Optional<CurrencyCode const&> get_currency_code(StringView currency)

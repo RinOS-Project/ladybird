@@ -7,7 +7,6 @@ set(SOURCES
     ConstrainedStream.cpp
     CountingStream.cpp
     Error.cpp
-    FFIHelpers.cpp
     FlyString.cpp
     Format.cpp
     GenericLexer.cpp
@@ -28,13 +27,12 @@ set(SOURCES
     StringConversions.cpp
     StringUtils.cpp
     StringView.cpp
-    ThreadID.cpp
     Time.cpp
     Utf16FlyString.cpp
     Utf16String.cpp
-    Utf16StringBuilder.cpp
     Utf16StringData.cpp
     Utf16View.cpp
+    Utf32View.cpp
     Utf8View.cpp
     kmalloc.cpp
 )
@@ -54,8 +52,8 @@ endif()
 
 ladybird_lib(AK ak)
 
-configure_file(Debug.h.in Debug.h @ONLY)
-
+find_package(cpptrace CONFIG)
+find_package(Backtrace)
 
 if(cpptrace_FOUND AND LADYBIRD_ENABLE_CPPTRACE)
     target_link_libraries(AK PRIVATE cpptrace::cpptrace)
@@ -72,21 +70,27 @@ else()
 endif()
 configure_file(Backtrace.h.in Backtrace.h @ONLY)
 
-target_link_libraries(AK PRIVATE FastFloat::fast_float fmt::fmt simdutf::simdutf)
-
-set(MIMALLOC_VISIBILITY PRIVATE)
-if (NOT BUILD_SHARED_LIBS)
-    set(MIMALLOC_VISIBILITY PUBLIC)
+if (NOT AK_OS_RINOS)
+    find_package(simdutf REQUIRED)
+    target_link_libraries(AK PRIVATE simdutf::simdutf)
+else()
+    # RinOS: libunicode provides UTF validation/conversion instead of simdutf
+    message(STATUS "RinOS policy: simdutf replaced by libunicode.")
 endif()
-target_link_libraries(AK ${MIMALLOC_VISIBILITY} mimalloc)
+
+if (NOT AK_OS_RINOS)
+    find_package(FastFloat CONFIG REQUIRED)
+    target_link_libraries(AK PRIVATE FastFloat::fast_float)
+
+    find_package(fmt CONFIG REQUIRED)
+    target_link_libraries(AK PRIVATE fmt::fmt)
+else()
+    message(STATUS "RinOS policy: FastFloat/fmt are replaced by AK fallback conversions.")
+endif()
 
 # FIXME: Make this generic for all imported shared library dependencies and apply globally
 if (BUILD_SHARED_LIBS AND NOT CMAKE_SKIP_INSTALL_RULES AND NOT "${VCPKG_INSTALLED_DIR}" STREQUAL "" AND NOT AK_OS_RINOS)
     install(IMPORTED_RUNTIME_ARTIFACTS simdutf::simdutf
-            LIBRARY COMPONENT Lagom_Runtime NAMELINK_COMPONENT Lagom_Development
-            FRAMEWORK COMPONENT Lagom_Runtime
-    )
-    install(IMPORTED_RUNTIME_ARTIFACTS mimalloc
             LIBRARY COMPONENT Lagom_Runtime NAMELINK_COMPONENT Lagom_Development
             FRAMEWORK COMPONENT Lagom_Runtime
     )
@@ -115,14 +119,6 @@ elseif (APPLE)
         set(ASSERTION_HANDLER_VISIBILITY INTERFACE)
     endif()
     target_link_options(AK ${ASSERTION_HANDLER_VISIBILITY} LINKER:-U,_ak_assertion_handler)
-    if (NOT BUILD_SHARED_LIBS)
-        target_link_options(AK INTERFACE
-            LINKER:-u,_ladybird_rust_alloc
-            LINKER:-u,_ladybird_rust_alloc_zeroed
-            LINKER:-u,_ladybird_rust_dealloc
-            LINKER:-u,_ladybird_rust_realloc
-        )
-    endif()
 endif()
 
 # Manually install AK headers

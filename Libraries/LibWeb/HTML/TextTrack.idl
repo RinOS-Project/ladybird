@@ -1,3 +1,5 @@
+#import <DOM/EventTarget.idl>
+
 // https://html.spec.whatwg.org/multipage/media.html#texttrackmode
 enum TextTrackMode { "disabled",  "hidden",  "showing" };
 
@@ -11,8 +13,8 @@ interface TextTrack : EventTarget {
     readonly attribute DOMString label;
     readonly attribute DOMString language;
 
-    readonly attribute Utf16DOMString id;
-    [FIXME] readonly attribute Utf16DOMString inBandMetadataTrackDispatchType;
+    readonly attribute DOMString id;
+    [FIXME] readonly attribute DOMString inBandMetadataTrackDispatchType;
 
     attribute TextTrackMode mode;
 

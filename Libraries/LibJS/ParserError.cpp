@@ -6,21 +6,27 @@
  */
 
 #include <AK/StringView.h>
-#include <AK/Utf16StringBuilder.h>
 #include <AK/Vector.h>
 #include <LibJS/ParserError.h>
 #include <LibJS/Token.h>
 
 namespace JS {
 
-Utf16String ParserError::to_utf16_string() const
+String ParserError::to_string() const
 {
     if (!position.has_value())
         return message;
-    return Utf16String::formatted("{} (line: {}, column: {})", message, position.value().line, position.value().column);
+    return MUST(String::formatted("{} (line: {}, column: {})", message, position.value().line, position.value().column));
 }
 
-Utf16String ParserError::source_location_hint(Utf16View const& source, char spacer, char indicator) const
+ByteString ParserError::to_byte_string() const
+{
+    if (!position.has_value())
+        return message.to_byte_string();
+    return ByteString::formatted("{} (line: {}, column: {})", message, position.value().line, position.value().column);
+}
+
+ByteString ParserError::source_location_hint(Utf16View const& source, char spacer, char indicator) const
 {
     if (!position.has_value())
         return {};
@@ -29,13 +35,13 @@ Utf16String ParserError::source_location_hint(Utf16View const& source, char spac
     // line terminators to \n is easier than splitting using all different LT characters.
     auto source_string = source.replace("\r\n"sv, "\n"sv, ReplaceMode::All).replace("\r"sv, "\n"sv, ReplaceMode::All).replace(LINE_SEPARATOR, "\n"sv, ReplaceMode::All).replace(PARAGRAPH_SEPARATOR, "\n"sv, ReplaceMode::All);
 
-    Utf16StringBuilder builder;
+    StringBuilder builder;
     builder.append(source_string.split_view('\n', SplitBehavior::KeepEmpty)[position.value().line - 1]);
-    builder.append_ascii('\n');
+    builder.append('\n');
     for (size_t i = 0; i < position.value().column - 1; ++i)
-        builder.append_ascii(spacer);
-    builder.append_ascii(indicator);
-    return builder.to_string();
+        builder.append(spacer);
+    builder.append(indicator);
+    return builder.to_byte_string();
 }
 
 }

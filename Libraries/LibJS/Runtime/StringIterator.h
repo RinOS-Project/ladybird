@@ -6,7 +6,8 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
+#include <AK/String.h>
+#include <AK/Utf8View.h>
 #include <LibJS/Runtime/Iterator.h>
 #include <LibJS/Runtime/Object.h>
 
@@ -18,7 +19,7 @@ class StringIterator final : public Object
     GC_DECLARE_ALLOCATOR(StringIterator);
 
 public:
-    static GC::Ref<StringIterator> create(Realm&, Utf16String string);
+    static GC::Ref<StringIterator> create(Realm&, String string);
 
     virtual ~StringIterator() override = default;
 
@@ -26,12 +27,12 @@ public:
     ThrowCompletionOr<void> next(VM&, bool& done, Value& value) override;
 
 private:
-    explicit StringIterator(Utf16String string, Object& prototype);
+    explicit StringIterator(String string, Object& prototype);
 
     friend class StringIteratorPrototype;
 
-    Utf16String m_string;
-    AK::Utf16CodePointIterator m_iterator;
+    String m_string;
+    Utf8CodePointIterator m_iterator;
     bool m_done { false };
 };
 

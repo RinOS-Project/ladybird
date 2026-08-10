@@ -8,28 +8,15 @@
 #include <AK/CharacterTypes.h>
 #include <AK/GenericLexer.h>
 #include <AK/StringView.h>
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16StringBuilder.h>
+#include <AK/Utf8View.h>
 #include <LibTextCodec/Decoder.h>
-#include <LibURL/URL.h>
 #include <LibWeb/DOM/Attr.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/HTML/Parser/HTMLEncodingDetection.h>
-#include <LibWeb/HTML/Parser/RustFFI.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 
 namespace Web::HTML {
-
-static Utf16FlyString prescan_attribute_name(Utf16StringBuilder const& attribute_name)
-{
-    return Utf16FlyString::from_utf16(attribute_name.view());
-}
-
-static Utf16String prescan_attribute_value(Utf16StringBuilder& attribute_value)
-{
-    return attribute_value.to_string();
-}
 
 static bool prescan_should_abort(ReadonlyBytes input, size_t const& position)
 {
@@ -132,7 +119,7 @@ GC::Ptr<DOM::Attr> prescan_get_attribute(DOM::Document& document, ReadonlyBytes 
 
     // 3. Otherwise, the byte at position is the start of the attribute name. Let attribute name and attribute value be the empty string.
     // 4. Process the byte at position as follows:
-    Utf16StringBuilder attribute_name;
+    StringBuilder attribute_name;
     while (true) {
         // -> If it is 0x3D (=), and the attribute name is longer than the empty string
         if (input[position] == '=' && !attribute_name.is_empty()) {
@@ -148,7 +135,7 @@ GC::Ptr<DOM::Attr> prescan_get_attribute(DOM::Document& document, ReadonlyBytes 
         // -> If it is 0x2F (/) or 0x3E (>)
         if (input[position] == '/' || input[position] == '>') {
             // Abort the get an attribute algorithm. The attribute's name is the value of attribute name, its value is the empty string.
-            return DOM::Attr::create(document, prescan_attribute_name(attribute_name), Utf16String {});
+            return DOM::Attr::create(document, MUST(attribute_name.to_string()), String {});
         }
         // -> If it is in the range 0x41 (A) to 0x5A (Z)
         if (input[position] >= 'A' && input[position] <= 'Z') {
@@ -178,7 +165,7 @@ spaces:
     // 7. If the byte at position is not 0x3D (=), abort the get an attribute algorithm.
     //    The attribute's name is the value of attribute name, its value is the empty string.
     if (input[position] != '=')
-        return DOM::Attr::create(document, prescan_attribute_name(attribute_name), Utf16String {});
+        return DOM::Attr::create(document, MUST(attribute_name.to_string()), String {});
 
     // 8. Advance position past the 0x3D (=) byte.
     ++position;
@@ -189,7 +176,7 @@ value:
     if (!prescan_skip_whitespace_and_slashes(input, position))
         return {};
 
-    Utf16StringBuilder attribute_value;
+    StringBuilder attribute_value;
     // 10. Process the byte at position as follows:
 
     // -> If it is 0x22 (") or 0x27 (')
@@ -206,7 +193,7 @@ value:
             //    The attribute's name is the value of attribute name, and its value is the value of attribute value.
             if (input[position] == quote_character) {
                 ++position;
-                return DOM::Attr::create(document, prescan_attribute_name(attribute_name), prescan_attribute_value(attribute_value));
+                return DOM::Attr::create(document, MUST(attribute_name.to_string()), MUST(attribute_value.to_string()));
             }
 
             // 4. Otherwise, if the value of the byte at position is in the range 0x41 (A) to 0x5A (Z),
@@ -227,7 +214,7 @@ value:
     // -> If it is 0x3E (>)
     if (input[position] == '>') {
         // Abort the get an attribute algorithm. The attribute's name is the value of attribute name, its value is the empty string.
-        return DOM::Attr::create(document, prescan_attribute_name(attribute_name), Utf16String {});
+        return DOM::Attr::create(document, MUST(attribute_name.to_string()), String {});
     }
 
     // -> If it is in the range 0x41 (A) to 0x5A (Z)
@@ -253,7 +240,7 @@ value:
         // -> If it is 0x09 (HT), 0x0A (LF), 0x0C (FF), 0x0D (CR), 0x20 (SP), or 0x3E (>)
         if (is_whitespace_or_end_chevron(input[position])) {
             // Abort the get an attribute algorithm. The attribute's name is the value of attribute name and its value is the value of attribute value.
-            return DOM::Attr::create(document, prescan_attribute_name(attribute_name), prescan_attribute_value(attribute_value));
+            return DOM::Attr::create(document, MUST(attribute_name.to_string()), MUST(attribute_value.to_string()));
         }
 
         // -> If it is in the range 0x41 (A) to 0x5A (Z)
@@ -325,7 +312,7 @@ Optional<ByteString> run_prescan_byte_stream_algorithm(DOM::Document& document, 
             position += 6;
 
             // 2. Let attribute list be an empty list of strings.
-            Vector<Utf16FlyString> attribute_list {};
+            Vector<FlyString> attribute_list {};
 
             // 3. Let got pragma be false.
             bool got_pragma = false;
@@ -356,7 +343,7 @@ Optional<ByteString> run_prescan_byte_stream_algorithm(DOM::Document& document, 
                 //    * If the attribute's name is "http-equiv"
                 if (attribute_name == AttributeNames::http_equiv) {
                     // If the attribute's value is "content-type", then set got pragma to true.
-                    got_pragma = attribute->value() == "content-type"sv;
+                    got_pragma = attribute->value() == "content-type";
                 }
 
                 //    * If the attribute's name is "content"
@@ -472,23 +459,6 @@ Optional<ByteString> run_bom_sniff(ReadonlyBytes input)
     return {};
 }
 
-ByteString extract_tld_hint(URL::URL const& url)
-{
-    // Extract the rightmost DNS label from the URL's host as a TLD hint for chardetng.
-    // chardetng uses this to improve detection accuracy for country-code TLDs (.jp, .ru, .cn, …).
-    // Skip IP addresses — only domain names have meaningful TLDs.
-    auto const& maybe_host = url.host();
-    if (!maybe_host.has_value() || !maybe_host->is_domain())
-        return {};
-    auto host_string = maybe_host->serialize();
-    StringView host_view = host_string;
-    auto last_dot = host_view.find_last('.');
-    StringView tld_label = last_dot.has_value()
-        ? host_view.substring_view(*last_dot + 1)
-        : host_view;
-    return tld_label.is_empty() ? ByteString {} : ByteString { tld_label };
-}
-
 // https://html.spec.whatwg.org/multipage/parsing.html#determining-the-character-encoding
 ByteString run_encoding_sniffing_algorithm(DOM::Document& document, ReadonlyBytes input, Optional<MimeSniff::MimeType> maybe_mime_type)
 {
@@ -529,30 +499,12 @@ ByteString run_encoding_sniffing_algorithm(DOM::Document& document, ReadonlyByte
     // 7. Otherwise, if the user agent has information on the likely encoding for this page, e.g. based on the encoding of the page when it was last visited, then return
     //    that encoding, with the confidence tentative.
 
-    // 8. The user agent may attempt to autodetect the character encoding from applying frequency analysis
-    //    or other algorithms to the data stream. Such algorithms may use information about the resource
-    //    other than the resource's contents, including the address of the resource.
-    //    If autodetection succeeds in determining a character encoding, and that encoding is a supported encoding,
-    //    then return that encoding, with the confidence tentative. [UNIVCHARDET]
-
-    auto tld_hint = extract_tld_hint(document.url());
-    u8 const* tld_data = tld_hint.is_empty() ? nullptr : reinterpret_cast<u8 const*>(tld_hint.characters());
-    size_t tld_size = tld_hint.length();
-
-    u8 const* encoding_name_ptr = nullptr;
-    size_t encoding_name_len = 0;
-
-    bool allow_utf8_detection = document.url().scheme() == "file"sv;
-
-    if (Parser::rust_detect_encoding(
-            input.data(), input.size(),
-            tld_data, tld_size,
-            allow_utf8_detection,
-            &encoding_name_ptr, &encoding_name_len)) {
-        auto detected = StringView { reinterpret_cast<char const*>(encoding_name_ptr), encoding_name_len };
-        auto standardized = TextCodec::get_standardized_encoding(detected);
-        if (standardized.has_value())
-            return ByteString { standardized.value() };
+    // 8. FIXME: The user agent may attempt to autodetect the character encoding from applying frequency analysis or other algorithms to the data stream. Such algorithms
+    //    may use information about the resource other than the resource's contents, including the address of the resource. If autodetection succeeds in determining a
+    //    character encoding, and that encoding is a supported encoding, then return that encoding, with the confidence tentative. [UNIVCHARDET]
+    if (!Utf8View(StringView(input)).validate()) {
+        // FIXME: As soon as Locale is supported, this should sometimes return a different encoding based on the locale.
+        return "windows-1252";
     }
 
     // 9. Otherwise, return an implementation-defined or user-specified default character encoding, with the confidence tentative.

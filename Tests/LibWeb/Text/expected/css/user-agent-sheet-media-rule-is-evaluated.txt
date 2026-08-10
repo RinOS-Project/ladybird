@@ -1,3 +1,0 @@
-before: none
-in the frame: inline
-after: none

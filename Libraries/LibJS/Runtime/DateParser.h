@@ -6,8 +6,6 @@
 
 #pragma once
 
-#include <AK/AllOf.h>
-#include <AK/CharacterTypes.h>
 #include <AK/Error.h>
 #include <AK/GenericLexer.h>
 #include <AK/Optional.h>
@@ -16,6 +14,8 @@
 #include <AK/Types.h>
 #include <AK/Vector.h>
 #include <LibJS/Runtime/Date.h>
+
+#include <cctype> // Not included by default on macOS.
 
 // Parse simplified ISO8601 and non-standard date formats to milliseconds
 // from epoch (double). Synopsis:
@@ -46,20 +46,27 @@
 //     - We always parse as "Month 01, Year".
 // - Support Firefox less permissive punctuation but more permissive punctuation
 //   syntax.
-class DateParser : public Utf16GenericLexer {
-public:
-    ALWAYS_INLINE static double parse(Utf16View string)
-    {
-        if (!all_of(string, is_ascii))
-            return NAN;
-        return DateParser(string).parse().value_or(NAN);
-    }
-
+class DateParser : public GenericLexer {
 private:
-    explicit DateParser(Utf16View string)
-        : Utf16GenericLexer(string)
-    {
-    }
+    Vector<u64> m_numbers;
+
+    Optional<i8> m_sign;
+    Optional<i64> m_year;
+    Optional<u8> m_month;
+    Optional<u8> m_day;
+    Optional<u8> m_hours;
+    Optional<u8> m_minutes;
+    Optional<u8> m_seconds;
+    Optional<u16> m_milliseconds;
+
+    // True if GMT/UTC/Z specified and there is no timezone offset; false if timezone offset.
+    // No value if there is no timezone information: we have to guess whether the date was given in GMT or local time.
+    Optional<bool> m_timezone_utc;
+    Optional<i8> m_timezone_sign; // +1 or -1 if there is a timezone offset.
+    Optional<u8> m_timezone_hours;
+    Optional<u8> m_timezone_minutes;
+    Optional<u8> m_timezone_seconds;
+    Optional<u64> m_timezone_nanoseconds;
 
     constexpr static u64 pow10(size_t pow)
     {
@@ -88,42 +95,32 @@ private:
 
         VERIFY_NOT_REACHED();
     }
-
-    template<Unsigned T>
-    struct ParsedNumber {
-        T number { 0 };
-        size_t digits { 0 };
-    };
-
     // Reads a contiguous sequence of digits. Ignores digits read past MaxLength.
     // Returns the numeric value of the sequence and the number of digits not ignored.
-    template<Unsigned T, size_t MaxLength>
-    ALWAYS_INLINE ParsedNumber<T> read_number()
+    template<typename T, size_t MaxLength>
+    ALWAYS_INLINE std::pair<T, size_t> read_number()
     {
+        static_assert(std::is_unsigned<T>(), "Type must be unsigned.");
         static_assert(MaxLength < 11, "Number too long.");
         static_assert((sizeof(T) >= 1) || (MaxLength <= 2), "Number too long.");
         static_assert((sizeof(T) >= 2) || (MaxLength <= 4), "Number too long.");
         static_assert((sizeof(T) >= 4) || (MaxLength <= 9), "Number too long.");
         static_assert((sizeof(T) >= 8) || (MaxLength <= 19), "Number too long.");
 
-        ParsedNumber<T> result;
-
-        for (; result.digits < MaxLength; ++result.digits) {
-            if (is_eof() || !next_is(is_ascii_digit))
+        auto result = std::make_pair(T(0), size_t(0));
+        for (result.second = 0; result.second < MaxLength; ++result.second) {
+            if (is_eof() || !next_is(isdigit))
                 return result;
-            result.number *= 10;
-            result.number += consume() - '0';
+            result.first *= 10;
+            result.first += consume() - '0';
         }
 
-        ignore_while(is_ascii_digit);
+        ignore_while(isdigit);
         return result;
     }
 
     ALWAYS_INLINE bool guess_date_from_numbers() // Guess an ambiguous date, like 1/1/1.
     {
-        if (m_year.has_value() && m_month.has_value() && m_day.has_value())
-            return m_numbers.is_empty();
-
         switch (m_numbers.size()) {
         case 0:
             return true; // The year and possibly month may have already been calculated. Verify later
@@ -137,7 +134,6 @@ private:
 
         return false; // Too many numbers
     }
-
     ALWAYS_INLINE bool guess_date_from_3_numbers() // Only "month-day-year" (default) and "year-month-day" are supported (same as firefox and chrome).
     {
         VERIFY(m_numbers.size() == 3);
@@ -180,7 +176,6 @@ private:
 
         return true;
     }
-
     ALWAYS_INLINE bool guess_date_from_2_numbers() // Guess default order "day-year" or adapt.
     {
         VERIFY(m_numbers.size() == 2);
@@ -241,7 +236,6 @@ private:
 
         return true;
     }
-
     ALWAYS_INLINE bool guess_date_from_1_number() // Guess in this order: year, month, day.
     {
         VERIFY(m_numbers.size() == 1);
@@ -267,7 +261,6 @@ private:
 
         return true;
     }
-
     ALWAYS_INLINE static u64 guess_year(u64 const number) // Guess one- or two-digit year.
     {
         switch (number) {
@@ -279,7 +272,6 @@ private:
 
         return number;
     }
-
     ALWAYS_INLINE bool one_number(u64 const number) // The whole input string is just one stand-alone number.}
     {
         switch (number) {
@@ -318,33 +310,28 @@ private:
         case 'A' ... 'Z':
             return maybe_word(); // Captures all date string "keywords". Accepts any kind of "junk" before date and time..
         case ' ':
-            m_previous_separator_was_space = true;
-            ignore();
-            return true;
         case '.':
         case ',':
         case '/':
             // Firefox seems to accept (ignore) this punctuation. So do we.
             // Firefox also accepts a bare '+' sometimes. We do not.
             // Chrome is a lot more permissive.
-            m_previous_separator_was_space = false;
             ignore(); // Ignore punctuation.
             return true;
         case '(':
             ignore_until(')'); // Consume time zone name (Anything in brackets).
             ignore();
-            ignore_while(is_ascii_space);
+            ignore_while(isspace);
             return true;
         }
 
         return false;
     }
-
     ALWAYS_INLINE bool maybe_ampm() // Side effect: consumes space at the end of a time component, even if there is no AM/PM.
     {
         VERIFY(m_hours.has_value());
 
-        consume_while(is_ascii_space);
+        consume_while(isspace);
 
         if (consume_specific("AM"sv)) {
             if (!separator())
@@ -369,55 +356,51 @@ private:
 
         return true;
     }
-
-    // H[H]:MM[:SS[.mss[...]]][ ][AM|PM] At this point, H[H]: has already been read.
-    ALWAYS_INLINE bool maybe_time(
-        ParsedNumber<u32> const& hours,
-        bool allow_single_digit_minutes_and_seconds = false)
+    ALWAYS_INLINE bool maybe_time(std::pair<u32, size_t> const& hours) // H[H]:MM[:SS[.mss[...]]][ ][AM|PM] At this point, H[H]: has already been read.
     {
         if (m_hours.has_value())
             return false; // Time has already been read.
 
-        if (hours.digits > 2)
+        if (hours.second > 2)
             return false; // 123:
-        if (hours.number > 24)
+        if (hours.first > 24)
             return false;
-        m_hours = hours.number; // No precision loss during the conversion u32 -> u8 since the hours has at most 2 digits.
+        m_hours = hours.first; // No precision loss during the conversion u32 -> u8 since the hours has at most 2 digits.
 
-        auto [minutes, minutes_digits] = read_number<u32, 3>();
-        if (minutes_digits != 2 && !(allow_single_digit_minutes_and_seconds && minutes_digits == 1))
+        auto const minutes = read_number<u32, 3>();
+        if (minutes.second != 2)
             return false; // 12:345 or 12:3
-        if (minutes > 59)
+        if (minutes.first > 59)
             return false;
-        m_minutes = minutes;
+        m_minutes = minutes.first;
 
         if (consume_specific('.'))
             return false; // 12:34.
         if (!consume_specific(':'))
             return true;
 
-        auto [seconds, seconds_digits] = read_number<u32, 3>();
-        if (seconds_digits != 2 && !(allow_single_digit_minutes_and_seconds && seconds_digits == 1))
+        auto const seconds = read_number<u32, 3>();
+        if (seconds.second != 2)
             return false; // 12:34:567 or 12:34:5
-        if (seconds > 59)
+        if (seconds.first > 59)
             return false;
-        m_seconds = seconds;
+        m_seconds = seconds.first;
 
         if (!consume_specific('.'))
             return true;
 
-        auto [milliseconds, milliseconds_digits] = read_number<u32, 3>();
-        switch (milliseconds_digits) {
+        auto const milliseconds = read_number<u32, 3>();
+        switch (milliseconds.second) {
         case 0:
             return false; // 12:34:56.
         case 1:
-            m_milliseconds = milliseconds * 100;
+            m_milliseconds = milliseconds.first * 100;
             break;
         case 2:
-            m_milliseconds = milliseconds * 10;
+            m_milliseconds = milliseconds.first * 10;
             break;
         case 3:
-            m_milliseconds = milliseconds;
+            m_milliseconds = milliseconds.first;
             break;
         default:
             VERIFY_NOT_REACHED();
@@ -425,44 +408,39 @@ private:
 
         return true;
     }
-
     ALWAYS_INLINE bool maybe_number()
     {
-        auto const previous_separator_was_space = m_previous_separator_was_space;
-        m_previous_separator_was_space = false;
-
         auto const number = read_number<u32, 7>();
-        VERIFY(number.digits > 0);
+        VERIFY(number.second > 0);
 
-        if (number.digits > 6)
+        if (number.second > 6)
             return false; // 1234567
 
         if (consume_specific(':')) {
-            if (!maybe_time(number, m_date_is_iso_like && previous_separator_was_space))
+            if (!maybe_time(number))
                 return false;
             if (!maybe_ampm())
                 return false;
             return true;
         }
 
-        m_numbers.append(number.number);
+        m_numbers.append(number.first);
 
         return separator(); // Must be followed by a separator.
     }
-
     ALWAYS_INLINE bool maybe_sign()
     {
         i8 const sign = (consume() == '-') ? -1 : +1;
         auto const number = read_number<u32, 7>();
 
-        switch (number.digits) {
+        switch (number.second) {
         case 0: // Not a sign after all; '+' is forbidden if it is not a sign. '-' is ignored as punctuation.
             return (sign == -1);
         case 1 ... 5: // Too small to be a signed year;
             if (m_hours.has_value())
                 break; // Candidate for timezone offset.
 
-            m_numbers.append(number.number); // Ignore the sign and treat it as a number.
+            m_numbers.append(number.first); // Ignore the sign and treat it as a number.
             return true;
         case 6:
             if (m_hours.has_value())
@@ -471,7 +449,7 @@ private:
             if (m_year.has_value())
                 return false; // To many digits to be anything else than a signed year.
 
-            m_year = sign * number.number; // Candidate for signed year
+            m_year = sign * number.first; // Candidate for signed year
             return true;
         default:
             return false;
@@ -487,15 +465,14 @@ private:
         auto const number = read_number<u32, 7>();
         return tz_offset(number);
     }
-
     // Continue reading a timezone offset, after the sign and the first number have beeen read.
-    ALWAYS_INLINE bool tz_offset(ParsedNumber<u32> const& number, bool iso_8601_format = false)
+    ALWAYS_INLINE bool tz_offset(std::pair<u32, size_t> const& number, bool iso_8601_format = false)
     {
         if (m_timezone_hours.has_value()) // Cannot have more than one timezone offset or a timezone name followed by a timezone offset.
             return false;
 
         m_timezone_utc = false;
-        switch (number.digits) {
+        switch (number.second) {
         case 0:
             return false;
         case 1:
@@ -509,7 +486,7 @@ private:
                 return false; // +123
             [[fallthrough]];
         case 4: { // "Military" timezone offset
-            u16 const tz_hhmm = number.number;
+            u16 const tz_hhmm = number.first;
             m_timezone_hours = tz_hhmm / 100;
             m_timezone_minutes = tz_hhmm % 100;
             return true;
@@ -519,7 +496,7 @@ private:
                 return false; // +12345
             [[fallthrough]];
         case 6: { // "Military" timezone offset
-            u32 const tz_hhmmss = number.number;
+            u32 const tz_hhmmss = number.first;
             m_timezone_hours = tz_hhmmss / 10000;
             m_timezone_minutes = tz_hhmmss % 10000 / 100;
             m_timezone_seconds = tz_hhmmss % 100;
@@ -529,60 +506,53 @@ private:
             return false;
         }
 
-        auto const timezone_offset_requires_colon = iso_8601_format && number.digits == 2;
-        m_timezone_hours = number.number; // Guaranteed to be a 1- or 2-digit number.
+        m_timezone_hours = number.first; // Guaranteed to be a 1- or 2-digit number.
 
         if (!consume_specific(':'))
-            return !timezone_offset_requires_colon; // +H[H] "military" time offset
+            return true; // +H[H] "military" time offset
 
         // Timezone with colon
-        auto [minutes, minutes_digits] = read_number<u16, 3>();
-        if (minutes_digits != 2)
+        auto const minutes = read_number<u16, 3>();
+        if (minutes.second != 2)
             return false;
-        m_timezone_minutes = minutes;
+        m_timezone_minutes = minutes.first;
 
         if (!consume_specific(':'))
             return true;
 
-        auto [seconds, seconds_digits] = read_number<u16, 3>();
-        if (seconds_digits != 2)
+        auto const seconds = read_number<u16, 3>();
+        if (seconds.second != 2)
             return false;
-        m_timezone_seconds = seconds;
+        m_timezone_seconds = seconds.first;
 
         if (!consume_specific('.'))
             return true;
 
-        auto [nanoseconds, nanoseconds_digits] = read_number<u16, 3>();
-        if (nanoseconds_digits == 0)
+        auto const nanoseconds = read_number<u64, 10>();
+        if (nanoseconds.second == 0)
             return false;
-        if (nanoseconds_digits > 9)
+        if (nanoseconds.second > 9)
             return false;
 
-        m_timezone_nanoseconds = nanoseconds * pow10(9 - nanoseconds_digits);
+        m_timezone_nanoseconds = nanoseconds.first * pow10(9 - nanoseconds.second);
 
         return true;
     }
-
     ALWAYS_INLINE bool separator() // Ignore space and Firefox punctuation.
     {
         if (is_eof())
             return true;
         switch (peek()) {
         case ' ':
-            m_previous_separator_was_space = true;
-            ignore();
-            return true;
         case ',':
         case '.':
         case '/':
         case '-':
-            m_previous_separator_was_space = false;
             ignore();
             return true;
         }
         return false;
     }
-
     ALWAYS_INLINE bool gmt(StringView const& str) // Z or GMT or UTC can be used interchangeably.
     {
         if (!consume_specific(str))
@@ -590,7 +560,7 @@ private:
 
         m_timezone_utc = true;
 
-        bool space = !consume_while(is_ascii_space).is_empty();
+        bool space = consume_while(isspace).length() > 0;
         switch (peek()) {
         case '+':
         case '-':
@@ -599,7 +569,6 @@ private:
 
         return space || separator();
     }
-
     // Same as Chrome and Firefox, we only support abbreviations for timezones covering the US mainland.
     ALWAYS_INLINE bool us_timezone(StringView const& str, u8 hours, u8 minutes = 0, i8 sign = -1)
     {
@@ -616,7 +585,6 @@ private:
 
         return separator(); // Must end with a separator.
     }
-
     ALWAYS_INLINE bool month_name(StringView const& str, u8 month)
     {
         VERIFY(str.length() == 3); // Only looking for 3-letter month prefixes.
@@ -624,21 +592,19 @@ private:
             if (str[i] != peek(i))
                 return false;
 
-        ignore_while(is_ascii_alpha); // ... which can followed by anything. Just like Firefox and Chrome.
+        ignore_while(isalpha); // ... which can followed by anything. Just like Firefox and Chrome.
         m_month = month;
 
         return separator(); // Must end with a separator.
     }
-
     ALWAYS_INLINE bool word() // Alphanumeric strings that are not date "keywords".
     {
-        consume_while(is_ascii_alpha);
+        (void)consume_while(isalpha);
         // Just like Firefox and Chrome:
         // - Ignore junk (bare words) at the beginning (before time or a date fragment has been read).
         // - Fail if a word is read later in the date string (exception: final time zone name, in brackets).
         return (m_numbers.is_empty() && !m_hours.has_value() && !m_year.has_value());
     }
-
     ALWAYS_INLINE bool maybe_word() // The top of a trie catching date "keywords".
     {
         switch (peek()) {
@@ -709,7 +675,6 @@ private:
 
         return Error::from_string_literal("Read ISO8601 format, but have some input left over.");
     }
-
     ALWAYS_INLINE ErrorOr<bool> maybe_iso_year()
     {
         switch (peek()) {
@@ -728,12 +693,11 @@ private:
 
         return false;
     }
-
     ALWAYS_INLINE ErrorOr<bool> maybe_iso_year4() // Like "2025".
     {
         auto number = read_number<u32, 7>();
 
-        switch (number.digits) {
+        switch (number.second) {
         case 0:
             return false; // no digits
         case 1:
@@ -751,31 +715,29 @@ private:
         case 5:
         case 6: // Six-digit year number; no sign means not ISO8601 date.
             // At this point, this is not an ISO8601 date.
-            m_numbers.append(number.number);
+            m_numbers.append(number.first);
             return false;
         case 4: // Four-digit year number.
-            m_year = number.number;
+            m_year = number.first;
             return true; // This can be the start of an ISO8601 date.
         }
 
         return Error::from_string_literal("String too long to be a year.");
     }
-
     ALWAYS_INLINE ErrorOr<bool> maybe_iso_signed_year6() // Like "+002025".
     {
         i64 sign = +1;
         if (consume() == '-')
             sign = -1;
+        auto number = read_number<u32, 7>();
 
-        auto [number, digits] = read_number<u32, 7>();
-
-        switch (digits) {
+        switch (number.second) {
         case 0:
             if (sign == +1) // Standalone '+' is invalid.
                 return Error::from_string_literal("Invalid character in date string ('+').");
             return false;
         case 1 ... 5:
-            m_numbers.append(number); // This is not an ISO8601 date.
+            m_numbers.append(number.first); // This is not an ISO8601 date.
             return false;
         case 6:
             break;
@@ -783,7 +745,7 @@ private:
             return Error::from_string_literal("String too long to be a 6-digit signed year.");
         }
 
-        m_year = sign * number;
+        m_year = sign * number.first;
 
         // "The representation of the year 0 as -000000 is invalid." https://tc39.es/ecma262/#sec-expanded-years
         // Firefox interprets "-000000" as "Jan 1, 2000".
@@ -792,26 +754,23 @@ private:
 
         return true;
     }
-
     ALWAYS_INLINE ErrorOr<bool> maybe_iso_month_day() // [-MM[-DD]]
     {
         if (!consume_specific('-'))
             return true;
 
-        m_date_is_iso_like = true;
-
-        auto [month, month_digits] = read_number<u16, 3>();
+        auto month = read_number<u16, 3>();
         if (consume_specific(':')) { // Like "2000-12:34". Firefox and Chrome parse it correctly. We do the same.
-            if (maybe_time({ month, month_digits }))
+            if (maybe_time(month))
                 return false;
             return Error::from_string_literal("Found something that looks like time, but is not.");
         }
 
-        switch (month_digits) {
+        switch (month.second) {
         case 0:
             return false; // Not ISO8601 date format. Continue reading.
         case 1:
-            m_month = month;
+            m_month = month.first;
             if (m_month == 0)
                 return Error::from_string_literal("Month number cannot be zero.");
             return false;
@@ -821,7 +780,7 @@ private:
             return Error::from_string_literal("Month number too long.");
         }
 
-        m_month = month;
+        m_month = month.first;
 
         if ((m_month == 0) || (m_month.value() > 12))
             return Error::from_string_literal("Invalid month number.");
@@ -832,13 +791,13 @@ private:
         if (is_eof())
             return Error::from_string_literal("Expecting month number. Got eof.");
 
-        auto [day, day_digits] = read_number<u16, 3>();
+        auto day = read_number<u16, 3>();
 
-        switch (day_digits) {
+        switch (day.second) {
         case 0:
             return false; // Not ISO8601 date format. Continue reading.
         case 1:
-            m_day = day;
+            m_day = day.first;
             if (m_day == 0)
                 return Error::from_string_literal("Day number cannot be zero.");
             return false;
@@ -848,13 +807,12 @@ private:
             return Error::from_string_literal("Day number too long.");
         }
 
-        m_day = day;
+        m_day = day.first;
         if ((m_day == 0) || (m_day.value() > 31))
             return Error::from_string_literal("Invalid day number.");
 
         return true;
     }
-
     ALWAYS_INLINE ErrorOr<bool> maybe_iso_time() // THH:MM[:SS[.M[SS...]]]
     {
         // The ECMA date string format requires uppercase 'T' and 'Z' https://tc39.es/ecma262/#sec-date-time-string-format
@@ -864,20 +822,19 @@ private:
             return false;
 
         // After reading the 'T', any failures return NAN (failed parse)
-        auto [hours, hours_digits] = read_number<u16, 3>();
+        auto hours = read_number<u16, 3>();
 
         if (!consume_specific(':')) // 12
             return Error::from_string_literal("Well specified time needs minutes.");
 
-        if (hours_digits != 2)
+        if (hours.second != 2)
             return Error::from_string_literal("Hours: invalid length.");
 
-        if (!maybe_time({ hours, hours_digits })) // The only difference is that ISO8601 requires 2-digit hours.
+        if (!maybe_time(hours)) // The only difference is that ISO8601 requires 2-digit hours.
             return Error::from_string_literal("Cannot parse time.");
 
         return true;
     }
-
     ALWAYS_INLINE ErrorOr<void> maybe_iso_tz() // After the 'T' for iso_time has been read, reading an ISO8601 timezone either succeeds or the whole parse fails.
     {
         switch (consume()) {
@@ -945,7 +902,6 @@ private:
 
         return JS::time_clip(time_ms);
     }
-
     ALWAYS_INLINE ErrorOr<double> parse()
     {
         if (TRY(maybe_iso_8601()))
@@ -954,10 +910,10 @@ private:
         // Convert the input string to uppercase only ~after~ parsing ISO8601 failed.
         // This saves some time (two string copies) if parsing a ISO8601 date succeeds.
         // The index stays exactly where it was before converting to uppercase.
-        auto str_uppercase = m_input.to_ascii_uppercase();
-        m_input = str_uppercase.utf16_view();
+        auto str_uppercase = m_input.to_ascii_uppercase_string();
+        m_input = str_uppercase;
         // FIXME: Two full string copies could be avoided, if to_uppercase can be done in place.
-        // The underlying Utf16View m_input protects itself from modifying its contents. Bummer.
+        // The underlying StringView m_input protects itself from modifying its contents. Bummer.
 
         while (!is_eof())
             if (!loop())
@@ -968,27 +924,14 @@ private:
 
         return build_date();
     }
+    DateParser(StringView const& str)
+        : GenericLexer(str)
+    {
+    }
 
-    Vector<u64> m_numbers;
-
-    Optional<i8> m_sign;
-    Optional<i64> m_year;
-    Optional<u8> m_month;
-    Optional<u8> m_day;
-    Optional<u8> m_hours;
-    Optional<u8> m_minutes;
-    Optional<u8> m_seconds;
-    Optional<u16> m_milliseconds;
-
-    // True if GMT/UTC/Z specified and there is no timezone offset; false if timezone offset.
-    // No value if there is no timezone information: we have to guess whether the date was given in GMT or local time.
-    Optional<bool> m_timezone_utc;
-    Optional<i8> m_timezone_sign; // +1 or -1 if there is a timezone offset.
-    Optional<u8> m_timezone_hours;
-    Optional<u8> m_timezone_minutes;
-    Optional<u8> m_timezone_seconds;
-    Optional<u64> m_timezone_nanoseconds;
-
-    bool m_date_is_iso_like { false };
-    bool m_previous_separator_was_space { false };
+public:
+    ALWAYS_INLINE static double parse(StringView const& str)
+    {
+        return DateParser(str).parse().value_or(NAN);
+    }
 };

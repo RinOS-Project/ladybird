@@ -105,57 +105,8 @@ ThrowCompletionOr<GC::Ref<ECMAScriptFunctionObject>> FunctionConstructor::create
         VERIFY_NOT_REACHED();
     }
 
-    // 6. Let argCount be the number of elements in parameterArgs.
-    auto arg_count = parameter_args.size();
-
-    // 7. Let parameterStrings be a new empty List.
-    Vector<Utf16String> parameter_strings;
-    parameter_strings.ensure_capacity(arg_count);
-
-    // 8. For each element arg of parameterArgs, do
-    for (auto const& parameter_value : parameter_args) {
-        // a. Append ? ToString(arg) to parameterStrings.
-        parameter_strings.unchecked_append(TRY(parameter_value.to_utf16_string(vm)));
-    }
-
-    // 9. Let bodyString be ? ToString(bodyArg).
-    auto body_string = TRY(body_arg.to_utf16_string(vm));
-
-    // 10. Let currentRealm be the current Realm Record.
+    auto function_data = TRY(compile_dynamic_function(vm, kind, parameter_args, body_arg));
     auto& realm = *vm.current_realm();
-
-    // 11. Let P be the empty String.
-    Utf16String parameters_string;
-
-    // 12. If argCount > 0, then
-    if (arg_count > 0) {
-        // a. Set P to parameterStrings[0].
-        // b. Let k be 1.
-        // c. Repeat, while k < argCount,
-        //     i. Let nextArgString be parameterStrings[k].
-        //     ii. Set P to the string-concatenation of P, "," (a comma), and nextArgString.
-        //     iii. Set k to k + 1.
-        parameters_string = Utf16String::join(',', parameter_strings);
-    }
-
-    // 13. Let bodyParseString be the string-concatenation of 0x000A (LINE FEED), bodyString, and 0x000A (LINE FEED).
-    auto body_parse_string = Utf16String::formatted("\n{}\n", body_string);
-
-    // 14. Let sourceString be the string-concatenation of prefix, " anonymous(", P, 0x000A (LINE FEED), ") {", bodyParseString, and "}".
-    // 15. Let sourceText be StringToCodePoints(sourceString).
-    auto source_text = Utf16String::formatted("{} anonymous({}\n) {{{}}}", prefix, parameters_string, body_parse_string);
-
-    // 16. Perform ? HostEnsureCanCompileStrings(currentRealm, parameterStrings, bodyString, sourceString, FUNCTION, parameterArgs, bodyArg).
-    TRY(vm.host_ensure_can_compile_strings(realm, parameter_strings, body_string, source_text, CompilationType::Function, parameter_args, body_arg));
-
-    GC::Ptr<SharedFunctionInstanceData> function_data;
-
-    auto rust_compilation = RustIntegration::compile_dynamic_function(vm, source_text, parameters_string, body_parse_string, kind);
-    if (!rust_compilation.has_value())
-        return vm.throw_completion<SyntaxError>("Failed to compile dynamic function"_utf16);
-    if (rust_compilation->is_error())
-        return vm.throw_completion<SyntaxError>(rust_compilation->release_error());
-    function_data = rust_compilation->value();
 
     // 25. Let proto be ? GetPrototypeFromConstructor(newTarget, fallbackProto).
     auto* prototype = TRY(get_prototype_from_constructor(vm, *new_target, fallback_prototype));

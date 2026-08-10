@@ -6,36 +6,36 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16String.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <AK/FlyString.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::CSS {
 
-class CSSVariableReferenceValue : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(CSSVariableReferenceValue, Bindings::GCAllocatedWrappable);
+class CSSVariableReferenceValue : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(CSSVariableReferenceValue, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(CSSVariableReferenceValue);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSVariableReferenceValue> create(Utf16FlyString variable, GC::Ptr<CSSUnparsedValue> fallback = nullptr);
-    static WebIDL::ExceptionOr<GC::Ref<CSSVariableReferenceValue>> construct_impl(Utf16String variable, GC::Ptr<CSSUnparsedValue> fallback);
+    [[nodiscard]] static GC::Ref<CSSVariableReferenceValue> create(JS::Realm&, FlyString variable, GC::Ptr<CSSUnparsedValue> fallback = nullptr);
+    static WebIDL::ExceptionOr<GC::Ref<CSSVariableReferenceValue>> construct_impl(JS::Realm&, FlyString variable, GC::Ptr<CSSUnparsedValue> fallback);
 
     virtual ~CSSVariableReferenceValue() override;
 
-    Utf16FlyString const& variable() const;
-    WebIDL::ExceptionOr<void> set_variable(Utf16String);
+    String variable() const;
+    WebIDL::ExceptionOr<void> set_variable(FlyString);
 
     GC::Ptr<CSSUnparsedValue> fallback() const;
     WebIDL::ExceptionOr<void> set_fallback(GC::Ptr<CSSUnparsedValue>);
 
-    WebIDL::ExceptionOr<Utf16String> to_string() const;
+    WebIDL::ExceptionOr<String> to_string() const;
 
 private:
-    CSSVariableReferenceValue(Utf16FlyString variable, GC::Ptr<CSSUnparsedValue> fallback);
+    CSSVariableReferenceValue(JS::Realm&, FlyString variable, GC::Ptr<CSSUnparsedValue> fallback);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
-    Utf16FlyString m_variable;
+    FlyString m_variable;
     GC::Ptr<CSSUnparsedValue> m_fallback;
 };
 

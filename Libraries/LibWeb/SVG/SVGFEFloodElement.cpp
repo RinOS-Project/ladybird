@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/SVGFEFloodElementPrototype.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/Layout/Node.h>
@@ -20,29 +20,35 @@ SVGFEFloodElement::SVGFEFloodElement(DOM::Document& document, DOM::QualifiedName
 {
 }
 
+void SVGFEFloodElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGFEFloodElement);
+    Base::initialize(realm);
+}
+
 void SVGFEFloodElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     SVGFilterPrimitiveStandardAttributes::visit_edges(visitor);
 }
 
-RefPtr<Layout::Node> SVGFEFloodElement::create_layout_node(NonnullRefPtr<CSS::ComputedValues const> style)
+GC::Ptr<Layout::Node> SVGFEFloodElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
 {
-    return make_ref_counted<Layout::SVGBox>(document(), *this, style);
+    return heap().allocate<Layout::SVGBox>(document(), *this, move(style));
 }
 
 // https://www.w3.org/TR/filter-effects-1/#FloodColorProperty
 Gfx::Color SVGFEFloodElement::flood_color()
 {
-    VERIFY(computed_values());
-    return computed_values()->flood_color();
+    VERIFY(computed_properties());
+    return computed_properties()->color(CSS::PropertyID::FloodColor, CSS::ColorResolutionContext::for_element({ *this }));
 }
 
 // https://www.w3.org/TR/filter-effects-1/#FloodOpacityProperty
 float SVGFEFloodElement::flood_opacity() const
 {
-    VERIFY(computed_values());
-    return computed_values()->flood_opacity();
+    VERIFY(computed_properties());
+    return computed_properties()->flood_opacity();
 }
 
 }

@@ -18,10 +18,10 @@ class ScriptSourceAttributeDirective final : public Directive {
 public:
     virtual ~ScriptSourceAttributeDirective() = default;
 
-    virtual Result inline_check(GC::Heap&, GC::Ptr<DOM::Element const>, InlineType, GC::Ref<Policy const>, Utf16View) const override;
+    virtual Result inline_check(GC::Heap&, GC::Ptr<DOM::Element const>, InlineType, GC::Ref<Policy const>, String const&) const override;
 
 private:
-    ScriptSourceAttributeDirective(Utf16FlyString name, Vector<Utf16String> value);
+    ScriptSourceAttributeDirective(String name, Vector<String> value);
 };
 
 }

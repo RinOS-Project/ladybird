@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/ValidityStatePrototype.h>
 #include <LibWeb/HTML/HTMLElement.h>
 #include <LibWeb/HTML/ValidityState.h>
 
@@ -12,17 +13,24 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(ValidityState);
 
-GC::Ref<ValidityState> ValidityState::create(FormAssociatedElement const& control)
+GC::Ref<ValidityState> ValidityState::create(JS::Realm& realm, FormAssociatedElement const& control)
 {
-    return GC::Heap::the().allocate<ValidityState>(control);
+    return realm.create<ValidityState>(realm, control);
 }
 
-ValidityState::ValidityState(FormAssociatedElement const& control)
-    : m_control(control)
+ValidityState::ValidityState(JS::Realm& realm, FormAssociatedElement const& control)
+    : PlatformObject(realm)
+    , m_control(control)
 {
 }
 
-void ValidityState::visit_edges(GC::Cell::Visitor& visitor)
+void ValidityState::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(ValidityState);
+    Base::initialize(realm);
+}
+
+void ValidityState::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_control.form_associated_element_to_html_element());

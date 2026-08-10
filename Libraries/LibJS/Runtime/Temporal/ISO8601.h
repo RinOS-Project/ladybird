@@ -8,53 +8,53 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <AK/Utf16View.h>
+#include <AK/StringView.h>
 #include <AK/Vector.h>
 
 namespace JS::Temporal {
 
 struct Annotation {
     bool critical { false };
-    Utf16View key;
-    Utf16View value;
+    StringView key;
+    StringView value;
 };
 
 struct TimeZoneOffset {
     Optional<char> sign;
-    Optional<Utf16View> hours;
-    Optional<Utf16View> minutes;
-    Optional<Utf16View> seconds;
-    Optional<Utf16View> fraction;
-    Utf16View source_text;
+    Optional<StringView> hours;
+    Optional<StringView> minutes;
+    Optional<StringView> seconds;
+    Optional<StringView> fraction;
+    StringView source_text;
 };
 
 struct ParseResult {
     Optional<char> sign;
 
-    Optional<Utf16View> date_year;
-    Optional<Utf16View> date_month;
-    Optional<Utf16View> date_day;
-    Optional<Utf16View> time_hour;
-    Optional<Utf16View> time_minute;
-    Optional<Utf16View> time_second;
-    Optional<Utf16View> time_fraction;
+    Optional<StringView> date_year;
+    Optional<StringView> date_month;
+    Optional<StringView> date_day;
+    Optional<StringView> time_hour;
+    Optional<StringView> time_minute;
+    Optional<StringView> time_second;
+    Optional<StringView> time_fraction;
     Optional<TimeZoneOffset> date_time_offset;
 
-    Optional<Utf16View> utc_designator;
-    Optional<Utf16View> time_zone_identifier;
-    Optional<Utf16View> time_zone_iana_name;
+    Optional<StringView> utc_designator;
+    Optional<StringView> time_zone_identifier;
+    Optional<StringView> time_zone_iana_name;
     Optional<TimeZoneOffset> time_zone_offset;
 
-    Optional<Utf16View> duration_years;
-    Optional<Utf16View> duration_months;
-    Optional<Utf16View> duration_weeks;
-    Optional<Utf16View> duration_days;
-    Optional<Utf16View> duration_hours;
-    Optional<Utf16View> duration_hours_fraction;
-    Optional<Utf16View> duration_minutes;
-    Optional<Utf16View> duration_minutes_fraction;
-    Optional<Utf16View> duration_seconds;
-    Optional<Utf16View> duration_seconds_fraction;
+    Optional<StringView> duration_years;
+    Optional<StringView> duration_months;
+    Optional<StringView> duration_weeks;
+    Optional<StringView> duration_days;
+    Optional<StringView> duration_hours;
+    Optional<StringView> duration_hours_fraction;
+    Optional<StringView> duration_minutes;
+    Optional<StringView> duration_minutes_fraction;
+    Optional<StringView> duration_seconds;
+    Optional<StringView> duration_seconds_fraction;
 
     Vector<Annotation> annotations;
 };
@@ -72,13 +72,13 @@ enum class Production {
     TimeZoneIdentifier,
 };
 
-Optional<ParseResult> parse_iso8601(Production, Utf16View);
+Optional<ParseResult> parse_iso8601(Production, StringView);
 
 enum class SubMinutePrecision {
     No,
     Yes,
 };
 
-Optional<TimeZoneOffset> parse_utc_offset(Utf16View, SubMinutePrecision);
+Optional<TimeZoneOffset> parse_utc_offset(StringView, SubMinutePrecision);
 
 }

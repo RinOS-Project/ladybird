@@ -8,12 +8,12 @@
         let style = document.getElementById("style");
         let target = document.getElementById("target");
 
-        function testSupports(input, shouldPass) {
+        function testSupports(input) {
             style.innerText = `${input} {
                 div { background-color: green; }
             }`;
             let result = getComputedStyle(target).backgroundColor;
-            println(`${input}: ${(result === 'rgb(0, 128, 0)') === shouldPass ? 'PASS' : 'FAIL'}`);
+            println(`${input}: ${result === 'rgb(0, 128, 0)' ? 'PASS' : 'FAIL'}`);
         }
 
         let validCases = [
@@ -24,11 +24,10 @@
             "@supports selector(.simple)",
             "@supports selector(a#more > .complicated.case:nth-child(42))",
             "@supports selector(.easy) or selector(.....nope)",
-            "@supports env(preferred-text-scale)",
         ];
-        println("These should all be valid:");
+        println("These should all pass:");
         for (let testCase of validCases) {
-            testSupports(testCase, true);
+            testSupports(testCase);
         }
 
         let invalidCases = [
@@ -37,14 +36,12 @@
             "@supports (width: yellow) or (height: green)",
             "@supports (flogwizzle: purple)",
             "@supports selector(.....nope)",
-            "@supports selector(::-thing-we-dont-support)",
+            "@supports selector(::-webkit-input-placeholder)",
             "@supports selector(32) or selector(thing[foo??????bar])",
-            "@supports env(florb)",
-            "@supports env(123)",
         ];
-        println("\nThese should all be invalid:");
+        println("\nThese should all fail:");
         for (let testCase of invalidCases) {
-            testSupports(testCase, false);
+            testSupports(testCase);
         }
     });
 </script>

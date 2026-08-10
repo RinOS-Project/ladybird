@@ -8,84 +8,66 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
-#include <LibGC/RootVector.h>
-#include <LibJS/Forward.h>
-#include <LibWeb/Bindings/MessageEvent.h>
+#include <AK/FlyString.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Export.h>
-#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 
 namespace Web::HTML {
 
 // FIXME: Include ServiceWorker
 // https://html.spec.whatwg.org/multipage/comms.html#messageeventsource
-using MessageEventSource = Variant<GC::Ref<WindowProxy>, GC::Ref<MessagePort>>;
-using NullableMessageEventSource = Variant<GC::Ref<WindowProxy>, GC::Ref<MessagePort>, Empty>;
+using MessageEventSource = Variant<GC::Root<WindowProxy>, GC::Root<MessagePort>>;
+using NullableMessageEventSource = Variant<GC::Root<WindowProxy>, GC::Root<MessagePort>, Empty>;
 
-struct MessageEventInit : DOM::EventInit {
+// https://html.spec.whatwg.org/multipage/comms.html#messageeventinit
+struct MessageEventInit : public DOM::EventInit {
     JS::Value data { JS::js_null() };
-    Utf16String last_event_id {};
-    Utf16String origin {};
-    GC::RootVector<GC::Ref<MessagePort>> ports {};
+    Variant<URL::Origin, String, Empty> origin {};
+    String last_event_id {};
     NullableMessageEventSource source { Empty {} };
+    Vector<GC::Root<MessagePort>> ports;
 };
 
 // https://html.spec.whatwg.org/multipage/comms.html#messageevent
 class WEB_API MessageEvent : public DOM::Event {
-    WEB_WRAPPABLE(MessageEvent, DOM::Event);
+    WEB_PLATFORM_OBJECT(MessageEvent, DOM::Event);
     GC_DECLARE_ALLOCATOR(MessageEvent);
 
 public:
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<MessageEvent>> create_for_constructor(Utf16String const& event_name, Bindings::MessageEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<MessageEvent> create(JS::Object const& relevant_global_object, FlyString const& event_name, MessageEventInit const&);
-    [[nodiscard]] static GC::Ref<MessageEvent> create(JS::Object const& relevant_global_object, FlyString const& event_name, MessageEventInit const&, URL::Origin const&);
-    [[nodiscard]] static GC::Ref<MessageEvent> create(JS::Object const& relevant_global_object, Utf16FlyString const& event_name, MessageEventInit const&);
-    [[nodiscard]] static GC::Ref<MessageEvent> create(JS::Object const& relevant_global_object, Utf16FlyString const& event_name, MessageEventInit const&, URL::Origin const&);
-    [[nodiscard]] static GC::Ref<MessageEvent> create(FlyString const& event_name, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<MessageEvent> create(FlyString const& event_name, MessageEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<MessageEvent> create(FlyString const& event_name, MessageEventInit const&, URL::Origin const&, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<MessageEvent> create(Utf16FlyString const& event_name, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<MessageEvent> create(Utf16FlyString const& event_name, MessageEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<MessageEvent> create(Utf16FlyString const& event_name, MessageEventInit const&, URL::Origin const&, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static GC::Ref<MessageEvent> create(JS::Realm&, FlyString const& event_name, MessageEventInit const& = {});
+    static WebIDL::ExceptionOr<GC::Ref<MessageEvent>> construct_impl(JS::Realm&, FlyString const& event_name, MessageEventInit const&);
 
+    MessageEvent(JS::Realm&, FlyString const& event_name, MessageEventInit const& event_init);
     virtual ~MessageEvent() override;
 
-    JS::Value const& data() const { return m_data; }
-    Utf16String origin() const;
-    Utf16String const& last_event_id() const { return m_last_event_id; }
-    Vector<GC::Ref<MessagePort>> const& message_ports() const { return m_ports; }
-    JS::Value ports(JS::Realm&);
+    JS::Value data() const { return m_data; }
+    String origin() const;
+    String const& last_event_id() const { return m_last_event_id; }
+    GC::Ref<JS::Object> ports() const;
 
     NullableMessageEventSource source() const;
 
     virtual Optional<URL::Origin> extract_an_origin() const override;
 
-    void init_message_event(Utf16FlyString const& type, bool bubbles, bool cancelable, JS::Value data, Utf16View origin, Utf16View last_event_id, NullableMessageEventSource source, GC::RootVector<GC::Ref<MessagePort>> const& ports);
+    void init_message_event(String const& type, bool bubbles, bool cancelable, JS::Value data, String const& origin, String const& last_event_id, NullableMessageEventSource source, Vector<GC::Root<MessagePort>> const& ports);
 
 private:
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    MessageEvent(FlyString const& event_name, HighResolutionTime::DOMHighResTimeStamp);
-    MessageEvent(FlyString const& event_name, MessageEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
-    MessageEvent(FlyString const& event_name, MessageEventInit const& event_init, URL::Origin const&, HighResolutionTime::DOMHighResTimeStamp);
-    MessageEvent(FlyString const& event_name, MessageEventInit const& event_init, Variant<URL::Origin, Utf16String, Empty>, HighResolutionTime::DOMHighResTimeStamp);
-    MessageEvent(Utf16FlyString const& event_name, HighResolutionTime::DOMHighResTimeStamp);
-    MessageEvent(Utf16FlyString const& event_name, MessageEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
-    MessageEvent(Utf16FlyString const& event_name, MessageEventInit const& event_init, URL::Origin const&, HighResolutionTime::DOMHighResTimeStamp);
-    MessageEvent(Utf16FlyString const& event_name, MessageEventInit const& event_init, Variant<URL::Origin, Utf16String, Empty>, HighResolutionTime::DOMHighResTimeStamp);
+    using MessageEventSourceInternal = Variant<Empty, GC::Ref<WindowProxy>, GC::Ref<MessagePort>>;
+    static MessageEventSourceInternal to_message_event_source_internal(NullableMessageEventSource const&);
 
     JS::Value m_data;
 
     // https://html.spec.whatwg.org/multipage/comms.html#concept-messageevent-origin
     // Each MessageEvent has an origin (an origin, a string, or null), initially null.
-    Variant<URL::Origin, Utf16String, Empty> m_origin;
+    Variant<URL::Origin, String, Empty> m_origin;
 
-    Utf16String m_last_event_id;
-    NullableMessageEventSource m_source;
-    Vector<GC::Ref<MessagePort>> m_ports;
+    String m_last_event_id;
+    MessageEventSourceInternal m_source;
+    Vector<GC::Ref<JS::Object>> m_ports;
+    mutable GC::Ptr<JS::Array> m_ports_array;
 };
 
 }

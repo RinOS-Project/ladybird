@@ -1,8 +1,8 @@
 Harness status: OK
 
-Found 20 tests
+Found 19 tests
 
-20 Pass
+19 Pass
 Pass	e.style['transform'] = "none scale(2)" should not set the property value
 Pass	e.style['transform'] = "translateX(3%) none" should not set the property value
 Pass	e.style['transform'] = "matrix(1, 2)" should not set the property value
@@ -22,4 +22,3 @@ Pass	e.style['transform'] = "skew(0, 0, 0)" should not set the property value
 Pass	e.style['transform'] = "skewX(0, 0)" should not set the property value
 Pass	e.style['transform'] = "skewY(0, 0)" should not set the property value
 Pass	e.style['transform'] = "scaleX(2), scaleY(3)" should not set the property value
-Pass	e.style['transform'] = "perspective(1000)" should not set the property value

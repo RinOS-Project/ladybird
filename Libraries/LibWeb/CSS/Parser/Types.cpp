@@ -12,101 +12,15 @@
 
 namespace Web::CSS::Parser {
 
-ComponentValueToken::ComponentValueToken(Token const& token)
-    : m_type(token.type())
-    , m_original_source_text(token.original_source_text())
-    , m_start_position(token.start_position())
-    , m_end_position(token.end_position())
+String SimpleBlock::to_string() const
 {
-}
+    StringBuilder builder;
 
-Token::Type ComponentValueToken::mirror_variant() const
-{
-    if (is(Token::Type::OpenCurly)) {
-        return Token::Type::CloseCurly;
-    }
+    builder.append(token.bracket_string());
+    builder.join(""sv, value);
+    builder.append(token.bracket_mirror_string());
 
-    if (is(Token::Type::OpenSquare)) {
-        return Token::Type::CloseSquare;
-    }
-
-    if (is(Token::Type::OpenParen)) {
-        return Token::Type::CloseParen;
-    }
-
-    return Token::Type::Invalid;
-}
-
-StringView ComponentValueToken::bracket_string() const
-{
-    if (is(Token::Type::OpenCurly)) {
-        return "{"sv;
-    }
-
-    if (is(Token::Type::CloseCurly)) {
-        return "}"sv;
-    }
-
-    if (is(Token::Type::OpenSquare)) {
-        return "["sv;
-    }
-
-    if (is(Token::Type::CloseSquare)) {
-        return "]"sv;
-    }
-
-    if (is(Token::Type::OpenParen)) {
-        return "("sv;
-    }
-
-    if (is(Token::Type::CloseParen)) {
-        return ")"sv;
-    }
-
-    return ""sv;
-}
-
-StringView ComponentValueToken::bracket_mirror_string() const
-{
-    if (is(Token::Type::OpenCurly)) {
-        return "}"sv;
-    }
-
-    if (is(Token::Type::CloseCurly)) {
-        return "{"sv;
-    }
-
-    if (is(Token::Type::OpenSquare)) {
-        return "]"sv;
-    }
-
-    if (is(Token::Type::CloseSquare)) {
-        return "["sv;
-    }
-
-    if (is(Token::Type::OpenParen)) {
-        return ")"sv;
-    }
-
-    if (is(Token::Type::CloseParen)) {
-        return "("sv;
-    }
-
-    return ""sv;
-}
-
-void SimpleBlock::serialize_to(Utf16StringBuilder& builder) const
-{
-    builder.append_ascii(token.bracket_string());
-    serialize_a_series_of_component_values(builder, value);
-    builder.append_ascii(token.bracket_mirror_string());
-}
-
-Utf16String SimpleBlock::to_string() const
-{
-    Utf16StringBuilder builder;
-    serialize_to(builder);
-    return builder.to_string();
+    return builder.to_string_without_validation();
 }
 
 String SimpleBlock::original_source_text() const
@@ -120,19 +34,27 @@ String SimpleBlock::original_source_text() const
     return builder.to_string_without_validation();
 }
 
-void Function::serialize_to(Utf16StringBuilder& builder) const
+void SimpleBlock::contains_arbitrary_substitution_function(SubstitutionFunctionsPresence& presence) const
 {
-    serialize_an_identifier(builder, name);
-    builder.append_ascii('(');
-    serialize_a_series_of_component_values(builder, value);
-    builder.append_ascii(')');
+    for (auto const& component_value : value) {
+        if (component_value.is_function())
+            component_value.function().contains_arbitrary_substitution_function(presence);
+        if (component_value.is_block())
+            component_value.block().contains_arbitrary_substitution_function(presence);
+    }
 }
 
-Utf16String Function::to_string() const
+String Function::to_string() const
 {
-    Utf16StringBuilder builder;
-    serialize_to(builder);
-    return builder.to_string();
+    StringBuilder builder;
+
+    serialize_an_identifier(builder, name);
+    builder.append('(');
+    for (auto& item : value)
+        builder.append(item.to_string());
+    builder.append(')');
+
+    return builder.to_string_without_validation();
 }
 
 String Function::original_source_text() const
@@ -144,6 +66,26 @@ String Function::original_source_text() const
     }
     builder.append(end_token.original_source_text());
     return builder.to_string_without_validation();
+}
+
+void Function::contains_arbitrary_substitution_function(SubstitutionFunctionsPresence& presence) const
+{
+    if (name.equals_ignoring_ascii_case("attr"sv))
+        presence.attr = true;
+    else if (name.equals_ignoring_ascii_case("env"sv))
+        presence.env = true;
+    else if (name.equals_ignoring_ascii_case("if"sv))
+        presence.if_ = true;
+    else if (name.equals_ignoring_ascii_case("inherit"sv))
+        presence.inherit = true;
+    else if (name.equals_ignoring_ascii_case("var"sv))
+        presence.var = true;
+    for (auto const& component_value : value) {
+        if (component_value.is_function())
+            component_value.function().contains_arbitrary_substitution_function(presence);
+        if (component_value.is_block())
+            component_value.block().contains_arbitrary_substitution_function(presence);
+    }
 }
 
 void AtRule::for_each(AtRuleVisitor&& visit_at_rule, QualifiedRuleVisitor&& visit_qualified_rule, DeclarationVisitor&& visit_declaration) const
@@ -169,14 +111,14 @@ void AtRule::for_each_as_declaration_list(DeclarationVisitor&& visit) const
     for_each(
         [this](auto const& at_rule) {
             ErrorReporter::the().report(InvalidRuleLocationError {
-                .outer_rule_name = Utf16String::formatted("@{}", name),
-                .inner_rule_name = Utf16String::formatted("@{}", at_rule.name),
+                .outer_rule_name = MUST(String::formatted("@{}", name)),
+                .inner_rule_name = MUST(String::formatted("@{}", at_rule.name)),
             });
         },
         [this](auto const&) {
             ErrorReporter::the().report(InvalidRuleLocationError {
-                .outer_rule_name = Utf16String::formatted("@{}", name),
-                .inner_rule_name = "qualified-rule"_utf16_fly_string,
+                .outer_rule_name = MUST(String::formatted("@{}", name)),
+                .inner_rule_name = "qualified-rule"_fly_string,
             });
         },
         move(visit));
@@ -189,15 +131,35 @@ void AtRule::for_each_as_qualified_rule_list(QualifiedRuleVisitor&& visit) const
     for_each(
         [this](auto const& at_rule) {
             ErrorReporter::the().report(InvalidRuleLocationError {
-                .outer_rule_name = Utf16String::formatted("@{}", name),
-                .inner_rule_name = Utf16String::formatted("@{}", at_rule.name),
+                .outer_rule_name = MUST(String::formatted("@{}", name)),
+                .inner_rule_name = MUST(String::formatted("@{}", at_rule.name)),
             });
         },
         move(visit),
         [this](auto const&) {
             ErrorReporter::the().report(InvalidRuleLocationError {
-                .outer_rule_name = Utf16String::formatted("@{}", name),
-                .inner_rule_name = "list-of-declarations"_utf16_fly_string,
+                .outer_rule_name = MUST(String::formatted("@{}", name)),
+                .inner_rule_name = "list-of-declarations"_fly_string,
+            });
+        });
+}
+
+// https://drafts.csswg.org/css-syntax/#typedef-at-rule-list
+void AtRule::for_each_as_at_rule_list(AtRuleVisitor&& visit) const
+{
+    // <at-rule-list>: only at-rules are allowed; declarations and qualified rules are automatically invalid.
+    for_each(
+        move(visit),
+        [this](auto const&) {
+            ErrorReporter::the().report(InvalidRuleLocationError {
+                .outer_rule_name = MUST(String::formatted("@{}", name)),
+                .inner_rule_name = "qualified-rule"_fly_string,
+            });
+        },
+        [this](auto const&) {
+            ErrorReporter::the().report(InvalidRuleLocationError {
+                .outer_rule_name = MUST(String::formatted("@{}", name)),
+                .inner_rule_name = "list-of-declarations"_fly_string,
             });
         });
 }
@@ -210,15 +172,31 @@ void AtRule::for_each_as_declaration_rule_list(AtRuleVisitor&& visit_at_rule, De
         move(visit_at_rule),
         [this](auto const&) {
             ErrorReporter::the().report(InvalidRuleLocationError {
-                .outer_rule_name = Utf16String::formatted("@{}", name),
-                .inner_rule_name = "qualified-rule"_utf16_fly_string,
+                .outer_rule_name = MUST(String::formatted("@{}", name)),
+                .inner_rule_name = "qualified-rule"_fly_string,
             });
         },
         move(visit_declaration));
 }
 
+// https://drafts.csswg.org/css-syntax/#typedef-rule-list
+void AtRule::for_each_as_rule_list(RuleVisitor&& visit) const
+{
+    // <rule-list>: qualified rules and at-rules are allowed; declarations are automatically invalid.
+    for (auto const& child : child_rules_and_lists_of_declarations) {
+        child.visit(
+            [&](Rule const& rule) { visit(rule); },
+            [&](Vector<Declaration> const&) {
+                ErrorReporter::the().report(InvalidRuleLocationError {
+                    .outer_rule_name = MUST(String::formatted("@{}", name)),
+                    .inner_rule_name = "list-of-declarations"_fly_string,
+                });
+            });
+    }
+}
+
 // https://drafts.csswg.org/css-syntax/#typedef-declaration-list
-void QualifiedRule::for_each_as_declaration_list(Utf16FlyString const& rule_name, DeclarationVisitor&& visit) const
+void QualifiedRule::for_each_as_declaration_list(FlyString const& rule_name, DeclarationVisitor&& visit) const
 {
     // <declaration-list>: only declarations are allowed; at-rules and qualified rules are automatically invalid.
     for (auto const& declaration : declarations)
@@ -229,7 +207,7 @@ void QualifiedRule::for_each_as_declaration_list(Utf16FlyString const& rule_name
             [&](Rule const&) {
                 ErrorReporter::the().report(InvalidRuleLocationError {
                     .outer_rule_name = rule_name,
-                    .inner_rule_name = "qualified-rule"_utf16_fly_string,
+                    .inner_rule_name = "qualified-rule"_fly_string,
                 });
             },
             [&](Vector<Declaration> const& declarations) {

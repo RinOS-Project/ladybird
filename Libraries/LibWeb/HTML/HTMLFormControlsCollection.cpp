@@ -4,50 +4,38 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/HTMLFormControlsCollectionPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/HTMLCollection.h>
 #include <LibWeb/DOM/ParentNode.h>
 #include <LibWeb/HTML/HTMLFormControlsCollection.h>
-#include <LibWeb/HTML/HTMLFormElement.h>
 #include <LibWeb/HTML/RadioNodeList.h>
 
 namespace Web::HTML {
 
-static Utf16View radio_node_list_name_view(Utf16String const& name)
-{
-    return name.utf16_view();
-}
-
-static bool radio_node_list_element_matches_name(DOM::Element const& element, Utf16View name)
-{
-    return (element.id().has_value() && element.id()->view() == name)
-        || (element.name().has_value() && element.name()->view() == name);
-}
-
 GC_DEFINE_ALLOCATOR(HTMLFormControlsCollection);
 
-GC::Ref<HTMLFormControlsCollection> HTMLFormControlsCollection::create(DOM::ParentNode& root, Scope scope, HTMLFormElement& form, Function<bool(DOM::Element const&)> filter)
+GC::Ref<HTMLFormControlsCollection> HTMLFormControlsCollection::create(DOM::ParentNode& root, Scope scope, Function<bool(DOM::Element const&)> filter)
 {
-    return GC::Heap::the().allocate<HTMLFormControlsCollection>(root, scope, form, move(filter));
+    return root.realm().create<HTMLFormControlsCollection>(root, scope, move(filter));
 }
 
-HTMLFormControlsCollection::HTMLFormControlsCollection(DOM::ParentNode& root, Scope scope, HTMLFormElement& form, Function<bool(DOM::Element const&)> filter)
+HTMLFormControlsCollection::HTMLFormControlsCollection(DOM::ParentNode& root, Scope scope, Function<bool(DOM::Element const&)> filter)
     : DOM::HTMLCollection(root, scope, move(filter))
-    , m_form(form)
 {
 }
 
 HTMLFormControlsCollection::~HTMLFormControlsCollection() = default;
 
-void HTMLFormControlsCollection::visit_edges(GC::Cell::Visitor& visitor)
+void HTMLFormControlsCollection::initialize(JS::Realm& realm)
 {
-    Base::visit_edges(visitor);
-    visitor.visit(m_form);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLFormControlsCollection);
+    Base::initialize(realm);
 }
 
 // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#dom-htmlformcontrolscollection-nameditem
-Variant<Empty, GC::Ref<DOM::Element>, GC::Ref<RadioNodeList>> HTMLFormControlsCollection::named_item_or_radio_node_list(Utf16View name) const
+Variant<Empty, DOM::Element*, GC::Root<RadioNodeList>> HTMLFormControlsCollection::named_item_or_radio_node_list(FlyString const& name) const
 {
     // 1. If name is the empty string, return null and stop the algorithm.
     if (name.is_empty())
@@ -55,17 +43,19 @@ Variant<Empty, GC::Ref<DOM::Element>, GC::Ref<RadioNodeList>> HTMLFormControlsCo
 
     // 2. If, at the time the method is called, there is exactly one node in the collection that has either an id attribute or a name attribute equal to name, then return that node and stop the algorithm.
     // 3. Otherwise, if there are no nodes in the collection that have either an id attribute or a name attribute equal to name, then return null and stop the algorithm.
-    bool multiple_matching = false;
     DOM::Element* matching_element = nullptr;
-    for (auto const& element : collect_matching_elements()) {
-        bool id_matches = element->id().has_value() && element->id()->view() == name;
-        bool name_matches = element->name().has_value() && element->name()->view() == name;
-        if (!id_matches && !name_matches)
+    bool multiple_matching = false;
+
+    auto collection = collect_matching_elements();
+    for (auto const& element : collection) {
+        if (element->id() != name && element->name() != name)
             continue;
+
         if (matching_element) {
             multiple_matching = true;
             break;
         }
+
         matching_element = element;
     }
 
@@ -73,19 +63,25 @@ Variant<Empty, GC::Ref<DOM::Element>, GC::Ref<RadioNodeList>> HTMLFormControlsCo
         return {};
 
     if (!multiple_matching)
-        return GC::Ref { *matching_element };
+        return matching_element;
 
     // 4. Otherwise, create a new RadioNodeList object representing a live view of the HTMLFormControlsCollection object, further filtered so that the only nodes in the
     //    RadioNodeList object are those that have either an id attribute or a name attribute equal to name. The nodes in the RadioNodeList object must be sorted in tree
     //    order. Return that RadioNodeList object.
-    auto name_copy = Utf16String::from_utf16(name);
-    return RadioNodeList::create(root(), DOM::LiveNodeList::Scope::Descendants, [name = move(name_copy)](auto const& node) {
+    return GC::make_root(RadioNodeList::create(realm(), root(), DOM::LiveNodeList::Scope::Descendants, [name](auto const& node) {
         if (!is<DOM::Element>(node))
             return false;
 
         auto const& element = as<DOM::Element>(node);
-        return radio_node_list_element_matches_name(element, radio_node_list_name_view(name));
-    });
+        return element.id() == name || element.name() == name;
+    }));
+}
+
+JS::Value HTMLFormControlsCollection::named_item_value(FlyString const& name) const
+{
+    return named_item_or_radio_node_list(name).visit(
+        [](Empty) -> JS::Value { return JS::js_undefined(); },
+        [](auto const& value) -> JS::Value { return value; });
 }
 
 }

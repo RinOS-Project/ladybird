@@ -11,14 +11,16 @@
 namespace Web::XHR {
 
 class XMLHttpRequestUpload : public XMLHttpRequestEventTarget {
-    WEB_WRAPPABLE(XMLHttpRequestUpload, XMLHttpRequestEventTarget);
+    WEB_PLATFORM_OBJECT(XMLHttpRequestUpload, XMLHttpRequestEventTarget);
     GC_DECLARE_ALLOCATOR(XMLHttpRequestUpload);
 
 public:
     virtual ~XMLHttpRequestUpload() override;
 
 private:
-    XMLHttpRequestUpload();
+    XMLHttpRequestUpload(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

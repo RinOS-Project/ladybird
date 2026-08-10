@@ -6,28 +6,28 @@
 
 #pragma once
 
+#include <AK/String.h>
 #include <AK/Vector.h>
-#include <LibWebView/Autocomplete.h>
 
 #import <Cocoa/Cocoa.h>
 
 @protocol AutocompleteObserver <NSObject>
 
-- (void)onSelectedSuggestion:(NSUInteger)suggestion_index;
-- (void)onAutocompleteDidClose;
+- (void)onSelectedSuggestion:(String)suggestion;
 
 @end
 
-@interface Autocomplete : NSObject
+@interface Autocomplete : NSPopover
 
 - (instancetype)init:(id<AutocompleteObserver>)observer
      withToolbarItem:(NSToolbarItem*)toolbar_item;
 
-- (void)showWithSuggestions:(Vector<WebView::AutocompleteSuggestion>)suggestions
-    selectedSuggestionIndex:(NSInteger)selected_suggestion_index;
-- (void)setSelectedSuggestionIndex:(NSInteger)selected_suggestion_index;
-- (void)clearSelection;
+- (void)showWithSuggestions:(Vector<String>)suggestions;
 - (BOOL)close;
-- (BOOL)isVisible;
+
+- (Optional<String>)selectedSuggestion;
+
+- (BOOL)selectNextSuggestion;
+- (BOOL)selectPreviousSuggestion;
 
 @end

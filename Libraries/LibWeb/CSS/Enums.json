@@ -116,10 +116,6 @@
     "x",
     "y"
   ],
-  "backface-visibility": [
-    "visible",
-    "hidden"
-  ],
   "background-attachment": [
     "fixed",
     "local",
@@ -158,21 +154,6 @@
   "caption-side": [
     "top",
     "bottom"
-  ],
-  "channel-keyword": [
-    "r",
-    "g",
-    "b",
-    "h",
-    "s",
-    "l",
-    "w",
-    "c",
-    "a",
-    "alpha",
-    "x",
-    "y",
-    "z"
   ],
   "clear": [
     "none",
@@ -486,8 +467,7 @@
     "flex",
     "grid",
     "ruby",
-    "math",
-    "-webkit-box"
+    "math"
   ],
   "display-internal": [
     "table-row-group",
@@ -507,10 +487,7 @@
     "inline-block",
     "inline-table",
     "inline-flex",
-    "inline-grid",
-    "-webkit-flex",
-    "-webkit-inline-box",
-    "-webkit-inline-flex"
+    "inline-grid"
   ],
   "display-outside": [
     "block",
@@ -636,7 +613,6 @@
     "cursive",
     "fantasy",
     "monospace",
-    "system-ui",
     "math",
     "ui-serif",
     "ui-sans-serif",
@@ -659,8 +635,8 @@
     "high-quality",
     "pixelated",
     "smooth",
-    "optimizespeed",
-    "optimizequality"
+    "optimizespeed=pixelated",
+    "optimizequality=smooth"
   ],
   "isolation": [
     "auto",
@@ -958,10 +934,6 @@
     "to-zero",
     "up"
   ],
-  "scroll-behavior": [
-    "auto",
-    "smooth"
-  ],
   "scrollbar-gutter": [
     "auto",
     "stable",
@@ -1111,8 +1083,7 @@
     "pan-right",
     "pan-up",
     "pan-x",
-    "pan-y",
-    "pinch-zoom"
+    "pan-y"
   ],
   "transform-box": [
     "content-box",
@@ -1154,10 +1125,6 @@
     "contain",
     "none",
     "text"
-  ],
-  "vector-effect": [
-    "none",
-    "non-scaling-stroke"
   ],
   "vertical-align": [
     "baseline",

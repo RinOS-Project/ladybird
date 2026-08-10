@@ -6,7 +6,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/HTMLSlotElement.h>
+#include <LibWeb/Bindings/HTMLSlotElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
@@ -23,23 +24,26 @@ HTMLSlotElement::HTMLSlotElement(DOM::Document& document, DOM::QualifiedName qua
 
 HTMLSlotElement::~HTMLSlotElement() = default;
 
+void HTMLSlotElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLSlotElement);
+    Base::initialize(realm);
+}
+
 void HTMLSlotElement::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     Slot::visit_edges(visitor);
-    visitor.visit(m_manually_assigned_nodes);
-}
 
-static HTMLSlotElement::AssignedNodesFlatten assigned_nodes_flatten(Bindings::AssignedNodesOptions const& options)
-{
-    return options.flatten ? HTMLSlotElement::AssignedNodesFlatten::Yes : HTMLSlotElement::AssignedNodesFlatten::No;
+    for (auto const& node : m_manually_assigned_nodes)
+        node.visit([&](auto const& slottable) { visitor.visit(slottable); });
 }
 
 // https://html.spec.whatwg.org/multipage/scripting.html#dom-slot-assignednodes
-Vector<GC::Root<DOM::Node>> HTMLSlotElement::assigned_nodes(AssignedNodesFlatten flatten) const
+Vector<GC::Root<DOM::Node>> HTMLSlotElement::assigned_nodes(AssignedNodesOptions options) const
 {
     // 1. If options["flatten"] is false, then return this's assigned nodes.
-    if (flatten == AssignedNodesFlatten::No) {
+    if (!options.flatten) {
         Vector<GC::Root<DOM::Node>> assigned_nodes;
         assigned_nodes.ensure_capacity(assigned_nodes_internal().size());
 
@@ -65,16 +69,11 @@ Vector<GC::Root<DOM::Node>> HTMLSlotElement::assigned_nodes(AssignedNodesFlatten
     return assigned_nodes;
 }
 
-Vector<GC::Root<DOM::Node>> HTMLSlotElement::assigned_nodes(Bindings::AssignedNodesOptions const& options) const
-{
-    return assigned_nodes(assigned_nodes_flatten(options));
-}
-
 // https://html.spec.whatwg.org/multipage/scripting.html#dom-slot-assignedelements
-Vector<GC::Root<DOM::Element>> HTMLSlotElement::assigned_elements(AssignedNodesFlatten flatten) const
+Vector<GC::Root<DOM::Element>> HTMLSlotElement::assigned_elements(AssignedNodesOptions options) const
 {
     // 1. If options["flatten"] is false, then return this's assigned nodes, filtered to contain only Element nodes.
-    if (flatten == AssignedNodesFlatten::No) {
+    if (!options.flatten) {
         Vector<GC::Root<DOM::Element>> assigned_nodes;
 
         for (auto const& node : assigned_nodes_internal()) {
@@ -95,13 +94,8 @@ Vector<GC::Root<DOM::Element>> HTMLSlotElement::assigned_elements(AssignedNodesF
     return assigned_nodes;
 }
 
-Vector<GC::Root<DOM::Element>> HTMLSlotElement::assigned_elements(Bindings::AssignedNodesOptions const& options) const
-{
-    return assigned_elements(assigned_nodes_flatten(options));
-}
-
 // https://html.spec.whatwg.org/multipage/scripting.html#dom-slot-assign
-void HTMLSlotElement::assign(GC::ConservativeVector<SlottableHandle> nodes)
+void HTMLSlotElement::assign(Vector<SlottableHandle> nodes)
 {
     // 1. For each node of this's manually assigned nodes, set node's manual slot assignment to null.
     for (auto& node : m_manually_assigned_nodes) {
@@ -140,7 +134,7 @@ void HTMLSlotElement::assign(GC::ConservativeVector<SlottableHandle> nodes)
 }
 
 // https://dom.spec.whatwg.org/#ref-for-concept-element-attributes-change-ext
-void HTMLSlotElement::attribute_changed(Utf16FlyString const& local_name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
+void HTMLSlotElement::attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
 {
     Base::attribute_changed(local_name, old_value, value, namespace_);
 
@@ -151,11 +145,11 @@ void HTMLSlotElement::attribute_changed(Utf16FlyString const& local_name, Option
             return;
 
         // 2. If value is null and oldValue is the empty string, then return.
-        if (!value.has_value() && old_value == Utf16String {})
+        if (!value.has_value() && old_value == String {})
             return;
 
         // 3. If value is the empty string and oldValue is null, then return.
-        if (value == Utf16String {} && !old_value.has_value())
+        if (value == String {} && !old_value.has_value())
             return;
 
         // OPTIMIZATION: Update the slot registry before changing the name.

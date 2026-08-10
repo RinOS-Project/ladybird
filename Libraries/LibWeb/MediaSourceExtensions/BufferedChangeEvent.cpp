@@ -4,33 +4,30 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/BufferedChangeEventPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/MediaSourceExtensions/BufferedChangeEvent.h>
 
 namespace Web::MediaSourceExtensions {
 
 GC_DEFINE_ALLOCATOR(BufferedChangeEvent);
 
-GC::Ref<BufferedChangeEvent> BufferedChangeEvent::create(AK::FlyString const& type, BufferedChangeEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
+WebIDL::ExceptionOr<GC::Ref<BufferedChangeEvent>> BufferedChangeEvent::construct_impl(JS::Realm& realm, AK::FlyString const& type, BufferedChangeEventInit const& event_init)
 {
-    return GC::Heap::the().allocate<BufferedChangeEvent>(type, event_init, time_stamp);
+    return realm.create<BufferedChangeEvent>(realm, type, event_init);
 }
 
-GC::Ref<BufferedChangeEvent> BufferedChangeEvent::create(Utf16String const& type, BufferedChangeEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-{
-    return GC::Heap::the().allocate<BufferedChangeEvent>(Utf16FlyString::from_utf16(type.utf16_view()), event_init, time_stamp);
-}
-
-BufferedChangeEvent::BufferedChangeEvent(AK::FlyString const& type, BufferedChangeEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-    : DOM::Event(type, event_init, time_stamp)
-{
-}
-
-BufferedChangeEvent::BufferedChangeEvent(Utf16FlyString const& type, BufferedChangeEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-    : DOM::Event(type, event_init, time_stamp)
+BufferedChangeEvent::BufferedChangeEvent(JS::Realm& realm, AK::FlyString const& type, BufferedChangeEventInit const& event_init)
+    : DOM::Event(realm, type, event_init)
 {
 }
 
 BufferedChangeEvent::~BufferedChangeEvent() = default;
+
+void BufferedChangeEvent::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(BufferedChangeEvent);
+    Base::initialize(realm);
+}
 
 }

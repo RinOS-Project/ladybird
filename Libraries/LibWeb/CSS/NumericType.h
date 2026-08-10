@@ -6,21 +6,18 @@
 
 #pragma once
 
-#include <LibWeb/Export.h>
-
 #include <AK/Array.h>
 #include <AK/Optional.h>
 #include <AK/String.h>
-#include <AK/Utf16FlyString.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::CSS {
 
-using UnitMap = HashMap<Utf16FlyString, i32>;
+using UnitMap = HashMap<FlyString, i32>;
 UnitMap product_of_two_unit_maps(UnitMap const&, UnitMap const&);
 
 // https://drafts.css-houdini.org/css-typed-om-1/#cssnumericvalue-type
-class WEB_API NumericType {
+class NumericType {
 public:
     enum class BaseType {
         Length,
@@ -57,7 +54,7 @@ public:
         VERIFY_NOT_REACHED();
     }
 
-    static Optional<NumericType> create_from_unit(Utf16FlyString const& unit);
+    static Optional<NumericType> create_from_unit(FlyString const& unit);
     static Optional<NumericType> create_from_unit_map(UnitMap const&);
     NumericType() = default;
     NumericType(BaseType type, i32 power)
@@ -69,6 +66,7 @@ public:
     Optional<NumericType> multiplied_by(NumericType const& other) const;
     NumericType inverted() const;
 
+    bool has_consistent_type_with(NumericType const& other) const;
     Optional<NumericType> consistent_type(NumericType const& other) const;
     Optional<NumericType> made_consistent_with(NumericType const& other) const;
 
@@ -101,8 +99,6 @@ public:
         }
     }
 
-    Optional<BaseType> entry_with_value_1_while_all_others_are_0() const;
-
     Optional<BaseType> const& percent_hint() const { return m_percent_hint; }
     void set_percent_hint(Optional<BaseType> hint) { m_percent_hint = hint; }
     void apply_percent_hint(BaseType hint);
@@ -110,6 +106,7 @@ public:
     bool operator==(NumericType const& other) const = default;
 
     String dump() const;
+    Optional<BaseType> entry_with_value_1_while_all_others_are_0() const;
 
 private:
     bool contains_all_the_non_zero_entries_of_other_with_the_same_value(NumericType const& other) const;
@@ -128,3 +125,11 @@ private:
 };
 
 }
+
+template<>
+struct AK::Formatter<Web::CSS::NumericType> : Formatter<StringView> {
+    ErrorOr<void> format(FormatBuilder& builder, Web::CSS::NumericType const& value)
+    {
+        return Formatter<StringView>::format(builder, value.dump());
+    }
+};

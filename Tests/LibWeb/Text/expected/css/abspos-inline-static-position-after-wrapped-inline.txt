@@ -1,2 +1,0 @@
-target x: 20
-target y: 20

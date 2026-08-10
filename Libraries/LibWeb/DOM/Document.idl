@@ -1,51 +1,86 @@
+#import <Animations/DocumentTimeline.idl>
+#import <CSS/FontFaceSet.idl>
+#import <CSS/StyleSheetList.idl>
+#import <DOM/CDATASection.idl>
+#import <DOM/Comment.idl>
+#import <DOM/DOMImplementation.idl>
+#import <DOM/DocumentFragment.idl>
+#import <DOM/DocumentOrShadowRoot.idl>
+#import <DOM/DocumentType.idl>
+#import <DOM/Element.idl>
+#import <DOM/Event.idl>
+#import <DOM/EventHandler.idl>
+#import <DOM/HTMLCollection.idl>
+#import <DOM/Node.idl>
+#import <DOM/NodeFilter.idl>
+#import <DOM/NodeIterator.idl>
+#import <DOM/NodeList.idl>
+#import <DOM/ParentNode.idl>
+#import <DOM/ProcessingInstruction.idl>
+#import <DOM/Range.idl>
+#import <DOM/Text.idl>
+#import <DOM/TreeWalker.idl>
+#import <Fullscreen/DocumentExtensions.idl>
+#import <HTML/HTMLAllCollection.idl>
+#import <HTML/HTMLElement.idl>
+#import <HTML/HTMLHeadElement.idl>
+#import <HTML/HTMLScriptElement.idl>
+#import <HTML/Location.idl>
+#import <Selection/Selection.idl>
+#import <TrustedTypes/TrustedHTML.idl>
+#import <ViewTransition/ViewTransition.idl>
+#import <XPath/XPathResult.idl>
+#import <XPath/XPathExpression.idl>
+#import <XPath/XPathNSResolver.idl>
+
 // https://dom.spec.whatwg.org/#document
 // https://html.spec.whatwg.org/multipage/dom.html#the-document-object
-[Exposed=Window, LegacyOverrideBuiltIns]
+[Exposed=Window, LegacyOverrideBuiltins]
 interface Document : Node {
     constructor();
 
     [ImplementedAs=has_focus_for_bindings] boolean hasFocus();
 
     [PutForwards=href, LegacyUnforgeable] readonly attribute Location? location;
-    attribute Utf16USVString domain;
+    attribute USVString domain;
 
     readonly attribute DOMImplementation implementation;
 
-    [ImplementedAs=url_string_for_bindings] readonly attribute Utf16DOMString URL;
-    readonly attribute Utf16DOMString documentURI;
+    [ImplementedAs=url_string] readonly attribute USVString URL;
+    readonly attribute USVString documentURI;
 
-    readonly attribute Utf16DOMString characterSet;
-    readonly attribute Utf16DOMString charset;
-    readonly attribute Utf16DOMString inputEncoding;
-    readonly attribute Utf16DOMString contentType;
+    readonly attribute DOMString characterSet;
+    readonly attribute DOMString charset;
+    readonly attribute DOMString inputEncoding;
+    readonly attribute DOMString contentType;
 
     readonly attribute WindowProxy? defaultView;
 
-    [CEReactions] Document open(optional Utf16DOMString unused1, optional Utf16DOMString unused2);
-    WindowProxy? open(Utf16USVString url, Utf16DOMString name, Utf16DOMString features);
+    [CEReactions] Document open(optional DOMString unused1, optional DOMString unused2);
+    WindowProxy? open(USVString url, DOMString name, DOMString features);
     [CEReactions] undefined close();
-    [CEReactions, ImplementedInBindings] undefined write((TrustedHTML or Utf16DOMString)... text);
-    [CEReactions, ImplementedInBindings] undefined writeln((TrustedHTML or Utf16DOMString)... text);
+    [CEReactions] undefined write((TrustedHTML or Utf16DOMString)... text);
+    [CEReactions] undefined writeln((TrustedHTML or Utf16DOMString)... text);
 
-    [NeedsCallerRealm, ImplementedInBindings] static Document parseHTMLUnsafe((TrustedHTML or Utf16DOMString) html);
+    static Document parseHTMLUnsafe((TrustedHTML or Utf16DOMString) html);
 
-    attribute Utf16DOMString cookie;
+    attribute DOMString cookie;
 
     // https://html.spec.whatwg.org/multipage/obsolete.html#Document-partial
-    [CEReactions, LegacyNullToEmptyString] attribute Utf16DOMString fgColor;
-    [CEReactions, LegacyNullToEmptyString] attribute Utf16DOMString linkColor;
-    [CEReactions, LegacyNullToEmptyString] attribute Utf16DOMString vlinkColor;
-    [CEReactions, LegacyNullToEmptyString] attribute Utf16DOMString alinkColor;
-    [CEReactions, LegacyNullToEmptyString] attribute Utf16DOMString bgColor;
+    [CEReactions, LegacyNullToEmptyString] attribute DOMString fgColor;
+    [CEReactions, LegacyNullToEmptyString] attribute DOMString linkColor;
+    [CEReactions, LegacyNullToEmptyString] attribute DOMString vlinkColor;
+    [CEReactions, LegacyNullToEmptyString] attribute DOMString alinkColor;
+    [CEReactions, LegacyNullToEmptyString] attribute DOMString bgColor;
 
-    readonly attribute Utf16DOMString referrer;
+    readonly attribute USVString referrer;
 
 
-    Element? getElementById(Utf16DOMString id);
-    NodeList getElementsByName(Utf16DOMString name);
-    HTMLCollection getElementsByTagName([Utf16FlyString] Utf16DOMString tagName);
-    HTMLCollection getElementsByTagNameNS([Utf16FlyString] Utf16DOMString? namespace, [Utf16FlyString] Utf16DOMString localName);
-    HTMLCollection getElementsByClassName(Utf16DOMString className);
+    Element? getElementById(DOMString id);
+    NodeList getElementsByName([FlyString] DOMString name);
+    HTMLCollection getElementsByTagName([FlyString] DOMString tagName);
+    HTMLCollection getElementsByTagNameNS([FlyString] DOMString? namespace, [FlyString] DOMString localName);
+    HTMLCollection getElementsByClassName(DOMString className);
 
     [SameObject] readonly attribute HTMLCollection applets;
     [SameObject] readonly attribute HTMLCollection anchors;
@@ -58,9 +93,6 @@ interface Document : Node {
 
     readonly attribute HTMLAllCollection all;
 
-    // https://html.spec.whatwg.org/multipage/dom.html#dom-document-nameditem
-    getter object (DOMString name);
-
     undefined clear();
     undefined captureEvents();
     undefined releaseEvents();
@@ -71,40 +103,40 @@ interface Document : Node {
     Text createTextNode(Utf16DOMString data);
     [NewObject] CDATASection createCDATASection(Utf16DOMString data);
     Comment createComment(Utf16DOMString data);
-    [NewObject] ProcessingInstruction createProcessingInstruction([Utf16FlyString] Utf16DOMString target, Utf16DOMString data);
+    [NewObject] ProcessingInstruction createProcessingInstruction(DOMString target, Utf16DOMString data);
 
-    [NewObject] Attr createAttribute([Utf16FlyString] Utf16DOMString localName);
-    [NewObject] Attr createAttributeNS([Utf16FlyString] Utf16DOMString? namespace, [Utf16FlyString] Utf16DOMString qualifiedName);
+    [NewObject] Attr createAttribute(DOMString localName);
+    [NewObject] Attr createAttributeNS([FlyString] DOMString? namespace, DOMString qualifiedName);
 
     Range createRange();
-    Event createEvent([Utf16FlyString] Utf16DOMString interface);
+    Event createEvent(DOMString interface);
 
     [CEReactions, NewObject] Node importNode(Node node, optional (boolean or ImportNodeOptions) options = false);
-    [CEReactions] Node adoptNode(Node node);
+    [CEReactions, ImplementedAs=adopt_node_binding] Node adoptNode(Node node);
 
-    readonly attribute [Utf16FlyString] Utf16DOMString compatMode;
+    readonly attribute DOMString compatMode;
     readonly attribute DocumentType? doctype;
 
     readonly attribute Element? documentElement;
-    [CEReactions] attribute Utf16DOMString dir;
+    [CEReactions] attribute DOMString dir;
     [CEReactions] attribute HTMLElement? body;
     readonly attribute HTMLHeadElement? head;
     readonly attribute HTMLScriptElement? currentScript;
 
-    readonly attribute Utf16DOMString lastModified;
-    readonly attribute [Utf16FlyString] Utf16DOMString readyState;
+    readonly attribute DOMString lastModified;
+    readonly attribute DOMString readyState;
 
     [CEReactions] attribute Utf16DOMString title;
 
     readonly attribute boolean hidden;
-    readonly attribute [Utf16FlyString] Utf16DOMString visibilityState;
+    readonly attribute DOMString visibilityState;
 
     [NewObject] NodeIterator createNodeIterator(Node root, optional unsigned long whatToShow = 0xFFFFFFFF, optional NodeFilter? filter = null);
     [NewObject] TreeWalker createTreeWalker(Node root, optional unsigned long whatToShow = 0xFFFFFFFF, optional NodeFilter? filter = null);
 
     Selection? getSelection();
 
-    [CEReactions] attribute Utf16DOMString designMode;
+    [CEReactions] attribute DOMString designMode;
 
     // https://drafts.csswg.org/web-animations-1/#extensions-to-the-document-interface
     readonly attribute DocumentTimeline timeline;
@@ -112,25 +144,28 @@ interface Document : Node {
     // https://drafts.csswg.org/cssom-view/#extensions-to-the-document-interface
     Element? elementFromPoint(double x, double y);
     sequence<Element> elementsFromPoint(double x, double y);
-    CaretPosition? caretPositionFromPoint(double x, double y, optional CaretPositionFromPointOptions options = {});
     readonly attribute Element? scrollingElement;
 
     // https://w3c.github.io/editing/docs/execCommand/
-    // FIXME: [CEReactions] boolean execCommand([Utf16FlyString] Utf16DOMString commandId, optional boolean showUI = false, optional (TrustedHTML or Utf16DOMString) value = "");
-    [CEReactions] boolean execCommand([Utf16FlyString] Utf16DOMString commandId, optional boolean showUI = false, optional Utf16DOMString value = "");
-    boolean queryCommandEnabled([Utf16FlyString] Utf16DOMString commandId);
-    boolean queryCommandIndeterm([Utf16FlyString] Utf16DOMString commandId);
-    boolean queryCommandState([Utf16FlyString] Utf16DOMString commandId);
-    boolean queryCommandSupported([Utf16FlyString] Utf16DOMString commandId);
-    Utf16DOMString queryCommandValue([Utf16FlyString] Utf16DOMString commandId);
+    // FIXME: [CEReactions] boolean execCommand(DOMString commandId, optional boolean showUI = false, optional (TrustedHTML or DOMString) value = "");
+    [CEReactions] boolean execCommand(DOMString commandId, optional boolean showUI = false, optional Utf16DOMString value = "");
+    boolean queryCommandEnabled(DOMString commandId);
+    boolean queryCommandIndeterm(DOMString commandId);
+    boolean queryCommandState(DOMString commandId);
+    boolean queryCommandSupported(DOMString commandId);
+    DOMString queryCommandValue(DOMString commandId);
+
+    // XPath
+    [NewObject] XPathExpression createExpression(DOMString expression, optional XPathNSResolver? resolver = null);
+    XPathResult evaluate(DOMString expression, Node contextNode, optional XPathNSResolver? resolver = null, optional unsigned short type = 0, optional XPathResult? result = null);
+    Node createNSResolver(Node nodeResolver); // legacy
 
     // special event handler IDL attributes that only apply to Document objects
     [LegacyLenientThis] attribute EventHandler onreadystatechange;
     attribute EventHandler onvisibilitychange;
 
     // https://drafts.csswg.org/css-view-transitions-1/#additions-to-document-api
-    [Experimental, ImplementedInBindings] ViewTransition startViewTransition(optional ViewTransitionUpdateCallback updateCallback);
-    [Experimental] readonly attribute ViewTransition? activeViewTransition;
+    ViewTransition startViewTransition(optional ViewTransitionUpdateCallback updateCallback);
 
     // https://w3c.github.io/svgwg/svg2-draft/struct.html#InterfaceDocumentExtensions
     readonly attribute SVGSVGElement? rootElement;
@@ -139,14 +174,10 @@ interface Document : Node {
     undefined exitPointerLock();
 };
 
-dictionary CaretPositionFromPointOptions {
-    sequence<ShadowRoot> shadowRoots = [];
-};
-
 // https://dom.spec.whatwg.org/#dictdef-elementcreationoptions
 dictionary ElementCreationOptions {
     CustomElementRegistry? customElementRegistry;
-    [Utf16FlyString] Utf16DOMString is;
+    DOMString is;
 };
 
 // https://dom.spec.whatwg.org/#dictdef-importnodeoptions

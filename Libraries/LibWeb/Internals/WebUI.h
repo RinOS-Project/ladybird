@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
 #include <LibJS/Runtime/Value.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Internals/InternalsBase.h>
@@ -14,18 +13,18 @@
 namespace Web::Internals {
 
 class WEB_API WebUI final : public InternalsBase {
-    WEB_WRAPPABLE(WebUI, InternalsBase);
+    WEB_PLATFORM_OBJECT(WebUI, InternalsBase);
     GC_DECLARE_ALLOCATOR(WebUI);
 
 public:
-    static GC::Ref<WebUI> create(HTML::Window&);
-
     virtual ~WebUI() override;
 
-    void send_message(Utf16String const& name, JS::Value data);
+    void send_message(String const& name, JS::Value data);
 
 private:
-    explicit WebUI(HTML::Window&);
+    explicit WebUI(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

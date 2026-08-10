@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLParamElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/HTMLParamElement.h>
 
 namespace Web::HTML {
@@ -16,5 +18,11 @@ HTMLParamElement::HTMLParamElement(DOM::Document& document, DOM::QualifiedName q
 }
 
 HTMLParamElement::~HTMLParamElement() = default;
+
+void HTMLParamElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLParamElement);
+    Base::initialize(realm);
+}
 
 }

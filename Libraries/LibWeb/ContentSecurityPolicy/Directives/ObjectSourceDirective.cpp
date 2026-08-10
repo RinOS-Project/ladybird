@@ -13,7 +13,7 @@ namespace Web::ContentSecurityPolicy::Directives {
 
 GC_DEFINE_ALLOCATOR(ObjectSourceDirective);
 
-ObjectSourceDirective::ObjectSourceDirective(Utf16FlyString name, Vector<Utf16String> value)
+ObjectSourceDirective::ObjectSourceDirective(String name, Vector<String> value)
     : Directive(move(name), move(value))
 {
 }

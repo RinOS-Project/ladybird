@@ -8,10 +8,8 @@
 #pragma once
 
 #include <AK/String.h>
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
 #include <LibGC/Ptr.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CSS/CSSStyleDeclaration.h>
 #include <LibWeb/CSS/Selector.h>
 #include <LibWeb/Export.h>
@@ -19,8 +17,8 @@
 
 namespace Web::CSS {
 
-class WEB_API CSSRule : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(CSSRule, Bindings::GCAllocatedWrappable);
+class WEB_API CSSRule : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(CSSRule, Bindings::PlatformObject);
 
 public:
     virtual ~CSSRule() = default;
@@ -46,55 +44,48 @@ public:
         Property = 103,
         Function = 104,
         FunctionDeclarations = 105,
-        Container = 106,
-        Scope = 107,
     };
 
     Type type() const { return m_type; }
     WebIDL::UnsignedShort type_for_bindings() const;
 
-    Utf16String css_text() const;
-    void set_css_text(Utf16View);
+    String css_text() const;
+    void set_css_text(StringView);
 
     CSSRule* parent_rule() { return m_parent_rule.ptr(); }
     CSSRule const* parent_rule() const { return m_parent_rule.ptr(); }
     void set_parent_rule(CSSRule*);
 
     CSSStyleSheet* parent_style_sheet() { return m_parent_style_sheet.ptr(); }
-    CSSStyleSheet const* parent_style_sheet() const { return m_parent_style_sheet.ptr(); }
     MUST_UPCALL virtual void set_parent_style_sheet(CSSStyleSheet*);
-
-    Optional<SourcePosition> const& source_location() const { return m_source_position; }
-    void set_source_position(Optional<SourcePosition> source_location) { m_source_position = move(source_location); }
 
     template<typename T>
     bool fast_is() const = delete;
 
     // https://drafts.csswg.org/cssom-1/#serialize-a-css-rule
-    virtual Utf16String serialized() const = 0;
+    virtual String serialized() const = 0;
 
     MUST_UPCALL virtual void dump(StringBuilder&, int indent_levels = 0) const;
 
     MUST_UPCALL virtual void clear_caches();
 
 protected:
-    CSSRule(Type);
+    CSSRule(JS::Realm&, Type);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    [[nodiscard]] Utf16FlyString const& parent_layer_internal_qualified_name() const
+    [[nodiscard]] FlyString const& parent_layer_internal_qualified_name() const
     {
         return m_cached_layer_name.ensure([&] { return parent_layer_internal_qualified_name_slow_case(); });
     }
 
-    [[nodiscard]] Utf16FlyString parent_layer_internal_qualified_name_slow_case() const;
+    [[nodiscard]] FlyString parent_layer_internal_qualified_name_slow_case() const;
 
     Type m_type;
     GC::Ptr<CSSRule> m_parent_rule;
     GC::Ptr<CSSStyleSheet> m_parent_style_sheet;
 
-    Optional<SourcePosition> m_source_position;
-    mutable Optional<Utf16FlyString> m_cached_layer_name;
+    mutable Optional<FlyString> m_cached_layer_name;
 };
 
 }

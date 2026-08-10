@@ -9,7 +9,6 @@
 #include <AK/JsonValue.h>
 #include <AK/LexicalPath.h>
 #include <AK/Platform.h>
-#include <AK/Utf16String.h>
 #include <LibCore/Directory.h>
 #include <LibCore/Environment.h>
 #include <LibCore/File.h>
@@ -18,7 +17,6 @@
 #include <LibCore/ResourceImplementationFile.h>
 #include <LibCore/System.h>
 #include <LibFileSystem/FileSystem.h>
-#include <LibWeb/HTML/SelectedFile.h>
 #include <LibWebView/Utilities.h>
 
 #define TOKENCAT(x, y) x##y
@@ -33,10 +31,10 @@ static constexpr auto libexec_path = STRINGIFY(LADYBIRD_LIBEXECDIR);
 static constexpr auto libexec_path = "libexec"sv;
 #endif
 
-ByteString& s_ladybird_resource_root = *new ByteString;
-static auto& s_ladybird_binary_path = *new Optional<ByteString>;
+ByteString s_ladybird_resource_root;
+static Optional<ByteString> s_ladybird_binary_path;
 
-Optional<ByteString>& s_mach_server_name = *new Optional<ByteString>;
+Optional<ByteString> s_mach_server_name;
 
 Optional<ByteString const&> mach_server_name()
 {
@@ -122,6 +120,24 @@ void platform_init(Optional<ByteString> ladybird_binary_path)
     Core::ResourceImplementation::install(make<Core::ResourceImplementationFile>(MUST(String::from_byte_string(s_ladybird_resource_root))));
 }
 
+void copy_default_config_files(StringView config_path)
+{
+    MUST(Core::Directory::create(config_path, Core::Directory::CreateDirectories::Yes));
+
+    auto config_resources = MUST(Core::Resource::load_from_uri("resource://ladybird/default-config"sv));
+
+    config_resources->for_each_descendant_file([config_path](Core::Resource const& resource) -> IterationDecision {
+        auto file_path = ByteString::formatted("{}/{}", config_path, resource.filename());
+
+        if (Core::System::stat(file_path).is_error()) {
+            auto file = MUST(Core::File::open(file_path, Core::File::OpenMode::Write));
+            MUST(file->write_until_depleted(resource.data()));
+        }
+
+        return IterationDecision::Continue;
+    });
+}
+
 ErrorOr<Vector<ByteString>> get_paths_for_helper_process(StringView process_name)
 {
     auto application_path = TRY(application_directory());
@@ -156,22 +172,6 @@ ErrorOr<void> handle_attached_debugger()
 #endif
 
     return {};
-}
-
-ErrorOr<Web::HTML::SelectedFile> create_selected_file(ByteString const& file_path)
-{
-    // FIXME: Implement the File and Directory Entries API.
-    //        https://wicg.github.io/entries-api/
-    if (FileSystem::is_directory(file_path))
-        return Error::from_string_literal("Only files may currently be selected");
-
-    // https://html.spec.whatwg.org/multipage/input.html#file-upload-state-(type=file):concept-input-file-path
-    // Filenames must not contain path components, even in the case that a user has selected an entire directory
-    // hierarchy or multiple files with the same name from different directories.
-    auto name = Utf16String::from_utf8(LexicalPath::basename(file_path));
-
-    auto file = TRY(Core::File::open(file_path, Core::File::OpenMode::Read));
-    return Web::HTML::SelectedFile { move(name), IPC::File::adopt_file(move(file)) };
 }
 
 ErrorOr<JsonObject> read_json_file(ByteString const& path)

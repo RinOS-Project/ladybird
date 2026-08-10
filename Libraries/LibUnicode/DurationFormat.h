@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
 
 namespace Unicode {
 
@@ -17,6 +16,6 @@ struct DigitalFormat {
     bool uses_two_digit_hours { false };
 };
 
-DigitalFormat digital_format(Utf16View locale);
+DigitalFormat digital_format(StringView locale);
 
 }

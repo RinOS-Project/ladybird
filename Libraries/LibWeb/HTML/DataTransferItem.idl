@@ -1,4 +1,7 @@
-callback FunctionStringCallback = undefined (Utf16DOMString data);
+#import <EntriesAPI/FileSystemEntry.idl>
+#import <FileAPI/File.idl>
+
+callback FunctionStringCallback = undefined (DOMString data);
 
 // https://html.spec.whatwg.org/multipage/dnd.html#datatransferitem
 [Exposed=Window]

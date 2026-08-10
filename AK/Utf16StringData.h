@@ -13,13 +13,6 @@
 #include <AK/StringView.h>
 #include <AK/Types.h>
 #include <AK/Utf16View.h>
-#include <AK/kmalloc.h>
-
-namespace AK {
-
-class Utf16String;
-
-}
 
 namespace AK::Detail {
 
@@ -40,7 +33,8 @@ public:
     static NonnullRefPtr<Utf16StringData> from_utf8(StringView, AllowASCIIStorage);
     static NonnullRefPtr<Utf16StringData> from_ascii(ReadonlyBytes);
     static NonnullRefPtr<Utf16StringData> from_utf16(Utf16View const&);
-    static NonnullRefPtr<Utf16StringData> from_string_builder(Utf16StringBuilder&);
+    static NonnullRefPtr<Utf16StringData> from_utf32(Utf32View const&);
+    static NonnullRefPtr<Utf16StringData> from_string_builder(StringBuilder&);
     static ErrorOr<NonnullRefPtr<Utf16StringData>> from_ipc_stream(Stream&, size_t length_in_code_units, bool is_ascii);
 
     static NonnullRefPtr<Utf16StringData> to_well_formed(Utf16View const&);
@@ -58,7 +52,7 @@ public:
 
     void operator delete(void* ptr)
     {
-        kfree(ptr);
+        free(ptr);
     }
 
     [[nodiscard]] ALWAYS_INLINE bool operator==(Utf16StringData const& other) const
@@ -124,8 +118,6 @@ public:
     [[nodiscard]] ALWAYS_INLINE bool is_fly_string() const { return m_is_fly_string; }
 
 private:
-    friend class AK::Utf16String;
-
     ALWAYS_INLINE Utf16StringData(StorageType storage_type, size_t code_unit_length)
         : m_length_in_code_units(code_unit_length)
     {
@@ -134,17 +126,9 @@ private:
     }
 
     static NonnullRefPtr<Utf16StringData> create_uninitialized(StorageType storage_type, size_t code_unit_length);
-    static NonnullRefPtr<Utf16StringData> create_uninitialized_ascii(size_t length_in_code_units, Bytes& buffer);
 
     template<typename ViewType>
     static NonnullRefPtr<Utf16StringData> create_from_code_point_iterable(ViewType const&);
-
-    [[nodiscard]] static constexpr size_t allocation_size_for_string_data(bool has_ascii_storage, size_t code_unit_length)
-    {
-        return has_ascii_storage
-            ? sizeof(Utf16StringData) + (sizeof(char) * code_unit_length)
-            : sizeof(Utf16StringData) + (sizeof(char16_t) * code_unit_length);
-    }
 
     [[nodiscard]] size_t calculate_code_point_length() const;
 
@@ -159,7 +143,7 @@ private:
 
     mutable bool m_is_fly_string { false };
 
-    union alignas(8) {
+    union {
         char m_ascii_data[0];
         char16_t m_utf16_data[0];
     };

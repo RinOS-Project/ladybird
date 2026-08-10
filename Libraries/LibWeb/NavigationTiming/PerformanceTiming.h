@@ -7,20 +7,17 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Window.h>
 
 namespace Web::NavigationTiming {
 
-class PerformanceTiming final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(PerformanceTiming, Bindings::GCAllocatedWrappable);
+class PerformanceTiming final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(PerformanceTiming, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(PerformanceTiming);
 
 public:
     using AllowOwnPtr = TrueType;
-
-    static GC::Ref<PerformanceTiming> create(HTML::Window&);
 
     ~PerformanceTiming();
 
@@ -44,39 +41,36 @@ public:
     u64 dom_loading() { return 0; }
     u64 dom_interactive()
     {
-        return relative_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.dom_interactive_time; });
+        return monotonic_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.dom_interactive_time; });
     }
     u64 dom_content_loaded_event_start()
     {
-        return relative_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.dom_content_loaded_event_start_time; });
+        return monotonic_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.dom_content_loaded_event_start_time; });
     }
     u64 dom_content_loaded_event_end()
     {
-        return relative_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.dom_content_loaded_event_end_time; });
+        return monotonic_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.dom_content_loaded_event_end_time; });
     }
     u64 dom_complete()
     {
-        return relative_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.dom_complete_time; });
+        return monotonic_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.dom_complete_time; });
     }
     u64 load_event_start()
     {
-        return relative_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.load_event_start_time; });
+        return monotonic_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.load_event_start_time; });
     }
     u64 load_event_end()
     {
-        return relative_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.load_event_end_time; });
+        return monotonic_timestamp_to_wall_time_milliseconds([](auto& load_info) { return load_info.load_event_end_time; });
     }
 
 private:
-    explicit PerformanceTiming(HTML::Window&);
+    explicit PerformanceTiming(JS::Realm&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
-
-    DOM::DocumentLoadTimingInfo const& document_load_timing_info() const;
+    DOM::DocumentLoadTimingInfo const& document_load_timing_info(JS::Object const& global_object) const;
     u64 monotonic_timestamp_to_wall_time_milliseconds(Function<HighResolutionTime::DOMHighResTimeStamp(DOM::DocumentLoadTimingInfo const&)> selector) const;
-    u64 relative_timestamp_to_wall_time_milliseconds(Function<HighResolutionTime::DOMHighResTimeStamp(DOM::DocumentLoadTimingInfo const&)> selector) const;
 
-    GC::Ref<HTML::Window> m_window;
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

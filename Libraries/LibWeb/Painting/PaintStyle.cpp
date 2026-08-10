@@ -9,13 +9,18 @@
 
 namespace Web::Painting {
 
-PatternPaintStyle::PatternPaintStyle(DisplayListResource tile_display_list, Gfx::FloatRect tile_rect, Optional<Gfx::AffineTransform> pattern_transform)
+NonnullRefPtr<SVGPatternPaintStyle> SVGPatternPaintStyle::create(NonnullRefPtr<DisplayList> tile_display_list, Gfx::FloatRect tile_rect, Optional<Gfx::AffineTransform> pattern_transform)
+{
+    return adopt_ref(*new SVGPatternPaintStyle(move(tile_display_list), tile_rect, move(pattern_transform)));
+}
+
+SVGPatternPaintStyle::SVGPatternPaintStyle(NonnullRefPtr<DisplayList> tile_display_list, Gfx::FloatRect tile_rect, Optional<Gfx::AffineTransform> pattern_transform)
     : m_tile_display_list(move(tile_display_list))
     , m_tile_rect(tile_rect)
     , m_pattern_transform(move(pattern_transform))
 {
 }
 
-PatternPaintStyle::~PatternPaintStyle() = default;
+SVGPatternPaintStyle::~SVGPatternPaintStyle() = default;
 
 }

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/Streams/AbstractOperations.h>
@@ -13,7 +13,6 @@
 #include <LibWeb/Streams/ReadableStreamOperations.h>
 #include <LibWeb/Streams/ReadableStreamTee.h>
 #include <LibWeb/WebIDL/Buffers.h>
-#include <LibWeb/WebIDL/ExceptionOrUtils.h>
 #include <LibWeb/WebIDL/Promise.h>
 
 namespace Web::Streams::Detail {
@@ -33,25 +32,23 @@ void ReadableStreamTeeParams::visit_edges(Visitor& visitor)
 
 // https://streams.spec.whatwg.org/#ref-for-read-request③
 ReadableStreamTeeReadRequest::ReadableStreamTeeReadRequest(
+    JS::Realm& realm,
     GC::Ref<ReadableStream> stream,
     GC::Ref<ReadableStreamTeeParams> params,
     GC::Ref<WebIDL::Promise> cancel_promise,
     bool clone_for_branch2)
-    : m_stream(stream)
+    : m_realm(realm)
+    , m_stream(stream)
     , m_params(params)
     , m_cancel_promise(cancel_promise)
     , m_clone_for_branch2(clone_for_branch2)
 {
 }
 
-JS::Realm& ReadableStreamTeeReadRequest::promise_realm() const
-{
-    return WebIDL::promise_realm(m_cancel_promise);
-}
-
 void ReadableStreamTeeReadRequest::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
+    visitor.visit(m_realm);
     visitor.visit(m_stream);
     visitor.visit(m_params);
     visitor.visit(m_cancel_promise);
@@ -61,8 +58,8 @@ void ReadableStreamTeeReadRequest::visit_edges(Visitor& visitor)
 void ReadableStreamTeeReadRequest::on_chunk(JS::Value chunk)
 {
     // 1. Queue a microtask to perform the following steps:
-    HTML::queue_a_microtask(nullptr, GC::create_function(GC::Heap::the(), [this, chunk]() {
-        HTML::TemporaryExecutionContext execution_context { promise_realm(), HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
+    HTML::queue_a_microtask(nullptr, GC::create_function(m_realm->heap(), [this, chunk]() {
+        HTML::TemporaryExecutionContext execution_context { m_realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
 
         auto controller1 = m_params->branch1->controller()->get<GC::Ref<ReadableStreamDefaultController>>();
         auto controller2 = m_params->branch2->controller()->get<GC::Ref<ReadableStreamDefaultController>>();
@@ -77,11 +74,11 @@ void ReadableStreamTeeReadRequest::on_chunk(JS::Value chunk)
         // 3. If canceled2 is false and cloneForBranch2 is true,
         if (!m_params->canceled2 && m_clone_for_branch2) {
             // 1. Let cloneResult be StructuredClone(chunk2).
-            auto clone_result = structured_clone(promise_realm(), chunk2);
+            auto clone_result = structured_clone(m_realm, chunk2);
 
             // 2. If cloneResult is an abrupt completion,
             if (clone_result.is_exception()) {
-                auto completion = WebIDL::exception_to_throw_completion(promise_realm().vm(), promise_realm(), clone_result.release_error());
+                auto completion = Bindings::exception_to_throw_completion(m_realm->vm(), clone_result.release_error());
 
                 // 1. Perform ! ReadableStreamDefaultControllerError(branch1.[[controller]], cloneResult.[[Value]]).
                 readable_stream_default_controller_error(controller1, completion.value());
@@ -90,10 +87,10 @@ void ReadableStreamTeeReadRequest::on_chunk(JS::Value chunk)
                 readable_stream_default_controller_error(controller2, completion.value());
 
                 // 3. Resolve cancelPromise with ! ReadableStreamCancel(stream, cloneResult.[[Value]]).
-                auto cancel_result = readable_stream_cancel(promise_realm(), m_stream, completion.value());
+                auto cancel_result = readable_stream_cancel(m_stream, completion.value());
 
                 // Note: We need to manually convert the result to an ECMAScript value here, by extracting its [[Promise]] slot.
-                WebIDL::resolve_promise(m_cancel_promise, cancel_result->promise());
+                WebIDL::resolve_promise(m_realm, m_cancel_promise, cancel_result->promise());
 
                 // 4. Return.
                 return;
@@ -105,12 +102,12 @@ void ReadableStreamTeeReadRequest::on_chunk(JS::Value chunk)
 
         // 4. If canceled1 is false, perform ! ReadableStreamDefaultControllerEnqueue(branch1.[[controller]], chunk1).
         if (!m_params->canceled1) {
-            MUST(readable_stream_default_controller_enqueue(promise_realm(), controller1, chunk1));
+            MUST(readable_stream_default_controller_enqueue(controller1, chunk1));
         }
 
         // 5. If canceled2 is false, perform ! ReadableStreamDefaultControllerEnqueue(branch2.[[controller]], chunk2).
         if (!m_params->canceled2) {
-            MUST(readable_stream_default_controller_enqueue(promise_realm(), controller2, chunk2));
+            MUST(readable_stream_default_controller_enqueue(controller2, chunk2));
         }
 
         // 6. Set reading to false.
@@ -148,7 +145,7 @@ void ReadableStreamTeeReadRequest::on_close()
 
     // 4. If canceled1 is false or canceled2 is false, resolve cancelPromise with undefined.
     if (!m_params->canceled1 || !m_params->canceled2) {
-        WebIDL::resolve_promise(m_cancel_promise);
+        WebIDL::resolve_promise(m_realm, m_cancel_promise, JS::js_undefined());
     }
 }
 
@@ -177,28 +174,26 @@ void ReadableByteStreamTeeParams::visit_edges(Visitor& visitor)
     visitor.visit(branch2);
     visitor.visit(pull1_algorithm);
     visitor.visit(pull2_algorithm);
-    visitor.visit(reader);
+    reader.visit([&](auto underlying_reader) { visitor.visit(underlying_reader); });
 }
 
 // https://streams.spec.whatwg.org/#ref-for-read-request④
 ReadableByteStreamTeeDefaultReadRequest::ReadableByteStreamTeeDefaultReadRequest(
+    JS::Realm& realm,
     GC::Ref<ReadableStream> stream,
     GC::Ref<ReadableByteStreamTeeParams> params,
     GC::Ref<WebIDL::Promise> cancel_promise)
-    : m_stream(stream)
+    : m_realm(realm)
+    , m_stream(stream)
     , m_params(params)
     , m_cancel_promise(cancel_promise)
 {
 }
 
-JS::Realm& ReadableByteStreamTeeDefaultReadRequest::promise_realm() const
-{
-    return WebIDL::promise_realm(m_cancel_promise);
-}
-
 void ReadableByteStreamTeeDefaultReadRequest::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
+    visitor.visit(m_realm);
     visitor.visit(m_stream);
     visitor.visit(m_params);
     visitor.visit(m_cancel_promise);
@@ -208,8 +203,8 @@ void ReadableByteStreamTeeDefaultReadRequest::visit_edges(Visitor& visitor)
 void ReadableByteStreamTeeDefaultReadRequest::on_chunk(JS::Value chunk)
 {
     // 1. Queue a microtask to perform the following steps:
-    HTML::queue_a_microtask(nullptr, GC::create_function(GC::Heap::the(), [this, chunk]() mutable {
-        HTML::TemporaryExecutionContext execution_context { promise_realm(), HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
+    HTML::queue_a_microtask(nullptr, GC::create_function(m_realm->heap(), [this, chunk]() mutable {
+        HTML::TemporaryExecutionContext execution_context { m_realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
 
         auto controller1 = m_params->branch1->controller()->get<GC::Ref<ReadableByteStreamController>>();
         auto controller2 = m_params->branch2->controller()->get<GC::Ref<ReadableByteStreamController>>();
@@ -227,12 +222,12 @@ void ReadableByteStreamTeeDefaultReadRequest::on_chunk(JS::Value chunk)
         // 4. If canceled1 is false and canceled2 is false,
         if (!m_params->canceled1 && !m_params->canceled2) {
             // 1. Let cloneResult be CloneAsUint8Array(chunk).
-            WebIDL::ArrayBufferView chunk_view { WebIDL::ArrayBufferView::from_object(chunk.as_object()) };
-            auto clone_result = clone_as_uint8_array(promise_realm(), chunk_view);
+            auto chunk_view = m_realm->create<WebIDL::ArrayBufferView>(chunk.as_object());
+            auto clone_result = clone_as_uint8_array(m_realm, chunk_view);
 
             // 2. If cloneResult is an abrupt completion,
             if (clone_result.is_exception()) {
-                auto completion = WebIDL::exception_to_throw_completion(promise_realm().vm(), promise_realm(), clone_result.release_error());
+                auto completion = Bindings::exception_to_throw_completion(m_realm->vm(), clone_result.release_error());
 
                 // 1. Perform ! ReadableByteStreamControllerError(branch1.[[controller]], cloneResult.[[Value]]).
                 readable_byte_stream_controller_error(controller1, completion.value());
@@ -241,9 +236,9 @@ void ReadableByteStreamTeeDefaultReadRequest::on_chunk(JS::Value chunk)
                 readable_byte_stream_controller_error(controller2, completion.value());
 
                 // 3. Resolve cancelPromise with ! ReadableStreamCancel(stream, cloneResult.[[Value]]).
-                auto cancel_result = readable_stream_cancel(promise_realm(), m_stream, completion.value());
+                auto cancel_result = readable_stream_cancel(m_stream, completion.value());
 
-                WebIDL::resolve_promise(m_cancel_promise, cancel_result->promise());
+                WebIDL::resolve_promise(m_realm, m_cancel_promise, cancel_result->promise());
 
                 // 4. Return.
                 return;
@@ -255,12 +250,12 @@ void ReadableByteStreamTeeDefaultReadRequest::on_chunk(JS::Value chunk)
 
         // 5. If canceled1 is false, perform ! ReadableByteStreamControllerEnqueue(branch1.[[controller]], chunk1).
         if (!m_params->canceled1) {
-            MUST(readable_byte_stream_controller_enqueue(promise_realm(), controller1, chunk1));
+            MUST(readable_byte_stream_controller_enqueue(controller1, chunk1));
         }
 
         // 6. If canceled2 is false, perform ! ReadableByteStreamControllerEnqueue(branch2.[[controller]], chunk2).
         if (!m_params->canceled2) {
-            MUST(readable_byte_stream_controller_enqueue(promise_realm(), controller2, chunk2));
+            MUST(readable_byte_stream_controller_enqueue(controller2, chunk2));
         }
 
         // 7. Set reading to false.
@@ -292,27 +287,27 @@ void ReadableByteStreamTeeDefaultReadRequest::on_close()
 
     // 2. If canceled1 is false, perform ! ReadableByteStreamControllerClose(branch1.[[controller]]).
     if (!m_params->canceled1) {
-        MUST(readable_byte_stream_controller_close(promise_realm(), controller1));
+        MUST(readable_byte_stream_controller_close(controller1));
     }
 
     // 3. If canceled2 is false, perform ! ReadableByteStreamControllerClose(branch2.[[controller]]).
     if (!m_params->canceled2) {
-        MUST(readable_byte_stream_controller_close(promise_realm(), controller2));
+        MUST(readable_byte_stream_controller_close(controller2));
     }
 
     // 4. If branch1.[[controller]].[[pendingPullIntos]] is not empty, perform ! ReadableByteStreamControllerRespond(branch1.[[controller]], 0).
     if (!controller1->pending_pull_intos().is_empty()) {
-        MUST(readable_byte_stream_controller_respond(promise_realm(), controller1, 0));
+        MUST(readable_byte_stream_controller_respond(controller1, 0));
     }
 
     // 5. If branch2.[[controller]].[[pendingPullIntos]] is not empty, perform ! ReadableByteStreamControllerRespond(branch2.[[controller]], 0).
     if (!controller2->pending_pull_intos().is_empty()) {
-        MUST(readable_byte_stream_controller_respond(promise_realm(), controller2, 0));
+        MUST(readable_byte_stream_controller_respond(controller2, 0));
     }
 
     // 6. If canceled1 is false or canceled2 is false, resolve cancelPromise with undefined.
     if (!m_params->canceled1 || !m_params->canceled2) {
-        WebIDL::resolve_promise(m_cancel_promise);
+        WebIDL::resolve_promise(m_realm, m_cancel_promise, JS::js_undefined());
     }
 }
 
@@ -325,13 +320,15 @@ void ReadableByteStreamTeeDefaultReadRequest::on_error(JS::Value)
 
 // https://streams.spec.whatwg.org/#ref-for-read-into-request②
 ReadableByteStreamTeeBYOBReadRequest::ReadableByteStreamTeeBYOBReadRequest(
+    JS::Realm& realm,
     GC::Ref<ReadableStream> stream,
     GC::Ref<ReadableByteStreamTeeParams> params,
     GC::Ref<WebIDL::Promise> cancel_promise,
     GC::Ref<ReadableStream> byob_branch,
     GC::Ref<ReadableStream> other_branch,
     bool for_branch2)
-    : m_stream(stream)
+    : m_realm(realm)
+    , m_stream(stream)
     , m_params(params)
     , m_cancel_promise(cancel_promise)
     , m_byob_branch(byob_branch)
@@ -340,14 +337,10 @@ ReadableByteStreamTeeBYOBReadRequest::ReadableByteStreamTeeBYOBReadRequest(
 {
 }
 
-JS::Realm& ReadableByteStreamTeeBYOBReadRequest::promise_realm() const
-{
-    return WebIDL::promise_realm(m_cancel_promise);
-}
-
 void ReadableByteStreamTeeBYOBReadRequest::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
+    visitor.visit(m_realm);
     visitor.visit(m_stream);
     visitor.visit(m_params);
     visitor.visit(m_cancel_promise);
@@ -358,11 +351,11 @@ void ReadableByteStreamTeeBYOBReadRequest::visit_edges(Visitor& visitor)
 // https://streams.spec.whatwg.org/#ref-for-read-into-request-chunk-steps①
 void ReadableByteStreamTeeBYOBReadRequest::on_chunk(JS::Value chunk)
 {
-    WebIDL::ArrayBufferView chunk_view { WebIDL::ArrayBufferView::from_object(chunk.as_object()) };
+    auto chunk_view = m_realm->create<WebIDL::ArrayBufferView>(chunk.as_object());
 
     // 1. Queue a microtask to perform the following steps:
-    HTML::queue_a_microtask(nullptr, GC::create_function(GC::Heap::the(), [this, chunk = move(chunk_view)]() {
-        HTML::TemporaryExecutionContext execution_context { promise_realm(), HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
+    HTML::queue_a_microtask(nullptr, GC::create_function(m_realm->heap(), [this, chunk = chunk_view]() {
+        HTML::TemporaryExecutionContext execution_context { m_realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
 
         auto byob_controller = m_byob_branch->controller()->get<GC::Ref<ReadableByteStreamController>>();
         auto other_controller = m_other_branch->controller()->get<GC::Ref<ReadableByteStreamController>>();
@@ -382,11 +375,11 @@ void ReadableByteStreamTeeBYOBReadRequest::on_chunk(JS::Value chunk)
         // 5. If otherCanceled is false,
         if (!other_cancelled) {
             // 1. Let cloneResult be CloneAsUint8Array(chunk).
-            auto clone_result = clone_as_uint8_array(promise_realm(), chunk);
+            auto clone_result = clone_as_uint8_array(m_realm, chunk);
 
             // 2. If cloneResult is an abrupt completion,
             if (clone_result.is_exception()) {
-                auto completion = WebIDL::exception_to_throw_completion(promise_realm().vm(), promise_realm(), clone_result.release_error());
+                auto completion = Bindings::exception_to_throw_completion(m_realm->vm(), clone_result.release_error());
 
                 // 1. Perform ! ReadableByteStreamControllerError(byobBranch.[[controller]], cloneResult.[[Value]]).
                 readable_byte_stream_controller_error(byob_controller, completion.value());
@@ -395,9 +388,9 @@ void ReadableByteStreamTeeBYOBReadRequest::on_chunk(JS::Value chunk)
                 readable_byte_stream_controller_error(other_controller, completion.value());
 
                 // 3. Resolve cancelPromise with ! ReadableStreamCancel(stream, cloneResult.[[Value]]).
-                auto cancel_result = readable_stream_cancel(promise_realm(), m_stream, completion.value());
+                auto cancel_result = readable_stream_cancel(m_stream, completion.value());
 
-                WebIDL::resolve_promise(m_cancel_promise, cancel_result->promise());
+                WebIDL::resolve_promise(m_realm, m_cancel_promise, cancel_result->promise());
 
                 // 4. Return.
                 return;
@@ -408,15 +401,15 @@ void ReadableByteStreamTeeBYOBReadRequest::on_chunk(JS::Value chunk)
 
             // 4. If byobCanceled is false, perform ! ReadableByteStreamControllerRespondWithNewView(byobBranch.[[controller]], chunk).
             if (!byob_cancelled) {
-                MUST(readable_byte_stream_controller_respond_with_new_view(promise_realm(), byob_controller, chunk));
+                MUST(readable_byte_stream_controller_respond_with_new_view(m_realm, byob_controller, chunk));
             }
 
             // 5. Perform ! ReadableByteStreamControllerEnqueue(otherBranch.[[controller]], clonedChunk).
-            MUST(readable_byte_stream_controller_enqueue(promise_realm(), other_controller, cloned_chunk));
+            MUST(readable_byte_stream_controller_enqueue(other_controller, cloned_chunk));
         }
         // 6. Otherwise, if byobCanceled is false, perform ! ReadableByteStreamControllerRespondWithNewView(byobBranch.[[controller]], chunk).
         else if (!byob_cancelled) {
-            MUST(readable_byte_stream_controller_respond_with_new_view(promise_realm(), byob_controller, chunk));
+            MUST(readable_byte_stream_controller_respond_with_new_view(m_realm, byob_controller, chunk));
         }
 
         // 7. Set reading to false.
@@ -454,12 +447,12 @@ void ReadableByteStreamTeeBYOBReadRequest::on_close(JS::Value chunk)
 
     // 4. If byobCanceled is false, perform ! ReadableByteStreamControllerClose(byobBranch.[[controller]]).
     if (!byob_cancelled) {
-        MUST(readable_byte_stream_controller_close(promise_realm(), byob_controller));
+        MUST(readable_byte_stream_controller_close(byob_controller));
     }
 
     // 5. If otherCanceled is false, perform ! ReadableByteStreamControllerClose(otherBranch.[[controller]]).
     if (!other_cancelled) {
-        MUST(readable_byte_stream_controller_close(promise_realm(), other_controller));
+        MUST(readable_byte_stream_controller_close(other_controller));
     }
 
     // 6. If chunk is not undefined,
@@ -468,20 +461,20 @@ void ReadableByteStreamTeeBYOBReadRequest::on_close(JS::Value chunk)
 
         // 2. If byobCanceled is false, perform ! ReadableByteStreamControllerRespondWithNewView(byobBranch.[[controller]], chunk).
         if (!byob_cancelled) {
-            WebIDL::ArrayBufferView array_buffer_view { WebIDL::ArrayBufferView::from_object(chunk.as_object()) };
-            MUST(readable_byte_stream_controller_respond_with_new_view(promise_realm(), byob_controller, array_buffer_view));
+            auto array_buffer_view = m_realm->create<WebIDL::ArrayBufferView>(chunk.as_object());
+            MUST(readable_byte_stream_controller_respond_with_new_view(m_realm, byob_controller, array_buffer_view));
         }
 
         // 3. If otherCanceled is false and otherBranch.[[controller]].[[pendingPullIntos]] is not empty,
         //    perform ! ReadableByteStreamControllerRespond(otherBranch.[[controller]], 0).
         if (!other_cancelled && !other_controller->pending_pull_intos().is_empty()) {
-            MUST(readable_byte_stream_controller_respond(promise_realm(), other_controller, 0));
+            MUST(readable_byte_stream_controller_respond(other_controller, 0));
         }
     }
 
     // 7. If byobCanceled is false or otherCanceled is false, resolve cancelPromise with undefined.
     if (!byob_cancelled || !other_cancelled) {
-        WebIDL::resolve_promise(m_cancel_promise);
+        WebIDL::resolve_promise(m_realm, m_cancel_promise, JS::js_undefined());
     }
 }
 

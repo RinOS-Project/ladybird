@@ -8,11 +8,8 @@
 
 #include <AK/ByteString.h>
 #include <AK/Error.h>
-#include <AK/LexicalPath.h>
-#include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibWebView/Application.h>
-#include <errno.h>
 
 namespace TestWeb {
 
@@ -25,10 +22,7 @@ public:
 
     virtual void create_platform_arguments(Core::ArgsParser&) override;
     virtual void create_platform_options(WebView::BrowserOptions&, WebView::RequestServerOptions&, WebView::WebContentOptions&) override;
-    virtual bool should_coordinate_browser_process() const override { return false; }
     virtual bool should_capture_web_content_output() const override { return true; }
-
-    virtual ErrorOr<LexicalPath> default_path_for_downloaded_file(ByteString const&) const override { return Error::from_errno(ECANCELED); }
 
     ErrorOr<void> launch_test_fixtures();
 
@@ -43,19 +37,18 @@ public:
     Vector<ByteString> test_globs;
 
     ByteString python_executable_path;
-    String invocation_command_line;
 
     bool dump_gc_graph { false };
+    bool debug_timeouts { false };
     bool fail_fast { false };
     size_t repeat_count { 1 };
     bool test_dry_run { false };
     bool rebaseline { false };
     bool shuffle { false };
-    bool run_ui_process_session_history_tests { false };
+
     int per_test_timeout_in_seconds { 30 };
 
     u8 verbosity { 0 };
-    bool quiet { false };
 };
 
 }

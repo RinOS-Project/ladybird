@@ -9,7 +9,7 @@
 namespace Web::DOM::MutationType {
 
 #define __ENUMERATE_MUTATION_TYPE(name) \
-    Utf16FlyString const& name = *new Utf16FlyString(#name##_utf16_fly_string);
+    FlyString name = #name##_fly_string;
 ENUMERATE_MUTATION_TYPES
 #undef __ENUMERATE_MUTATION_TYPE
 

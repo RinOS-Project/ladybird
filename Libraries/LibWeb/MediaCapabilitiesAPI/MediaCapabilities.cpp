@@ -5,69 +5,45 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
 #include <LibJS/Runtime/BooleanObject.h>
-#include <LibJS/Runtime/Object.h>
-#include <LibWeb/HTML/EventLoop/Task.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/MediaCapabilitiesPrototype.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/MediaCapabilitiesAPI/MediaCapabilities.h>
 #include <LibWeb/MimeSniff/MimeType.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
-#include <LibWeb/WebIDL/Promise.h>
 
 namespace Web::MediaCapabilitiesAPI {
 
-static GC::Ref<JS::Object> media_capabilities_decoding_info_to_object(JS::Object& global_object, MediaCapabilitiesDecodingInfo const& info)
-{
-    auto& realm = global_object.shape().realm();
-    auto object = JS::Object::create(realm, realm.intrinsics().object_prototype());
-
-    // FIXME: Also include configuration in this object.
-
-    MUST(object->create_data_property("supported"_utf16_fly_string, JS::BooleanObject::create(realm, info.supported)));
-    MUST(object->create_data_property("smooth"_utf16_fly_string, JS::BooleanObject::create(realm, info.smooth)));
-    MUST(object->create_data_property("powerEfficient"_utf16_fly_string, JS::BooleanObject::create(realm, info.power_efficient)));
-
-    return object;
-}
-
-// https://w3c.github.io/media-capabilities/#queue-a-media-capabilities-task
-static void queue_a_media_capabilities_task(JS::Object& global_object, Function<void()> steps)
-{
-    // When an algorithm queues a Media Capabilities task T, the user agent MUST queue a global task T on the
-    // media capabilities task source using the global object of the the current realm record.
-    HTML::queue_global_task(HTML::Task::Source::MediaCapabilities, global_object, GC::create_function(GC::Heap::the(), move(steps)));
-}
-
 // https://w3c.github.io/media-capabilities/#valid-mediaconfiguration
-static bool is_valid_media_configuration(MediaDecodingConfiguration const& configuration)
+bool MediaConfiguration::is_valid_media_configuration() const
 {
     //  For a MediaConfiguration to be a valid MediaConfiguration, all of the following conditions MUST be true:
 
     // 1. audio and/or video MUST exist.
-    if (!configuration.audio.has_value() && !configuration.video.has_value())
+    if (!audio.has_value() && !video.has_value())
         return false;
 
     // 2. audio MUST be a valid audio configuration if it exists.
-    if (configuration.audio.has_value() && !is_valid_audio_configuration(configuration.audio.value()))
+    if (audio.has_value() && !audio.value().is_valid_audio_configuration())
         return false;
 
     // 3. video MUST be a valid video configuration if it exists.
-    if (configuration.video.has_value() && !is_valid_video_configuration(configuration.video.value()))
+    if (video.has_value() && !video.value().is_valid_video_configuration())
         return false;
 
     return true;
 }
 
 // https://w3c.github.io/media-capabilities/#valid-mediadecodingconfiguration
-bool is_valid_media_decoding_configuration(MediaDecodingConfiguration const& configuration)
+bool MediaDecodingConfiguration::is_valid_media_decoding_configuration() const
 {
     // For a MediaDecodingConfiguration to be a valid MediaDecodingConfiguration, all of the following
     // conditions MUST be true:
 
     // 1. It MUST be a valid MediaConfiguration.
-    if (!is_valid_media_configuration(configuration))
+    if (!is_valid_media_configuration())
         return false;
 
     // 2. If keySystemConfiguration exists:
@@ -77,7 +53,7 @@ bool is_valid_media_decoding_configuration(MediaDecodingConfiguration const& con
 }
 
 // https://w3c.github.io/media-capabilities/#valid-audio-mime-type
-bool is_valid_audio_mime_type(Utf16View string)
+bool is_valid_audio_mime_type(StringView string)
 {
     // A valid audio MIME type is a string that is a valid media MIME type and for which the type per [RFC9110] is
     // either audio or application.
@@ -88,7 +64,7 @@ bool is_valid_audio_mime_type(Utf16View string)
 }
 
 // https://w3c.github.io/media-capabilities/#valid-video-mime-type
-bool is_valid_video_mime_type(Utf16View string)
+bool is_valid_video_mime_type(StringView string)
 {
     // A valid video MIME type is a string that is a valid media MIME type and for which the type per [RFC9110] is
     // either video or application.
@@ -99,17 +75,17 @@ bool is_valid_video_mime_type(Utf16View string)
 }
 
 // https://w3c.github.io/media-capabilities/#valid-video-configuration
-bool is_valid_video_configuration(VideoConfiguration const& configuration)
+bool VideoConfiguration::is_valid_video_configuration() const
 {
     // To check if a VideoConfiguration configuration is a valid video configuration, the following steps MUST be
     // run:
 
     // 1. If configuration’s contentType is not a valid video MIME type, return false and abort these steps.
-    if (!is_valid_video_mime_type(configuration.content_type))
+    if (!is_valid_video_mime_type(content_type))
         return false;
 
     // 2. If framerate is not finite or is not greater than 0, return false and abort these steps.
-    if (!isfinite(configuration.framerate) || configuration.framerate <= 0)
+    if (!isfinite(framerate) || framerate <= 0)
         return false;
 
     // 3. If an optional member is specified for a MediaDecodingType or MediaEncodingType to which it’s not
@@ -121,13 +97,13 @@ bool is_valid_video_configuration(VideoConfiguration const& configuration)
 }
 
 // https://w3c.github.io/media-capabilities/#valid-video-configuration
-bool is_valid_audio_configuration(AudioConfiguration const& configuration)
+bool AudioConfiguration::is_valid_audio_configuration() const
 {
     // To check if a AudioConfiguration configuration is a valid audio configuration, the following steps MUST be
     // run:
 
     // 1. If configuration’s contentType is not a valid audio MIME type, return false and abort these steps.
-    if (!is_valid_audio_mime_type(configuration.content_type))
+    if (!is_valid_audio_mime_type(content_type))
         return false;
 
     // 2. Return true.
@@ -136,44 +112,64 @@ bool is_valid_audio_configuration(AudioConfiguration const& configuration)
 
 GC_DEFINE_ALLOCATOR(MediaCapabilities);
 
-GC::Ref<MediaCapabilities> MediaCapabilities::create()
+GC::Ref<MediaCapabilities> MediaCapabilities::create(JS::Realm& realm)
 {
-    return GC::Heap::the().allocate<MediaCapabilities>();
+    return realm.create<MediaCapabilities>(realm);
 }
 
-MediaCapabilities::MediaCapabilities()
+MediaCapabilities::MediaCapabilities(JS::Realm& realm)
+    : PlatformObject(realm)
 {
+}
+
+void MediaCapabilities::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(MediaCapabilities);
+    Base::initialize(realm);
+}
+
+// https://w3c.github.io/media-capabilities/#queue-a-media-capabilities-task
+void queue_a_media_capabilities_task(JS::VM& vm, Function<void()> steps)
+{
+    // When an algorithm queues a Media Capabilities task T, the user agent MUST queue a global task T on the
+    // media capabilities task source using the global object of the the current realm record.
+    queue_global_task(HTML::Task::Source::MediaCapabilities, vm.current_realm()->global_object(), GC::create_function(vm.current_realm()->heap(), move(steps)));
 }
 
 // https://w3c.github.io/media-capabilities/#dom-mediacapabilities-decodinginfo
-void MediaCapabilities::decoding_info(MediaDecodingConfiguration const& configuration, GC::Ref<WebIDL::Promise> promise)
+GC::Ref<WebIDL::Promise> MediaCapabilities::decoding_info(MediaDecodingConfiguration const& configuration)
 {
+    auto& realm = this->realm();
     // The decodingInfo() method MUST run the following steps:
 
     // 1. If configuration is not a valid MediaDecodingConfiguration, return a Promise rejected with a newly created
     //    TypeError.
-    if (!is_valid_media_decoding_configuration(configuration)) {
-        WebIDL::reject_promise(promise, JS::TypeError::create(WebIDL::promise_realm(promise), "The given configuration is not a valid MediaDecodingConfiguration"sv));
-        return;
+    if (!configuration.is_valid_media_decoding_configuration()) {
+        return WebIDL::create_rejected_promise_from_exception(realm, vm().throw_completion<JS::TypeError>("The given configuration is not a valid MediaDecodingConfiguration"sv));
     }
 
     // 2. If configuration.keySystemConfiguration exists, run the following substeps:
     // FIXME: Implement this.
 
+    // 3. Let p be a new Promise.
+    auto p = WebIDL::create_promise(realm);
+
     // 4. Run the following steps in parallel:
-    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(GC::Heap::the(), [promise, configuration]() mutable {
-        auto& realm = WebIDL::promise_realm(promise);
+    auto& vm = this->vm();
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&vm, &realm, p, configuration]() mutable {
         HTML::TemporaryExecutionContext context(realm);
         // 1. Run the Create a MediaCapabilitiesDecodingInfo algorithm with configuration.
-        auto result = media_capabilities_decoding_info_to_object(realm.global_object(), create_a_media_capabilities_decoding_info(configuration));
+        auto result = create_a_media_capabilities_decoding_info(configuration).to_object(realm);
 
         // Queue a Media Capabilities task to resolve p with its result.
-        queue_a_media_capabilities_task(realm.global_object(), [promise, result] {
-            auto& realm = WebIDL::promise_realm(promise);
+        queue_a_media_capabilities_task(vm, [&realm, p, result] {
             HTML::TemporaryExecutionContext context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
-            WebIDL::resolve_promise(promise, JS::Value(result));
+            WebIDL::resolve_promise(realm, p, JS::Value(result));
         });
     }));
+
+    // 5. Return p.
+    return p;
 }
 
 // https://w3c.github.io/media-capabilities/#create-a-mediacapabilitiesdecodinginfo
@@ -185,12 +181,7 @@ MediaCapabilitiesDecodingInfo create_a_media_capabilities_decoding_info(MediaDec
 
     // 2. Set configuration to be a new MediaDecodingConfiguration. For every property in configuration create
     //    a new property with the same name and value in configuration.
-    MediaDecodingConfiguration info_configuration {};
-    info_configuration.audio = configuration.audio;
-    info_configuration.video = configuration.video;
-    info_configuration.type = configuration.type;
-    info_configuration.key_system_configuration = configuration.key_system_configuration;
-    info.configuration = move(info_configuration);
+    info.configuration = { { configuration.video, configuration.audio }, configuration.type, configuration.key_system_configuration };
 
     // 3. If configuration.keySystemConfiguration exists:
     if (false) {
@@ -220,9 +211,9 @@ MediaCapabilitiesDecodingInfo create_a_media_capabilities_decoding_info(MediaDec
     return info;
 }
 
-bool is_able_to_decode_media(MediaDecodingConfiguration const& configuration)
+bool is_able_to_decode_media(MediaDecodingConfiguration configuration)
 {
-    if (configuration.type != MediaDecodingType::MediaSource)
+    if (configuration.type != Bindings::MediaDecodingType::MediaSource)
         return false;
 
     if (configuration.video.has_value()) {
@@ -238,6 +229,19 @@ bool is_able_to_decode_media(MediaDecodingConfiguration const& configuration)
     }
 
     return true;
+}
+
+GC::Ref<JS::Object> MediaCapabilitiesDecodingInfo::to_object(JS::Realm& realm)
+{
+    auto object = JS::Object::create(realm, realm.intrinsics().object_prototype());
+
+    // FIXME: Also include configuration in this object.
+
+    MUST(object->create_data_property("supported"_utf16_fly_string, JS::BooleanObject::create(realm, supported)));
+    MUST(object->create_data_property("smooth"_utf16_fly_string, JS::BooleanObject::create(realm, smooth)));
+    MUST(object->create_data_property("powerEfficient"_utf16_fly_string, JS::BooleanObject::create(realm, power_efficient)));
+
+    return object;
 }
 
 }

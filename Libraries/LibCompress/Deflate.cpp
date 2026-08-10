@@ -7,7 +7,6 @@
  */
 
 #include <AK/BinarySearch.h>
-#include <AK/NeverDestroyed.h>
 #include <LibCompress/Deflate.h>
 #include <LibCompress/DeflateTables.h>
 
@@ -17,14 +16,30 @@ namespace Compress {
 
 CanonicalCode const& CanonicalCode::fixed_literal_codes()
 {
-    static NeverDestroyed<CanonicalCode> code { MUST(CanonicalCode::from_bytes(fixed_literal_bit_lengths)) };
-    return *code;
+    static CanonicalCode code;
+    static bool initialized = false;
+
+    if (initialized)
+        return code;
+
+    code = MUST(CanonicalCode::from_bytes(fixed_literal_bit_lengths));
+    initialized = true;
+
+    return code;
 }
 
 CanonicalCode const& CanonicalCode::fixed_distance_codes()
 {
-    static NeverDestroyed<CanonicalCode> code { MUST(CanonicalCode::from_bytes(fixed_distance_bit_lengths)) };
-    return *code;
+    static CanonicalCode code;
+    static bool initialized = false;
+
+    if (initialized)
+        return code;
+
+    code = MUST(CanonicalCode::from_bytes(fixed_distance_bit_lengths));
+    initialized = true;
+
+    return code;
 }
 
 ErrorOr<CanonicalCode> CanonicalCode::from_bytes(ReadonlyBytes bytes)

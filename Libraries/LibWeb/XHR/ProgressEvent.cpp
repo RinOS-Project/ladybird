@@ -4,21 +4,26 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/ProgressEventPrototype.h>
 #include <LibWeb/XHR/ProgressEvent.h>
 
 namespace Web::XHR {
 
 GC_DEFINE_ALLOCATOR(ProgressEvent);
 
-GC::Ref<ProgressEvent> ProgressEvent::create(Utf16FlyString const& event_name, ProgressEventInit const& event_init,
-    HighResolutionTime::DOMHighResTimeStamp time_stamp)
+GC::Ref<ProgressEvent> ProgressEvent::create(JS::Realm& realm, FlyString const& event_name, ProgressEventInit const& event_init)
 {
-    return GC::Heap::the().allocate<ProgressEvent>(event_name, event_init, time_stamp);
+    return realm.create<ProgressEvent>(realm, event_name, event_init);
 }
 
-ProgressEvent::ProgressEvent(Utf16FlyString const& event_name, ProgressEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-    : Event(event_name, event_init, time_stamp)
+WebIDL::ExceptionOr<GC::Ref<ProgressEvent>> ProgressEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, ProgressEventInit const& event_init)
+{
+    return create(realm, event_name, event_init);
+}
+
+ProgressEvent::ProgressEvent(JS::Realm& realm, FlyString const& event_name, ProgressEventInit const& event_init)
+    : Event(realm, event_name, event_init)
     , m_length_computable(event_init.length_computable)
     , m_loaded(event_init.loaded)
     , m_total(event_init.total)
@@ -26,5 +31,11 @@ ProgressEvent::ProgressEvent(Utf16FlyString const& event_name, ProgressEventInit
 }
 
 ProgressEvent::~ProgressEvent() = default;
+
+void ProgressEvent::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(ProgressEvent);
+    Base::initialize(realm);
+}
 
 }

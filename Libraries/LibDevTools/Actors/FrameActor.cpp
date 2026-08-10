@@ -7,7 +7,6 @@
 #include <AK/Enumerate.h>
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
-#include <LibCore/EventLoop.h>
 #include <LibDevTools/Actors/AccessibilityActor.h>
 #include <LibDevTools/Actors/CSSPropertiesActor.h>
 #include <LibDevTools/Actors/ConsoleActor.h>
@@ -17,50 +16,20 @@
 #include <LibDevTools/Actors/StyleSheetsActor.h>
 #include <LibDevTools/Actors/TabActor.h>
 #include <LibDevTools/Actors/ThreadActor.h>
-#include <LibDevTools/Actors/WatcherActor.h>
 #include <LibDevTools/DevToolsDelegate.h>
 #include <LibDevTools/DevToolsServer.h>
 #include <LibWebView/ConsoleOutput.h>
 
 namespace DevTools {
 
-static JsonArray serialize_frame_list(WeakPtr<TabActor> const& tab_actor)
+NonnullRefPtr<FrameActor> FrameActor::create(DevToolsServer& devtools, String name, WeakPtr<TabActor> tab, WeakPtr<CSSPropertiesActor> css_properties, WeakPtr<ConsoleActor> console, WeakPtr<InspectorActor> inspector, WeakPtr<StyleSheetsActor> style_sheets, WeakPtr<ThreadActor> thread, WeakPtr<AccessibilityActor> accessibility)
 {
-    JsonArray frames;
-
-    if (auto tab = tab_actor.strong_ref()) {
-        JsonObject frame;
-        frame.set("id"sv, tab->description().id);
-        frame.set("title"sv, tab->description().title);
-        frame.set("url"sv, tab->description().url);
-        frames.must_append(move(frame));
-    }
-
-    return frames;
+    return adopt_ref(*new FrameActor(devtools, move(name), move(tab), move(css_properties), move(console), move(inspector), move(style_sheets), move(thread), move(accessibility)));
 }
 
-static void set_resources_available_message(JsonObject& message, StringView resource_type, JsonArray resources)
-{
-    JsonArray resource;
-    resource.must_append(resource_type);
-    resource.must_append(move(resources));
-
-    JsonArray array;
-    array.must_append(move(resource));
-
-    message.set("type"sv, "resources-available-array"sv);
-    message.set("array"sv, move(array));
-}
-
-NonnullRefPtr<FrameActor> FrameActor::create(DevToolsServer& devtools, String name, WeakPtr<TabActor> tab, WeakPtr<WatcherActor> watcher, WeakPtr<CSSPropertiesActor> css_properties, WeakPtr<ConsoleActor> console, WeakPtr<InspectorActor> inspector, WeakPtr<StyleSheetsActor> style_sheets, WeakPtr<ThreadActor> thread, WeakPtr<AccessibilityActor> accessibility)
-{
-    return adopt_ref(*new FrameActor(devtools, move(name), move(tab), move(watcher), move(css_properties), move(console), move(inspector), move(style_sheets), move(thread), move(accessibility)));
-}
-
-FrameActor::FrameActor(DevToolsServer& devtools, String name, WeakPtr<TabActor> tab, WeakPtr<WatcherActor> watcher, WeakPtr<CSSPropertiesActor> css_properties, WeakPtr<ConsoleActor> console, WeakPtr<InspectorActor> inspector, WeakPtr<StyleSheetsActor> style_sheets, WeakPtr<ThreadActor> thread, WeakPtr<AccessibilityActor> accessibility)
+FrameActor::FrameActor(DevToolsServer& devtools, String name, WeakPtr<TabActor> tab, WeakPtr<CSSPropertiesActor> css_properties, WeakPtr<ConsoleActor> console, WeakPtr<InspectorActor> inspector, WeakPtr<StyleSheetsActor> style_sheets, WeakPtr<ThreadActor> thread, WeakPtr<AccessibilityActor> accessibility)
     : Actor(devtools, move(name))
     , m_tab(move(tab))
-    , m_watcher(move(watcher))
     , m_css_properties(move(css_properties))
     , m_console(move(console))
     , m_inspector(move(inspector))
@@ -69,6 +38,11 @@ FrameActor::FrameActor(DevToolsServer& devtools, String name, WeakPtr<TabActor> 
     , m_accessibility(move(accessibility))
 {
     if (auto tab = m_tab.strong_ref()) {
+        // NB: We must notify WebContent that DevTools is connected before setting up listeners,
+        //     so that WebContent knows to start sending network response bodies over IPC.
+        //     IPC messages are processed in order, so this is guaranteed to arrive first.
+        devtools.delegate().did_connect_devtools_client(tab->description());
+
         devtools.delegate().listen_for_console_messages(
             tab->description(),
             weak_callback(*this, [](auto& self, WebView::ConsoleOutput console_output) {
@@ -76,14 +50,10 @@ FrameActor::FrameActor(DevToolsServer& devtools, String name, WeakPtr<TabActor> 
             }));
 
         // FIXME: We should adopt WebContent to inform us when style sheets are available or removed.
-        Core::deferred_invoke([weak_self = make_weak_ptr<FrameActor>(), tab] {
-            if (auto self = weak_self.strong_ref()) {
-                self->devtools().delegate().retrieve_style_sheets(tab->description(),
-                    self->async_handler<FrameActor>({}, [](auto& self, auto style_sheets, auto& response) {
-                        self.style_sheets_available(response, move(style_sheets));
-                    }));
-            }
-        });
+        devtools.delegate().retrieve_style_sheets(tab->description(),
+            async_handler<FrameActor>({}, [](auto& self, auto style_sheets, auto& response) {
+                self.style_sheets_available(response, move(style_sheets));
+            }));
 
         devtools.delegate().listen_for_network_events(
             tab->description(),
@@ -108,28 +78,17 @@ FrameActor::FrameActor(DevToolsServer& devtools, String name, WeakPtr<TabActor> 
             weak_callback(*this, [](auto& self, String url, String title) {
                 self.on_navigation_finished(move(url), move(title));
             }));
-
-        m_is_listening = true;
     }
 }
 
 FrameActor::~FrameActor()
 {
-    stop_listening();
-}
-
-void FrameActor::stop_listening()
-{
-    if (!m_is_listening)
-        return;
-
     if (auto tab = m_tab.strong_ref()) {
         devtools().delegate().stop_listening_for_console_messages(tab->description());
         devtools().delegate().stop_listening_for_network_events(tab->description());
         devtools().delegate().stop_listening_for_navigation_events(tab->description());
+        devtools().delegate().did_disconnect_devtools_client(tab->description());
     }
-
-    m_is_listening = false;
 }
 
 void FrameActor::handle_message(Message const& message)
@@ -149,45 +108,7 @@ void FrameActor::handle_message(Message const& message)
         return;
     }
 
-    if (message.type == "reload"sv) {
-        bool bypass_cache = false;
-        if (auto options = message.data.get_object("options"sv); options.has_value())
-            bypass_cache = options->get_bool("force"sv).value_or(false);
-
-        if (auto tab = m_tab.strong_ref())
-            devtools().delegate().reload_tab(tab->description(), bypass_cache);
-
-        send_response(message, move(response));
-        return;
-    }
-
-    if (message.type == "goBack"sv) {
-        if (auto tab = m_tab.strong_ref())
-            devtools().delegate().traverse_the_history_by_delta(tab->description(), -1);
-
-        send_response(message, move(response));
-        return;
-    }
-
-    if (message.type == "goForward"sv) {
-        if (auto tab = m_tab.strong_ref())
-            devtools().delegate().traverse_the_history_by_delta(tab->description(), 1);
-
-        send_response(message, move(response));
-        return;
-    }
-
     if (message.type == "listFrames"sv) {
-        response.set("frames"sv, serialize_frame_list(m_tab));
-        send_response(message, move(response));
-        send_pending_navigation_document_events_after_target_switch();
-        return;
-    }
-
-    if (message.type == "listWorkers"sv) {
-        // FIXME: Return dedicated, shared, and service worker targets once
-        //        Ladybird exposes worker targets to DevTools.
-        response.set("workers"sv, JsonArray {});
         send_response(message, move(response));
         return;
     }
@@ -197,29 +118,20 @@ void FrameActor::handle_message(Message const& message)
 
 void FrameActor::send_frame_update_message()
 {
+    JsonArray frames;
+
+    if (auto tab_actor = m_tab.strong_ref()) {
+        JsonObject frame;
+        frame.set("id"sv, tab_actor->description().id);
+        frame.set("title"sv, tab_actor->description().title);
+        frame.set("url"sv, tab_actor->description().url);
+        frames.must_append(move(frame));
+    }
+
     JsonObject message;
     message.set("type"sv, "frameUpdate"sv);
-    message.set("frames"sv, serialize_frame_list(m_tab));
+    message.set("frames"sv, move(frames));
     send_message(move(message));
-}
-
-void FrameActor::set_pending_navigation_document_events_after_target_switch(String const& url, String const& title)
-{
-    m_pending_navigation_document_events_after_target_switch = PendingNavigationDocumentEvents {
-        .url = url,
-        .title = title,
-    };
-}
-
-void FrameActor::send_pending_navigation_document_events_after_target_switch()
-{
-    if (!m_pending_navigation_document_events_after_target_switch.has_value())
-        return;
-
-    auto pending_events = m_pending_navigation_document_events_after_target_switch.release_value();
-    send_document_event("dom-loading"sv, pending_events.url);
-    send_document_event("dom-interactive"sv, pending_events.url, pending_events.title);
-    send_document_event("dom-complete"sv, pending_events.url);
 }
 
 JsonObject FrameActor::serialize_target() const
@@ -240,13 +152,7 @@ JsonObject FrameActor::serialize_target() const
         target.set("title"sv, tab_actor->description().title);
         target.set("url"sv, tab_actor->description().url);
         target.set("browsingContextID"sv, tab_actor->description().id);
-        target.set("followWindowGlobalLifeCycle"sv, true);
-        target.set("innerWindowId"sv, tab_actor->inner_window_id());
-        target.set("isPopup"sv, false);
-        target.set("isPrivate"sv, false);
         target.set("outerWindowID"sv, tab_actor->description().id);
-        target.set("processID"sv, 1);
-        target.set("topInnerWindowId"sv, tab_actor->inner_window_id());
         target.set("isTopLevelTarget"sv, true);
     }
 
@@ -281,7 +187,7 @@ void FrameActor::style_sheets_available(JsonObject& response, Vector<Web::CSS::S
         return;
 
     for (auto const& [i, style_sheet] : enumerate(style_sheets)) {
-        auto resource_id = StyleSheetsActor::resource_id_for_index(style_sheets_actor->name(), i);
+        auto resource_id = MUST(String::formatted("{}-stylesheet:{}", style_sheets_actor->name(), i));
 
         JsonValue href;
         JsonValue source_map_base_url;
@@ -290,16 +196,14 @@ void FrameActor::style_sheets_available(JsonObject& response, Vector<Web::CSS::S
         if (style_sheet.url.has_value()) {
             if (style_sheet.type == Web::CSS::StyleSheetIdentifier::Type::UserAgent) {
                 // LibWeb sets the URL to a style sheet name for UA style sheets. DevTools would reject these invalid URLs.
-                auto style_sheet_url = style_sheet.url->to_utf8();
-                href = MUST(String::formatted("resource://{}", style_sheet_url));
-                title = move(style_sheet_url);
+                href = MUST(String::formatted("resource://{}", style_sheet.url.value()));
+                title = *style_sheet.url;
                 source_map_base_url = tab_url;
             } else if (style_sheet.type == Web::CSS::StyleSheetIdentifier::Type::StyleElement) {
-                source_map_base_url = style_sheet.url->to_utf8();
+                source_map_base_url = *style_sheet.url;
             } else {
-                auto style_sheet_url = style_sheet.url->to_utf8();
-                href = style_sheet_url;
-                source_map_base_url = move(style_sheet_url);
+                href = *style_sheet.url;
+                source_map_base_url = *style_sheet.url;
             }
         } else {
             source_map_base_url = tab_url;
@@ -335,36 +239,6 @@ void FrameActor::style_sheets_available(JsonObject& response, Vector<Web::CSS::S
     response.set("array"sv, move(array));
 
     style_sheets_actor->set_style_sheets(move(style_sheets));
-}
-
-void FrameActor::send_source_resource_available_message()
-{
-    auto tab = m_tab.strong_ref();
-    if (!tab)
-        return;
-
-    devtools().delegate().retrieve_sources(tab->description(),
-        async_handler<FrameActor>({}, [](auto& self, auto sources, auto& response) {
-            auto thread = self.m_thread.strong_ref();
-            if (!thread)
-                return;
-
-            set_resources_available_message(response, "source"sv, thread->serialize_sources(sources));
-        }));
-}
-
-void FrameActor::send_source_resource_available_message(Web::HTML::ScriptRegistry::Description const& source)
-{
-    auto thread = m_thread.strong_ref();
-    if (!thread)
-        return;
-
-    JsonArray serialized_sources;
-    serialized_sources.must_append(thread->serialize_source(source));
-
-    JsonObject message;
-    set_resources_available_message(message, "source"sv, move(serialized_sources));
-    send_message(move(message));
 }
 
 void FrameActor::on_console_message(WebView::ConsoleOutput console_output)
@@ -502,11 +376,6 @@ void FrameActor::on_network_request_started(DevToolsDelegate::NetworkRequestData
 {
     auto& actor = devtools().register_actor<NetworkEventActor>(data.request_id);
     actor.set_request_info(move(data.url), move(data.method), data.start_time, move(data.request_headers), move(data.request_body), move(data.initiator_type));
-    if (auto tab = m_tab.strong_ref())
-        actor.set_browsing_context_ids(tab->description().id, tab->inner_window_id());
-    actor.set_referrer_policy(move(data.referrer_policy));
-    actor.set_is_navigation_request(data.is_navigation_request);
-    actor.set_priority(data.priority);
     m_network_events.set(data.request_id, actor);
 
     JsonArray events;
@@ -533,8 +402,6 @@ void FrameActor::on_network_response_headers_received(DevToolsDelegate::NetworkR
 
     auto& actor = *it->value;
     actor.set_response_start(data.status_code, data.reason_phrase);
-    auto loaded_from_cache = data.came_from_cache == Requests::CameFromCache::Yes;
-    actor.set_loaded_from_cache(loaded_from_cache);
 
     // Extract Content-Type before moving headers
     String mime_type;
@@ -553,7 +420,6 @@ void FrameActor::on_network_response_headers_received(DevToolsDelegate::NetworkR
     resource_updates.set("statusText"sv, data.reason_phrase.value_or(String {}));
     resource_updates.set("headersSize"sv, headers_size);
     resource_updates.set("mimeType"sv, mime_type);
-    resource_updates.set("fromCache"sv, loaded_from_cache);
     // FIXME: Get actual HTTP version from response
     resource_updates.set("httpVersion"sv, "HTTP/1.1"sv);
     // FIXME: Get actual remote address and port from connection
@@ -568,8 +434,8 @@ void FrameActor::on_network_response_headers_received(DevToolsDelegate::NetworkR
     update_entry.set("resourceId"sv, static_cast<i64>(data.request_id));
     update_entry.set("resourceType"sv, "network-event"sv);
     update_entry.set("resourceUpdates"sv, move(resource_updates));
-    update_entry.set("browsingContextID"sv, actor.browsing_context_id());
-    update_entry.set("innerWindowId"sv, actor.inner_window_id());
+    update_entry.set("browsingContextID"sv, 1);
+    update_entry.set("innerWindowId"sv, 1);
 
     JsonArray updates;
     updates.must_append(move(update_entry));
@@ -621,8 +487,8 @@ void FrameActor::on_network_request_finished(DevToolsDelegate::NetworkRequestCom
     update_entry.set("resourceId"sv, static_cast<i64>(data.request_id));
     update_entry.set("resourceType"sv, "network-event"sv);
     update_entry.set("resourceUpdates"sv, move(resource_updates));
-    update_entry.set("browsingContextID"sv, actor.browsing_context_id());
-    update_entry.set("innerWindowId"sv, actor.inner_window_id());
+    update_entry.set("browsingContextID"sv, 1);
+    update_entry.set("innerWindowId"sv, 1);
 
     JsonArray updates;
     updates.must_append(move(update_entry));
@@ -640,20 +506,18 @@ void FrameActor::on_network_request_finished(DevToolsDelegate::NetworkRequestCom
     send_message(move(message));
 }
 
-void FrameActor::send_document_event(StringView name, String const& url, Optional<StringView> title)
+void FrameActor::on_navigation_started(String url)
 {
+    // Clear our internal tracking of network events
+    m_network_events.clear();
+
+    // Send will-navigate document event to trigger network panel clear
     JsonObject document_event;
     document_event.set("resourceType"sv, "document-event"sv);
-    document_event.set("name"sv, name);
+    document_event.set("name"sv, "will-navigate"sv);
     document_event.set("time"sv, UnixDateTime::now().milliseconds_since_epoch());
+    document_event.set("newURI"sv, url);
     document_event.set("isFrameSwitching"sv, false);
-
-    if (name == "will-navigate"sv)
-        document_event.set("newURI"sv, url);
-    if (name == "dom-loading"sv || name == "dom-interactive"sv)
-        document_event.set("url"sv, url);
-    if (title.has_value())
-        document_event.set("title"sv, title.value());
 
     JsonArray events;
     events.must_append(move(document_event));
@@ -669,37 +533,34 @@ void FrameActor::send_document_event(StringView name, String const& url, Optiona
     resources_message.set("type"sv, "resources-available-array"sv);
     resources_message.set("array"sv, move(array));
     send_message(move(resources_message));
-}
 
-void FrameActor::on_navigation_started(String url)
-{
-    if (auto inspector = m_inspector.strong_ref())
-        inspector->on_navigation_started();
-
-    // Clear our internal tracking of network events
-    m_network_events.clear();
-
-    send_document_event("will-navigate"sv, url);
+    // Also send tabNavigated for backwards compatibility
+    JsonObject message;
+    message.set("type"sv, "tabNavigated"sv);
+    message.set("url"sv, move(url));
+    message.set("state"sv, "start"sv);
+    message.set("isFrameSwitching"sv, false);
+    send_message(move(message));
 }
 
 void FrameActor::on_navigation_finished(String url, String title)
 {
     // Update the tab description with the new URL and title
-    if (auto tab = m_tab.strong_ref())
-        tab->navigate_to(url, title);
+    if (auto tab = m_tab.strong_ref()) {
+        tab->set_url(url);
+        tab->set_title(title);
+    }
 
-    if (auto inspector = m_inspector.strong_ref())
-        inspector->on_navigation_finished();
+    JsonObject message;
+    message.set("type"sv, "tabNavigated"sv);
+    message.set("url"sv, move(url));
+    message.set("title"sv, move(title));
+    message.set("state"sv, "stop"sv);
+    message.set("isFrameSwitching"sv, false);
+    send_message(move(message));
 
-    auto finished_url = url;
-    auto finished_title = title;
-
-    Core::deferred_invoke([watcher = m_watcher, target = make_weak_ptr<FrameActor>(), url = move(finished_url), title = move(finished_title)] {
-        auto strong_watcher = watcher.strong_ref();
-        auto strong_target = target.strong_ref();
-        if (strong_watcher && strong_target)
-            strong_watcher->switch_frame_target(*strong_target, url, title);
-    });
+    // Also send a frameUpdate message to update the frame info
+    send_frame_update_message();
 }
 
 }

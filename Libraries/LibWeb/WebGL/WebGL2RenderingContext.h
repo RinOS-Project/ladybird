@@ -18,7 +18,7 @@
 namespace Web::WebGL {
 
 class WebGL2RenderingContext final : public WebGL2RenderingContextOverloads {
-    WEB_WRAPPABLE(WebGL2RenderingContext, WebGL2RenderingContextOverloads);
+    WEB_PLATFORM_OBJECT(WebGL2RenderingContext, WebGL2RenderingContextOverloads);
     GC_DECLARE_ALLOCATOR(WebGL2RenderingContext);
 
 public:
@@ -26,12 +26,16 @@ public:
 
     virtual ~WebGL2RenderingContext() override;
 
-    void prepare_for_compositing() override;
-    void did_update_canvas_content() override;
+    void present() override;
+    void needs_to_present() override;
 
-    virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const override;
+    GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const;
 
+    bool is_context_lost() const;
     Optional<WebGLContextAttributes> get_context_attributes();
+
+    RefPtr<Gfx::PaintingSurface> surface();
+    void allocate_painting_surface_if_needed();
 
     void set_size(Gfx::IntSize const&);
     void reset_to_default_state();
@@ -40,10 +44,11 @@ public:
     WebIDL::Long drawing_buffer_height() const;
 
 private:
-    WebGL2RenderingContext(JS::Realm&, HTML::HTMLCanvasElement&, NonnullOwnPtr<WebGLContextProxy> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters);
+    virtual void initialize(JS::Realm&) override;
+
+    WebGL2RenderingContext(JS::Realm&, HTML::HTMLCanvasElement&, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters);
 
     virtual void visit_edges(Cell::Visitor&) override;
-    virtual bool reestablish_remote_context() override;
 
     GC::Ref<HTML::HTMLCanvasElement> m_canvas_element;
 
@@ -54,6 +59,10 @@ private:
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#actual-context-parameters
     // Each WebGLRenderingContext has actual context parameters, set each time the drawing buffer is created, in a WebGLContextAttributes object.
     WebGLContextAttributes m_actual_context_parameters {};
+
+    // https://www.khronos.org/registry/webgl/specs/latest/1.0/#webgl-context-lost-flag
+    // Each WebGLRenderingContext has a webgl context lost flag, which is initially unset.
+    bool m_context_lost { false };
 };
 
 }

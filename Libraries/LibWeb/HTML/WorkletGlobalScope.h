@@ -6,20 +6,20 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/worklets.html#workletglobalscope
-class WorkletGlobalScope : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(WorkletGlobalScope, Bindings::GCAllocatedWrappable);
+class WorkletGlobalScope : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(WorkletGlobalScope, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(WorkletGlobalScope);
 
 public:
     virtual ~WorkletGlobalScope() override;
 
 protected:
-    WorkletGlobalScope();
+    explicit WorkletGlobalScope(JS::Realm&);
 };
 
 }

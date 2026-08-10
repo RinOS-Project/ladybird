@@ -7,29 +7,28 @@
 #pragma once
 
 #include <AK/FlyString.h>
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16String.h>
-#include <LibWeb/Bindings/FocusEvent.h>
-#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibWeb/UIEvents/UIEvent.h>
 
 namespace Web::UIEvents {
 
-using FocusEventInit = Bindings::FocusEventInit;
+struct FocusEventInit : public UIEventInit {
+    GC::Ptr<DOM::EventTarget> related_target;
+};
 
 class FocusEvent final : public UIEvent {
-    WEB_WRAPPABLE(FocusEvent, UIEvent);
+    WEB_PLATFORM_OBJECT(FocusEvent, UIEvent);
     GC_DECLARE_ALLOCATOR(FocusEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<FocusEvent> create(FlyString const& event_name, FocusEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<FocusEvent> create(Utf16String const& event_name, FocusEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static GC::Ref<FocusEvent> create(JS::Realm&, FlyString const& event_name, FocusEventInit const& = {});
+    static WebIDL::ExceptionOr<GC::Ref<FocusEvent>> construct_impl(JS::Realm&, FlyString const& event_name, FocusEventInit const& event_init);
 
     virtual ~FocusEvent() override;
 
 private:
-    FocusEvent(FlyString const& event_name, FocusEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
-    FocusEvent(Utf16FlyString const& event_name, FocusEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    FocusEvent(JS::Realm&, FlyString const& event_name, FocusEventInit const&);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

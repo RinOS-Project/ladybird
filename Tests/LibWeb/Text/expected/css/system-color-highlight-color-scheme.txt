@@ -1,3 +1,0 @@
-Light HighlightText: rgb(255, 255, 255)
-Dark HighlightText: rgb(20, 20, 20)
-Dark CanvasText: rgb(235, 235, 235)

@@ -6,24 +6,22 @@
 
 #pragma once
 
-#include <AK/Types.h>
-#include <LibJS/Forward.h>
 #include <LibWeb/Animations/AnimationTimeline.h>
-#include <LibWeb/Bindings/ScrollTimeline.h>
-
-namespace Web::HTML {
-
-class Window;
-
-}
+#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Bindings/ScrollTimelinePrototype.h>
 
 namespace Web::Animations {
 
-using ScrollAxis = Bindings::ScrollAxis;
+// https://drafts.csswg.org/scroll-animations-1/#dictdef-scrolltimelineoptions
+struct ScrollTimelineOptions {
+    // NB: We use Optional here to distinguish between "undefined" and "null"
+    Optional<GC::Ptr<DOM::Element>> source;
+    Bindings::ScrollAxis axis;
+};
 
 // https://drafts.csswg.org/scroll-animations-1/#scrolltimeline
 class ScrollTimeline : public AnimationTimeline {
-    WEB_WRAPPABLE(ScrollTimeline, AnimationTimeline);
+    WEB_PLATFORM_OBJECT(ScrollTimeline, AnimationTimeline);
     GC_DECLARE_ALLOCATOR(ScrollTimeline);
 
 public:
@@ -36,27 +34,27 @@ public:
 
     using Source = Variant<GC::Ptr<DOM::Element const>, AnonymousSource>;
 
-    static GC::Ref<ScrollTimeline> create(DOM::Document&, Source source, ScrollAxis axis);
-    static GC::Ref<ScrollTimeline> create_for_constructor(JS::Object&, Bindings::ScrollTimelineOptions const&);
+    static GC::Ref<ScrollTimeline> create(JS::Realm&, DOM::Document&, Source source, Bindings::ScrollAxis axis);
+    static GC::Ref<ScrollTimeline> construct_impl(JS::Realm&, ScrollTimelineOptions options = {});
 
     virtual Optional<TimeValue> duration() const override { return TimeValue { TimeValue::Type::Percentage, 100 }; }
 
     GC::Ptr<DOM::Element const> source() const;
-    ScrollAxis axis() const { return m_axis; }
+    Bindings::ScrollAxis axis() const { return m_axis; }
 
     Source source_internal() const { return m_source; }
 
-    bool is_stale() const;
     virtual void update_current_time(double timestamp) override;
 
     virtual bool is_progress_based() const override { return true; }
     virtual bool can_convert_a_timeline_time_to_an_origin_relative_time() const override { return false; }
 
 private:
-    ScrollTimeline(DOM::Document&, Source source, ScrollAxis axis);
+    ScrollTimeline(JS::Realm&, DOM::Document&, Source source, Bindings::ScrollAxis axis);
     virtual ~ScrollTimeline() override = default;
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
 
     Variant<GC::Ptr<DOM::Element const>, GC::Ptr<DOM::Document>> get_propagated_source() const;
 
@@ -64,11 +62,9 @@ private:
     Source m_source;
 
     // https://drafts.csswg.org/scroll-animations-1/#dom-scrolltimeline-axis
-    ScrollAxis m_axis;
-
-    Optional<double> m_last_max_scroll_offset;
+    Bindings::ScrollAxis m_axis { Bindings::ScrollAxis::Block };
 };
 
-ScrollAxis scroll_axis_from_css_axis(CSS::Axis);
+Bindings::ScrollAxis css_axis_to_bindings_scroll_axis(CSS::Axis);
 
 }

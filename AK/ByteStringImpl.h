@@ -30,7 +30,7 @@ public:
 
     void operator delete(void* ptr)
     {
-        kfree(ptr);
+        kfree_sized(ptr, allocation_size_for_stringimpl(static_cast<ByteStringImpl*>(ptr)->m_length));
     }
 
     static ByteStringImpl& the_empty_stringimpl();

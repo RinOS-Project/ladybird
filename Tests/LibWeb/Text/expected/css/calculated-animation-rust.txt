@@ -1,3 +1,0 @@
-width: 40px
-height: 30px
-additive width: 50px

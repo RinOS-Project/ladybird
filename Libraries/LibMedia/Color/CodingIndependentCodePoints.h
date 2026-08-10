@@ -17,10 +17,9 @@ namespace Media {
 // Current edition is from 07/21.
 
 enum class ColorPrimaries : u8 {
-    // Reserved
+    Reserved = 0,
     BT709 = 1,
-    Unspecified = 2, // Used by codecs to indicate that an alternative value may be used.
-    // Reserved
+    Unspecified = 2, // Used by codecs to indicate that an alternative value may be used
     BT470M = 4,
     BT470BG = 5,
     BT601 = 6,
@@ -31,13 +30,13 @@ enum class ColorPrimaries : u8 {
     SMPTE431 = 11,
     SMPTE432 = 12,
     EBU3213 = 22,
+    // All other values are also Reserved for later use.
 };
 
 enum class TransferCharacteristics : u8 {
-    // Reserved
+    Reserved = 0,
     BT709 = 1,
     Unspecified = 2, // Used by codecs to indicate that an alternative value may be used
-    // Reserved
     BT470M = 4,
     BT470BG = 5,
     BT601 = 6, // BT.601 or Rec. 601
@@ -53,13 +52,13 @@ enum class TransferCharacteristics : u8 {
     SMPTE2084 = 16, // Also known as PQ
     SMPTE428 = 17,
     HLG = 18,
+    // All other values are also Reserved for later use.
 };
 
 enum class MatrixCoefficients : u8 {
-    Identity = 0,
+    Identity = 0, // Applies no transformation to input values
     BT709 = 1,
-    Unspecified = 2, // Used by codecs to indicate that an alternative value may be used.
-    // Reserved
+    Unspecified = 2, // Used by codecs to indicate that an alternative value may be used
     FCC = 4,
     BT470BG = 5,
     BT601 = 6,
@@ -71,95 +70,14 @@ enum class MatrixCoefficients : u8 {
     ChromaticityDerivedNonConstantLuminance = 12,
     ChromaticityDerivedConstantLuminance = 13,
     ICtCp = 14,
+    // All other values are Reserved for later use.
 };
 
 enum class VideoFullRangeFlag : u8 {
     Studio = 0,      // Y range 16..235, UV range 16..240
     Full = 1,        // 0..255
-    Unspecified = 2, // Used by codecs to indicate that an alternative value may be used.
+    Unspecified = 2, // Not part of the spec, serenity-specific addition for convenience.
 };
-
-static constexpr bool color_primaries_valid(ColorPrimaries color_primaries)
-{
-    switch (color_primaries) {
-    case ColorPrimaries::Unspecified:
-        return false;
-    case ColorPrimaries::BT709:
-    case ColorPrimaries::BT470M:
-    case ColorPrimaries::BT470BG:
-    case ColorPrimaries::BT601:
-    case ColorPrimaries::SMPTE240:
-    case ColorPrimaries::GenericFilm:
-    case ColorPrimaries::BT2020:
-    case ColorPrimaries::XYZ:
-    case ColorPrimaries::SMPTE431:
-    case ColorPrimaries::SMPTE432:
-    case ColorPrimaries::EBU3213:
-        return true;
-    }
-    return false;
-}
-
-static constexpr bool transfer_characteristics_valid(TransferCharacteristics transfer_characteristics)
-{
-    switch (transfer_characteristics) {
-    case TransferCharacteristics::Unspecified:
-        return false;
-    case TransferCharacteristics::BT709:
-    case TransferCharacteristics::BT470M:
-    case TransferCharacteristics::BT470BG:
-    case TransferCharacteristics::BT601:
-    case TransferCharacteristics::SMPTE240:
-    case TransferCharacteristics::Linear:
-    case TransferCharacteristics::Log100:
-    case TransferCharacteristics::Log100Sqrt10:
-    case TransferCharacteristics::IEC61966:
-    case TransferCharacteristics::BT1361:
-    case TransferCharacteristics::SRGB:
-    case TransferCharacteristics::BT2020BitDepth10:
-    case TransferCharacteristics::BT2020BitDepth12:
-    case TransferCharacteristics::SMPTE2084:
-    case TransferCharacteristics::SMPTE428:
-    case TransferCharacteristics::HLG:
-        return true;
-    }
-    return false;
-}
-
-static constexpr bool matrix_coefficients_valid(MatrixCoefficients matrix_coefficients)
-{
-    switch (matrix_coefficients) {
-    case MatrixCoefficients::Unspecified:
-        return false;
-    case MatrixCoefficients::Identity:
-    case MatrixCoefficients::BT709:
-    case MatrixCoefficients::FCC:
-    case MatrixCoefficients::BT470BG:
-    case MatrixCoefficients::BT601:
-    case MatrixCoefficients::SMPTE240:
-    case MatrixCoefficients::YCgCo:
-    case MatrixCoefficients::BT2020NonConstantLuminance:
-    case MatrixCoefficients::BT2020ConstantLuminance:
-    case MatrixCoefficients::SMPTE2085:
-    case MatrixCoefficients::ChromaticityDerivedNonConstantLuminance:
-    case MatrixCoefficients::ChromaticityDerivedConstantLuminance:
-    case MatrixCoefficients::ICtCp:
-        return true;
-    }
-    return false;
-}
-
-static constexpr bool video_full_range_flag_valid(VideoFullRangeFlag video_full_range_flag)
-{
-    switch (video_full_range_flag) {
-    case VideoFullRangeFlag::Unspecified:
-        return false;
-    case VideoFullRangeFlag::Studio:
-    case VideoFullRangeFlag::Full:
-        return true;
-    }
-    return false;
-}
 
 // https://en.wikipedia.org/wiki/Coding-independent_code_points
 struct CodingIndependentCodePoints {
@@ -185,13 +103,13 @@ public:
 
     constexpr void adopt_specified_values(CodingIndependentCodePoints cicp)
     {
-        if (color_primaries_valid(cicp.color_primaries()))
+        if (cicp.color_primaries() != ColorPrimaries::Unspecified && cicp.color_primaries() != ColorPrimaries::Reserved)
             set_color_primaries(cicp.color_primaries());
-        if (transfer_characteristics_valid(cicp.transfer_characteristics()))
+        if (cicp.transfer_characteristics() != TransferCharacteristics::Unspecified && cicp.transfer_characteristics() != TransferCharacteristics::Reserved)
             set_transfer_characteristics(cicp.transfer_characteristics());
-        if (matrix_coefficients_valid(cicp.matrix_coefficients()))
+        if (cicp.matrix_coefficients() != MatrixCoefficients::Unspecified)
             set_matrix_coefficients(cicp.matrix_coefficients());
-        if (video_full_range_flag_valid(cicp.video_full_range_flag()))
+        if (cicp.video_full_range_flag() != VideoFullRangeFlag::Unspecified)
             set_video_full_range_flag(cicp.video_full_range_flag());
     }
 
@@ -205,6 +123,8 @@ private:
 constexpr StringView color_primaries_to_string(ColorPrimaries color_primaries)
 {
     switch (color_primaries) {
+    case ColorPrimaries::Reserved:
+        return "Reserved"sv;
     case ColorPrimaries::BT709:
         return "BT.709"sv;
     case ColorPrimaries::Unspecified:
@@ -236,6 +156,8 @@ constexpr StringView color_primaries_to_string(ColorPrimaries color_primaries)
 constexpr StringView transfer_characteristics_to_string(TransferCharacteristics transfer_characteristics)
 {
     switch (transfer_characteristics) {
+    case TransferCharacteristics::Reserved:
+        return "Reserved"sv;
     case TransferCharacteristics::BT709:
         return "BT.709"sv;
     case TransferCharacteristics::Unspecified:
@@ -316,7 +238,7 @@ constexpr StringView video_full_range_flag_to_string(VideoFullRangeFlag video_fu
         return "Studio"sv;
     case VideoFullRangeFlag::Full:
         return "Full"sv;
-    case VideoFullRangeFlag::Unspecified:
+    case VideoFullRangeFlag::Unspecified: // Not part of the spec, serenity-specific addition for convenience.
         return "Unspecified"sv;
     }
     return "Unknown"sv;

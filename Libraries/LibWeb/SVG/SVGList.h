@@ -23,8 +23,6 @@ enum class ReadOnlyList : u8 {
 template<typename T>
 class SVGList {
 public:
-    virtual ~SVGList() = default;
-
     // https://www.w3.org/TR/SVG2/types.html#__svg__SVGNameList__length
     WebIDL::UnsignedLong length() const;
     WebIDL::UnsignedLong number_of_items() const { return length(); }
@@ -38,17 +36,17 @@ public:
     WebIDL::ExceptionOr<T> append_item(T);
 
     ReadonlySpan<T> items() { return m_items; }
-    ReadonlySpan<T> items() const { return m_items; }
 
 protected:
-    SVGList(Vector<T>, ReadOnlyList);
-    explicit SVGList(ReadOnlyList);
+    SVGList(JS::Realm&, Vector<T>, ReadOnlyList);
+    SVGList(JS::Realm&, ReadOnlyList);
 
     void visit_edges(GC::Cell::Visitor& visitor);
 
     ReadOnlyList read_only() const { return m_read_only; }
 
 private:
+    GC::Ref<JS::Realm> m_realm;
     Vector<T> m_items;
 
     // https://www.w3.org/TR/SVG2/types.html#ReadOnlyList

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/WritableStreamDefaultControllerPrototype.h>
 #include <LibWeb/DOM/AbortSignal.h>
 #include <LibWeb/Streams/WritableStream.h>
 #include <LibWeb/Streams/WritableStreamDefaultController.h>
@@ -13,7 +15,7 @@ namespace Web::Streams {
 
 GC_DEFINE_ALLOCATOR(WritableStreamDefaultController);
 
-void WritableStreamDefaultController::visit_edges(GC::Cell::Visitor& visitor)
+void WritableStreamDefaultController::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_signal);
@@ -26,8 +28,14 @@ void WritableStreamDefaultController::visit_edges(GC::Cell::Visitor& visitor)
     visitor.visit(m_write_algorithm);
 }
 
+void WritableStreamDefaultController::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(WritableStreamDefaultController);
+    Base::initialize(realm);
+}
+
 // https://streams.spec.whatwg.org/#ws-default-controller-error
-void WritableStreamDefaultController::error(Optional<JS::Value> error)
+void WritableStreamDefaultController::error(JS::Value error)
 {
     // 1. Let state be this.[[stream]].[[state]].
     auto state = m_stream->state();
@@ -37,7 +45,7 @@ void WritableStreamDefaultController::error(Optional<JS::Value> error)
         return;
 
     // 3. Perform ! WritableStreamDefaultControllerError(this, e).
-    writable_stream_default_controller_error(*this, error.value_or(JS::js_undefined()));
+    writable_stream_default_controller_error(*this, error);
 }
 
 // https://streams.spec.whatwg.org/#ws-default-controller-private-abort
@@ -60,7 +68,8 @@ void WritableStreamDefaultController::error_steps()
     reset_queue(*this);
 }
 
-WritableStreamDefaultController::WritableStreamDefaultController()
+WritableStreamDefaultController::WritableStreamDefaultController(JS::Realm& realm)
+    : Bindings::PlatformObject(realm)
 {
 }
 

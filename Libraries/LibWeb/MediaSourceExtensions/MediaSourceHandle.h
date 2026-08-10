@@ -6,21 +6,23 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::MediaSourceExtensions {
 
 // https://w3c.github.io/media-source/#dom-mediasourcehandle
-class MediaSourceHandle : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(MediaSourceHandle, Bindings::GCAllocatedWrappable);
+class MediaSourceHandle : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(MediaSourceHandle, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(MediaSourceHandle);
 
 public:
 private:
-    MediaSourceHandle();
+    MediaSourceHandle(JS::Realm&);
 
     virtual ~MediaSourceHandle() override;
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

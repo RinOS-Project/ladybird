@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/TextTrackListPrototype.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/TextTrackList.h>
 
@@ -12,16 +14,17 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(TextTrackList);
 
-TextTrackList::TextTrackList()
-    : DOM::EventTarget()
+TextTrackList::TextTrackList(JS::Realm& realm)
+    : DOM::EventTarget(realm, MayInterfereWithIndexedPropertyAccess::Yes)
 {
 }
 
 TextTrackList::~TextTrackList() = default;
 
-GC::Ref<TextTrackList> TextTrackList::create()
+void TextTrackList::initialize(JS::Realm& realm)
 {
-    return GC::Heap::the().allocate<TextTrackList>();
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(TextTrackList);
+    Base::initialize(realm);
 }
 
 void TextTrackList::visit_edges(JS::Cell::Visitor& visitor)
@@ -30,19 +33,21 @@ void TextTrackList::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_text_tracks);
 }
 
-GC::Ptr<TextTrack> TextTrackList::item(size_t index) const
+// https://html.spec.whatwg.org/multipage/media.html#dom-texttracklist-item
+JS::ThrowCompletionOr<Optional<JS::PropertyDescriptor>> TextTrackList::internal_get_own_property(JS::PropertyKey const& property_name) const
 {
     // To determine the value of an indexed property of a TextTrackList object for a given index index, the user
     // agent must return the indexth text track in the list represented by the TextTrackList object.
-    if (index >= m_text_tracks.size())
-        return nullptr;
+    if (property_name.is_number()) {
+        if (auto index = property_name.as_number(); index < m_text_tracks.size()) {
+            JS::PropertyDescriptor descriptor;
+            descriptor.value = m_text_tracks.at(index);
 
-    return m_text_tracks.at(index);
-}
+            return descriptor;
+        }
+    }
 
-void TextTrackList::add_track(GC::Ref<TextTrack> text_track)
-{
-    m_text_tracks.append(text_track);
+    return Base::internal_get_own_property(property_name);
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttracklist-length
@@ -52,7 +57,7 @@ size_t TextTrackList::length() const
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttracklist-gettrackbyid
-GC::Ptr<TextTrack> TextTrackList::get_track_by_id(Utf16View id) const
+GC::Ptr<TextTrack> TextTrackList::get_track_by_id(StringView id) const
 {
     // The getTrackById(id) method must return the first TextTrack in the TextTrackList object whose id
     // IDL attribute would return a value equal to the value of the id argument.

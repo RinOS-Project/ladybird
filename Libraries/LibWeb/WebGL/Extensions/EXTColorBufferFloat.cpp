@@ -5,25 +5,31 @@
  */
 
 #include <LibJS/Runtime/Realm.h>
-#include <LibWeb/Bindings/EXTColorBufferFloat.h>
+#include <LibWeb/Bindings/EXTColorBufferFloatPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/WebGL/Extensions/EXTColorBufferFloat.h>
-#include <LibWeb/WebGL/WebGLContextProxy.h>
+#include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
-namespace Web::WebGL {
+namespace Web::WebGL::Extensions {
 
 GC_DEFINE_ALLOCATOR(EXTColorBufferFloat);
 
-GC::Ref<Bindings::Wrappable> EXTColorBufferFloat::create(GC::Ref<WebGLRenderingContextBase> context)
+JS::ThrowCompletionOr<GC::Ref<JS::Object>> EXTColorBufferFloat::create(JS::Realm& realm, GC::Ref<WebGLRenderingContextBase> context)
 {
-    auto& realm = context->realm();
     return realm.create<EXTColorBufferFloat>(realm, context);
 }
 
-EXTColorBufferFloat::EXTColorBufferFloat(JS::Realm&, GC::Ref<WebGLRenderingContextBase> context)
-    : m_context(context)
+EXTColorBufferFloat::EXTColorBufferFloat(JS::Realm& realm, GC::Ref<WebGLRenderingContextBase> context)
+    : PlatformObject(realm)
+    , m_context(context)
 {
+}
+
+void EXTColorBufferFloat::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(EXTColorBufferFloat);
+    Base::initialize(realm);
 }
 
 void EXTColorBufferFloat::visit_edges(Visitor& visitor)

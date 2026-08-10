@@ -7,7 +7,7 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
-#include <AK/Utf16String.h>
+#include <AK/ByteString.h>
 #include <AK/Variant.h>
 #include <LibIPC/File.h>
 #include <LibIPC/Forward.h>
@@ -22,15 +22,17 @@ enum class AllowMultipleFiles {
 
 class WEB_API SelectedFile {
 public:
-    SelectedFile(Utf16String name, ByteBuffer contents);
-    SelectedFile(Utf16String name, IPC::File file);
+    static ErrorOr<SelectedFile> from_file_path(ByteString const& file_path);
 
-    Utf16String const& name() const { return m_name; }
+    SelectedFile(ByteString name, ByteBuffer contents);
+    SelectedFile(ByteString name, IPC::File file);
+
+    ByteString const& name() const { return m_name; }
     auto const& file_or_contents() const { return m_file_or_contents; }
     ByteBuffer take_contents();
 
 private:
-    Utf16String m_name;
+    ByteString m_name;
     Variant<IPC::File, ByteBuffer> m_file_or_contents;
 };
 

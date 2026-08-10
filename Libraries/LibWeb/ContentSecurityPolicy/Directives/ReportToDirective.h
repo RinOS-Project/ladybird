@@ -19,7 +19,7 @@ public:
     virtual ~ReportToDirective() = default;
 
 private:
-    ReportToDirective(Utf16FlyString name, Vector<Utf16String> value);
+    ReportToDirective(String name, Vector<String> value);
 };
 
 }

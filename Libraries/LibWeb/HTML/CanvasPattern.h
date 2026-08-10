@@ -8,41 +8,28 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
 #include <LibGfx/PaintStyle.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/Export.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/HTML/Canvas/CanvasDrawImage.h>
-
-namespace Web::Bindings {
-
-struct DOMMatrix2DInit;
-
-}
-
-namespace Web::Geometry {
-
-class DOMMatrix;
-
-}
 
 namespace Web::HTML {
 
-class CanvasPattern final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(CanvasPattern, Bindings::GCAllocatedWrappable);
+class CanvasPattern final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(CanvasPattern, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(CanvasPattern);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ptr<CanvasPattern>> create(CanvasImageSource const& image, Utf16FlyString const& repetition);
+    static WebIDL::ExceptionOr<GC::Ptr<CanvasPattern>> create(JS::Realm&, CanvasImageSource const& image, StringView repetition);
 
     ~CanvasPattern();
 
     NonnullRefPtr<Gfx::PaintStyle> to_gfx_paint_style() { return m_pattern; }
-    WebIDL::ExceptionOr<void> set_transform(GC::Ref<Geometry::DOMMatrix> transform);
-    WebIDL::ExceptionOr<void> set_transform(Bindings::DOMMatrix2DInit const& transform);
+    WebIDL::ExceptionOr<void> set_transform(Geometry::DOMMatrix2DInit& transform);
 
 private:
-    CanvasPattern(Gfx::CanvasPatternPaintStyle&);
+    CanvasPattern(JS::Realm&, Gfx::CanvasPatternPaintStyle&);
+
+    virtual void initialize(JS::Realm&) override;
 
     NonnullRefPtr<Gfx::CanvasPatternPaintStyle> m_pattern;
 };

@@ -6,11 +6,16 @@
  */
 
 #include <AK/GenericShorthands.h>
-#include <AK/HashMap.h>
+#if defined(AK_OS_RINOS)
+#    include <AK/HashMap.h>
+#    include <AK/Time.h>
+#endif
 #include <LibCore/File.h>
 #include <LibCore/MimeData.h>
 #include <LibCore/Notifier.h>
-#include <LibCore/System.h>
+#if defined(AK_OS_RINOS)
+#    include <LibCore/System.h>
+#endif
 #include <LibHTTP/Cache/DiskCache.h>
 #include <LibHTTP/Cache/Utilities.h>
 #include <LibHTTP/Status.h>
@@ -39,341 +44,69 @@ extern OwnPtr<ResourceSubstitutionMap> g_resource_substitution_map;
 
 static long s_connect_timeout_seconds = 90L;
 
-Request::TransferredBodyFile::~TransferredBodyFile()
-{
-    if (fd != -1)
-        (void)Core::System::close(fd);
-}
-
-static void log_network_activity(URL::URL const& url, ByteString const& method, void* curl_easy_handle, int curl_result_code, bool is_revalidation, RequestType type)
-{
-    if constexpr (!REQUESTSERVER_WIRE_DEBUG)
-        return;
-    if (!curl_easy_handle)
-        return;
-
-    auto get_off = [&](auto option) {
-        curl_off_t value = 0;
-        (void)curl_easy_getinfo(curl_easy_handle, option, &value);
-        return value;
-    };
-    auto get_long = [&](auto option) {
-        long value = 0;
-        (void)curl_easy_getinfo(curl_easy_handle, option, &value);
-        return value;
-    };
-
-    long http_status = get_long(CURLINFO_RESPONSE_CODE);
-    long http_version = get_long(CURLINFO_HTTP_VERSION);
-
-    auto queue_us = get_off(CURLINFO_QUEUE_TIME_T);
-    auto namelookup_us = get_off(CURLINFO_NAMELOOKUP_TIME_T);
-    auto connect_us = get_off(CURLINFO_CONNECT_TIME_T);
-    auto appconnect_us = get_off(CURLINFO_APPCONNECT_TIME_T);
-    auto pretransfer_us = get_off(CURLINFO_PRETRANSFER_TIME_T);
-    auto starttransfer_us = get_off(CURLINFO_STARTTRANSFER_TIME_T);
-    auto total_us = get_off(CURLINFO_TOTAL_TIME_T);
-    auto bytes_downloaded = get_off(CURLINFO_SIZE_DOWNLOAD_T);
-    auto bytes_uploaded = get_off(CURLINFO_SIZE_UPLOAD_T);
-    auto download_speed_bps = get_off(CURLINFO_SPEED_DOWNLOAD_T);
-
-    // libcurl phase timings are cumulative from t=0, but skipped phases (e.g. DNS/TCP/TLS on a
-    // reused connection) are reported as 0, breaking the monotonic ordering. Clamp each marker
-    // to the previous one so skipped phases yield a 0-length delta instead of double-counting.
-    auto clamp = [](curl_off_t marker, curl_off_t previous) { return marker > previous ? marker : previous; };
-    auto m_queue = queue_us;
-    auto m_namelookup = clamp(namelookup_us, m_queue);
-    auto m_connect = clamp(connect_us, m_namelookup);
-    auto m_appconnect = clamp(appconnect_us, m_connect);
-    auto m_pretransfer = clamp(pretransfer_us, m_appconnect);
-    auto m_starttransfer = clamp(starttransfer_us, m_pretransfer);
-    auto m_total = clamp(total_us, m_starttransfer);
-
-    auto us_to_ms = [](curl_off_t us) { return static_cast<double>(us) / 1000.0; };
-    auto queue_ms = us_to_ms(m_queue);
-    auto dns_ms = us_to_ms(m_namelookup - m_queue);
-    auto tcp_ms = us_to_ms(m_connect - m_namelookup);
-    auto tls_ms = us_to_ms(m_appconnect - m_connect);
-    auto request_ms = us_to_ms(m_pretransfer - m_appconnect);
-    auto wait_ms = us_to_ms(m_starttransfer - m_pretransfer);
-    auto body_ms = us_to_ms(m_total - m_starttransfer);
-    auto total_ms = us_to_ms(m_total);
-
-    auto kib = [](curl_off_t bytes) { return static_cast<double>(bytes) / 1024.0; };
-
-    StringView http_version_str = "HTTP/?"sv;
-    switch (http_version) {
-    case CURL_HTTP_VERSION_1_0:
-        http_version_str = "HTTP/1.0"sv;
-        break;
-    case CURL_HTTP_VERSION_1_1:
-        http_version_str = "HTTP/1.1"sv;
-        break;
-    case CURL_HTTP_VERSION_2_0:
-        http_version_str = "HTTP/2"sv;
-        break;
-    case CURL_HTTP_VERSION_3:
-        http_version_str = "HTTP/3"sv;
-        break;
-    default:
-        break;
-    }
-
-    StringView kind;
-    if (curl_result_code != CURLE_OK)
-        kind = "FAIL"sv;
-    else if (is_revalidation && http_status == 304)
-        kind = "REVAL-304"sv;
-    else if (is_revalidation)
-        kind = "REVAL-FULL"sv;
-    else
-        kind = "DOWNLOAD"sv;
-
-    StringView background = type == RequestType::BackgroundRevalidation ? " [bg]"sv : ""sv;
-
-    if (curl_result_code != CURLE_OK) {
-        char const* err = curl_easy_strerror(static_cast<CURLcode>(curl_result_code));
-        dbgln_if(REQUESTSERVER_WIRE_DEBUG, "RequestServer wire: {}{} {} {} -> error: {} (after {:.1} ms, wire {:.1} KiB)",
-            kind, background, method, url, err, total_ms, kib(bytes_downloaded));
-        return;
-    }
-
-    auto wire_kibps_during_body = body_ms > 0.0
-        ? kib(bytes_downloaded) / (body_ms / 1000.0)
-        : 0.0;
-
-    dbgln_if(REQUESTSERVER_WIRE_DEBUG, "RequestServer wire: {}{} {} {} {} -> {} | wire {:.1} KiB sent {:.1} KiB | total {:.1} ms = queue {:.1} + dns {:.1} + tcp {:.1} + tls {:.1} + req {:.1} + wait {:.1} + body {:.1} | wire {:.1} KiB/s avg, {:.1} KiB/s during body",
-        kind, background, method, url, http_version_str, http_status,
-        kib(bytes_downloaded), kib(bytes_uploaded),
-        total_ms, queue_ms, dns_ms, tcp_ms, tls_ms, request_ms, wait_ms, body_ms,
-        kib(download_speed_bps), wire_kibps_during_body);
-}
-
-struct WireStats {
-    // Decoded-side (sampled in on_data_received, after curl decompresses)
-    Optional<MonotonicTime> first_chunk_at;
-    Optional<MonotonicTime> last_chunk_at;
-    u64 chunk_count { 0 };
-    u64 total_decoded_bytes { 0 };
-    u64 min_chunk_bytes { NumericLimits<u64>::max() };
-    u64 max_chunk_bytes { 0 };
-    AK::Duration sum_inter_chunk_gaps;
-    AK::Duration max_inter_chunk_gap;
-    u64 stall_count_100ms { 0 };
-    AK::Duration max_stall_started_at;
-    u64 bytes_at_max_stall { 0 };
-
-    // Wire-side (sampled in CURLOPT_XFERINFOFUNCTION, before decompression)
-    Optional<MonotonicTime> first_wire_byte_at;
-    Optional<MonotonicTime> last_wire_byte_at;
-    curl_off_t last_wire_dlnow { 0 };
-    AK::Duration max_wire_gap;
-    AK::Duration max_wire_stall_started_at;
-    curl_off_t wire_bytes_at_max_stall { 0 };
-    u64 wire_stall_count_100ms { 0 };
-
-    // Internal-pipeline lifecycle (set by state-machine handlers).
-    // Lets us see how much wall time we burned in our own code paths
-    // (cache lookup, our DNS resolver, cookie IPC, curl setup) before
-    // libcurl ever saw the request.
-    Optional<MonotonicTime> created_at;
-    Optional<MonotonicTime> dns_started_at;
-    Optional<MonotonicTime> dns_completed_at;
-    Optional<MonotonicTime> cookie_started_at;
-    Optional<MonotonicTime> cookie_completed_at;
-    Optional<MonotonicTime> curl_added_at;
-    Optional<MonotonicTime> complete_observed_at;
-
-    // WebContent-side back-pressure on our outgoing pipe. Updated by
-    // write_queued_bytes_without_blocking when the pipe returns EAGAIN
-    // (WebContent isn't draining fast enough — typically because its main
-    // thread is busy parsing, running JS, etc.). `current_window_started`
-    // is set on entry to a back-pressure window and cleared when we resume
-    // writing successfully.
-    Optional<MonotonicTime> current_pressure_window_started;
-    AK::Duration total_pipe_back_pressure;
-    u64 pipe_back_pressure_events { 0 };
-    u64 max_buffered_bytes { 0 };
+#if defined(AK_OS_RINOS)
+struct RinDNSCacheEntry {
+    NonnullRefPtr<DNS::LookupResult> result;
+    i64 expires_at_ms { 0 };
 };
 
-static HashMap<Request const*, WireStats>& wire_stats()
-{
-    static HashMap<Request const*, WireStats> map;
-    return map;
-}
+static HashMap<ByteString, RinDNSCacheEntry> s_rinos_dns_cache;
+static Threading::Mutex s_rinos_dns_cache_mutex;
+static constexpr i64 s_rinos_dns_cache_ttl_ms = 60'000;
+static constexpr size_t s_rinos_dns_cache_max_entries = 64;
 
-static void record_chunk(Request const* request, size_t bytes)
+static ErrorOr<NonnullRefPtr<DNS::LookupResult>> resolve_host_via_rinos(ByteString const& host)
 {
-    if constexpr (!REQUESTSERVER_WIRE_DEBUG)
-        return;
-    auto now = MonotonicTime::now();
-    auto& stats = wire_stats().ensure(request);
-
-    if (stats.chunk_count == 0) {
-        stats.first_chunk_at = now;
-    } else {
-        auto gap = now - *stats.last_chunk_at;
-        stats.sum_inter_chunk_gaps = stats.sum_inter_chunk_gaps + gap;
-        if (gap > stats.max_inter_chunk_gap) {
-            stats.max_inter_chunk_gap = gap;
-            stats.max_stall_started_at = *stats.last_chunk_at - *stats.first_chunk_at;
-            stats.bytes_at_max_stall = stats.total_decoded_bytes;
-        }
-        if (gap > AK::Duration::from_milliseconds(100))
-            stats.stall_count_100ms += 1;
+    // getaddrinfo() uses the isolated resolved service. Keep a small process
+    // cache here as well: a modern page may request hundreds of resources for
+    // one host, and opening a fresh resolved IPC session for every one needlessly
+    // consumes Unix endpoints. Holding this mutex across a miss coalesces
+    // concurrent lookups for the same host.
+    Threading::MutexLocker locker { s_rinos_dns_cache_mutex };
+    auto now_ms = MonotonicTime::now_coarse().milliseconds();
+    if (auto cached = s_rinos_dns_cache.find(host); cached != s_rinos_dns_cache.end()) {
+        if (cached->value.expires_at_ms > now_ms)
+            return cached->value.result;
+        s_rinos_dns_cache.remove(cached);
     }
 
-    stats.last_chunk_at = now;
-    stats.chunk_count += 1;
-    stats.total_decoded_bytes += bytes;
-    if (bytes < stats.min_chunk_bytes)
-        stats.min_chunk_bytes = bytes;
-    if (bytes > stats.max_chunk_bytes)
-        stats.max_chunk_bytes = bytes;
-}
+    struct addrinfo hints {};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
 
-[[maybe_unused]] static int on_xferinfo(void* user_data, curl_off_t /*dltotal*/, curl_off_t dlnow, curl_off_t /*ultotal*/, curl_off_t /*ulnow*/)
-{
-    if constexpr (!REQUESTSERVER_WIRE_DEBUG)
-        return 0;
-    auto* request = static_cast<Request const*>(user_data);
-    if (dlnow <= 0)
-        return 0;
+    auto addresses = TRY(Core::System::getaddrinfo(host.characters(), nullptr, hints));
+    auto result = make_ref_counted<DNS::LookupResult>(DNS::Messages::DomainName::from_string(host));
+    result->will_add_record_of_type(DNS::Messages::ResourceType::A);
 
-    auto& stats = wire_stats().ensure(request);
-    if (dlnow == stats.last_wire_dlnow)
-        return 0;
-
-    auto now = MonotonicTime::now();
-    if (!stats.first_wire_byte_at.has_value())
-        stats.first_wire_byte_at = now;
-    if (stats.last_wire_byte_at.has_value()) {
-        auto gap = now - *stats.last_wire_byte_at;
-        if (gap > stats.max_wire_gap) {
-            stats.max_wire_gap = gap;
-            stats.max_wire_stall_started_at = *stats.last_wire_byte_at - *stats.first_wire_byte_at;
-            stats.wire_bytes_at_max_stall = stats.last_wire_dlnow;
-        }
-        if (gap > AK::Duration::from_milliseconds(100))
-            stats.wire_stall_count_100ms += 1;
-    }
-    stats.last_wire_byte_at = now;
-    stats.last_wire_dlnow = dlnow;
-    return 0;
-}
-
-static void log_chunk_stats(Request const* request)
-{
-    if constexpr (!REQUESTSERVER_WIRE_DEBUG)
-        return;
-    auto it = wire_stats().find(request);
-    if (it == wire_stats().end())
-        return;
-    auto const& s = it->value;
-    if (s.chunk_count == 0)
-        return;
-
-    auto kib = [](u64 b) { return static_cast<double>(b) / 1024.0; };
-    auto kib_off = [](curl_off_t b) { return static_cast<double>(b) / 1024.0; };
-    auto decoded_span = (s.last_chunk_at.has_value() && s.first_chunk_at.has_value())
-        ? *s.last_chunk_at - *s.first_chunk_at
-        : AK::Duration {};
-    auto decoded_span_ms = decoded_span.to_milliseconds();
-    auto avg_gap_ms = s.chunk_count > 1
-        ? static_cast<double>(s.sum_inter_chunk_gaps.to_microseconds()) / 1000.0 / static_cast<double>(s.chunk_count - 1)
-        : 0.0;
-    auto avg_chunk = s.total_decoded_bytes / s.chunk_count;
-    auto decoded_kibps = decoded_span_ms > 0
-        ? kib(s.total_decoded_bytes) / (static_cast<double>(decoded_span_ms) / 1000.0)
-        : 0.0;
-
-    dbgln_if(REQUESTSERVER_WIRE_DEBUG, "RequestServer wire+:  decoded chunks={} bytes={:.1} KiB span={} ms thru={:.1} KiB/s | gap avg={:.1} ms max={} ms stalls(>100ms)={} | worst gap began at +{} ms after {:.1} KiB decoded | chunk bytes avg={} min={} max={}",
-        s.chunk_count, kib(s.total_decoded_bytes), decoded_span_ms, decoded_kibps,
-        avg_gap_ms, s.max_inter_chunk_gap.to_milliseconds(), s.stall_count_100ms,
-        s.max_stall_started_at.to_milliseconds(), kib(s.bytes_at_max_stall),
-        avg_chunk, s.min_chunk_bytes, s.max_chunk_bytes);
-
-    if (s.first_wire_byte_at.has_value() && s.last_wire_byte_at.has_value()) {
-        auto wire_span = *s.last_wire_byte_at - *s.first_wire_byte_at;
-        auto wire_span_ms = wire_span.to_milliseconds();
-        auto wire_kibps = wire_span_ms > 0
-            ? kib_off(s.last_wire_dlnow) / (static_cast<double>(wire_span_ms) / 1000.0)
-            : 0.0;
-        auto compression_ratio = s.last_wire_dlnow > 0
-            ? static_cast<double>(s.total_decoded_bytes) / static_cast<double>(s.last_wire_dlnow)
-            : 0.0;
-        dbgln_if(REQUESTSERVER_WIRE_DEBUG, "RequestServer wire++: wire bytes={:.1} KiB span={} ms thru={:.1} KiB/s | wire max gap={} ms stalls(>100ms)={} | worst wire gap began at +{} ms after {:.1} KiB on the wire | compression={:.2}x",
-            kib_off(s.last_wire_dlnow), wire_span_ms, wire_kibps,
-            s.max_wire_gap.to_milliseconds(), s.wire_stall_count_100ms,
-            s.max_wire_stall_started_at.to_milliseconds(), kib_off(s.wire_bytes_at_max_stall),
-            compression_ratio);
-    }
-
-    // wire^: pre-network time spent inside RequestServer (cache + our DNS resolver + cookie IPC
-    // + curl setup), and the gap between the wire going quiet and us actually emitting this log
-    // entry. Useful to see if a long "total" was actually our pipeline rather than the network.
-    if (s.created_at.has_value()) {
-        auto delta_ms = [](Optional<MonotonicTime> const& a, Optional<MonotonicTime> const& b) -> i64 {
-            if (!a.has_value() || !b.has_value())
-                return -1;
-            return (*b - *a).to_milliseconds();
-        };
-
-        // Cache + Init + WaitForCache: from creation to start of DNS lookup.
-        auto pre_dns_ms = delta_ms(s.created_at, s.dns_started_at);
-        // Our DNS resolver (note: distinct from libcurl's `dns` field, which is 0 because we
-        // pre-resolve and pass via CURLOPT_RESOLVE).
-        auto our_dns_ms = delta_ms(s.dns_started_at, s.dns_completed_at);
-        // Cookie IPC round-trip to the UI process.
-        auto cookie_ms = delta_ms(s.cookie_started_at, s.cookie_completed_at);
-        // Time from the last completed pre-network step to curl_multi_add_handle.
-        auto curl_setup_ms = [&]() -> i64 {
-            Optional<MonotonicTime> last_pre_curl;
-            if (s.cookie_completed_at.has_value())
-                last_pre_curl = s.cookie_completed_at;
-            else if (s.dns_completed_at.has_value())
-                last_pre_curl = s.dns_completed_at;
-            else
-                last_pre_curl = s.created_at;
-            return delta_ms(last_pre_curl, s.curl_added_at);
-        }();
-        auto pre_curl_total_ms = delta_ms(s.created_at, s.curl_added_at);
-
-        // Drain delay: time between the last byte arriving and check_active_requests draining
-        // the completion. Non-zero would mean we noticed completion later than curl did.
-        Optional<MonotonicTime> last_activity;
-        if (s.last_wire_byte_at.has_value())
-            last_activity = s.last_wire_byte_at;
-        else if (s.last_chunk_at.has_value())
-            last_activity = s.last_chunk_at;
-        auto drain_delay_ms = delta_ms(last_activity, s.complete_observed_at);
-
-        auto fmt_ms = [](i64 ms) -> ByteString {
-            return ms < 0 ? ByteString { "-" } : ByteString::formatted("{}", ms);
-        };
-
-        ByteString back_pressure_summary;
-        if (s.pipe_back_pressure_events > 0) {
-            back_pressure_summary = ByteString::formatted(
-                " | pipe back-pressure events={} total={} ms peak-buffered={} bytes",
-                s.pipe_back_pressure_events,
-                s.total_pipe_back_pressure.to_milliseconds(),
-                s.max_buffered_bytes);
+    bool found_address = false;
+    for (auto const& address : addresses.addresses()) {
+        if (address.ai_family != AF_INET || address.ai_addr == nullptr
+            || address.ai_addrlen < sizeof(sockaddr_in)) {
+            continue;
         }
 
-        dbgln_if(REQUESTSERVER_WIRE_DEBUG, "RequestServer wire^:  internal pre-curl={} ms = cache+init {} + our-dns {} + cookie {} + curl-setup {} | drain delay {} ms{}",
-            fmt_ms(pre_curl_total_ms), fmt_ms(pre_dns_ms), fmt_ms(our_dns_ms),
-            fmt_ms(cookie_ms), fmt_ms(curl_setup_ms), fmt_ms(drain_delay_ms),
-            back_pressure_summary);
+        auto const* ipv4 = reinterpret_cast<sockaddr_in const*>(address.ai_addr);
+        result->add_record({
+            .name = {},
+            .type = DNS::Messages::ResourceType::A,
+            .class_ = DNS::Messages::Class::IN,
+            .ttl = 0,
+            .record = DNS::Messages::Records::A { IPv4Address(ipv4->sin_addr.s_addr) },
+            .raw = {},
+        });
+        found_address = true;
     }
-}
 
-static void mark_lifecycle_event(Request const* request, Optional<MonotonicTime> WireStats::* field)
-{
-    if constexpr (!REQUESTSERVER_WIRE_DEBUG)
-        return;
-    wire_stats().ensure(request).*field = MonotonicTime::now();
+    result->finished_request();
+    if (!found_address)
+        return Error::from_string_literal("RinResolver returned no IPv4 address");
+
+    if (s_rinos_dns_cache.size() >= s_rinos_dns_cache_max_entries)
+        s_rinos_dns_cache.clear();
+    s_rinos_dns_cache.set(host, RinDNSCacheEntry { result, now_ms + s_rinos_dns_cache_ttl_ms });
+    return result;
 }
+#endif
 
 NonnullOwnPtr<Request> Request::fetch(
     u64 request_id,
@@ -387,13 +120,10 @@ NonnullOwnPtr<Request> Request::fetch(
     NonnullRefPtr<HTTP::HeaderList> request_headers,
     ByteBuffer request_body,
     HTTP::Cookie::IncludeCredentials include_credentials,
-    Optional<ByteString> alt_svc_cache_path,
-    Core::ProxyData proxy_data,
-    bool keep_alive_for_transfer,
-    Optional<u32> address_selection_hint)
+    ByteString alt_svc_cache_path,
+    Core::ProxyData proxy_data)
 {
-    auto request = adopt_own(*new Request { request_id, RequestType::Fetch, disk_cache, cache_mode, client, curl_multi, resolver, move(url), move(method), move(request_headers), move(request_body), include_credentials, move(alt_svc_cache_path), proxy_data, keep_alive_for_transfer });
-    request->m_address_selection_hint = address_selection_hint;
+    auto request = adopt_own(*new Request { request_id, Type::Fetch, disk_cache, cache_mode, client, curl_multi, resolver, move(url), move(method), move(request_headers), move(request_body), include_credentials, move(alt_svc_cache_path), proxy_data });
     request->process();
 
     return request;
@@ -408,8 +138,16 @@ NonnullOwnPtr<Request> Request::connect(
     CacheLevel cache_level)
 {
     auto request = adopt_own(*new Request { request_id, client, curl_multi, resolver, move(url) });
-    request->m_connect_cache_level = cache_level;
-    request->transition_to_state(State::DNSLookup);
+
+    switch (cache_level) {
+    case CacheLevel::ResolveOnly:
+        request->transition_to_state(State::DNSLookup);
+        break;
+    case CacheLevel::CreateConnection:
+        request->transition_to_state(State::Connect);
+        break;
+    }
+
     return request;
 }
 
@@ -424,10 +162,10 @@ NonnullOwnPtr<Request> Request::revalidate(
     NonnullRefPtr<HTTP::HeaderList> request_headers,
     ByteBuffer request_body,
     HTTP::Cookie::IncludeCredentials include_credentials,
-    Optional<ByteString> alt_svc_cache_path,
+    ByteString alt_svc_cache_path,
     Core::ProxyData proxy_data)
 {
-    auto request = adopt_own(*new Request { request_id, RequestType::BackgroundRevalidation, disk_cache, HTTP::CacheMode::Default, client, curl_multi, resolver, move(url), move(method), move(request_headers), move(request_body), include_credentials, move(alt_svc_cache_path), proxy_data });
+    auto request = adopt_own(*new Request { request_id, Type::BackgroundRevalidation, disk_cache, HTTP::CacheMode::Default, client, curl_multi, resolver, move(url), move(method), move(request_headers), move(request_body), include_credentials, move(alt_svc_cache_path), proxy_data });
     request->process();
 
     return request;
@@ -435,7 +173,7 @@ NonnullOwnPtr<Request> Request::revalidate(
 
 Request::Request(
     u64 request_id,
-    RequestType type,
+    Type type,
     Optional<HTTP::DiskCache&> disk_cache,
     HTTP::CacheMode cache_mode,
     ConnectionFromClient& client,
@@ -446,14 +184,13 @@ Request::Request(
     NonnullRefPtr<HTTP::HeaderList> request_headers,
     ByteBuffer request_body,
     HTTP::Cookie::IncludeCredentials include_credentials,
-    Optional<ByteString> alt_svc_cache_path,
-    Core::ProxyData proxy_data,
-    bool keep_alive_for_transfer)
+    ByteString alt_svc_cache_path,
+    Core::ProxyData proxy_data)
     : m_request_id(request_id)
     , m_type(type)
     , m_disk_cache(disk_cache)
     , m_cache_mode(cache_mode)
-    , m_client(&client)
+    , m_client(client)
     , m_curl_multi_handle(curl_multi)
     , m_resolver(resolver)
     , m_url(move(url))
@@ -464,10 +201,7 @@ Request::Request(
     , m_alt_svc_cache_path(move(alt_svc_cache_path))
     , m_proxy_data(proxy_data)
     , m_response_headers(HTTP::HeaderList::create())
-    , m_keep_alive_for_transfer(keep_alive_for_transfer)
 {
-    if constexpr (REQUESTSERVER_WIRE_DEBUG)
-        wire_stats().ensure(this).created_at = MonotonicTime::now();
 }
 
 Request::Request(
@@ -477,34 +211,28 @@ Request::Request(
     Resolver& resolver,
     URL::URL url)
     : m_request_id(request_id)
-    , m_type(RequestType::Connect)
-    , m_client(&client)
+    , m_type(Type::Connect)
+    , m_client(client)
     , m_curl_multi_handle(curl_multi)
     , m_resolver(resolver)
     , m_url(move(url))
     , m_request_headers(HTTP::HeaderList::create())
     , m_response_headers(HTTP::HeaderList::create())
 {
-    if constexpr (REQUESTSERVER_WIRE_DEBUG)
-        wire_stats().ensure(this).created_at = MonotonicTime::now();
 }
 
 Request::~Request()
 {
-    if constexpr (REQUESTSERVER_DEBUG) {
-        if (!m_response_buffer.is_eof())
-            dbgln("Warning: Request destroyed with buffered data (it's likely that the client disappeared or the request was cancelled)");
-    }
+    if (!m_response_buffer.is_eof())
+        dbgln("Warning: Request destroyed with buffered data (it's likely that the client disappeared or the request was cancelled)");
 
 #if defined(AK_OS_RINOS)
     if (m_rin_fetch)
         m_rin_fetch->cancel();
 #else
     if (m_curl_easy_handle) {
-        if (m_curl_easy_handle_is_in_multi) {
-            auto result = curl_multi_remove_handle(m_curl_multi_handle, m_curl_easy_handle);
-            VERIFY(result == CURLM_OK);
-        }
+        auto result = curl_multi_remove_handle(m_curl_multi_handle, m_curl_easy_handle);
+        VERIFY(result == CURLM_OK);
 
         curl_easy_cleanup(m_curl_easy_handle);
     }
@@ -519,9 +247,6 @@ Request::~Request()
         else
             m_cache_entry_writer->remove_incomplete_entry();
     }
-
-    if constexpr (REQUESTSERVER_WIRE_DEBUG)
-        wire_stats().remove(this);
 }
 
 void Request::notify_request_unblocked(Badge<HTTP::DiskCache>)
@@ -533,8 +258,7 @@ void Request::notify_request_unblocked(Badge<HTTP::DiskCache>)
 
 void Request::notify_retrieved_http_cookie(Badge<ConnectionFromClient>, StringView cookie)
 {
-    mark_lifecycle_event(this, &WireStats::cookie_completed_at);
-
+    rs_serial("[RS] cookie response received\n");
     if (!cookie.is_empty()) {
         auto header = HTTP::Header::isomorphic_encode("Cookie"sv, cookie);
         m_request_headers->append(move(header));
@@ -567,32 +291,25 @@ void Request::maybe_advance_from_parallel()
 
 void Request::notify_fetch_complete(Badge<ConnectionFromClient>, int result_code)
 {
-    mark_lifecycle_event(this, &WireStats::complete_observed_at);
+    handle_fetch_complete_result(result_code);
+}
 
-    if (m_type == RequestType::Fetch || m_type == RequestType::BackgroundRevalidation) {
-        log_network_activity(m_url, m_method, m_curl_easy_handle, result_code, is_revalidation_request(), m_type);
-        log_chunk_stats(this);
-    }
-
+void Request::handle_fetch_complete_result(int result_code)
+{
     if (is_revalidation_request()) {
-        if (result_code == CURLE_OK && acquire_status_code() == 304) {
-            if (m_type == RequestType::BackgroundRevalidation && m_disk_cache->mode() == HTTP::DiskCache::Mode::Testing)
+        if (acquire_status_code() == 304) {
+            if (m_type == Type::BackgroundRevalidation && m_disk_cache->mode() == HTTP::DiskCache::Mode::Testing)
                 m_response_headers->set({ HTTP::TEST_CACHE_REVALIDATION_STATUS_HEADER, "fresh"sv });
 
             m_cache_entry_reader->revalidation_succeeded(m_response_headers);
-            transition_to_state(m_type == RequestType::Fetch ? State::ReadCache : State::Complete);
+            transition_to_state(m_type == Type::Fetch ? State::ReadCache : State::Complete);
             return;
         }
 
         if (revalidation_failed().is_error())
             return;
 
-        // Only forward the response to the client if the network request actually produced one. If the request failed
-        // at the transport level (e.g. connection refused), there's no response; fall through so the request completes
-        // with a network error — exactly like a non-revalidation request whose connection failed. Otherwise, the client
-        // would receive an empty response with HTTP status 0 — and then wait forever for a body that will never arrive.
-        if (result_code == CURLE_OK)
-            transfer_headers_to_client_if_needed();
+        transfer_headers_to_client_if_needed();
     }
 
 #if defined(AK_OS_RINOS)
@@ -667,7 +384,7 @@ void Request::handle_initial_state()
     if (m_cache_mode == HTTP::CacheMode::NoStore) {
         m_cache_status = HTTP::CacheRequest::CacheStatus::NotCached;
     } else if (m_disk_cache.has_value()) {
-        auto open_mode = m_type == RequestType::BackgroundRevalidation
+        auto open_mode = m_type == Type::BackgroundRevalidation
             ? HTTP::DiskCache::OpenMode::Revalidate
             : HTTP::DiskCache::OpenMode::Read;
 
@@ -678,13 +395,13 @@ void Request::handle_initial_state()
 
                     if (m_cache_entry_reader.has_value()) {
                         if (m_cache_entry_reader->revalidation_type() == HTTP::CacheEntryReader::RevalidationType::StaleWhileRevalidate)
-                            m_client->start_revalidation_request({}, m_method, m_url, m_request_headers, m_request_body, m_include_credentials, m_proxy_data);
+                            m_client.start_revalidation_request({}, m_method, m_url, m_request_headers, m_request_body, m_include_credentials, m_proxy_data);
 
                         if (is_revalidation_request())
                             transition_to_state(State::DNSLookup);
                         else
                             transition_to_state(State::ReadCache);
-                    } else if (m_type == RequestType::BackgroundRevalidation) {
+                    } else if (m_type == Type::BackgroundRevalidation) {
                         // If we were not able to open a cache entry reader for revalidation requests, there's no point
                         // in issuing a request over the network.
                         transition_to_state(State::Complete);
@@ -732,54 +449,28 @@ void Request::handle_read_cache_state()
     m_response_headers = m_cache_entry_reader->response_headers();
     m_cache_status = CacheStatus::ReadFromCache;
 
+    if (inform_client_request_started().is_error())
+        return;
     transfer_headers_to_client_if_needed();
 
-    if (m_cache_entry_reader->body_size() < static_cast<u64>(PAGE_SIZE)) {
-        if (inform_client_request_started().is_error())
-            return;
+    m_cache_entry_reader->send_to(
+        m_client_request_pipe->writer_fd(),
+        weak_callback(*this, [](auto& self, auto bytes_sent) {
+            self.m_bytes_transferred_to_client = bytes_sent;
+#if defined(AK_OS_RINOS)
+            self.m_rin_result_code = 0;
+#else
+            self.m_curl_result_code = CURLE_OK;
+#endif
 
-        m_cache_entry_reader->send_to(
-            m_client_request_pipe->writer_fd(),
-            weak_callback(*this, [](auto& self, auto bytes_sent) {
-                self.m_bytes_transferred_to_client = bytes_sent;
-                self.m_curl_result_code = CURLE_OK;
+            self.transition_to_state(State::Complete);
+        }),
+        weak_callback(*this, [](auto& self, auto bytes_sent) {
+            self.m_bytes_transferred_to_client = bytes_sent;
+            self.m_network_error = Requests::NetworkError::CacheReadFailed;
 
-                self.transition_to_state(State::Complete);
-            }),
-            weak_callback(*this, [](auto& self, auto bytes_sent) {
-                self.m_bytes_transferred_to_client = bytes_sent;
-                self.m_network_error = Requests::NetworkError::CacheReadFailed;
-
-                self.transition_to_state(State::Error);
-            }));
-        return;
-    }
-
-    auto body_file = m_cache_entry_reader->take_body_file();
-    if (body_file.is_error()) {
-        m_network_error = Requests::NetworkError::CacheReadFailed;
-        transition_to_state(State::Error);
-        return;
-    }
-
-    auto file = body_file.release_value();
-    m_transferred_body_file.emplace();
-    m_transferred_body_file->fd = file.fd;
-    m_transferred_body_file->offset = file.offset;
-    m_transferred_body_file->size = file.size;
-
-    m_bytes_transferred_to_client = file.size;
-    m_curl_result_code = CURLE_OK;
-
-    if (send_transferred_body_file_to_client().is_error()) {
-        m_network_error = Requests::NetworkError::CacheReadFailed;
-        transition_to_state(State::Error);
-        return;
-    }
-
-    m_cache_entry_reader.clear();
-
-    transition_to_state(State::Complete);
+            self.transition_to_state(State::Error);
+        }));
 }
 
 void Request::handle_failed_cache_only_state()
@@ -923,11 +614,9 @@ void Request::handle_dns_lookup_state()
     return;
 #endif
 
-    mark_lifecycle_event(this, &WireStats::dns_started_at);
-
+#if !defined(AK_OS_RINOS)
     m_resolver->dns.lookup(host, DNS::Messages::Class::IN, { DNS::Messages::ResourceType::A, DNS::Messages::ResourceType::AAAA }, { .validate_dnssec_locally = dns_info.validate_dnssec_locally })
         ->when_rejected(weak_callback(*this, [host](auto& self, auto const& error) {
-            mark_lifecycle_event(&self, &WireStats::dns_completed_at);
             dbgln("Request::handle_dns_lookup_state: DNS lookup failed for '{}': {}", host, error);
 #if defined(AK_OS_RINOS)
             self.m_dns_pending = false;
@@ -936,7 +625,6 @@ void Request::handle_dns_lookup_state()
             self.transition_to_state(State::Error);
         }))
         .when_resolved(weak_callback(*this, [host](auto& self, NonnullRefPtr<DNS::LookupResult const> dns_result) {
-            mark_lifecycle_event(&self, &WireStats::dns_completed_at);
             if (dns_result->is_empty() || !dns_result->has_cached_addresses()) {
                 dbgln("Request::handle_dns_lookup_state: DNS lookup failed for '{}'", host);
 #if defined(AK_OS_RINOS)
@@ -944,12 +632,18 @@ void Request::handle_dns_lookup_state()
 #endif
                 self.m_network_error = Requests::NetworkError::UnableToResolveHost;
                 self.transition_to_state(State::Error);
-            } else if (first_is_one_of(self.m_type, RequestType::Fetch, RequestType::BackgroundRevalidation)) {
+            } else if (first_is_one_of(self.m_type, Type::Fetch, Type::BackgroundRevalidation)) {
+#if defined(AK_OS_RINOS)
+                rs_serial("[RS] DNS resolved (parallel); checking cookie status\n");
+                self.m_dns_result = move(dns_result);
+                self.m_dns_pending = false;
+                if (self.m_state == State::DNSLookup || self.m_state == State::RetrieveCookie)
+                    self.maybe_advance_from_parallel();
+#else
+                rs_serial("[RS] DNS resolved, transitioning to RetrieveCookie\n");
                 self.m_dns_result = move(dns_result);
                 self.transition_to_state(State::RetrieveCookie);
-            } else if (self.m_type == RequestType::Connect && self.m_connect_cache_level == CacheLevel::CreateConnection) {
-                self.m_dns_result = move(dns_result);
-                self.transition_to_state(State::Connect);
+#endif
             } else {
 #if defined(AK_OS_RINOS)
                 self.m_dns_pending = false;
@@ -969,8 +663,8 @@ void Request::handle_retrieve_cookie_state()
     }
 
     if (auto connection = ConnectionFromClient::primary_connection(); connection.has_value()) {
-        mark_lifecycle_event(this, &WireStats::cookie_started_at);
-        connection->async_retrieve_http_cookie(m_client->client_id(), m_request_id, m_type, m_url, m_client->is_private());
+        rs_serial("[RS] cookie IPC sent\n");
+        connection->async_retrieve_http_cookie(m_client.client_id(), m_request_id, m_url);
     } else {
         rs_serial("[RS] cookie IPC FAILED: no primary connection\n");
         m_network_error = Requests::NetworkError::RequestServerDied;
@@ -1005,20 +699,9 @@ void Request::handle_connect_state()
     set_option(CURLOPT_CONNECTTIMEOUT, s_connect_timeout_seconds);
     set_option(CURLOPT_CONNECT_ONLY, 1L);
 
-    // Pre-populate the multi's hostcache so libcurl skips its threaded resolver entirely.
-    VERIFY(m_dns_result);
-    auto formatted_address = build_curl_resolve_list(*m_dns_result, m_url.serialized_host(), m_url.port_or_default());
-    if (curl_slist* resolve_list = curl_slist_append(nullptr, formatted_address.characters())) {
-        set_option(CURLOPT_RESOLVE, resolve_list);
-        m_curl_string_lists.append(resolve_list);
-    } else {
-        VERIFY_NOT_REACHED();
-    }
-
-    mark_lifecycle_event(this, &WireStats::curl_added_at);
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
     VERIFY(result == CURLM_OK);
-    m_curl_easy_handle_is_in_multi = true;
+#endif
 }
 
 void Request::handle_fetch_state()
@@ -1098,9 +781,8 @@ void Request::handle_fetch_state()
     set_option(CURLOPT_URL, m_url.to_byte_string().characters());
     set_option(CURLOPT_PORT, m_url.port_or_default());
     set_option(CURLOPT_CONNECTTIMEOUT, s_connect_timeout_seconds);
-
-    if (m_alt_svc_cache_path.has_value())
-        set_option(CURLOPT_ALTSVC, m_alt_svc_cache_path->characters());
+    set_option(CURLOPT_PIPEWAIT, 1L);
+    set_option(CURLOPT_ALTSVC, m_alt_svc_cache_path.characters());
 
     set_option(CURLOPT_CUSTOMREQUEST, m_method.characters());
     set_option(CURLOPT_FOLLOWLOCATION, 0);
@@ -1170,12 +852,6 @@ void Request::handle_fetch_state()
     set_option(CURLOPT_WRITEFUNCTION, &on_data_received);
     set_option(CURLOPT_WRITEDATA, this);
 
-    if constexpr (REQUESTSERVER_WIRE_DEBUG) {
-        set_option(CURLOPT_NOPROGRESS, 0L);
-        set_option(CURLOPT_XFERINFOFUNCTION, &on_xferinfo);
-        set_option(CURLOPT_XFERINFODATA, this);
-    }
-
     VERIFY(m_dns_result);
     auto formatted_address = build_curl_resolve_list(*m_dns_result, m_url.serialized_host(), m_url.port_or_default());
 
@@ -1186,29 +862,27 @@ void Request::handle_fetch_state()
         VERIFY_NOT_REACHED();
     }
 
-    // CURLOPT_CONNECT_TO pins this handle without poisoning the shared CURLOPT_RESOLVE host cache.
-    if (m_address_selection_hint.has_value() && DNSInfo::the().uses_configured_dns_server()) {
-        auto connect_to = build_curl_connect_to_entry(*m_dns_result, m_url.serialized_host(), m_url.port_or_default(), *m_address_selection_hint);
-
-        if (connect_to.has_value()) {
-            if (curl_slist* connect_to_list = curl_slist_append(nullptr, connect_to->characters())) {
-                set_option(CURLOPT_CONNECT_TO, connect_to_list);
-                m_curl_string_lists.append(connect_to_list);
-            } else {
-                VERIFY_NOT_REACHED();
-            }
-        }
-    }
-
-    mark_lifecycle_event(this, &WireStats::curl_added_at);
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
     VERIFY(result == CURLM_OK);
-    m_curl_easy_handle_is_in_multi = true;
+#endif
 }
 
 void Request::handle_complete_state()
 {
-    if (m_type == RequestType::Fetch) {
+    if (m_type == Type::Fetch) {
+#if defined(AK_OS_RINOS)
+        VERIFY(m_rin_result_code.has_value());
+
+        if (*m_rin_result_code != 0) {
+            m_network_error = Requests::NetworkError::Unknown;
+            transition_to_state(State::Error);
+            return;
+        }
+
+        auto timing_info = m_rin_fetch ? m_rin_fetch->timing_info() : Requests::RequestTimingInfo {};
+        transfer_headers_to_client_if_needed();
+        m_client.async_request_finished(m_request_id, m_bytes_transferred_to_client, timing_info, m_network_error);
+#else
         VERIFY(m_curl_result_code.has_value());
 
         // HTTPS servers might terminate their connection without proper notice of shutdown - i.e. they do not send
@@ -1233,43 +907,21 @@ void Request::handle_complete_state()
         auto timing_info = acquire_timing_info();
         transfer_headers_to_client_if_needed();
 
-        // Finalize the disk cache entry before notifying WebContent that the request is complete: WebContent may
-        // immediately fire off a JavaScript bytecode cache store against this entry, and that store needs the cache
-        // index row to already exist. If we notified first the store would race the index write and be rejected.
-        Optional<HTTP::CacheEntryBodyFile> cached_body_file;
-        if (m_cache_entry_writer.has_value()) {
-            if (m_cache_entry_writer->body_size() >= static_cast<u64>(PAGE_SIZE)) {
-                auto body_file = m_cache_entry_writer->flush_and_take_body_file(m_request_headers, m_response_headers);
-                if (!body_file.is_error())
-                    cached_body_file = body_file.release_value();
-            } else {
-                (void)m_cache_entry_writer->flush(m_request_headers, m_response_headers);
-            }
-            m_cache_entry_writer.clear();
-        }
-
-        if (cached_body_file.has_value())
-            m_client->async_request_cached_body_file_available(m_request_id, IPC::File::adopt_fd(cached_body_file->fd), cached_body_file->offset, cached_body_file->size);
-
-        m_client->async_request_finished(m_request_id, m_bytes_transferred_to_client, timing_info, m_network_error);
+        m_client.async_request_finished(m_request_id, m_bytes_transferred_to_client, timing_info, m_network_error);
+#endif
     }
 
-    if (m_cache_entry_writer.has_value()) {
-        (void)m_cache_entry_writer->flush(m_request_headers, m_response_headers);
-        m_cache_entry_writer.clear();
-    }
-
-    m_client->request_complete({}, *this);
+    m_client.request_complete({}, *this);
 }
 
 void Request::handle_error_state()
 {
-    if (m_type == RequestType::Fetch) {
+    if (m_type == Type::Fetch) {
         // FIXME: Implement timing info for failed requests.
-        m_client->async_request_finished(m_request_id, m_bytes_transferred_to_client, {}, m_network_error.value_or(Requests::NetworkError::Unknown));
+        m_client.async_request_finished(m_request_id, m_bytes_transferred_to_client, {}, m_network_error.value_or(Requests::NetworkError::Unknown));
     }
 
-    m_client->request_complete({}, *this);
+    m_client.request_complete({}, *this);
 }
 
 size_t Request::on_header_received(void* buffer, size_t size, size_t nmemb, void* user_data)
@@ -1291,7 +943,7 @@ size_t Request::on_header_received(void* buffer, size_t size, size_t nmemb, void
                 auto decoder = TextCodec::decoder_for_exact_name("ISO-8859-1"sv);
                 VERIFY(decoder.has_value());
 
-                request.m_reason_phrase = MUST(decoder->to_utf8(reason_phrase, TextCodec::IgnoreBOM::No, TextCodec::ErrorMode::Replacement));
+                request.m_reason_phrase = MUST(decoder->to_utf8(reason_phrase));
                 return total_size;
             }
         }
@@ -1309,9 +961,6 @@ size_t Request::on_header_received(void* buffer, size_t size, size_t nmemb, void
 size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* user_data)
 {
     auto& request = *static_cast<Request*>(user_data);
-
-    if (request.m_type == RequestType::Fetch || request.m_type == RequestType::BackgroundRevalidation)
-        record_chunk(&request, size * nmemb);
 
     if (request.is_revalidation_request()) {
         // If we arrive here, we did not receive an HTTP 304 response code. We must remove the cache entry and inform
@@ -1358,72 +1007,9 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
     return total_size;
 }
 
-ErrorOr<void> Request::detach_curl_handle_from_multi()
-{
-    if (!m_curl_easy_handle)
-        return {};
-
-    if (!m_curl_easy_handle_is_in_multi)
-        return {};
-
-    auto remove_result = curl_multi_remove_handle(m_curl_multi_handle, m_curl_easy_handle);
-    if (remove_result != CURLM_OK)
-        return Error::from_string_literal("Failed to remove curl easy handle from multi handle");
-
-    m_curl_easy_handle_is_in_multi = false;
-    return {};
-}
-
-ErrorOr<void> Request::transfer_to_client(ConnectionFromClient& client, u64 request_id)
-{
-    if (m_type == RequestType::BackgroundRevalidation)
-        return Error::from_string_literal("Cannot transfer background revalidation requests");
-
-    auto was_complete = is_complete();
-    auto& previous_client = *m_client;
-    auto previous_request_id = m_request_id;
-
-    if (was_complete)
-        TRY(detach_curl_handle_from_multi());
-    else if (&previous_client != &client)
-        m_network_connection_keep_alive = &previous_client;
-
-    m_client = &client;
-    m_request_id = request_id;
-    m_keep_alive_for_transfer = false;
-
-    if (m_client_request_pipe.has_value())
-        TRY(send_request_pipe_to_client());
-
-    if (m_sent_response_headers_to_client)
-        send_headers_to_client();
-
-    if (m_transferred_body_file.has_value())
-        TRY(send_transferred_body_file_to_client());
-
-    if (was_complete) {
-        if (m_state == State::Complete)
-            m_client->async_request_finished(m_request_id, m_bytes_transferred_to_client, acquire_timing_info(), m_network_error);
-        else
-            m_client->async_request_finished(m_request_id, m_bytes_transferred_to_client, {}, m_network_error.value_or(Requests::NetworkError::Unknown));
-    } else {
-        previous_client.async_request_transferred(previous_request_id);
-    }
-
-    return {};
-}
-
-ErrorOr<void> Request::send_transferred_body_file_to_client()
-{
-    VERIFY(m_transferred_body_file.has_value());
-    auto fd = TRY(Core::System::dup(m_transferred_body_file->fd));
-    m_client->async_request_body_file_available(m_request_id, IPC::File::adopt_fd(fd), m_transferred_body_file->offset, m_transferred_body_file->size);
-    return {};
-}
-
 ErrorOr<void> Request::inform_client_request_started()
 {
-    if (m_type == RequestType::BackgroundRevalidation)
+    if (m_type == Type::BackgroundRevalidation)
         return {};
 
     auto request_pipe = RequestPipe::create();
@@ -1434,16 +1020,8 @@ ErrorOr<void> Request::inform_client_request_started()
     }
 
     m_client_request_pipe = request_pipe.release_value();
-    TRY(send_request_pipe_to_client());
+    m_client.async_request_started(m_request_id, IPC::File::adopt_fd(m_client_request_pipe->reader_fd()));
 
-    return {};
-}
-
-ErrorOr<void> Request::send_request_pipe_to_client()
-{
-    VERIFY(m_client_request_pipe.has_value());
-    auto reader_fd = TRY(Core::System::dup(m_client_request_pipe->reader_fd()));
-    m_client->async_request_started(m_request_id, IPC::File::adopt_fd(reader_fd));
     return {};
 }
 
@@ -1465,7 +1043,7 @@ void Request::transfer_headers_to_client_if_needed()
         }
     }
 
-    if (m_type == RequestType::BackgroundRevalidation)
+    if (m_type == Type::BackgroundRevalidation)
         return;
 
     if (m_disk_cache.has_value() && m_disk_cache->mode() == HTTP::DiskCache::Mode::Testing) {
@@ -1484,50 +1062,40 @@ void Request::transfer_headers_to_client_if_needed()
         }
     }
 
-    Optional<IPC::File> javascript_bytecode;
-    u64 javascript_bytecode_size { 0 };
-    Optional<u64> javascript_bytecode_cache_vary_key;
-    if (m_cache_status == CacheStatus::ReadFromCache && m_disk_cache.has_value()) {
-        VERIFY(m_cache_entry_reader.has_value());
-        javascript_bytecode_cache_vary_key = m_cache_entry_reader->vary_key();
-        auto data = m_disk_cache->retrieve_associated_data_file(m_url, m_method, *m_request_headers, javascript_bytecode_cache_vary_key, HTTP::CacheEntryAssociatedData::JavaScriptBytecode);
-        if (!data.is_error() && data.value().has_value()) {
-            javascript_bytecode_size = data.value()->size;
-            javascript_bytecode = IPC::File::adopt_fd(data.value()->fd);
-        }
-    } else if (m_cache_status == CacheStatus::WrittenToCache && m_cache_entry_writer.has_value()) {
-        javascript_bytecode_cache_vary_key = m_cache_entry_writer->vary_key();
-    }
-
-    send_headers_to_client(move(javascript_bytecode), javascript_bytecode_size, javascript_bytecode_cache_vary_key);
-}
-
-void Request::send_headers_to_client(Optional<IPC::File> javascript_bytecode, u64 javascript_bytecode_size, Optional<u64> javascript_bytecode_cache_vary_key)
-{
-    auto came_from_cache = m_cache_status == CacheStatus::ReadFromCache
-        ? Requests::CameFromCache::Yes
-        : Requests::CameFromCache::No;
-    m_client->async_headers_became_available(m_request_id, m_response_headers->headers(), m_status_code, m_reason_phrase, move(javascript_bytecode), javascript_bytecode_size, javascript_bytecode_cache_vary_key, came_from_cache);
+    m_client.async_headers_became_available(m_request_id, m_response_headers->headers(), m_status_code, m_reason_phrase);
 }
 
 ErrorOr<void> Request::write_queued_bytes_without_blocking()
 {
+    // 固定サイズのスタックスクラッチで peek → write → discard を繰り返す。
+    // 以前は m_response_buffer.used_buffer_size() 全体を Vector<u8> に new していた
+    // ため、producer 側が inner loop で詰め込むと毎回巨大な malloc/free が発生し、
+    // ユーザヒープが二次関数的に膨張して OOM に至っていた。このチャンク化で
+    // RSS を「パイプで送れていない残量 + 16KiB」に抑える。
+    constexpr size_t SCRATCH_SIZE = 16 * 1024;
+    u8 scratch[SCRATCH_SIZE];
+
     auto write_bytes_to_disk_cache = [&](ReadonlyBytes bytes) {
         if (!m_cache_entry_writer.has_value())
             return;
-
         if (m_cache_entry_writer->write_data(bytes).is_error())
             m_cache_entry_writer.clear();
     };
 
-    if (m_type == RequestType::BackgroundRevalidation) {
-        while (!m_response_buffer.is_eof()) {
-            auto bytes = m_response_buffer.peek_some_contiguous();
-            write_bytes_to_disk_cache(bytes);
-            MUST(m_response_buffer.discard(bytes.size()));
+    if (m_type == Type::BackgroundRevalidation) {
+        while (m_response_buffer.used_buffer_size() > 0) {
+            size_t chunk = min(SCRATCH_SIZE, m_response_buffer.used_buffer_size());
+            Bytes span { scratch, chunk };
+            m_response_buffer.peek_some(span);
+            write_bytes_to_disk_cache(ReadonlyBytes { scratch, chunk });
+            MUST(m_response_buffer.discard(chunk));
         }
 
-        if (m_curl_result_code.has_value())
+#if defined(AK_OS_RINOS)
+        if (m_response_buffer.is_eof() && m_rin_result_code.has_value())
+#else
+        if (m_response_buffer.is_eof() && m_curl_result_code.has_value())
+#endif
             transition_to_state(State::Complete);
 
         return {};
@@ -1539,63 +1107,51 @@ ErrorOr<void> Request::write_queued_bytes_without_blocking()
 
         m_client_writer_notifier->on_activation = weak_callback(*this, [](auto& self) {
             if (auto result = self.write_queued_bytes_without_blocking(); result.is_error()) {
-                self.m_client_writer_notifier->set_enabled(false);
-                dbgln_if(REQUESTSERVER_DEBUG, "Warning: Failed to write buffered request data (it's likely the client disappeared): {}", result.error());
+                auto error = result.release_error();
+                self.abandon_client_response(error);
             }
         });
     }
 
-    if constexpr (REQUESTSERVER_WIRE_DEBUG) {
-        auto& stats = wire_stats().ensure(this);
-        if (stats.current_pressure_window_started.has_value()) {
-            auto window = MonotonicTime::now() - *stats.current_pressure_window_started;
-            stats.total_pipe_back_pressure = stats.total_pipe_back_pressure + window;
-            stats.current_pressure_window_started = {};
-            if (window.to_milliseconds() > 50) {
-                dbgln("RequestServer wire-pipe-pressure: {} {} unblocked after {} ms (peak buffered={} bytes); WebContent likely behind",
-                    m_method, m_url, window.to_milliseconds(), stats.max_buffered_bytes);
-            }
-        }
-    }
+    while (m_response_buffer.used_buffer_size() > 0) {
+        size_t chunk = min(SCRATCH_SIZE, m_response_buffer.used_buffer_size());
+        Bytes span { scratch, chunk };
+        m_response_buffer.peek_some(span);
+        ReadonlyBytes send_bytes { scratch, chunk };
 
-    while (!m_response_buffer.is_eof()) {
-        auto bytes = m_response_buffer.peek_some_contiguous();
-
-        auto result = m_client_request_pipe->write(bytes);
+        auto result = m_client_request_pipe->write(send_bytes);
         if (result.is_error()) {
             if (!first_is_one_of(result.error().code(), EAGAIN, EWOULDBLOCK))
                 return result.release_error();
 
-            if constexpr (REQUESTSERVER_WIRE_DEBUG) {
-                auto& stats = wire_stats().ensure(this);
-                if (!stats.current_pressure_window_started.has_value()) {
-                    stats.current_pressure_window_started = MonotonicTime::now();
-                    stats.pipe_back_pressure_events += 1;
-                    dbgln("RequestServer wire-pipe-pressure: {} {} pipe full, buffering={} bytes",
-                        m_method, m_url, m_response_buffer.used_buffer_size());
-                }
-                if (m_response_buffer.used_buffer_size() > stats.max_buffered_bytes)
-                    stats.max_buffered_bytes = m_response_buffer.used_buffer_size();
-            }
-
             m_client_writer_notifier->set_enabled(true);
             return {};
         }
 
-        auto written = result.value();
-        write_bytes_to_disk_cache(bytes.slice(0, written));
-        MUST(m_response_buffer.discard(written));
+        size_t written = result.value();
+        if (written == 0) {
+            // 送れない (fd closed 等) - notifier に任せて離脱。
+            m_client_writer_notifier->set_enabled(true);
+            return {};
+        }
 
+        write_bytes_to_disk_cache(send_bytes.slice(0, written));
+        MUST(m_response_buffer.discard(written));
         m_bytes_transferred_to_client += written;
 
-        if (written < bytes.size()) {
+        if (written < chunk) {
+            // パイプが飽和 (部分書き込み)。notifier を有効化してリトライを待つ。
             m_client_writer_notifier->set_enabled(true);
             return {};
         }
     }
 
-    m_client_writer_notifier->set_enabled(false);
-    if (m_curl_result_code.has_value())
+    m_client_writer_notifier->set_enabled(!m_response_buffer.is_eof());
+#if defined(AK_OS_RINOS)
+    if (m_response_buffer.is_eof() && m_rin_result_code.has_value())
+#else
+    if (m_response_buffer.is_eof() && m_curl_result_code.has_value())
+#endif
         transition_to_state(State::Complete);
 
     return {};
@@ -1635,11 +1191,11 @@ void Request::abandon_client_response(Error const& error)
 bool Request::is_revalidation_request() const
 {
     switch (m_type) {
-    case RequestType::Fetch:
+    case Type::Fetch:
         return m_cache_entry_reader.has_value() && m_cache_entry_reader->revalidation_type() == HTTP::CacheEntryReader::RevalidationType::MustRevalidate;
-    case RequestType::Connect:
+    case Type::Connect:
         return false;
-    case RequestType::BackgroundRevalidation:
+    case Type::BackgroundRevalidation:
         return m_cache_entry_reader.has_value();
     }
     VERIFY_NOT_REACHED();
@@ -1647,7 +1203,7 @@ bool Request::is_revalidation_request() const
 
 ErrorOr<void> Request::revalidation_failed()
 {
-    if (m_type == RequestType::BackgroundRevalidation && m_disk_cache->mode() == HTTP::DiskCache::Mode::Testing)
+    if (m_type == Type::BackgroundRevalidation && m_disk_cache->mode() == HTTP::DiskCache::Mode::Testing)
         m_response_headers->set({ HTTP::TEST_CACHE_REVALIDATION_STATUS_HEADER, "expired"sv });
 
     m_cache_entry_reader->revalidation_failed();

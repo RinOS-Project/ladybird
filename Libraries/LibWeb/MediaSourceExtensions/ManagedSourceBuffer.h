@@ -12,7 +12,7 @@ namespace Web::MediaSourceExtensions {
 
 // https://w3c.github.io/media-source/#managedsourcebuffer-interface
 class ManagedSourceBuffer : public SourceBuffer {
-    WEB_WRAPPABLE(ManagedSourceBuffer, SourceBuffer);
+    WEB_PLATFORM_OBJECT(ManagedSourceBuffer, SourceBuffer);
     GC_DECLARE_ALLOCATOR(ManagedSourceBuffer);
 
 public:
@@ -20,9 +20,11 @@ public:
     GC::Ptr<WebIDL::CallbackType> onbufferedchange();
 
 private:
-    ManagedSourceBuffer(ManagedMediaSource&, GC::Ref<HTML::AudioTrackList>, GC::Ref<HTML::VideoTrackList>, GC::Ref<HTML::TextTrackList>);
+    ManagedSourceBuffer(JS::Realm&);
 
     virtual ~ManagedSourceBuffer() override;
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

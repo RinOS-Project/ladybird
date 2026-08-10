@@ -169,8 +169,20 @@ public:
     constexpr Duration() = default;
     constexpr Duration(Duration const&) = default;
     constexpr Duration& operator=(Duration const&) = default;
-    constexpr Duration(Duration&&) = default;
-    constexpr Duration& operator=(Duration&&) = default;
+
+    constexpr Duration(Duration&& other)
+        : m_seconds(exchange(other.m_seconds, 0))
+        , m_nanoseconds(exchange(other.m_nanoseconds, 0))
+    {
+    }
+    constexpr Duration& operator=(Duration&& other)
+    {
+        if (this != &other) {
+            m_seconds = exchange(other.m_seconds, 0);
+            m_nanoseconds = exchange(other.m_nanoseconds, 0);
+        }
+        return *this;
+    }
 
 private:
     // This must be part of the header in order to make the various 'from_*' functions constexpr.
@@ -235,7 +247,6 @@ public:
     [[nodiscard]] static Duration from_timespec(const struct timespec&);
     [[nodiscard]] static Duration from_timeval(const struct timeval&);
     [[nodiscard]] static Duration from_time_units(i64 units, u32 numerator, u32 denominator);
-    [[nodiscard]] Duration scaled_by(u32 numerator, u32 denominator) const;
     // We don't pull in <stdint.h> for the pretty min/max definitions because this file is also included in the Kernel
     [[nodiscard]] constexpr static Duration min() { return Duration(-__INT64_MAX__ - 1LL, 0); }
     [[nodiscard]] constexpr static Duration zero() { return Duration(0, 0); }
@@ -359,8 +370,6 @@ private:
     u32 m_nanoseconds { 0 }; // Always less than 1'000'000'000
 };
 
-static_assert(IsTriviallyCopyable<Duration>);
-
 template<>
 struct Formatter<Duration> : StandardFormatter {
     ErrorOr<void> format(FormatBuilder&, Duration);
@@ -437,11 +446,6 @@ public:
     [[nodiscard]] constexpr static UnixDateTime from_milliseconds_since_epoch(i64 milliseconds)
     {
         return UnixDateTime { Duration::from_milliseconds(milliseconds) };
-    }
-
-    [[nodiscard]] constexpr static UnixDateTime from_microseconds_since_epoch(i64 microseconds)
-    {
-        return UnixDateTime { Duration::from_microseconds(microseconds) };
     }
 
     [[nodiscard]] constexpr static UnixDateTime from_nanoseconds_since_epoch(i64 nanoseconds)

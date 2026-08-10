@@ -13,14 +13,16 @@ namespace Web::SVG {
 
 // https://svgwg.org/svg2-draft/text.html#InterfaceSVGTSpanElement
 class SVGTSpanElement : public SVGTextPositioningElement {
-    WEB_WRAPPABLE(SVGTSpanElement, SVGTextPositioningElement);
+    WEB_PLATFORM_OBJECT(SVGTSpanElement, SVGTextPositioningElement);
     GC_DECLARE_ALLOCATOR(SVGTSpanElement);
 
 public:
-    virtual RefPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::ComputedValues const>) override;
+    virtual GC::Ptr<Layout::Node> create_layout_node(GC::Ref<CSS::ComputedProperties>) override;
 
 protected:
     SVGTSpanElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

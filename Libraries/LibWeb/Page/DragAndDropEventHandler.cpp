@@ -1,25 +1,16 @@
 /*
- * Copyright (c) 2024-2026, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2024, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/ScopeGuard.h>
-#include <AK/Utf16StringBuilder.h>
 #include <LibWeb/DOM/Document.h>
-#include <LibWeb/DOM/Element.h>
-#include <LibWeb/HTML/AttributeNames.h>
 #include <LibWeb/HTML/DragEvent.h>
 #include <LibWeb/HTML/EventNames.h>
-#include <LibWeb/HTML/HTMLAnchorElement.h>
-#include <LibWeb/HTML/HTMLElement.h>
-#include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/HTMLTextAreaElement.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/SelectedFile.h>
-#include <LibWeb/HTML/WindowProxy.h>
-#include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/MimeSniff/Resource.h>
 #include <LibWeb/Page/DragAndDropEventHandler.h>
 #include <LibWeb/UIEvents/KeyCode.h>
@@ -35,8 +26,7 @@ void DragAndDropEventHandler::visit_edges(JS::Cell::Visitor& visitor) const
 
 // https://html.spec.whatwg.org/multipage/dnd.html#drag-and-drop-processing-model
 EventResult DragAndDropEventHandler::handle_drag_start(
-    JS::Object const& relevant_global_object,
-    GC::Ptr<DOM::Node> drag_target,
+    JS::Realm& realm,
     CSSPixelPoint screen_position,
     CSSPixelPoint page_offset,
     CSSPixelPoint client_offset,
@@ -46,31 +36,18 @@ EventResult DragAndDropEventHandler::handle_drag_start(
     unsigned modifiers,
     Vector<HTML::SelectedFile> files)
 {
-    auto fire_a_drag_and_drop_event = [&](GC::Ptr<DOM::EventTarget> target, Utf16FlyString const& name, GC::Ptr<DOM::EventTarget> related_target = nullptr) {
-        return this->fire_a_drag_and_drop_event(relevant_global_object, target, name, screen_position, page_offset, client_offset, offset, button, buttons, modifiers, related_target);
+    auto fire_a_drag_and_drop_event = [&](GC::Ptr<DOM::EventTarget> target, FlyString const& name, GC::Ptr<DOM::EventTarget> related_target = nullptr) {
+        return this->fire_a_drag_and_drop_event(realm, target, name, screen_position, page_offset, client_offset, offset, button, buttons, modifiers, related_target);
     };
 
     // 1. Determine what is being dragged, as follows:
-    GC::Ptr<DOM::Node> dragged_node;
-
+    //
     //    FIXME: If the drag operation was invoked on a selection, then it is the selection that is being dragged.
-
-    //    Otherwise, if the drag operation was invoked on a Document, it is the first element, going up the ancestor chain,
-    //    starting at the node that the user tried to drag, that has the IDL attribute draggable set to true. If there is
-    //    no such element, then nothing is being dragged; return, the drag-and-drop operation is never started.
-    if (drag_target) {
-        drag_target->for_each_inclusive_ancestor_of_type<HTML::HTMLElement>([&](HTML::HTMLElement& node) {
-            if (!node.draggable())
-                return IterationDecision::Continue;
-
-            dragged_node = node;
-            return IterationDecision::Break;
-        });
-
-        if (!dragged_node)
-            return EventResult::Cancelled;
-    }
-
+    //
+    //    FIXME: Otherwise, if the drag operation was invoked on a Document, it is the first element, going up the ancestor chain,
+    //           starting at the node that the user tried to drag, that has the IDL attribute draggable set to true. If there is
+    //           no such element, then nothing is being dragged; return, the drag-and-drop operation is never started.
+    //
     //    Otherwise, the drag operation was invoked outside the user agent's purview. What is being dragged is defined by
     //    the document or application where the drag was started.
 
@@ -84,17 +61,13 @@ EventResult DragAndDropEventHandler::handle_drag_start(
     //           drag on (typically the Text node that the user originally clicked). If the user did not specify a particular
     //           node, for example if the user just told the user agent to begin a drag of "the selection", then the source
     //           node is the first Text node containing a part of the selection.
-
-    //    Otherwise, if it is an element that is being dragged, then the source node is the element that is being dragged.
-    if (dragged_node) {
-        m_source_node = dragged_node;
-    }
+    //
+    //    FIXME: Otherwise, if it is an element that is being dragged, then the source node is the element that is being dragged.
+    //
     //    Otherwise, the source node is part of another document or application. When this specification requires that
     //    an event be dispatched at the source node in this case, the user agent must instead follow the platform-specific
     //    conventions relevant to that situation.
-    else {
-        m_source_node = nullptr;
-    }
+    m_source_node = nullptr;
 
     // FIXME: 4. Determine the list of dragged nodes, as follows:
     //
@@ -128,9 +101,8 @@ EventResult DragAndDropEventHandler::handle_drag_start(
 
         m_drag_data_store->add_item({
             .kind = HTML::DragDataStoreItem::Kind::File,
-            .type_string = Utf16String::from_utf8(mime_type.essence()),
-            .data = {},
-            .file_data = move(contents),
+            .type_string = mime_type.essence(),
+            .data = move(contents),
             .file_name = file.name(),
         });
     }
@@ -145,42 +117,23 @@ EventResult DragAndDropEventHandler::handle_drag_start(
     //    The actual data
     //        The resulting JSON string.
 
-    // 7. Run the following substeps:
+    // FIXME: 7. Run the following substeps:
     [&]() {
         // 1. Let urls be « ».
-        Vector<Utf16String> urls;
 
         // 2. For each node in the list of dragged nodes:
-        if (auto* element = as_if<DOM::Element>(m_source_node.ptr())) {
-            // If the node is an a element with an href attribute
-            if (is<HTML::HTMLAnchorElement>(element) && element->has_attribute(HTML::AttributeNames::href)) {
-                // Add to urls the result of encoding-parsing-and-serializing a URL given the element's href content
-                // attribute's value, relative to the element's node document.
-                if (auto url = element->document().encoding_parse_and_serialize_url(element->get_attribute_value(HTML::AttributeNames::href)); url.has_value())
-                    urls.append(url.release_value());
-            }
-            // If the node is an img element with a src attribute
-            if (is<HTML::HTMLImageElement>(element) && element->has_attribute(HTML::AttributeNames::src)) {
-                // Add to urls the result of encoding-parsing-and-serializing a URL given the element's src content
-                // attribute's value, relative to the element's node document.
-                if (auto url = element->document().encoding_parse_and_serialize_url(element->get_attribute_value(HTML::AttributeNames::src)); url.has_value())
-                    urls.append(url.release_value());
-            }
-        }
+        //
+        //    If the node is an a element with an href attribute
+        //        Add to urls the result of encoding-parsing-and-serializing a URL given the element's href content
+        //        attribute's value, relative to the element's node document.
+        //    If the node is an img element with a src attribute
+        //        Add to urls the result of encoding-parsing-and-serializing a URL given the element's src content
+        //        attribute's value, relative to the element's node document.
 
         // 3. If urls is still empty, then return.
-        if (urls.is_empty())
-            return;
 
         // 4. Let url string be the result of concatenating the strings in urls, in the order they were added, separated
         //    by a U+000D CARRIAGE RETURN U+000A LINE FEED character pair (CRLF).
-        Utf16StringBuilder url_builder;
-        for (auto const& url : urls) {
-            if (!url_builder.is_empty())
-                url_builder.append_ascii("\r\n"sv);
-            url_builder.append(url);
-        }
-        auto url = url_builder.to_string();
 
         // 5. Add one item to the drag data store item list, with its properties set as follows:
         //
@@ -190,13 +143,6 @@ EventResult DragAndDropEventHandler::handle_drag_start(
         //        Text
         //    The actual data
         //        url string
-        m_drag_data_store->add_item({
-            .kind = HTML::DragDataStoreItem::Kind::Text,
-            .type_string = "text/uri-list"_utf16,
-            .data = move(url),
-            .file_data = {},
-            .file_name = {},
-        });
     }();
 
     // FIXME: 8. Update the drag data store default feedback as appropriate for the user agent (if the user is dragging the
@@ -230,7 +176,8 @@ EventResult DragAndDropEventHandler::handle_drag_start(
 
 // https://html.spec.whatwg.org/multipage/dnd.html#drag-and-drop-processing-model:queue-a-task
 EventResult DragAndDropEventHandler::handle_drag_move(
-    JS::Object const& relevant_global_object,
+    JS::Realm& realm,
+    GC::Ref<DOM::Document> document,
     GC::Ref<DOM::Node> node,
     CSSPixelPoint screen_position,
     CSSPixelPoint page_offset,
@@ -243,8 +190,8 @@ EventResult DragAndDropEventHandler::handle_drag_move(
     if (!has_ongoing_drag_and_drop_operation())
         return EventResult::Cancelled;
 
-    auto fire_a_drag_and_drop_event = [&](GC::Ptr<DOM::EventTarget> target, Utf16FlyString const& name, GC::Ptr<DOM::EventTarget> related_target = nullptr) {
-        return this->fire_a_drag_and_drop_event(relevant_global_object, target, name, screen_position, page_offset, client_offset, offset, button, buttons, modifiers, related_target);
+    auto fire_a_drag_and_drop_event = [&](GC::Ptr<DOM::EventTarget> target, FlyString const& name, GC::Ptr<DOM::EventTarget> related_target = nullptr) {
+        return this->fire_a_drag_and_drop_event(realm, target, name, screen_position, page_offset, client_offset, offset, button, buttons, modifiers, related_target);
     };
 
     // FIXME: 1. If the user agent is still performing the previous iteration of the sequence (if any) when the next iteration
@@ -280,27 +227,39 @@ EventResult DragAndDropEventHandler::handle_drag_move(
             // -> Otherwise
             else {
                 // Fire a DND event named dragenter at the immediate user selection.
-                fire_a_drag_and_drop_event(m_immediate_user_selection, HTML::EventNames::dragenter);
+                auto drag_event = fire_a_drag_and_drop_event(m_immediate_user_selection, HTML::EventNames::dragenter);
 
                 // If the event is canceled, then set the current target element to the immediate user selection.
+                if (drag_event->cancelled()) {
+                    m_current_target_element = m_immediate_user_selection;
+                }
                 // Otherwise, run the appropriate step from the following list:
-                // -> If the immediate user selection is a text control (e.g., textarea, or an input element whose
-                //    type attribute is in the Text state) or an editing host or editable element, and the drag data
-                //    store item list has an item with the drag data item type string "text/plain" and the drag data
-                //    item kind text
-                //        Set the current target element to the immediate user selection anyway.
-                // -> If the immediate user selection is the body element
-                //        Leave the current target element unchanged.
-                // -> Otherwise
-                //        Fire a DND event named dragenter at the body element, if there is one, or at the Document
-                //        object, if not. Then, set the current target element to the body element, regardless of
-                //        whether that event was canceled or not.
+                else {
+                    // -> If the immediate user selection is a text control (e.g., textarea, or an input element whose
+                    //    type attribute is in the Text state) or an editing host or editable element, and the drag data
+                    //    store item list has an item with the drag data item type string "text/plain" and the drag data
+                    //    item kind text
+                    if (allow_text_drop(*m_immediate_user_selection)) {
+                        // Set the current target element to the immediate user selection anyway.
+                        m_current_target_element = m_immediate_user_selection;
+                    }
+                    // -> If the immediate user selection is the body element
+                    else if (m_immediate_user_selection == document->body()) {
+                        // Leave the current target element unchanged.
+                    }
+                    // -> Otherwise
+                    else {
+                        // Fire a DND event named dragenter at the body element, if there is one, or at the Document
+                        // object, if not. Then, set the current target element to the body element, regardless of
+                        // whether that event was canceled or not.
+                        DOM::EventTarget* target = document->body();
+                        if (!target)
+                            target = document;
 
-                // FIXME: Spec isue: Contrary to the spec, all browsers do not require the user script to cancel the
-                //        dragenter event. See: https://github.com/whatwg/html/issues/11608
-                m_current_target_element = is<DOM::Element>(*m_immediate_user_selection)
-                    ? m_immediate_user_selection
-                    : m_immediate_user_selection->first_ancestor_of_type<DOM::Element>();
+                        fire_a_drag_and_drop_event(target, HTML::EventNames::dragenter);
+                        m_current_target_element = document->body();
+                    }
+                }
             }
         }
 
@@ -361,13 +320,13 @@ EventResult DragAndDropEventHandler::handle_drag_move(
 
     // Set 4 continues in handle_drag_end.
     if (drag_event->cancelled())
-        return handle_drag_end(relevant_global_object, Cancelled::Yes, screen_position, page_offset, client_offset, offset, button, buttons, modifiers);
+        return handle_drag_end(realm, Cancelled::Yes, screen_position, page_offset, client_offset, offset, button, buttons, modifiers);
 
     return EventResult::Handled;
 }
 
 EventResult DragAndDropEventHandler::handle_drag_leave(
-    JS::Object const& relevant_global_object,
+    JS::Realm& realm,
     CSSPixelPoint screen_position,
     CSSPixelPoint page_offset,
     CSSPixelPoint client_offset,
@@ -376,24 +335,11 @@ EventResult DragAndDropEventHandler::handle_drag_leave(
     unsigned buttons,
     unsigned modifiers)
 {
-    return handle_drag_end(relevant_global_object, Cancelled::Yes, screen_position, page_offset, client_offset, offset, button, buttons, modifiers);
-}
-
-EventResult DragAndDropEventHandler::handle_drag_cancel(
-    JS::Object const& relevant_global_object,
-    CSSPixelPoint screen_position,
-    CSSPixelPoint page_offset,
-    CSSPixelPoint client_offset,
-    CSSPixelPoint offset,
-    unsigned button,
-    unsigned buttons,
-    unsigned modifiers)
-{
-    return handle_drag_end(relevant_global_object, Cancelled::Yes, screen_position, page_offset, client_offset, offset, button, buttons, modifiers);
+    return handle_drag_end(realm, Cancelled::Yes, screen_position, page_offset, client_offset, offset, button, buttons, modifiers);
 }
 
 EventResult DragAndDropEventHandler::handle_drop(
-    JS::Object const& relevant_global_object,
+    JS::Realm& realm,
     CSSPixelPoint screen_position,
     CSSPixelPoint page_offset,
     CSSPixelPoint client_offset,
@@ -402,12 +348,12 @@ EventResult DragAndDropEventHandler::handle_drop(
     unsigned buttons,
     unsigned modifiers)
 {
-    return handle_drag_end(relevant_global_object, Cancelled::No, screen_position, page_offset, client_offset, offset, button, buttons, modifiers);
+    return handle_drag_end(realm, Cancelled::No, screen_position, page_offset, client_offset, offset, button, buttons, modifiers);
 }
 
 // https://html.spec.whatwg.org/multipage/dnd.html#drag-and-drop-processing-model:event-dnd-drag-3
 EventResult DragAndDropEventHandler::handle_drag_end(
-    JS::Object const& relevant_global_object,
+    JS::Realm& realm,
     Cancelled cancelled,
     CSSPixelPoint screen_position,
     CSSPixelPoint page_offset,
@@ -420,8 +366,8 @@ EventResult DragAndDropEventHandler::handle_drag_end(
     if (!has_ongoing_drag_and_drop_operation())
         return EventResult::Cancelled;
 
-    auto fire_a_drag_and_drop_event = [&](GC::Ptr<DOM::EventTarget> target, Utf16FlyString const& name, GC::Ptr<DOM::EventTarget> related_target = nullptr) {
-        return this->fire_a_drag_and_drop_event(relevant_global_object, target, name, screen_position, page_offset, client_offset, offset, button, buttons, modifiers, related_target);
+    auto fire_a_drag_and_drop_event = [&](GC::Ptr<DOM::EventTarget> target, FlyString const& name, GC::Ptr<DOM::EventTarget> related_target = nullptr) {
+        return this->fire_a_drag_and_drop_event(realm, target, name, screen_position, page_offset, client_offset, offset, button, buttons, modifiers, related_target);
     };
 
     ScopeGuard guard { [&]() { reset(); } };
@@ -525,9 +471,9 @@ EventResult DragAndDropEventHandler::handle_drag_end(
 
 // https://html.spec.whatwg.org/multipage/dnd.html#fire-a-dnd-event
 GC::Ref<HTML::DragEvent> DragAndDropEventHandler::fire_a_drag_and_drop_event(
-    JS::Object const& relevant_global_object,
+    JS::Realm& realm,
     GC::Ptr<DOM::EventTarget> target,
-    Utf16FlyString const& name,
+    FlyString const& name,
     CSSPixelPoint screen_position,
     CSSPixelPoint page_offset,
     CSSPixelPoint client_offset,
@@ -562,7 +508,7 @@ GC::Ref<HTML::DragEvent> DragAndDropEventHandler::fire_a_drag_and_drop_event(
     }
 
     // 6. Let dataTransfer be a newly created DataTransfer object associated with the given drag data store.
-    auto data_transfer = HTML::DataTransfer::create(*m_drag_data_store);
+    auto data_transfer = HTML::DataTransfer::create(realm, *m_drag_data_store);
 
     // 7. Set the effectAllowed attribute to the drag data store's drag data store allowed effects state.
     data_transfer->set_effect_allowed_internal(m_drag_data_store->allowed_effects_state());
@@ -616,9 +562,7 @@ GC::Ref<HTML::DragEvent> DragAndDropEventHandler::fire_a_drag_and_drop_event(
     event_init.data_transfer = data_transfer;
 
     if (target) {
-        auto* target_node = as_if<DOM::Node>(target.ptr());
-        VERIFY(target_node);
-        auto& window = HTML::relevant_window(*target_node);
+        auto& window = static_cast<HTML::Window&>(HTML::relevant_global_object(*target));
         event_init.view = window.window();
     }
 
@@ -639,7 +583,7 @@ GC::Ref<HTML::DragEvent> DragAndDropEventHandler::fire_a_drag_and_drop_event(
     event_init.button = button;
     event_init.buttons = buttons;
 
-    auto event = HTML::DragEvent::create(name, event_init, page_offset.x().to_double(), page_offset.y().to_double(), offset.x().to_double(), offset.y().to_double(), HighResolutionTime::current_high_resolution_time(relevant_global_object));
+    auto event = HTML::DragEvent::create(realm, name, event_init, page_offset.x().to_double(), page_offset.y().to_double(), offset.x().to_double(), offset.y().to_double());
 
     // The "create an event" AO in step 9 should set these.
     event->set_is_trusted(true);

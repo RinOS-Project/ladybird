@@ -28,10 +28,11 @@ public:
     virtual void handle_result(JS::Value) = 0;
 
 protected:
-    WebContentConsoleClient(JS::Console&, PageClient&, ConsoleGlobalEnvironmentExtensions&);
+    WebContentConsoleClient(JS::Realm&, JS::Console&, PageClient&, ConsoleGlobalEnvironmentExtensions&);
 
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
+    GC::Ref<JS::Realm> m_realm;
     GC::Ref<PageClient> m_client;
     GC::Ref<ConsoleGlobalEnvironmentExtensions> m_console_global_environment_extensions;
 };

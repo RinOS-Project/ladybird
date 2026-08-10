@@ -18,9 +18,6 @@
 //! - A set of registers for capture group positions
 //! - A backtrack stack for saving/restoring state
 
-pub use libunicode_rust::character_types::PropertyKind;
-pub use libunicode_rust::character_types::ResolvedProperty;
-
 /// A named capture group mapping derived from the pattern's named captures.
 /// <https://tc39.es/ecma262/#sec-parsepattern>
 #[derive(Debug, Clone)]
@@ -70,7 +67,10 @@ pub enum Instruction {
     AnyChar { dot_all: bool },
 
     /// Match a character in a set of ranges. `negated` inverts the match.
-    CharClass { ranges: Vec<CharRange>, negated: bool },
+    CharClass {
+        ranges: Vec<CharRange>,
+        negated: bool,
+    },
 
     /// Match a built-in character class (\d, \w, \s and negations).
     BuiltinClass(BuiltinCharacterClass),
@@ -134,7 +134,11 @@ pub enum Instruction {
     /// `forward`: lookahead (true) or lookbehind (false).
     /// `body`: start of the assertion body.
     /// `end`: instruction after the assertion.
-    LookStart { positive: bool, forward: bool, end: u32 },
+    LookStart {
+        positive: bool,
+        forward: bool,
+        end: u32,
+    },
 
     /// End of a lookaround body. Signals success of the assertion sub-match.
     LookEnd,
@@ -189,6 +193,38 @@ pub enum Instruction {
     },
 }
 
+/// The kind of a resolved Unicode property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PropertyKind {
+    Script = 0,
+    ScriptExtension = 1,
+    GeneralCategory = 2,
+    BinaryProperty = 3,
+}
+
+impl PropertyKind {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Script),
+            1 => Some(Self::ScriptExtension),
+            2 => Some(Self::GeneralCategory),
+            3 => Some(Self::BinaryProperty),
+            _ => None,
+        }
+    }
+}
+
+/// A resolved Unicode property — the string name/value has been resolved to
+/// an ICU enum at compile time, so match-time lookups avoid string parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedProperty {
+    /// The kind of Unicode property (Script, GeneralCategory, etc.).
+    pub kind: PropertyKind,
+    /// ICU enum value (e.g. script code, general category, binary property ID).
+    pub id: u32,
+}
+
 /// Data for a Unicode property match instruction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnicodePropertyData {
@@ -209,13 +245,14 @@ pub enum SimpleMatch {
     /// Case-insensitive character.
     CharNoCase(u32, u32),
     /// Character class (set of ranges), negated flag.
-    CharClass { ranges: Vec<CharRange>, negated: bool },
+    CharClass {
+        ranges: Vec<CharRange>,
+        negated: bool,
+    },
     /// Built-in class (\d, \w, \s, etc.)
     BuiltinClass(BuiltinCharacterClass),
     /// Unicode property (\p{...}, \P{...}).
     UnicodeProperty(Box<UnicodePropertyData>),
-    /// Union of two matchers: matches if either alternative matches.
-    Union(Box<SimpleMatch>, Box<SimpleMatch>),
 }
 
 /// A character range for CharClass instructions (u32 code points).

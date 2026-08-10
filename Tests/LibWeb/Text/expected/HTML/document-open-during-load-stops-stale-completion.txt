@@ -1,3 +1,0 @@
-Replaced parser during window load event
-Replacement reached complete ready state
-Stale iframe load events: 0

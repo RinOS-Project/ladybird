@@ -5,11 +5,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/NeverDestroyed.h>
+#include <AK/ByteString.h>
 #include <AK/QuickSort.h>
 #include <AK/TypeCasts.h>
-#include <AK/kmalloc.h>
-#include <LibGC/WeakHashMap.h>
 #include <LibJS/Bytecode/PropertyAccess.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Accessor.h>
@@ -34,11 +32,7 @@ namespace JS {
 
 GC_DEFINE_ALLOCATOR(Object);
 
-static auto& intrinsic_accessor_map()
-{
-    static NeverDestroyed<GC::WeakHashMap<GC::Ptr<Object const>, HashMap<Utf16FlyString, Object::IntrinsicAccessor>>> intrinsics;
-    return *intrinsics;
-}
+static HashMap<GC::Ptr<Object const>, HashMap<Utf16FlyString, Object::IntrinsicAccessor>> s_intrinsics;
 
 // Heap-allocated named property storage layout:
 //   [u32 capacity] [u32 padding] [Value 0] [Value 1] ...
@@ -49,8 +43,7 @@ static constexpr u32 HEAP_STORAGE_HEADER_SIZE = sizeof(Value);
 static Value* allocate_heap_named_storage(u32 capacity)
 {
     VERIFY(capacity > Object::INLINE_NAMED_PROPERTY_CAPACITY);
-    auto allocation_size = HEAP_STORAGE_HEADER_SIZE + capacity * sizeof(Value);
-    auto* raw = static_cast<u8*>(kmalloc(HeapPartition::JSObjectStorage, allocation_size));
+    auto* raw = static_cast<u8*>(malloc(HEAP_STORAGE_HEADER_SIZE + capacity * sizeof(Value)));
     VERIFY(raw);
     *reinterpret_cast<u32*>(raw) = capacity;
     return reinterpret_cast<Value*>(raw + HEAP_STORAGE_HEADER_SIZE);
@@ -58,20 +51,12 @@ static Value* allocate_heap_named_storage(u32 capacity)
 
 static void free_heap_named_storage(Value* storage)
 {
-    auto* raw = reinterpret_cast<u8*>(storage) - HEAP_STORAGE_HEADER_SIZE;
-    kfree(raw);
+    free(reinterpret_cast<u8*>(storage) - HEAP_STORAGE_HEADER_SIZE);
 }
 
 static u32 heap_named_storage_capacity(Value* storage)
 {
     return *reinterpret_cast<u32*>(reinterpret_cast<u8*>(storage) - HEAP_STORAGE_HEADER_SIZE);
-}
-
-size_t Object::named_storage_external_memory_size() const
-{
-    if (named_storage_is_inline())
-        return 0;
-    return HEAP_STORAGE_HEADER_SIZE + heap_named_storage_capacity(m_named_properties) * sizeof(Value);
 }
 
 void Object::ensure_named_storage_capacity(u32 needed)
@@ -88,8 +73,7 @@ void Object::ensure_named_storage_capacity(u32 needed)
             new_storage[i] = Value();
         m_named_properties = new_storage;
     } else {
-        auto* raw = static_cast<u8*>(krealloc(
-            HeapPartition::JSObjectStorage,
+        auto* raw = static_cast<u8*>(realloc(
             reinterpret_cast<u8*>(m_named_properties) - HEAP_STORAGE_HEADER_SIZE,
             HEAP_STORAGE_HEADER_SIZE + new_capacity * sizeof(Value)));
         VERIFY(raw);
@@ -170,7 +154,7 @@ Object::~Object()
 {
     free_indexed_elements();
     if (has_intrinsic_accessors())
-        intrinsic_accessor_map().remove(this);
+        s_intrinsics.remove(this);
     if (!named_storage_is_inline())
         free_heap_named_storage(m_named_properties);
 }
@@ -490,7 +474,7 @@ ThrowCompletionOr<GC::RootVector<Value>> Object::enumerable_own_property_names(P
     // 1. Let ownKeys be ? O.[[OwnPropertyKeys]]().
 
     // 2. Let properties be a new empty List.
-    GC::RootVector<Value> properties;
+    auto properties = GC::RootVector<Value> { heap() };
     properties.ensure_capacity(own_properties_count());
 
     auto& pre_iteration_shape = shape();
@@ -554,42 +538,6 @@ ThrowCompletionOr<void> Object::copy_data_properties(VM& vm, Value source, HashT
 
     // 2. Let from be ! ToObject(source).
     auto from = MUST(source.to_object(vm));
-
-    // OPTIMIZATION: For ordinary objects we can iterate the shape directly and read values by storage
-    //               offset, avoiding repeated property lookups through DescriptorArray::find.
-    if (from->eligible_for_own_property_enumeration_fast_path()
-        && !from->has_intrinsic_accessors()
-        && !from->may_interfere_with_indexed_property_access()
-        && excluded_values.is_empty()
-        && from->indexed_storage_kind() <= IndexedStorageKind::Packed) {
-
-        bool has_accessors = false;
-        from->shape().for_each_property_in_insertion_order([&](auto const&, auto const& metadata) {
-            if (metadata.attributes.is_enumerable() && from->get_direct(metadata.offset).is_accessor()) {
-                has_accessors = true;
-                return IterationDecision::Break;
-            }
-            return IterationDecision::Continue;
-        });
-
-        if (!has_accessors) {
-            for (u32 i = 0; i < from->indexed_array_like_size(); ++i) {
-                if (!excluded_keys.is_empty() && excluded_keys.contains(PropertyKey(i)))
-                    continue;
-                MUST(create_data_property_or_throw(PropertyKey(i), from->m_indexed_elements[i]));
-            }
-
-            from->shape().for_each_property_in_insertion_order([&](auto const& property_key, auto const& metadata) {
-                if (!metadata.attributes.is_enumerable())
-                    return;
-                if (!excluded_keys.is_empty() && excluded_keys.contains(property_key))
-                    return;
-                MUST(create_data_property_or_throw(property_key, from->get_direct(metadata.offset)));
-            });
-
-            return {};
-        }
-    }
 
     // 3. Let keys be ? from.[[OwnPropertyKeys]]().
     auto keys = TRY(from->internal_own_property_keys());
@@ -1049,9 +997,6 @@ ThrowCompletionOr<Value> Object::internal_get(PropertyKey const& property_key, V
             return js_undefined();
 
         // c. Return ? parent.[[Get]](P, Receiver).
-        // AD-HOC: Avoid a native stack overflow when walking a pathologically-deep prototype chain.
-        if (vm.did_reach_stack_space_limit()) [[unlikely]]
-            return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
         return parent->internal_get(property_key, receiver, cacheable_metadata, PropertyLookupPhase::PrototypeChain);
     }
 
@@ -1214,7 +1159,7 @@ ThrowCompletionOr<bool> Object::ordinary_set_with_own_descriptor(PropertyKey con
             Optional<u32> new_property_offset;
             auto result = TRY(receiver_object.create_data_property(property_key, value, &new_property_offset));
             auto& receiver_shape = receiver_object.shape();
-            if (cacheable_metadata && new_property_offset.has_value() && !receiver_shape.is_dictionary() && !receiver_object.requires_slow_add_own_property()) {
+            if (cacheable_metadata && new_property_offset.has_value() && !receiver_shape.is_dictionary()) {
                 VERIFY(!property_key.is_number());
                 *cacheable_metadata = CacheableSetPropertyMetadata {
                     .type = CacheableSetPropertyMetadata::Type::AddOwnProperty,
@@ -1275,7 +1220,7 @@ ThrowCompletionOr<GC::RootVector<Value>> Object::internal_own_property_keys() co
     auto& vm = this->vm();
 
     // 1. Let keys be a new empty List.
-    GC::RootVector<Value> keys;
+    GC::RootVector<Value> keys { heap() };
 
     // 2. For each own property key P of O such that P is an array index, in ascending numeric index order, do
     {
@@ -1287,20 +1232,20 @@ ThrowCompletionOr<GC::RootVector<Value>> Object::internal_own_property_keys() co
     }
 
     // 3. For each own property key P of O such that Type(P) is String and P is not an array index, in ascending chronological order of property creation, do
-    shape().for_each_property_in_insertion_order([&](auto const& property_key, auto const&) {
-        if (property_key.is_string()) {
+    for (auto& it : shape().property_table()) {
+        if (it.key.is_string()) {
             // a. Add P as the last element of keys.
-            keys.append(property_key.to_value(vm));
+            keys.append(it.key.to_value(vm));
         }
-    });
+    }
 
     // 4. For each own property key P of O such that Type(P) is Symbol, in ascending chronological order of property creation, do
-    shape().for_each_property_in_insertion_order([&](auto const& property_key, auto const&) {
-        if (property_key.is_symbol()) {
+    for (auto& it : shape().property_table()) {
+        if (it.key.is_symbol()) {
             // a. Add P as the last element of keys.
-            keys.append(property_key.to_value(vm));
+            keys.append(it.key.to_value(vm));
         }
-    });
+    }
 
     // 5. Return keys.
     return { move(keys) };
@@ -1325,16 +1270,16 @@ static Optional<Object::IntrinsicAccessor> find_intrinsic_accessor(Object const*
     if (!property_key.is_string())
         return {};
 
-    auto intrinsics = intrinsic_accessor_map().get(object);
-    if (!intrinsics.has_value())
+    auto intrinsics = s_intrinsics.find(object);
+    if (intrinsics == s_intrinsics.end())
         return {};
 
-    auto accessor_iterator = intrinsics->find(property_key.as_string());
-    if (accessor_iterator == intrinsics->end())
+    auto accessor_iterator = intrinsics->value.find(property_key.as_string());
+    if (accessor_iterator == intrinsics->value.end())
         return {};
 
     auto accessor = accessor_iterator->value;
-    intrinsics->remove(accessor_iterator);
+    intrinsics->value.remove(accessor_iterator);
     return accessor;
 }
 
@@ -1391,8 +1336,8 @@ Optional<u32> Object::storage_set(PropertyKey const& property_key, ValueAndAttri
     }
 
     if (has_intrinsic_accessors() && property_key.is_string()) {
-        if (auto intrinsics = intrinsic_accessor_map().get(this); intrinsics.has_value())
-            intrinsics->remove(property_key.as_string());
+        if (auto intrinsics = s_intrinsics.find(this); intrinsics != s_intrinsics.end())
+            intrinsics->value.remove(property_key.as_string());
     }
 
     auto metadata = shape().lookup(property_key);
@@ -1431,8 +1376,8 @@ void Object::storage_delete(PropertyKey const& property_key)
         return indexed_delete(property_key.as_number());
 
     if (has_intrinsic_accessors() && property_key.is_string()) {
-        if (auto intrinsics = intrinsic_accessor_map().get(this); intrinsics.has_value())
-            intrinsics->remove(property_key.as_string());
+        if (auto intrinsics = s_intrinsics.find(this); intrinsics != s_intrinsics.end())
+            intrinsics->value.remove(property_key.as_string());
     }
 
     auto metadata = shape().lookup(property_key);
@@ -1454,17 +1399,6 @@ void Object::set_prototype(Object* new_prototype)
     if (prototype() == new_prototype)
         return;
     m_shape = shape().create_prototype_transition(new_prototype);
-}
-
-void Object::define_native_accessor(Realm& realm, PropertyKey const& property_key, NativeFunctionPointer getter, NativeFunctionPointer setter, PropertyAttributes attribute)
-{
-    FunctionObject* getter_function = nullptr;
-    if (getter)
-        getter_function = NativeFunction::create(realm, move(getter), 0, property_key, &realm, "get"sv);
-    FunctionObject* setter_function = nullptr;
-    if (setter)
-        setter_function = NativeFunction::create(realm, move(setter), 1, property_key, &realm, "set"sv);
-    define_direct_accessor(property_key, getter_function, setter_function, attribute);
 }
 
 void Object::define_native_accessor(Realm& realm, PropertyKey const& property_key, Function<ThrowCompletionOr<Value>(VM&)> getter, Function<ThrowCompletionOr<Value>(VM&)> setter, PropertyAttributes attribute)
@@ -1500,7 +1434,7 @@ void Object::define_intrinsic_accessor(PropertyKey const& property_key, Property
     (void)storage_set(property_key, { {}, attributes });
 
     set_has_intrinsic_accessors();
-    auto& intrinsics = intrinsic_accessor_map().ensure(this);
+    auto& intrinsics = s_intrinsics.ensure(this);
     intrinsics.set(property_key.as_string(), move(accessor));
 }
 
@@ -1512,8 +1446,8 @@ ThrowCompletionOr<void> Object::for_each_own_property_with_enumerability(Functio
             PropertyKey property_key;
             bool enumerable;
         };
-        GC::ConservativeVector<OwnKey> keys;
-        keys.ensure_capacity(indexed_real_size() + shape().property_count() + (has_magical_length_property() ? 1 : 0));
+        GC::ConservativeVector<OwnKey> keys { heap() };
+        keys.ensure_capacity(indexed_real_size() + shape().property_count());
 
         {
             auto indices = indexed_indices();
@@ -1528,14 +1462,11 @@ ThrowCompletionOr<void> Object::for_each_own_property_with_enumerability(Functio
             }
         }
 
-        if (has_magical_length_property())
-            keys.unchecked_append({ PropertyKey(vm.names.length), false });
-
-        shape().for_each_property_in_insertion_order([&](auto const& property_key, auto const& metadata) {
+        for (auto const& [property_key, metadata] : shape().property_table()) {
             if (!property_key.is_string())
-                return;
+                continue;
             keys.unchecked_append({ property_key, metadata.attributes.is_enumerable() });
-        });
+        }
 
         for (auto& key : keys)
             TRY(callback(key.property_key, key.enumerable));
@@ -1557,7 +1488,7 @@ ThrowCompletionOr<void> Object::for_each_own_property_with_enumerability(Functio
 
 size_t Object::own_properties_count() const
 {
-    return indexed_real_size() + shape().property_count() + (has_magical_length_property() ? 1 : 0);
+    return indexed_real_size() + shape().property_table().size();
 }
 
 // Simple side-effect free property lookup, following the prototype chain. Non-standard.
@@ -1571,12 +1502,6 @@ Value Object::get_without_side_effects(PropertyKey const& property_key) const
         object = object->prototype();
     }
     return {};
-}
-
-void Object::define_native_function(Realm& realm, PropertyKey const& property_key, NativeFunctionPointer native_function, i32 length, PropertyAttributes attribute, Optional<Bytecode::Builtin> builtin)
-{
-    auto function = NativeFunction::create(realm, move(native_function), length, property_key, &realm, {}, builtin);
-    define_direct_property(property_key, function, attribute);
 }
 
 void Object::define_native_function(Realm& realm, PropertyKey const& property_key, Function<ThrowCompletionOr<Value>(VM&)> native_function, i32 length, PropertyAttributes attribute, Optional<Bytecode::Builtin> builtin)
@@ -1696,7 +1621,7 @@ void Object::visit_edges(Cell::Visitor& visitor)
             visitor.visit(m_indexed_elements[i]);
         break;
     case IndexedStorageKind::Holey:
-        for (u32 i = 0, available_elements = min(m_indexed_array_like_size, indexed_elements_capacity()); i < available_elements; ++i) {
+        for (u32 i = 0; i < m_indexed_array_like_size; ++i) {
             if (!m_indexed_elements[i].is_special_empty_value())
                 visitor.visit(m_indexed_elements[i]);
         }
@@ -1710,15 +1635,6 @@ void Object::visit_edges(Cell::Visitor& visitor)
         for (auto& private_element : *m_private_elements)
             private_element.visit_edges(visitor);
     }
-}
-
-size_t Object::external_memory_size() const
-{
-    size_t size = named_storage_external_memory_size();
-    size += indexed_storage_external_memory_size();
-    if (m_private_elements)
-        size += m_private_elements->capacity() * sizeof(PrivateElement);
-    return size;
 }
 
 // 7.1.1.1 OrdinaryToPrimitive ( O, hint ), https://tc39.es/ecma262/#sec-ordinarytoprimitive
@@ -1741,11 +1657,11 @@ ThrowCompletionOr<Value> Object::ordinary_to_primitive(Value::PreferredType pref
         // a. Let method be ? Get(O, name).
         Value method;
         if (method_name == vm.names.toString) {
-            static auto& cache = *new Bytecode::StaticPropertyLookupCache;
+            static Bytecode::StaticPropertyLookupCache cache;
             method = TRY(get(method_name, cache));
         } else {
             ASSERT(method_name == vm.names.valueOf);
-            static auto& cache = *new Bytecode::StaticPropertyLookupCache;
+            static Bytecode::StaticPropertyLookupCache cache;
             method = TRY(get(method_name, cache));
         }
 
@@ -1767,6 +1683,7 @@ ThrowCompletionOr<Value> Object::ordinary_to_primitive(Value::PreferredType pref
 // Indexed property storage implementation
 
 static constexpr size_t SPARSE_ARRAY_HOLE_THRESHOLD = 200;
+static constexpr size_t LENGTH_SETTER_GENERIC_STORAGE_THRESHOLD = 4 * MiB;
 
 GenericIndexedPropertyStorage* Object::indexed_dictionary() const
 {
@@ -1783,26 +1700,10 @@ u32 Object::indexed_elements_capacity() const
     return *reinterpret_cast<u32 const*>(reinterpret_cast<u8 const*>(m_indexed_elements) - sizeof(u64));
 }
 
-size_t Object::indexed_storage_external_memory_size() const
-{
-    switch (m_indexed_storage_kind) {
-    case IndexedStorageKind::None:
-        return 0;
-    case IndexedStorageKind::Packed:
-    case IndexedStorageKind::Holey:
-        return sizeof(u64) + indexed_elements_capacity() * sizeof(Value);
-    case IndexedStorageKind::Dictionary:
-        return sizeof(GenericIndexedPropertyStorage) + indexed_dictionary()->external_memory_size();
-    }
-    VERIFY_NOT_REACHED();
-}
-
 static Value* allocate_indexed_elements(u32 capacity)
 {
     // Layout: [u32 capacity] [u32 padding] [Value 0] [Value 1] ...
-    auto allocation_size = sizeof(u64) + capacity * sizeof(Value);
-    auto* raw = static_cast<u8*>(kmalloc(HeapPartition::JSObjectStorage, allocation_size));
-    VERIFY(raw);
+    auto* raw = static_cast<u8*>(malloc(sizeof(u64) + capacity * sizeof(Value)));
     *reinterpret_cast<u32*>(raw) = capacity;
     *reinterpret_cast<u32*>(raw + sizeof(u32)) = 0; // padding
     auto* elements = reinterpret_cast<Value*>(raw + sizeof(u64));
@@ -1816,7 +1717,7 @@ static void deallocate_indexed_elements(Value* elements)
     if (!elements)
         return;
     auto* raw = reinterpret_cast<u8*>(elements) - sizeof(u64);
-    kfree(raw);
+    free(raw);
 }
 
 void Object::free_indexed_elements()
@@ -1840,9 +1741,9 @@ void Object::ensure_indexed_elements(u32 needed_capacity)
 
 void Object::grow_indexed_elements(u32 needed_capacity)
 {
-    // Grow by at least 50% to reduce copying during dense fills.
+    // Grow by at least 25%
     u32 old_capacity = m_indexed_elements ? indexed_elements_capacity() : 0;
-    u32 new_capacity = max(needed_capacity, old_capacity + old_capacity / 2);
+    u32 new_capacity = max(needed_capacity, old_capacity + old_capacity / 4);
     new_capacity = max(new_capacity, static_cast<u32>(8));
 
     auto* new_elements = allocate_indexed_elements(new_capacity);
@@ -1863,7 +1764,7 @@ void Object::transition_to_dictionary()
 
     if (m_indexed_storage_kind == IndexedStorageKind::Packed || m_indexed_storage_kind == IndexedStorageKind::Holey) {
         // Transfer existing elements
-        u32 count = min(m_indexed_array_like_size, indexed_elements_capacity());
+        u32 count = m_indexed_array_like_size;
         for (u32 i = 0; i < count; ++i) {
             auto value = m_indexed_elements[i];
             if (!value.is_special_empty_value())
@@ -1891,8 +1792,6 @@ Optional<ValueAndAttributes> Object::indexed_get(u32 index) const
     case IndexedStorageKind::Holey:
         if (index >= m_indexed_array_like_size)
             return {};
-        if (index >= indexed_elements_capacity())
-            return {};
         if (m_indexed_elements[index].is_special_empty_value())
             return {};
         return ValueAndAttributes { m_indexed_elements[index], default_attributes };
@@ -1905,9 +1804,6 @@ Optional<ValueAndAttributes> Object::indexed_get(u32 index) const
 void Object::indexed_put(u32 index, Value value, PropertyAttributes attributes)
 {
     bool const storing_hole = value.is_special_empty_value();
-    u32 materialized_elements = 0;
-    if (m_indexed_storage_kind == IndexedStorageKind::Packed || m_indexed_storage_kind == IndexedStorageKind::Holey)
-        materialized_elements = min(m_indexed_array_like_size, indexed_elements_capacity());
 
     if (m_indexed_storage_kind == IndexedStorageKind::Dictionary) {
         indexed_dictionary()->put(index, value, attributes);
@@ -1925,7 +1821,7 @@ void Object::indexed_put(u32 index, Value value, PropertyAttributes attributes)
     }
 
     // Check for sparse threshold
-    if (index > materialized_elements + SPARSE_ARRAY_HOLE_THRESHOLD) {
+    if (index > m_indexed_array_like_size + SPARSE_ARRAY_HOLE_THRESHOLD) {
         if (m_indexed_storage_kind != IndexedStorageKind::Dictionary)
             transition_to_dictionary();
         indexed_dictionary()->put(index, value, attributes);
@@ -1938,17 +1834,15 @@ void Object::indexed_put(u32 index, Value value, PropertyAttributes attributes)
         u32 needed = index + 1;
         ensure_indexed_elements(needed);
         m_indexed_elements[index] = value;
-        m_indexed_array_like_size = max(m_indexed_array_like_size, index + 1);
+        m_indexed_array_like_size = index + 1;
         return;
     }
 
     // Packed or Holey
-    if (index >= materialized_elements)
-        ensure_indexed_elements(index + 1);
-
     if (index >= m_indexed_array_like_size) {
         // Growing
         u32 new_size = index + 1;
+        ensure_indexed_elements(new_size);
 
         if (m_indexed_storage_kind == IndexedStorageKind::Packed
             && (index > m_indexed_array_like_size || storing_hole)) {
@@ -1968,13 +1862,13 @@ void Object::indexed_put(u32 index, Value value, PropertyAttributes attributes)
     // Only check when writing to the last index to avoid O(N^2) scanning.
     if (m_indexed_storage_kind == IndexedStorageKind::Holey && index == m_indexed_array_like_size - 1) {
         bool has_holes = false;
-        for (u32 i = 0, available_elements = min(m_indexed_array_like_size, indexed_elements_capacity()); i < available_elements; ++i) {
+        for (u32 i = 0; i < m_indexed_array_like_size; ++i) {
             if (m_indexed_elements[i].is_special_empty_value()) {
                 has_holes = true;
                 break;
             }
         }
-        if (!has_holes && indexed_elements_capacity() >= m_indexed_array_like_size)
+        if (!has_holes)
             m_indexed_storage_kind = IndexedStorageKind::Packed;
     }
 }
@@ -1987,9 +1881,7 @@ bool Object::indexed_has(u32 index) const
     case IndexedStorageKind::Packed:
         return index < m_indexed_array_like_size;
     case IndexedStorageKind::Holey:
-        return index < m_indexed_array_like_size
-            && index < indexed_elements_capacity()
-            && !m_indexed_elements[index].is_special_empty_value();
+        return index < m_indexed_array_like_size && !m_indexed_elements[index].is_special_empty_value();
     case IndexedStorageKind::Dictionary:
         return indexed_dictionary()->has_index(index);
     }
@@ -2000,7 +1892,8 @@ void Object::indexed_delete(u32 index)
 {
     switch (m_indexed_storage_kind) {
     case IndexedStorageKind::None:
-        return;
+        VERIFY_NOT_REACHED();
+        break;
     case IndexedStorageKind::Packed:
         VERIFY(index < m_indexed_array_like_size);
         m_indexed_elements[index] = js_special_empty_value();
@@ -2008,8 +1901,6 @@ void Object::indexed_delete(u32 index)
         break;
     case IndexedStorageKind::Holey:
         VERIFY(index < m_indexed_array_like_size);
-        if (index >= indexed_elements_capacity())
-            return;
         m_indexed_elements[index] = js_special_empty_value();
         break;
     case IndexedStorageKind::Dictionary:
@@ -2020,7 +1911,7 @@ void Object::indexed_delete(u32 index)
 
 bool Object::set_indexed_array_like_size(size_t new_size)
 {
-    if (new_size == m_indexed_array_like_size)
+    if (new_size == m_indexed_array_like_size && m_indexed_storage_kind != IndexedStorageKind::None)
         return true;
 
     if (m_indexed_storage_kind == IndexedStorageKind::Dictionary) {
@@ -2029,7 +1920,14 @@ bool Object::set_indexed_array_like_size(size_t new_size)
         return result;
     }
 
-    VERIFY(new_size <= NumericLimits<u32>::max());
+    // For large sizes or sizes that don't fit in i32, use Dictionary
+    if (new_size > static_cast<size_t>(NumericLimits<i32>::max())
+        || (m_indexed_array_like_size < LENGTH_SETTER_GENERIC_STORAGE_THRESHOLD && new_size > LENGTH_SETTER_GENERIC_STORAGE_THRESHOLD)) {
+        transition_to_dictionary();
+        bool result = indexed_dictionary()->set_array_like_size(new_size);
+        m_indexed_array_like_size = indexed_dictionary()->array_like_size();
+        return result;
+    }
 
     u32 old_size = m_indexed_array_like_size;
     auto new_size_u32 = static_cast<u32>(new_size);
@@ -2038,11 +1936,13 @@ bool Object::set_indexed_array_like_size(size_t new_size)
         if (new_size_u32 == 0)
             return true;
         m_indexed_storage_kind = IndexedStorageKind::Holey;
+        ensure_indexed_elements(new_size_u32);
         m_indexed_array_like_size = new_size_u32;
         return true;
     }
 
     if (new_size_u32 > old_size) {
+        ensure_indexed_elements(new_size_u32);
         if (m_indexed_storage_kind == IndexedStorageKind::Packed)
             m_indexed_storage_kind = IndexedStorageKind::Holey;
         m_indexed_array_like_size = new_size_u32;
@@ -2074,20 +1974,15 @@ ValueAndAttributes Object::indexed_take_first()
     }
 
     VERIFY(m_indexed_array_like_size > 0);
-    if (m_indexed_storage_kind == IndexedStorageKind::None) {
-        --m_indexed_array_like_size;
-        return {};
-    }
+    auto first = m_indexed_elements[0];
 
-    auto available_elements = min(m_indexed_array_like_size, indexed_elements_capacity());
-    auto first = available_elements > 0 ? m_indexed_elements[0] : js_special_empty_value();
-
-    if (available_elements > 1)
-        memmove(m_indexed_elements, m_indexed_elements + 1, (available_elements - 1) * sizeof(Value));
+    // Shift all elements left
+    for (u32 i = 0; i + 1 < m_indexed_array_like_size; ++i)
+        m_indexed_elements[i] = m_indexed_elements[i + 1];
 
     m_indexed_array_like_size--;
-    if (available_elements > 0)
-        m_indexed_elements[available_elements - 1] = js_special_empty_value();
+    if (m_indexed_array_like_size < indexed_elements_capacity())
+        m_indexed_elements[m_indexed_array_like_size] = js_special_empty_value();
 
     return { first, default_attributes };
 }
@@ -2102,11 +1997,6 @@ ValueAndAttributes Object::indexed_take_last()
 
     VERIFY(m_indexed_array_like_size > 0);
     m_indexed_array_like_size--;
-    if (m_indexed_storage_kind == IndexedStorageKind::None)
-        return {};
-    if (m_indexed_array_like_size >= indexed_elements_capacity())
-        return {};
-
     auto last = m_indexed_elements[m_indexed_array_like_size];
     m_indexed_elements[m_indexed_array_like_size] = js_special_empty_value();
 
@@ -2124,7 +2014,7 @@ size_t Object::indexed_real_size() const
         return m_indexed_array_like_size;
     case IndexedStorageKind::Holey: {
         size_t count = 0;
-        for (u32 i = 0, available_elements = min(m_indexed_array_like_size, indexed_elements_capacity()); i < available_elements; ++i) {
+        for (u32 i = 0; i < m_indexed_array_like_size; ++i) {
             if (!m_indexed_elements[i].is_special_empty_value())
                 ++count;
         }
@@ -2150,9 +2040,8 @@ Vector<u32> Object::indexed_indices() const
     }
     case IndexedStorageKind::Holey: {
         Vector<u32> indices;
-        auto available_elements = min(m_indexed_array_like_size, indexed_elements_capacity());
-        indices.ensure_capacity(available_elements);
-        for (u32 i = 0; i < available_elements; ++i) {
+        indices.ensure_capacity(m_indexed_array_like_size);
+        for (u32 i = 0; i < m_indexed_array_like_size; ++i) {
             if (!m_indexed_elements[i].is_special_empty_value())
                 indices.unchecked_append(i);
         }

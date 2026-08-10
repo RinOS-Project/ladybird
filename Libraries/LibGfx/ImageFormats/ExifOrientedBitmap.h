@@ -92,7 +92,7 @@ private:
         case Orientation::FlipVertically:
             return IntPoint(point.x(), m_height - point.y() - 1);
         case Orientation::Rotate90ClockwiseThenFlipHorizontally:
-            return IntPoint(point.y(), point.x());
+            return flip_horizontally(rotate_90_clockwise(point));
         case Orientation::Rotate90Clockwise:
             return rotate_90_clockwise(point);
         case Orientation::FlipHorizontallyThenRotate90Clockwise:

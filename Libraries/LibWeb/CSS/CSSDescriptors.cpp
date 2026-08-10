@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Utf16StringBuilder.h>
 #include <LibWeb/CSS/CSSDescriptors.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
@@ -15,8 +14,8 @@
 
 namespace Web::CSS {
 
-CSSDescriptors::CSSDescriptors(AtRuleID at_rule_id, Vector<Descriptor> descriptors)
-    : CSSStyleDeclaration(Computed::No, Readonly::No)
+CSSDescriptors::CSSDescriptors(JS::Realm& realm, AtRuleID at_rule_id, Vector<Descriptor> descriptors)
+    : CSSStyleDeclaration(realm, Computed::No, Readonly::No)
     , m_at_rule_id(at_rule_id)
     , m_descriptors(move(descriptors))
 {
@@ -32,14 +31,14 @@ size_t CSSDescriptors::length() const
 }
 
 // https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-item
-Utf16String CSSDescriptors::item(size_t index) const
+String CSSDescriptors::item(size_t index) const
 {
     // The item(index) method must return the property name of the CSS declaration at position index.
     // If there is no indexth object in the collection, then the method must return the empty string.
     if (index >= length())
         return {};
 
-    return m_descriptors[index].descriptor_name_and_id.name().to_utf16_string();
+    return m_descriptors[index].descriptor_name_and_id.name().to_string();
 }
 
 // https://drafts.csswg.org/cssom/#set-a-css-declaration
@@ -64,17 +63,11 @@ bool CSSDescriptors::set_a_css_declaration(DescriptorNameAndID const& descriptor
 }
 
 // https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-setproperty
-WebIDL::ExceptionOr<void> CSSDescriptors::set_property(Utf16FlyString const& property, Utf16View value, Utf16View priority)
-{
-    return set_property_internal(property, value, priority);
-}
-
-// https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-setproperty
-WebIDL::ExceptionOr<void> CSSDescriptors::set_property_internal(Utf16FlyString const& property, Utf16View value, Utf16View priority)
+WebIDL::ExceptionOr<void> CSSDescriptors::set_property(FlyString const& property, StringView value, StringView priority)
 {
     // 1. If the readonly flag is set, then throw a NoModificationAllowedError exception.
     if (is_readonly())
-        return WebIDL::NoModificationAllowedError::create("Cannot modify properties of readonly CSSStyleDeclaration"_utf16);
+        return WebIDL::NoModificationAllowedError::create(realm(), "Cannot modify properties of readonly CSSStyleDeclaration"_utf16);
 
     // 2. If property is not a custom property, follow these substeps:
     Optional<DescriptorNameAndID> descriptor_name_and_id;
@@ -88,13 +81,12 @@ WebIDL::ExceptionOr<void> CSSDescriptors::set_property_internal(Utf16FlyString c
 
     // 3. If value is the empty string, invoke removeProperty() with property as argument and return.
     if (value.is_empty()) {
-        auto removed_value = MUST(remove_property(property));
-        (void)removed_value;
+        MUST(remove_property(property));
         return {};
     }
 
     // 4. If priority is not the empty string and is not an ASCII case-insensitive match for the string "important", then return.
-    if (!priority.is_empty() && !priority.equals_ignoring_ascii_case(u"important"sv))
+    if (!priority.is_empty() && !priority.equals_ignoring_ascii_case("important"sv))
         return {};
 
     // 5. Let component value list be the result of parsing value for property property.
@@ -137,14 +129,11 @@ WebIDL::ExceptionOr<void> CSSDescriptors::set_property_internal(Utf16FlyString c
 }
 
 // https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-removeproperty
-WebIDL::ExceptionOr<Utf16String> CSSDescriptors::remove_property(Utf16FlyString const& property)
+WebIDL::ExceptionOr<String> CSSDescriptors::remove_property(FlyString const& property)
 {
     // 1. If the readonly flag is set, then throw a NoModificationAllowedError exception.
     if (is_readonly())
-        return WebIDL::NoModificationAllowedError::create("Cannot modify properties of readonly CSSStyleDeclaration"_utf16);
-
-    if (!property.is_ascii())
-        return Utf16String {};
+        return WebIDL::NoModificationAllowedError::create(realm(), "Cannot modify properties of readonly CSSStyleDeclaration"_utf16);
 
     // 2. If property is not a custom property, let property be property converted to ASCII lowercase.
     // AD-HOC: We compare names case-insensitively instead.
@@ -181,7 +170,7 @@ WebIDL::ExceptionOr<Utf16String> CSSDescriptors::remove_property(Utf16FlyString 
 }
 
 // https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-getpropertyvalue
-Utf16String CSSDescriptors::get_property_value(Utf16FlyString const& property) const
+String CSSDescriptors::get_property_value(FlyString const& property) const
 {
     // 1. If property is not a custom property, follow these substeps: ...
     // NB: These substeps only apply to shorthands, and descriptors cannot be shorthands.
@@ -192,7 +181,7 @@ Utf16String CSSDescriptors::get_property_value(Utf16FlyString const& property) c
     if (descriptor_name_and_id.has_value()) {
         auto match = m_descriptors.first_matching([descriptor_name_and_id](Descriptor const& entry) { return entry.descriptor_name_and_id == descriptor_name_and_id; });
         if (match.has_value())
-            return match->value->to_utf16_string(SerializationMode::Normal);
+            return match->value->to_string(SerializationMode::Normal);
     }
 
     // 3. Return the empty string.
@@ -200,17 +189,17 @@ Utf16String CSSDescriptors::get_property_value(Utf16FlyString const& property) c
 }
 
 // https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-getpropertypriority
-Utf16String CSSDescriptors::get_property_priority(Utf16FlyString const&) const
+StringView CSSDescriptors::get_property_priority(FlyString const&) const
 {
     // AD-HOC: It's not valid for descriptors to be !important.
     return {};
 }
 
 // https://drafts.csswg.org/cssom/#serialize-a-css-declaration-block
-Utf16String CSSDescriptors::serialized() const
+String CSSDescriptors::serialized() const
 {
     // 1. Let list be an empty array.
-    Vector<Utf16String> list;
+    Vector<String> list;
     list.ensure_capacity(m_descriptors.size());
 
     // 2. Let already serialized be an empty array.
@@ -229,34 +218,28 @@ Utf16String CSSDescriptors::serialized() const
         // NB: Descriptors can't be shorthands.
 
         // 5. Let value be the result of invoking serialize a CSS value of declaration.
-        auto value = descriptor.value->to_utf16_string(SerializationMode::Normal);
+        auto value = descriptor.value->to_string(SerializationMode::Normal);
 
         // 6. Let serialized declaration be the result of invoking serialize a CSS declaration with property name property, value value, and the important flag set if declaration has its important flag set.
-        auto serialized_declaration = serialize_a_css_declaration_to_utf16(property, value, Important::No);
+        auto serialized_declaration = serialize_a_css_declaration(property, value, Important::No);
 
         // 7. Append serialized declaration to list.
-        list.append(move(serialized_declaration));
+        list.append(serialized_declaration);
 
         // 8. Append property to already serialized.
         // AD-HOC: Not needed as we don't have shorthands.
     }
 
     // 4. Return list joined with " " (U+0020).
-    Utf16StringBuilder builder;
-    for (size_t i = 0; i < list.size(); ++i) {
-        if (i != 0)
-            builder.append_ascii(' ');
-        builder.append(list[i]);
-    }
-    return builder.to_string();
+    return MUST(String::join(' ', list));
 }
 
 // https://drafts.csswg.org/cssom/#dom-cssstyledeclaration-csstext
-WebIDL::ExceptionOr<void> CSSDescriptors::set_css_text(Utf16View value)
+WebIDL::ExceptionOr<void> CSSDescriptors::set_css_text(StringView value)
 {
     // 1. If the readonly flag is set, then throw a NoModificationAllowedError exception.
     if (is_readonly())
-        return WebIDL::NoModificationAllowedError::create("Cannot modify properties of readonly CSSStyleDeclaration"_utf16);
+        return WebIDL::NoModificationAllowedError::create(realm(), "Cannot modify properties of readonly CSSStyleDeclaration"_utf16);
 
     // 2. Empty the declarations.
     m_descriptors.clear();
@@ -271,6 +254,14 @@ WebIDL::ExceptionOr<void> CSSDescriptors::set_css_text(Utf16View value)
     update_style_attribute();
 
     return {};
+}
+
+void CSSDescriptors::visit_edges(Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    for (auto& descriptor : m_descriptors) {
+        descriptor.value->visit_edges(visitor);
+    }
 }
 
 RefPtr<StyleValue const> CSSDescriptors::descriptor(DescriptorNameAndID const& descriptor_name_and_id) const

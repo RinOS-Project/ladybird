@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/ByteString.h>
+#include <AK/FlyString.h>
 
 namespace Requests {
 
@@ -20,21 +20,21 @@ enum class ALPNHttpVersion {
     Http3,
 };
 
-inline ByteString alpn_http_version_to_byte_string(ALPNHttpVersion version)
+inline FlyString alpn_http_version_to_fly_string(ALPNHttpVersion version)
 {
     switch (version) {
     case ALPNHttpVersion::None:
-        return ""sv;
+        return ""_fly_string;
     case ALPNHttpVersion::Http1_0:
-        return "http/1.0"sv;
+        return "http/1.0"_fly_string;
     case ALPNHttpVersion::Http1_1:
-        return "http/1.1"sv;
+        return "http/1.1"_fly_string;
     case ALPNHttpVersion::Http2_TLS:
-        return "h2"sv;
+        return "h2"_fly_string;
     case ALPNHttpVersion::Http2_TCP:
-        return "h2c"sv;
+        return "h2c"_fly_string;
     case ALPNHttpVersion::Http3:
-        return "h3"sv;
+        return "h3"_fly_string;
     default:
         VERIFY_NOT_REACHED();
     }

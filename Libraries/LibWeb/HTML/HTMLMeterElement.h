@@ -14,7 +14,7 @@
 namespace Web::HTML {
 
 class HTMLMeterElement final : public HTMLElement {
-    WEB_WRAPPABLE(HTMLMeterElement, HTMLElement);
+    WEB_PLATFORM_OBJECT(HTMLMeterElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLMeterElement);
 
 public:
@@ -36,6 +36,8 @@ public:
     // ^HTMLElement
     virtual void inserted() override;
 
+    virtual void adjust_computed_style(CSS::ComputedProperties&) override;
+
     // https://html.spec.whatwg.org/multipage/forms.html#category-label
     virtual bool is_labelable() const override { return true; }
 
@@ -51,6 +53,8 @@ public:
 
 private:
     HTMLMeterElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     void create_shadow_tree_if_needed();

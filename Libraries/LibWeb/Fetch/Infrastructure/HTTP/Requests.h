@@ -14,8 +14,6 @@
 #include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/Time.h>
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
 #include <AK/Variant.h>
 #include <AK/Vector.h>
 #include <LibGC/Ptr.h>
@@ -163,9 +161,8 @@ public:
     using PolicyContainerType = Variant<PolicyContainer, GC::Ref<HTML::PolicyContainer>>;
     using ReferrerType = Variant<Referrer, URL::URL>;
     using ReservedClientType = GC::Ptr<HTML::Environment>;
-    using TraversableForUserPromptsType = Variant<TraversableForUserPrompts, GC::Ptr<HTML::EnvironmentSettingsObject>, GC::Ptr<HTML::LocalTraversableNavigable>>;
+    using TraversableForUserPromptsType = Variant<TraversableForUserPrompts, GC::Ptr<HTML::EnvironmentSettingsObject>, GC::Ptr<HTML::TraversableNavigable>>;
 
-    [[nodiscard]] static GC::Ref<Request> create();
     [[nodiscard]] static GC::Ref<Request> create(JS::VM&);
 
     [[nodiscard]] ByteString const& method() const { return m_method; }
@@ -192,8 +189,8 @@ public:
     [[nodiscard]] ReservedClientType& reserved_client() { return m_reserved_client; }
     void set_reserved_client(ReservedClientType reserved_client) { m_reserved_client = move(reserved_client); }
 
-    [[nodiscard]] Utf16String const& replaces_client_id() const { return m_replaces_client_id; }
-    void set_replaces_client_id(Utf16String replaces_client_id) { m_replaces_client_id = move(replaces_client_id); }
+    [[nodiscard]] String const& replaces_client_id() const { return m_replaces_client_id; }
+    void set_replaces_client_id(String replaces_client_id) { m_replaces_client_id = move(replaces_client_id); }
 
     [[nodiscard]] TraversableForUserPromptsType const& traversable_for_user_prompts() const { return m_traversable_for_user_prompts; }
     void set_traversable_for_user_prompts(TraversableForUserPromptsType traversable_for_user_prompts) { m_traversable_for_user_prompts = move(traversable_for_user_prompts); }
@@ -243,11 +240,11 @@ public:
     [[nodiscard]] RedirectMode redirect_mode() const { return m_redirect_mode; }
     void set_redirect_mode(RedirectMode redirect_mode) { m_redirect_mode = redirect_mode; }
 
-    [[nodiscard]] Utf16String const& integrity_metadata() const { return m_integrity_metadata; }
-    void set_integrity_metadata(Utf16String integrity_metadata) { m_integrity_metadata = move(integrity_metadata); }
+    [[nodiscard]] String const& integrity_metadata() const { return m_integrity_metadata; }
+    void set_integrity_metadata(String integrity_metadata) { m_integrity_metadata = move(integrity_metadata); }
 
-    [[nodiscard]] Utf16String const& cryptographic_nonce_metadata() const { return m_cryptographic_nonce_metadata; }
-    void set_cryptographic_nonce_metadata(Utf16String cryptographic_nonce_metadata) { m_cryptographic_nonce_metadata = move(cryptographic_nonce_metadata); }
+    [[nodiscard]] String const& cryptographic_nonce_metadata() const { return m_cryptographic_nonce_metadata; }
+    void set_cryptographic_nonce_metadata(String cryptographic_nonce_metadata) { m_cryptographic_nonce_metadata = move(cryptographic_nonce_metadata); }
 
     [[nodiscard]] Optional<ParserMetadata> const& parser_metadata() const { return m_parser_metadata; }
     void set_parser_metadata(Optional<ParserMetadata> parser_metadata) { m_parser_metadata = move(parser_metadata); }
@@ -363,7 +360,7 @@ private:
 
     // https://fetch.spec.whatwg.org/#concept-request-replaces-client-id
     // A request has an associated replaces client id (a string). Unless stated otherwise it is the empty string.
-    Utf16String m_replaces_client_id;
+    String m_replaces_client_id;
 
     // https://fetch.spec.whatwg.org/#concept-request-window
     // A request has an associated traversable for user prompts, that is "no-traversable", "client", or a traversable
@@ -463,12 +460,12 @@ private:
 
     // https://fetch.spec.whatwg.org/#concept-request-integrity-metadata
     // A request has associated integrity metadata (a string). Unless stated otherwise, it is the empty string.
-    Utf16String m_integrity_metadata;
+    String m_integrity_metadata;
 
     // https://fetch.spec.whatwg.org/#concept-request-nonce-metadata
     // A request has associated cryptographic nonce metadata (a string). Unless stated otherwise, it is the empty
     // string.
-    Utf16String m_cryptographic_nonce_metadata;
+    String m_cryptographic_nonce_metadata;
 
     // https://fetch.spec.whatwg.org/#concept-request-parser-metadata
     // A request has associated parser metadata which is the empty string, "parser-inserted", or
@@ -525,13 +522,12 @@ private:
 };
 
 WEB_API StringView request_destination_to_string(Request::Destination);
-Optional<Request::Destination> translate_potential_destination(Utf16View potential_destination);
+Optional<Request::Destination> translate_potential_destination(StringView potential_destination);
 bool destination_is_script_like(Request::Destination);
 
 WEB_API StringView request_mode_to_string(Request::Mode);
-WEB_API Utf16FlyString initiator_type_to_string(Request::InitiatorType);
+WEB_API FlyString initiator_type_to_string(Request::InitiatorType);
 
-Optional<Request::Priority> request_priority_from_string(Utf16View);
-Optional<Request::Priority> request_priority_from_string(Utf16String const&);
+Optional<Request::Priority> request_priority_from_string(StringView);
 
 }

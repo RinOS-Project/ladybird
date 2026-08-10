@@ -1,2 +1,0 @@
-worker1: connect 1
-worker2: error

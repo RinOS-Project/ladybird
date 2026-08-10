@@ -9,13 +9,12 @@
 
 namespace Web::ARIA {
 
-Utf16String const& role_name(Role role)
+StringView role_name(Role role)
 {
     switch (role) {
-#define __ENUMERATE_ARIA_ROLE(name, attribute)                                \
-    case Role::name:                                                          \
-        static Utf16String const& name = *new Utf16String(attribute##_utf16); \
-        return name;
+#define __ENUMERATE_ARIA_ROLE(name, attribute) \
+    case Role::name:                           \
+        return attribute##sv;
         ENUMERATE_ARIA_ROLES
 #undef __ENUMERATE_ARIA_ROLE
     default:
@@ -23,10 +22,10 @@ Utf16String const& role_name(Role role)
     }
 }
 
-Optional<Role> role_from_string(Utf16View input_role_name)
+Optional<Role> role_from_string(StringView role_name)
 {
-#define __ENUMERATE_ARIA_ROLE(name, attribute)                                          \
-    if (input_role_name.equals_ignoring_ascii_case(role_name(Role::name).utf16_view())) \
+#define __ENUMERATE_ARIA_ROLE(name, attribute)               \
+    if (role_name.equals_ignoring_ascii_case(attribute##sv)) \
         return Role::name;
     ENUMERATE_ARIA_ROLES
 #undef __ENUMERATE_ARIA_ROLE

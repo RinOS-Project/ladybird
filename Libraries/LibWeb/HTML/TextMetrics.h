@@ -6,16 +6,16 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::HTML {
 
-class TextMetrics : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(TextMetrics, Bindings::GCAllocatedWrappable);
+class TextMetrics : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(TextMetrics, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(TextMetrics);
 
 public:
-    [[nodiscard]] static GC::Ref<TextMetrics> create();
+    [[nodiscard]] static GC::Ref<TextMetrics> create(JS::Realm&);
 
     virtual ~TextMetrics() override;
 
@@ -46,7 +46,9 @@ public:
     void set_ideographic_baseline(double baseline) { m_ideographic_baseline = baseline; }
 
 private:
-    explicit TextMetrics();
+    explicit TextMetrics(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 
     double m_width { 0 };
     double m_actual_bounding_box_left { 0 };

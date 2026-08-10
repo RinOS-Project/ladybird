@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/Assertions.h>
-#include <AK/Optional.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Types.h>
 #include <initializer_list>
@@ -202,12 +201,9 @@ public:
         return result;
     }
 
-    [[nodiscard]] constexpr Optional<Matrix> inverse() const
+    [[nodiscard]] constexpr Matrix inverse() const
     {
-        auto const determinant = this->determinant();
-        if (determinant == static_cast<T>(0))
-            return {};
-        return adjugate() / determinant;
+        return adjugate() / determinant();
     }
 
     [[nodiscard]] constexpr Matrix transpose() const

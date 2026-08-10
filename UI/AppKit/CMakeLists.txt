@@ -3,22 +3,18 @@ add_library(ladybird_impl STATIC
     Application/ApplicationDelegate.mm
     Application/EventLoopImplementationMacOS.mm
     Interface/Autocomplete.mm
-    Interface/BookmarkFolder.mm
     Interface/BookmarksBar.mm
     Interface/Event.mm
     Interface/InfoBar.mm
     Interface/LadybirdWebView.mm
     Interface/LadybirdWebViewBridge.cpp
     Interface/LadybirdWebViewWindow.mm
-    Interface/LocationSearchField.mm
     Interface/Menu.mm
     Interface/Palette.mm
     Interface/SearchPanel.mm
     Interface/Tab.mm
     Interface/TabController.mm
-    Utilities/ApplicationIcon.mm
     Utilities/Conversions.mm
-    Utilities/DictionaryLookup.mm
 )
 target_include_directories(ladybird_impl PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 

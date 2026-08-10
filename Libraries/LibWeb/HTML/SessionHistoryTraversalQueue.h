@@ -6,10 +6,9 @@
 
 #pragma once
 
-#include <AK/HashTable.h>
 #include <AK/Vector.h>
-#include <LibCore/EventLoop.h>
 #include <LibCore/Promise.h>
+#include <LibCore/Timer.h>
 #include <LibGC/CellAllocator.h>
 #include <LibGC/Function.h>
 #include <LibGC/Ptr.h>
@@ -17,24 +16,21 @@
 #include <LibJS/Heap/Cell.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
-#include <LibWeb/HTML/CrossProcessId.h>
 
 namespace Web::HTML {
-
-using SessionHistoryTraversalSteps = GC::Function<void(NonnullRefPtr<Core::Promise<Empty>>)>;
 
 struct SessionHistoryTraversalQueueEntry : public JS::Cell {
     GC_CELL(SessionHistoryTraversalQueueEntry, JS::Cell);
     GC_DECLARE_ALLOCATOR(SessionHistoryTraversalQueueEntry);
 
 public:
-    static GC::Ref<SessionHistoryTraversalQueueEntry> create(GC::Ref<SessionHistoryTraversalSteps> steps, GC::Ptr<HTML::LocalNavigable> target_navigable);
+    static GC::Ref<SessionHistoryTraversalQueueEntry> create(JS::VM& vm, GC::Ref<GC::Function<NonnullRefPtr<Core::Promise<Empty>>()>> steps, GC::Ptr<HTML::Navigable> target_navigable);
 
-    GC::Ptr<HTML::LocalNavigable> target_navigable() const { return m_target_navigable; }
-    void execute_steps(NonnullRefPtr<Core::Promise<Empty>> promise) const { m_steps->function()(move(promise)); }
+    GC::Ptr<HTML::Navigable> target_navigable() const { return m_target_navigable; }
+    NonnullRefPtr<Core::Promise<Empty>> execute_steps() const { return m_steps->function()(); }
 
 private:
-    SessionHistoryTraversalQueueEntry(GC::Ref<SessionHistoryTraversalSteps> steps, GC::Ptr<HTML::LocalNavigable> target_navigable)
+    SessionHistoryTraversalQueueEntry(GC::Ref<GC::Function<NonnullRefPtr<Core::Promise<Empty>>()>> steps, GC::Ptr<HTML::Navigable> target_navigable)
         : m_steps(steps)
         , m_target_navigable(target_navigable)
     {
@@ -42,8 +38,8 @@ private:
 
     virtual void visit_edges(Cell::Visitor&) override;
 
-    GC::Ref<SessionHistoryTraversalSteps> m_steps;
-    GC::Ptr<HTML::LocalNavigable> m_target_navigable;
+    GC::Ref<GC::Function<NonnullRefPtr<Core::Promise<Empty>>()>> m_steps;
+    GC::Ptr<HTML::Navigable> m_target_navigable;
 };
 
 // https://html.spec.whatwg.org/multipage/document-sequences.html#tn-session-history-traversal-queue
@@ -54,21 +50,19 @@ class WEB_API SessionHistoryTraversalQueue : public JS::Cell {
 public:
     SessionHistoryTraversalQueue();
 
-    void append(GC::Ref<SessionHistoryTraversalSteps> steps);
-    void append_sync(GC::Ref<SessionHistoryTraversalSteps> steps, GC::Ptr<LocalNavigable> target_navigable);
+    void append(GC::Ref<GC::Function<NonnullRefPtr<Core::Promise<Empty>>()>> steps);
+    void append_sync(GC::Ref<GC::Function<NonnullRefPtr<Core::Promise<Empty>>()>> steps, GC::Ptr<Navigable> target_navigable);
 
     // https://html.spec.whatwg.org/multipage/browsing-the-web.html#sync-navigations-jump-queue
-    GC::Ptr<SessionHistoryTraversalQueueEntry> first_synchronous_navigation_steps_with_target_navigable_not_contained_in(HashTable<CrossProcessId> const&);
+    GC::Ptr<SessionHistoryTraversalQueueEntry> first_synchronous_navigation_steps_with_target_navigable_not_contained_in(HashTable<GC::Ref<Navigable>> const&);
 
 private:
     virtual void visit_edges(Cell::Visitor&) override;
 
-    void process_queue();
-    void schedule_processing();
-
     Vector<GC::Ref<SessionHistoryTraversalQueueEntry>> m_queue;
-    bool m_processing_scheduled { false };
-    RefPtr<Core::Promise<Empty>> m_current_promise;
+    RefPtr<Core::Timer> m_timer;
+    bool m_is_task_running { false };
+    WeakPtr<Core::Promise<Empty>> m_current_promise;
 };
 
 }

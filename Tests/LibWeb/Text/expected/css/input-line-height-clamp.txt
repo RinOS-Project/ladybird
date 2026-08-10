@@ -1,4 +1,0 @@
-small: normal
-large: 40px
-variable: normal
-checkbox: 1px

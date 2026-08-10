@@ -1,3 +1,0 @@
-Overlay starts near button: true
-Overlay height does not span previous lines: true
-Point above button does not hit overlay: true

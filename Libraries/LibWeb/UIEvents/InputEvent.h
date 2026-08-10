@@ -6,28 +6,24 @@
 
 #pragma once
 
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16String.h>
-#include <LibWeb/Bindings/InputEvent.h>
 #include <LibWeb/DOM/StaticRange.h>
-#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibWeb/UIEvents/UIEvent.h>
 
 namespace Web::UIEvents {
 
-using InputEventInit = Bindings::InputEventInit;
+struct InputEventInit : public UIEventInit {
+    Optional<Utf16String> data;
+    bool is_composing { false };
+    FlyString input_type {};
+};
 
 class InputEvent final : public UIEvent {
-    WEB_WRAPPABLE(InputEvent, UIEvent);
+    WEB_PLATFORM_OBJECT(InputEvent, UIEvent);
     GC_DECLARE_ALLOCATOR(InputEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<InputEvent> create(FlyString const& type, InputEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<InputEvent> create(Utf16String const& type, InputEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<InputEvent> create(FlyString const& type, InputEventInit const&, Vector<GC::Ref<DOM::StaticRange>> const& target_ranges, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<InputEvent> create_from_platform_event(FlyString const& type, InputEventInit const&, Vector<GC::Ref<DOM::StaticRange>> const& target_ranges = {}, HighResolutionTime::DOMHighResTimeStamp = 0);
-    [[nodiscard]] static GC::Ref<InputEvent> create_from_platform_event(Utf16FlyString const& type, InputEventInit const&, Vector<GC::Ref<DOM::StaticRange>> const& target_ranges = {}, HighResolutionTime::DOMHighResTimeStamp = 0);
-    [[nodiscard]] static GC::Ref<InputEvent> create(Utf16FlyString const& type, InputEventInit const&);
+    [[nodiscard]] static GC::Ref<InputEvent> create_from_platform_event(JS::Realm&, FlyString const& type, InputEventInit const& event_init, Vector<GC::Ref<DOM::StaticRange>> const& target_ranges = {});
+    static WebIDL::ExceptionOr<GC::Ref<InputEvent>> construct_impl(JS::Realm&, FlyString const& event_name, InputEventInit const& event_init);
 
     virtual ~InputEvent() override;
 
@@ -38,22 +34,19 @@ public:
     bool is_composing() const { return m_is_composing; }
 
     // https://w3c.github.io/uievents/#dom-inputevent-inputtype
-    Utf16FlyString input_type() const { return m_input_type; }
-
-    GC::Ptr<HTML::DataTransfer> data_transfer() const { return m_data_transfer; }
+    FlyString input_type() const { return m_input_type; }
 
     ReadonlySpan<GC::Ref<DOM::StaticRange>> get_target_ranges() const;
 
 private:
-    InputEvent(FlyString const& event_name, InputEventInit const&, Vector<GC::Ref<DOM::StaticRange>> const& target_ranges, HighResolutionTime::DOMHighResTimeStamp);
-    InputEvent(Utf16FlyString const& event_name, InputEventInit const&, Vector<GC::Ref<DOM::StaticRange>> const& target_ranges, HighResolutionTime::DOMHighResTimeStamp);
+    InputEvent(JS::Realm&, FlyString const& event_name, InputEventInit const&, Vector<GC::Ref<DOM::StaticRange>> const& target_ranges = {});
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Visitor&) override;
 
     Optional<Utf16String> m_data;
     bool m_is_composing;
-    Utf16FlyString m_input_type;
-    GC::Ptr<HTML::DataTransfer> m_data_transfer;
+    FlyString m_input_type;
     Vector<GC::Ref<DOM::StaticRange>> m_target_ranges;
 };
 

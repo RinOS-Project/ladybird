@@ -14,47 +14,13 @@
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/StyleElementBase.h>
-#include <LibWeb/HTML/AttributeNames.h>
 #include <LibWeb/HTML/EventNames.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
-#include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/Infra/Strings.h>
 
 namespace Web::DOM {
 
-void StyleElementBase::set_parser_document(Badge<HTML::HTMLParser>, GC::Ref<Document> document)
-{
-    m_parser_document = document;
-    m_is_on_parser_stack_of_open_elements = true;
-}
-
-void StyleElementBase::did_pop_off_parser_stack_of_open_elements()
-{
-    m_is_on_parser_stack_of_open_elements = false;
-    update_a_style_block(UpdateSource::ParserPop);
-}
-
-void StyleElementBase::update_a_style_block_for_dynamic_change()
-{
-    if (m_is_on_parser_stack_of_open_elements)
-        return;
-    update_a_style_block();
-}
-
-void StyleElementBase::style_element_attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& value)
-{
-    if (name == HTML::AttributeNames::media) {
-        if (auto* sheet = this->sheet()) {
-            sheet->set_media(value.has_value() ? value->utf16_view() : u""sv);
-            associated_style_sheet_media_attribute_changed();
-        }
-    } else if (name == HTML::AttributeNames::type) {
-        update_a_style_block_for_dynamic_change();
-    }
-}
-
 // The user agent must run the "update a style block" algorithm whenever one of the following conditions occur:
-// The element is popped off the stack of open elements of an HTML parser or XML parser.
+// FIXME: The element is popped off the stack of open elements of an HTML parser or XML parser.
 //
 // NOTE: This is basically done by children_changed() today:
 // The element's children changed steps run.
@@ -63,7 +29,7 @@ void StyleElementBase::style_element_attribute_changed(Utf16FlyString const& nam
 // The element is not on the stack of open elements of an HTML parser or XML parser, and it becomes connected or disconnected.
 //
 // https://html.spec.whatwg.org/multipage/semantics.html#update-a-style-block
-void StyleElementBase::update_a_style_block(UpdateSource update_source)
+void StyleElementBase::update_a_style_block()
 {
     auto& style_element = as_element();
 
@@ -74,6 +40,7 @@ void StyleElementBase::update_a_style_block(UpdateSource update_source)
 
     // 1. Let element be the style element.
     // 2. If element has an associated CSS style sheet, remove the CSS style sheet in question.
+
     if (m_associated_css_style_sheet) {
         m_style_sheet_list->remove_a_css_style_sheet(*m_associated_css_style_sheet);
         m_style_sheet_list = nullptr;
@@ -82,25 +49,17 @@ void StyleElementBase::update_a_style_block(UpdateSource update_source)
         m_associated_css_style_sheet = nullptr;
     }
 
-    // AD-HOC: The script-blocking style sheet set tracks elements, but a style element's associated sheet can be
-    //         replaced before that sheet's critical subresources finish loading. Keep that set and any queued
-    //         completions in sync with the sheet removed above.
-    ++m_style_sheet_update_generation;
-    remove_from_script_blocking_style_sheet_set_if_needed();
-    clear_associated_css_style_sheet_parser_blocking_state();
-
     // 3. If element is not connected, then return.
     if (!style_element.is_connected())
         return;
 
     // 4. If element's type attribute is present and its value is neither the empty string nor an ASCII case-insensitive match for "text/css", then return.
     auto type_attribute = style_element.attribute(HTML::AttributeNames::type);
-    if (type_attribute.has_value() && !type_attribute->is_empty() && !type_attribute->equals_ignoring_ascii_case(u"text/css"sv))
+    if (type_attribute.has_value() && !type_attribute->is_empty() && !type_attribute->bytes_as_string_view().equals_ignoring_ascii_case("text/css"sv))
         return;
 
     // 5. If the Should element's inline behavior be blocked by Content Security Policy? algorithm returns "Blocked" when executed upon the style element, "style", and the style element's child text content, then return. [CSP]
-    auto child_text = style_element.child_text_content();
-    if (ContentSecurityPolicy::should_elements_inline_type_behavior_be_blocked_by_content_security_policy(style_element, ContentSecurityPolicy::Directives::Directive::InlineType::Style, child_text.utf16_view()) == ContentSecurityPolicy::Directives::Directive::Result::Blocked)
+    if (ContentSecurityPolicy::should_elements_inline_type_behavior_be_blocked_by_content_security_policy(style_element.realm(), style_element, ContentSecurityPolicy::Directives::Directive::InlineType::Style, style_element.child_text_content().to_utf8_but_should_be_ported_to_utf16()) == ContentSecurityPolicy::Directives::Directive::Result::Blocked)
         return;
 
     // 6. Create a CSS style sheet with the following properties:
@@ -124,37 +83,25 @@ void StyleElementBase::update_a_style_block(UpdateSource update_source)
     //            Left at its default value.
     //        CSS rules
     //          Left uninitialized.
-    auto text_content = style_element.text_content();
-    auto text_content_view = text_content.has_value() ? text_content->utf16_view() : u""sv;
-    auto media_attribute = style_element.attribute(HTML::AttributeNames::media);
-    auto media_attribute_view = media_attribute.has_value() ? media_attribute->utf16_view() : u""sv;
-    auto title_attribute = style_element.in_a_document_tree() ? style_element.attribute(HTML::AttributeNames::title) : Optional<Utf16String> {};
     m_style_sheet_list = style_element.document_or_shadow_root_style_sheets();
     m_associated_css_style_sheet = m_style_sheet_list->create_a_css_style_sheet(
-        text_content_view,
+        style_element.text_content().value_or({}).to_utf8_but_should_be_ported_to_utf16(),
+        "text/css"_string,
         &style_element,
-        media_attribute_view,
-        title_attribute.has_value() ? title_attribute.release_value() : Utf16String {},
+        style_element.attribute(HTML::AttributeNames::media).value_or({}),
+        style_element.in_a_document_tree()
+            ? style_element.attribute(HTML::AttributeNames::title).value_or({})
+            : String {},
         CSS::StyleSheetList::Alternate::No,
         CSS::StyleSheetList::OriginClean::Yes,
         {},
         nullptr,
         nullptr);
 
-    evaluate_associated_style_sheet_media_queries();
-    if (update_source == UpdateSource::ParserPop) {
-        m_associated_css_style_sheet_was_created_by_parser = true;
-        m_associated_css_style_sheet_was_enabled_when_created_by_parser = !m_associated_css_style_sheet->disabled();
-        m_associated_css_style_sheet_load_is_pending_for_script_blocking = m_associated_css_style_sheet_was_enabled_when_created_by_parser
-            && m_associated_css_style_sheet_media_matches_environment
-            && m_associated_css_style_sheet->loading_state() == CSS::CSSStyleSheet::LoadingState::Loading;
-    }
-
     // 7. If element contributes a script-blocking style sheet, append element to its node document's script-blocking style sheet set.
     if (style_element.contributes_a_script_blocking_style_sheet()) {
         m_document_load_event_delayer.emplace(style_element.document());
         style_element.document().script_blocking_style_sheet_set().set(style_element);
-        m_associated_css_style_sheet_is_blocking_scripts = true;
     }
 
     // FIXME: 8. If element's media attribute's value matches the environment and element is potentially render-blocking, then block rendering on element.
@@ -171,7 +118,6 @@ void StyleElementBase::finished_loading_critical_subresources(AnyFailed any_fail
 {
     // 1. Let element be the style element associated with the style sheet in question.
     auto& element = as_element();
-    auto const style_sheet_update_generation = m_style_sheet_update_generation;
 
     // 2. Let success be true.
     auto success = true;
@@ -184,119 +130,25 @@ void StyleElementBase::finished_loading_critical_subresources(AnyFailed any_fail
         success = false;
 
     // 4. Queue an element task on the networking task source given element and the following steps:
-    element.queue_an_element_task(HTML::Task::Source::UserInteraction, [&element, success, style_sheet_update_generation] {
-        // AD-HOC: If the associated stylesheet has been replaced or removed since this task was queued, ignore it.
-        auto* style_element_base = as_if<StyleElementBase>(element);
-        if (!style_element_base || style_element_base->m_style_sheet_update_generation != style_sheet_update_generation)
-            return;
-
+    element.queue_an_element_task(HTML::Task::Source::UserInteraction, [&element, success] {
         // 1. If success is true, fire an event named load at element.
         // AD-HOC: these should call fire an event this is not implemented anywhere so we dispatch it ourselves
         if (success)
-            element.dispatch_event(DOM::Event::create(
-                HTML::EventNames::load,
-                HighResolutionTime::current_high_resolution_time(HTML::relevant_global_object(element))));
+            element.dispatch_event(DOM::Event::create(element.realm(), HTML::EventNames::load));
         // 2. Otherwise, fire an event named error at element.
         else
-            element.dispatch_event(DOM::Event::create(
-                HTML::EventNames::error,
-                HighResolutionTime::current_high_resolution_time(HTML::relevant_global_object(element))));
+            element.dispatch_event(DOM::Event::create(element.realm(), HTML::EventNames::error));
         // 3. If element contributes a script-blocking style sheet:
         if (element.contributes_a_script_blocking_style_sheet()) {
             // 1. Assert: element's node document's script-blocking style sheet set contains element.
             VERIFY(element.document().script_blocking_style_sheet_set().contains(element));
-            VERIFY(style_element_base->m_associated_css_style_sheet_is_blocking_scripts);
             // 2. Remove element from its node document's script-blocking style sheet set.
-            element.document().remove_from_script_blocking_style_sheet_set(element);
-            style_element_base->m_associated_css_style_sheet_is_blocking_scripts = false;
+            element.document().script_blocking_style_sheet_set().remove(element);
         }
         // 4. Unblock rendering on element.
         element.unblock_rendering();
-        style_element_base->m_associated_css_style_sheet_load_is_pending_for_script_blocking = false;
     });
     m_document_load_event_delayer.clear();
-}
-
-void StyleElementBase::associated_style_sheet_media_attribute_changed()
-{
-    evaluate_associated_style_sheet_media_queries();
-    if (!as_element().contributes_a_script_blocking_style_sheet()) {
-        remove_from_script_blocking_style_sheet_set_if_needed();
-        m_associated_css_style_sheet_load_is_pending_for_script_blocking = false;
-    }
-}
-
-// https://html.spec.whatwg.org/multipage/semantics.html#contributes-a-script-blocking-style-sheet
-bool StyleElementBase::style_element_contributes_a_script_blocking_style_sheet() const
-{
-    // An element el in the context of a Document of an HTML parser or XML parser contributes a script-blocking style
-    // sheet if all of the following are true:
-    auto& element = as_element();
-
-    // el was created by that Document's parser.
-    if (m_parser_document != &element.document())
-        return false;
-
-    if (!m_associated_css_style_sheet_was_created_by_parser)
-        return false;
-
-    // el is either a style element or a link element that was an external resource link that contributes to the
-    // styling processing model when the el was created by the parser.
-    // NB: This is a style element, so all good!
-
-    // el's media attribute's value matches the environment.
-    if (!m_associated_css_style_sheet_media_matches_environment)
-        return false;
-
-    // el's style sheet was enabled when the element was created by the parser.
-    if (!m_associated_css_style_sheet_was_enabled_when_created_by_parser)
-        return false;
-
-    // FIXME: The last time the event loop reached step 1, el's root was that Document.
-
-    // FIXME: The user agent hasn't given up on loading that particular style sheet yet.
-    //        A user agent may give up on loading a style sheet at any time.
-
-    // AD-HOC: Once this parser-created stylesheet has finished loading or stopped blocking scripts, it no longer
-    //         contributes a script-blocking stylesheet even though it is still the current associated stylesheet.
-    // FIXME: May not be needed once the other clauses above are implemented.
-    if (!m_associated_css_style_sheet_load_is_pending_for_script_blocking)
-        return false;
-
-    return true;
-}
-
-void StyleElementBase::evaluate_associated_style_sheet_media_queries()
-{
-    if (!m_associated_css_style_sheet) {
-        m_associated_css_style_sheet_media_matches_environment = false;
-        return;
-    }
-
-    m_associated_css_style_sheet->evaluate_media_queries(as_element().document());
-    m_associated_css_style_sheet_media_matches_environment = m_associated_css_style_sheet->media()->matches();
-}
-
-void StyleElementBase::remove_from_script_blocking_style_sheet_set_if_needed()
-{
-    if (!m_associated_css_style_sheet_is_blocking_scripts)
-        return;
-
-    auto& element = as_element();
-    if (element.document().script_blocking_style_sheet_set().contains(element))
-        element.document().remove_from_script_blocking_style_sheet_set(element);
-
-    m_associated_css_style_sheet_is_blocking_scripts = false;
-    m_document_load_event_delayer.clear();
-}
-
-void StyleElementBase::clear_associated_css_style_sheet_parser_blocking_state()
-{
-    m_associated_css_style_sheet_was_created_by_parser = false;
-    m_associated_css_style_sheet_was_enabled_when_created_by_parser = false;
-    m_associated_css_style_sheet_media_matches_environment = false;
-    m_associated_css_style_sheet_load_is_pending_for_script_blocking = false;
-    m_associated_css_style_sheet_is_blocking_scripts = false;
 }
 
 // https://www.w3.org/TR/cssom/#dom-linkstyle-sheet
@@ -311,33 +163,6 @@ CSS::CSSStyleSheet const* StyleElementBase::sheet() const
 {
     // The sheet attribute must return the associated CSS style sheet for the node or null if there is no associated CSS style sheet.
     return m_associated_css_style_sheet;
-}
-
-// https://html.spec.whatwg.org/multipage/semantics.html#dom-style-disabled
-bool StyleElementBase::disabled()
-{
-    // 1. If this does not have an associated CSS style sheet, return false.
-    if (!sheet())
-        return false;
-
-    // 2. If this's associated CSS style sheet's disabled flag is set, return true.
-    if (sheet()->disabled())
-        return true;
-
-    // 3. Return false.
-    return false;
-}
-
-// https://html.spec.whatwg.org/multipage/semantics.html#dom-style-disabled
-void StyleElementBase::set_disabled(bool disabled)
-{
-    // 1. If this does not have an associated CSS style sheet, return.
-    if (!sheet())
-        return;
-
-    // 2. If the given value is true, set this's associated CSS style sheet's disabled flag.
-    //    Otherwise, unset this's associated CSS style sheet's disabled flag.
-    sheet()->set_disabled(disabled);
 }
 
 void StyleElementBase::visit_style_element_edges(JS::Cell::Visitor& visitor)

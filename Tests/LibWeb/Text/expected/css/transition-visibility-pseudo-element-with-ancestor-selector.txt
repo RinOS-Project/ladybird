@@ -1,2 +1,0 @@
-::before box present while hidden? true
-::before box still present after reveal transition? true

@@ -8,36 +8,36 @@
 #pragma once
 
 #include <AK/FlyString.h>
-#include <LibJS/Runtime/Value.h>
-#include <LibWeb/Bindings/CustomEvent.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Export.h>
 
 namespace Web::DOM {
 
-using CustomEventInit = Bindings::CustomEventInit;
+struct CustomEventInit : public EventInit {
+    JS::Value detail { JS::js_null() };
+};
 
 // https://dom.spec.whatwg.org/#customevent
 class WEB_API CustomEvent : public Event {
-    WEB_WRAPPABLE(CustomEvent, Event);
+    WEB_PLATFORM_OBJECT(CustomEvent, Event);
     GC_DECLARE_ALLOCATOR(CustomEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<CustomEvent> create(JS::Object const& relevant_global_object, FlyString const& event_name, CustomEventInit const& = {});
-    [[nodiscard]] static GC::Ref<CustomEvent> create(FlyString const& event_name, CustomEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
-    [[nodiscard]] static GC::Ref<CustomEvent> create_for_constructor(Utf16String const& event_name, CustomEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static GC::Ref<CustomEvent> create(JS::Realm&, FlyString const& event_name, CustomEventInit const& = {});
+    static WebIDL::ExceptionOr<GC::Ref<CustomEvent>> construct_impl(JS::Realm&, FlyString const& event_name, CustomEventInit const&);
 
     virtual ~CustomEvent() override;
 
     // https://dom.spec.whatwg.org/#dom-customevent-detail
-    JS::Value const& detail() const { return m_detail; }
+    JS::Value detail() const { return m_detail; }
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(JS::Cell::Visitor&) override;
 
-    void init_custom_event(Utf16FlyString const& type, bool bubbles, bool cancelable, JS::Value detail);
+    void init_custom_event(String const& type, bool bubbles, bool cancelable, JS::Value detail);
 
 private:
-    CustomEvent(FlyString const& event_name, CustomEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
+    CustomEvent(JS::Realm&, FlyString const& event_name, CustomEventInit const& event_init);
 
     // https://dom.spec.whatwg.org/#dom-customevent-initcustomevent-type-bubbles-cancelable-detail-detail
     JS::Value m_detail { JS::js_null() };

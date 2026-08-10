@@ -1,3 +1,0 @@
-parent font-size: 20px
-child font-size: 20px
-child line-height: 40px

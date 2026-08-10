@@ -10,15 +10,16 @@
 #pragma once
 
 #include <LibWeb/Forward.h>
-#include <LibWeb/HTML/Canvas/AbstractCanvasMixin.h>
+#include <LibWeb/HTML/Canvas/CanvasState.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/canvas.html#canvasfillstrokestyles
-class CanvasFillStrokeStyles : protected virtual AbstractCanvasMixin {
+template<typename IncludingClass>
+class CanvasFillStrokeStyles {
 public:
     ~CanvasFillStrokeStyles() = default;
-    using FillOrStrokeStyleVariant = Variant<Utf16String, GC::Ref<CanvasGradient>, GC::Ref<CanvasPattern>>;
+    using FillOrStrokeStyleVariant = Variant<String, GC::Root<CanvasGradient>, GC::Root<CanvasPattern>>;
 
     void set_fill_style(FillOrStrokeStyleVariant style);
     FillOrStrokeStyleVariant fill_style() const;
@@ -27,12 +28,17 @@ public:
     FillOrStrokeStyleVariant stroke_style() const;
 
     WebIDL::ExceptionOr<GC::Ref<CanvasGradient>> create_radial_gradient(double x0, double y0, double r0, double x1, double y1, double r1);
-    WebIDL::ExceptionOr<GC::Ref<CanvasGradient>> create_linear_gradient(double x0, double y0, double x1, double y1);
-    WebIDL::ExceptionOr<GC::Ref<CanvasGradient>> create_conic_gradient(double start_angle, double x, double y);
-    WebIDL::ExceptionOr<GC::Ptr<CanvasPattern>> create_pattern(CanvasImageSource const& image, Utf16FlyString const& repetition);
+    GC::Ref<CanvasGradient> create_linear_gradient(double x0, double y0, double x1, double y1);
+    GC::Ref<CanvasGradient> create_conic_gradient(double start_angle, double x, double y);
+    WebIDL::ExceptionOr<GC::Ptr<CanvasPattern>> create_pattern(CanvasImageSource const& image, StringView repetition);
 
 protected:
     CanvasFillStrokeStyles() = default;
+
+private:
+    Variant<HTMLCanvasElement*, OffscreenCanvas*> my_canvas_element();
+    CanvasState::DrawingState& my_drawing_state();
+    CanvasState::DrawingState const& my_drawing_state() const;
 };
 
 }

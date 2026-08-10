@@ -6,16 +6,16 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
-#include <AK/Variant.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibJS/Forward.h>
+#include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/Bindings/TrustedScriptURLPrototype.h>
 
 namespace Web::TrustedTypes {
 
-using TrustedScriptURLOrString = Variant<GC::Ref<TrustedScriptURL>, Utf16String>;
+using TrustedScriptURLOrString = Variant<GC::Root<TrustedScriptURL>, Utf16String>;
 
-class TrustedScriptURL final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(TrustedScriptURL, Bindings::GCAllocatedWrappable);
+class TrustedScriptURL final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(TrustedScriptURL, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(TrustedScriptURL);
 
 public:
@@ -25,7 +25,8 @@ public:
     Utf16String const& to_json() const;
 
 private:
-    explicit TrustedScriptURL(Utf16String);
+    explicit TrustedScriptURL(JS::Realm&, Utf16String);
+    virtual void initialize(JS::Realm&) override;
 
     Utf16String const m_data;
 };

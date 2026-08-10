@@ -5,7 +5,8 @@
  */
 
 #include "CSSMathSum.h"
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/CSSMathSumPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSMathNegate.h>
 #include <LibWeb/CSS/CSSNumericArray.h>
 #include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
@@ -16,12 +17,12 @@ namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSMathSum);
 
-GC::Ref<CSSMathSum> CSSMathSum::create(NumericType type, GC::Ref<CSSNumericArray> values)
+GC::Ref<CSSMathSum> CSSMathSum::create(JS::Realm& realm, NumericType type, GC::Ref<CSSNumericArray> values)
 {
-    return GC::Heap::the().allocate<CSSMathSum>(move(type), move(values));
+    return realm.create<CSSMathSum>(realm, move(type), move(values));
 }
 
-WebIDL::ExceptionOr<GC::Ref<CSSMathSum>> CSSMathSum::add_all_types_into_math_sum(GC::RootVector<GC::Ref<CSSNumericValue>> const& values)
+WebIDL::ExceptionOr<GC::Ref<CSSMathSum>> CSSMathSum::add_all_types_into_math_sum(JS::Realm& realm, GC::RootVector<GC::Ref<CSSNumericValue>> const& values)
 {
     auto type = values.first()->type();
     bool first = true;
@@ -33,51 +34,57 @@ WebIDL::ExceptionOr<GC::Ref<CSSMathSum>> CSSMathSum::add_all_types_into_math_sum
         if (auto added_types = type.added_to(value->type()); added_types.has_value()) {
             type = added_types.release_value();
         } else {
-            return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot create a CSSMathSum with values of incompatible types"_utf16 };
+            return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot create a CSSMathSum with values of incompatible types"sv };
         }
     }
 
-    auto values_array = CSSNumericArray::create({ values });
-    return CSSMathSum::create(type, values_array);
+    auto values_array = CSSNumericArray::create(realm, { values });
+    return CSSMathSum::create(realm, type, values_array);
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-cssmathsum-cssmathsum
-WebIDL::ExceptionOr<GC::Ref<CSSMathSum>> CSSMathSum::create_for_constructor(ReadonlySpan<CSSNumberish> values)
+WebIDL::ExceptionOr<GC::Ref<CSSMathSum>> CSSMathSum::construct_impl(JS::Realm& realm, Vector<CSSNumberish> values)
 {
     // The CSSMathSum(...args) constructor must, when called, perform the following steps:
 
     // 1. Replace each item of args with the result of rectifying a numberish value for the item.
-    GC::RootVector<GC::Ref<CSSNumericValue>> converted_values;
+    GC::RootVector<GC::Ref<CSSNumericValue>> converted_values { realm.heap() };
     converted_values.ensure_capacity(values.size());
     for (auto const& value : values) {
-        converted_values.append(rectify_a_numberish_value(value));
+        converted_values.append(rectify_a_numberish_value(realm, value));
     }
 
     // 2. If args is empty, throw a SyntaxError.
     if (converted_values.is_empty())
-        return WebIDL::SyntaxError::create("Cannot create an empty CSSMathSum"_utf16);
+        return WebIDL::SyntaxError::create(realm, "Cannot create an empty CSSMathSum"_utf16);
 
     // 3. Let type be the result of adding the types of all the items of args. If type is failure, throw a TypeError.
     // 4. Return a new CSSMathSum whose values internal slot is set to args.
-    return add_all_types_into_math_sum(converted_values);
+    return add_all_types_into_math_sum(realm, converted_values);
 }
 
-CSSMathSum::CSSMathSum(NumericType type, GC::Ref<CSSNumericArray> values)
-    : CSSMathValue(CSSMathOperator::Sum, move(type))
+CSSMathSum::CSSMathSum(JS::Realm& realm, NumericType type, GC::Ref<CSSNumericArray> values)
+    : CSSMathValue(realm, Bindings::CSSMathOperator::Sum, move(type))
     , m_values(move(values))
 {
 }
 
 CSSMathSum::~CSSMathSum() = default;
 
-void CSSMathSum::visit_edges(GC::Cell::Visitor& visitor)
+void CSSMathSum::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSMathSum);
+    Base::initialize(realm);
+}
+
+void CSSMathSum::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_values);
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#serialize-a-cssmathvalue
-void CSSMathSum::serialize_math_value(Utf16StringBuilder& s, Nested nested, Parens parens) const
+void CSSMathSum::serialize_math_value(StringBuilder& s, Nested nested, Parens parens) const
 {
     // NB: Only steps 1 and 3 apply here.
     // 1. Let s initially be the empty string.
@@ -88,9 +95,9 @@ void CSSMathSum::serialize_math_value(Utf16StringBuilder& s, Nested nested, Pare
         //    otherwise, append "calc(" to s.
         if (parens == Parens::With) {
             if (nested == Nested::Yes) {
-                s.append_ascii('(');
+                s.append('(');
             } else {
-                s.append_ascii("calc("sv);
+                s.append("calc("sv);
             }
         }
 
@@ -109,20 +116,20 @@ void CSSMathSum::serialize_math_value(Utf16StringBuilder& s, Nested nested, Pare
             // 1. If arg is a CSSMathNegate, append " - " to s, then serialize arg’s value internal slot with nested
             //    set to true, and append the result to s.
             if (auto* negate = as_if<CSSMathNegate>(*arg)) {
-                s.append_ascii(" - "sv);
+                s.append(" - "sv);
                 negate->value()->serialize(s, { .nested = true });
             }
 
             // 2. Otherwise, append " + " to s, then serialize arg with nested set to true, and append the result to s.
             else {
-                s.append_ascii(" + "sv);
+                s.append(" + "sv);
                 arg->serialize(s, { .nested = true });
             }
         }
 
         // 4. If paren-less is false, append ")" to s,
         if (parens == Parens::With)
-            s.append_ascii(')');
+            s.append(')');
 
         // 5. Return s.
     }
@@ -203,14 +210,14 @@ Optional<SumValue> CSSMathSum::create_a_sum_value() const
     return values;
 }
 
-WebIDL::ExceptionOr<CalcNodeRef> CSSMathSum::create_calculation_node(CalculationContext const& context) const
+WebIDL::ExceptionOr<NonnullRefPtr<CalculationNode const>> CSSMathSum::create_calculation_node(CalculationContext const& context) const
 {
-    Vector<CalcNodeRef> child_nodes;
+    Vector<NonnullRefPtr<CalculationNode const>> child_nodes;
     for (auto const& child_value : m_values->values()) {
         child_nodes.append(TRY(child_value->create_calculation_node(context)));
     }
 
-    return CalcNodeRef::sum(move(child_nodes));
+    return SumCalculationNode::create(move(child_nodes));
 }
 
 }

@@ -6,7 +6,6 @@
 
 #include <AK/CharacterTypes.h>
 #include <AK/Find.h>
-#include <AK/Utf16StringBuilder.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/RegExpConstructor.h>
@@ -41,12 +40,6 @@ GC_DEFINE_ALLOCATOR(RegExpConstructor);
 RegExpConstructor::RegExpConstructor(Realm& realm)
     : NativeFunction(realm.vm().names.RegExp.as_string(), realm.intrinsics().function_prototype())
 {
-}
-
-void RegExpConstructor::visit_edges(Cell::Visitor& visitor)
-{
-    Base::visit_edges(visitor);
-    m_legacy_static_properties.visit_edges(visitor);
 }
 
 void RegExpConstructor::initialize(Realm& realm)
@@ -180,7 +173,7 @@ ThrowCompletionOr<GC::Ref<Object>> RegExpConstructor::construct_impl(FunctionObj
 }
 
 // 22.2.5.1.1 EncodeForRegExpEscape ( cp ), https://tc39.es/ecma262/#sec-encodeforregexpescape
-static Utf16String encode_for_regexp_escape(u32 code_point)
+static String encode_for_regexp_escape(u32 code_point)
 {
     // https://tc39.es/ecma262/#table-controlescape-code-point-values
     // Table 63: ControlEscape Code Point Values
@@ -199,10 +192,7 @@ static Utf16String encode_for_regexp_escape(u32 code_point)
     // 1. If c is matched by SyntaxCharacter or c is U+002F (SOLIDUS), then
     if (is_syntax_character(code_point) || code_point == '/') {
         // a. Return the string-concatenation of 0x005C (REVERSE SOLIDUS) and UTF16EncodeCodePoint(c).
-        Utf16StringBuilder builder;
-        builder.append_ascii('\\');
-        builder.append_code_point(code_point);
-        return builder.to_string();
+        return MUST(String::formatted("\\{}", String::from_code_point(code_point)));
     }
 
     // 2. Else if c is the code point listed in some cell of the “Code Point” column of Table 63, then
@@ -213,26 +203,23 @@ static Utf16String encode_for_regexp_escape(u32 code_point)
     if (it != control_escapes.end()) {
         // a. Return the string-concatenation of 0x005C (REVERSE SOLIDUS) and the string in the “ControlEscape” column
         //    of the row whose “Code Point” column contains c.
-        Utf16StringBuilder builder;
-        builder.append_ascii('\\');
-        builder.append_ascii(it->control_escape);
-        return builder.to_string();
+        return MUST(String::formatted("\\{}", it->control_escape));
     }
 
     // 3. Let otherPunctuators be the string-concatenation of ",-=<>#&!%:;@~'`" and the code unit 0x0022 (QUOTATION MARK).
     // 4. Let toEscape be StringToCodePoints(otherPunctuators).
-    static constexpr auto to_escape = ",-=<>#&!%:;@~'`\""sv;
+    static constexpr Utf8View to_escape { ",-=<>#&!%:;@~'`\""sv };
 
     // 5. If toEscape contains c, c is matched by either WhiteSpace or LineTerminator, or c has the same numeric value
     //    as a leading surrogate or trailing surrogate, then
-    if ((is_ascii(code_point) && to_escape.contains(static_cast<char>(code_point))) || is_whitespace(code_point) || is_line_terminator(code_point) || is_unicode_surrogate(code_point)) {
+    if (to_escape.contains(code_point) || is_whitespace(code_point) || is_line_terminator(code_point) || is_unicode_surrogate(code_point)) {
         // a. Let cNum be the numeric value of c.
         // b. If cNum ≤ 0xFF, then
         if (code_point <= 0xFF) {
             // i. Let hex be Number::toString(𝔽(cNum), 16).
             // ii. Return the string-concatenation of the code unit 0x005C (REVERSE SOLIDUS), "x", and
             //     StringPad(hex, 2, "0", START).
-            return Utf16String::formatted("\\x{:02x}", code_point);
+            return MUST(String::formatted("\\x{:02x}", code_point));
         }
 
         // c. Let escaped be the empty String.
@@ -240,11 +227,11 @@ static Utf16String encode_for_regexp_escape(u32 code_point)
         // e. For each code unit cu of codeUnits, do
         //     i. Set escaped to the string-concatenation of escaped and UnicodeEscape(cu).
         // f. Return escaped.
-        return Utf16String::formatted("\\u{:04x}", code_point);
+        return MUST(String::formatted("\\u{:04x}", code_point));
     }
 
     // 6. Return UTF16EncodeCodePoint(c).
-    return Utf16String::from_code_point(code_point);
+    return String::from_code_point(code_point);
 }
 
 // 22.2.5.1 RegExp.escape ( S ), https://tc39.es/ecma262/#sec-regexp.escape
@@ -257,13 +244,13 @@ JS_DEFINE_NATIVE_FUNCTION(RegExpConstructor::escape)
         return vm.throw_completion<TypeError>(ErrorType::NotAString, string);
 
     // 2. Let escaped be the empty String.
-    auto code_point_list = string.as_string().utf16_string_view();
-    Utf16StringBuilder escaped(string.as_string().utf16_string_view().length_in_code_units());
+    StringBuilder escaped(string.as_string().utf8_string().byte_count());
 
     // 3. Let cpList be StringToCodePoints(S).
+    auto code_point_list = string.as_string().utf8_string();
 
     // 4. For each code point c of cpList, do
-    for (auto code_point : code_point_list) {
+    for (auto code_point : code_point_list.code_points()) {
         // a. If escaped is the empty String and c is matched by either DecimalDigit or AsciiLetter, then
         if (escaped.is_empty() && is_ascii_alphanumeric(code_point)) {
             // i. NOTE: Escaping a leading digit ensures that output corresponds with pattern text which may be used
@@ -285,7 +272,7 @@ JS_DEFINE_NATIVE_FUNCTION(RegExpConstructor::escape)
     }
 
     // 5. Return escaped.
-    return JS::PrimitiveString::create(vm, escaped.to_string());
+    return JS::PrimitiveString::create(vm, MUST(escaped.to_string()));
 }
 
 // 22.2.5.3 get RegExp [ %Symbol.species% ], https://tc39.es/ecma262/#sec-get-regexp-@@species

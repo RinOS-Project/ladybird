@@ -12,14 +12,16 @@
 
 namespace Web::Layout {
 
-RadioButton::RadioButton(DOM::Document& document, HTML::HTMLInputElement& element, NonnullRefPtr<CSS::ComputedValues const> style)
-    : ReplacedBox(document, element, style)
+GC_DEFINE_ALLOCATOR(RadioButton);
+
+RadioButton::RadioButton(DOM::Document& document, HTML::HTMLInputElement& element, GC::Ref<CSS::ComputedProperties> style)
+    : ReplacedBox(document, element, move(style))
 {
 }
 
 RadioButton::~RadioButton() = default;
 
-RefPtr<Painting::Paintable> RadioButton::create_paintable() const
+GC::Ptr<Painting::Paintable> RadioButton::create_paintable() const
 {
     return Painting::RadioButtonPaintable::create(*this);
 }

@@ -78,7 +78,10 @@ impl Operand {
     }
 
     pub fn operand_type(self) -> OperandType {
-        assert!(!self.is_invalid(), "operand_type() called on INVALID operand");
+        assert!(
+            !self.is_invalid(),
+            "operand_type() called on INVALID operand"
+        );
         match (self.0 >> Self::TYPE_SHIFT) & 0x7 {
             0 => OperandType::Register,
             1 => OperandType::Local,
@@ -94,14 +97,6 @@ impl Operand {
 
     pub fn raw(self) -> u32 {
         self.0
-    }
-
-    pub fn from_raw(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    pub fn optional_from_raw(raw: u32) -> Option<Self> {
-        if raw == Self::INVALID { None } else { Some(Self(raw)) }
     }
 
     /// Offset the index by the given amount, stripping the type tag and
@@ -142,10 +137,6 @@ pub struct StringTableIndex(pub u32);
 
 impl StringTableIndex {
     pub const INVALID: u32 = 0xFFFF_FFFF;
-
-    pub fn optional_from_raw(raw: u32) -> Option<Self> {
-        if raw == Self::INVALID { None } else { Some(Self(raw)) }
-    }
 }
 
 /// Index into the identifier table.
@@ -154,10 +145,6 @@ pub struct IdentifierTableIndex(pub u32);
 
 impl IdentifierTableIndex {
     pub const INVALID: u32 = 0xFFFF_FFFF;
-
-    pub fn optional_from_raw(raw: u32) -> Option<Self> {
-        if raw == Self::INVALID { None } else { Some(Self(raw)) }
-    }
 }
 
 /// Index into the property key table.
@@ -168,7 +155,7 @@ pub struct PropertyKeyTableIndex(pub u32);
 #[derive(Debug, Clone, Copy)]
 pub struct RegexTableIndex(pub u32);
 
-/// Environment coordinate used by environment lookup instructions.
+/// Environment coordinate used as a mutable cache in some instructions.
 /// Layout: two `u32` fields (hops + index).
 #[derive(Debug, Clone, Copy)]
 pub struct EnvironmentCoordinate {

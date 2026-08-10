@@ -6,12 +6,9 @@
 
 #include <AK/Enumerate.h>
 #include <AK/Find.h>
-#include <AK/NeverDestroyed.h>
-#include <LibGC/Heap.h>
-#include <LibGC/WeakInlines.h>
-#include <LibJS/Runtime/Array.h>
-#include <LibJS/Runtime/PrimitiveString.h>
-#include <LibWeb/Bindings/WrapperWorld.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/DataTransferPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/FileAPI/Blob.h>
 #include <LibWeb/FileAPI/File.h>
 #include <LibWeb/FileAPI/FileList.h>
@@ -24,96 +21,21 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(DataTransfer);
 
-struct DataTransferTypesCacheEntry {
-    GC::Weak<DataTransfer> data_transfer;
-    u64 types_revision { 0 };
-    Bindings::WrapperWorldWeakValueCache<JS::Array> types_arrays;
-};
-
-static Vector<DataTransferTypesCacheEntry>& data_transfer_types_caches()
-{
-    static NeverDestroyed<Vector<DataTransferTypesCacheEntry>> caches;
-    return *caches;
-}
-
-static void prune_data_transfer_types_caches()
-{
-    data_transfer_types_caches().remove_all_matching([](auto const& entry) {
-        return !entry.data_transfer;
-    });
-}
-
-static DataTransferTypesCacheEntry& types_cache_for(DataTransfer& data_transfer)
-{
-    auto& caches = data_transfer_types_caches();
-    prune_data_transfer_types_caches();
-
-    for (auto& entry : caches) {
-        if (entry.data_transfer.ptr() != &data_transfer)
-            continue;
-
-        if (entry.types_revision != data_transfer.types_revision()) {
-            entry.types_arrays.clear();
-            entry.types_revision = data_transfer.types_revision();
-        }
-
-        return entry;
-    }
-
-    caches.append(DataTransferTypesCacheEntry {
-        data_transfer,
-        data_transfer.types_revision(),
-        {},
-    });
-    return caches.last();
-}
-
 namespace DataTransferEffect {
 
-#define __ENUMERATE_DATA_TRANSFER_EFFECT(name) Utf16FlyString const& name = *new Utf16FlyString(#name##_utf16_fly_string);
+#define __ENUMERATE_DATA_TRANSFER_EFFECT(name) FlyString name = #name##_fly_string;
 ENUMERATE_DATA_TRANSFER_EFFECTS
 #undef __ENUMERATE_DATA_TRANSFER_EFFECT
 
 }
 
-struct NormalizedFormatForLookup {
-    Utf16View type;
-    bool convert_to_url { false };
-};
-
-static NormalizedFormatForLookup normalize_format_for_lookup(Utf16View format)
+GC::Ref<DataTransfer> DataTransfer::create(JS::Realm& realm, NonnullRefPtr<DragDataStore> drag_data_store)
 {
-    if (format.equals_ignoring_ascii_case(u"text"sv))
-        return { u"text/plain"sv };
-    if (format.equals_ignoring_ascii_case(u"url"sv))
-        return { u"text/uri-list"sv, true };
-    return { format };
-}
-
-static Utf16FlyString normalize_format_for_storage(Utf16View format)
-{
-    if (format.equals_ignoring_ascii_case(u"text"sv))
-        return "text/plain"_utf16_fly_string;
-    if (format.equals_ignoring_ascii_case(u"url"sv))
-        return "text/uri-list"_utf16_fly_string;
-    return Utf16FlyString::from_utf16(format);
-}
-
-GC::Ref<DataTransfer> DataTransfer::create(NonnullRefPtr<DragDataStore> drag_data_store)
-{
-    auto data_transfer = GC::Heap::the().allocate<DataTransfer>(move(drag_data_store));
-
-    for (auto const& [i, item] : enumerate(data_transfer->m_associated_drag_data_store->item_list())) {
-        auto data_transfer_item = DataTransferItem::create(data_transfer, i);
-        data_transfer->m_item_list.append(data_transfer_item);
-    }
-
-    data_transfer->update_data_transfer_types_list();
-    return data_transfer;
+    return realm.create<DataTransfer>(realm, move(drag_data_store));
 }
 
 // https://html.spec.whatwg.org/multipage/dnd.html#dom-datatransfer
-GC::Ref<DataTransfer> DataTransfer::create_for_constructor()
+GC::Ref<DataTransfer> DataTransfer::construct_impl(JS::Realm& realm)
 {
     // 1. Set the drag data store's item list to be an empty list.
     auto drag_data_store = DragDataStore::create();
@@ -124,24 +46,44 @@ GC::Ref<DataTransfer> DataTransfer::create_for_constructor()
     // 3. Set the dropEffect and effectAllowed to "none".
     // NOTE: This is done by the default-initializers.
 
-    return create(move(drag_data_store));
+    return realm.create<DataTransfer>(realm, move(drag_data_store));
 }
 
-DataTransfer::DataTransfer(NonnullRefPtr<DragDataStore> drag_data_store)
-    : m_associated_drag_data_store(move(drag_data_store))
+DataTransfer::DataTransfer(JS::Realm& realm, NonnullRefPtr<DragDataStore> drag_data_store)
+    : PlatformObject(realm)
+    , m_associated_drag_data_store(move(drag_data_store))
 {
+    for (auto const& [i, item] : enumerate(m_associated_drag_data_store->item_list())) {
+        auto data_transfer_item = DataTransferItem::create(realm, *this, i);
+        m_item_list.append(data_transfer_item);
+    }
+
+    update_data_transfer_types_list();
 }
 
 DataTransfer::~DataTransfer() = default;
 
-void DataTransfer::visit_edges(GC::Cell::Visitor& visitor)
+void DataTransfer::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(DataTransfer);
+    Base::initialize(realm);
+}
+
+void DataTransfer::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_items);
     visitor.visit(m_item_list);
+
+    VISIT_CACHED_ATTRIBUTE(types);
 }
 
-void DataTransfer::set_drop_effect(Utf16FlyString drop_effect)
+void DataTransfer::set_drop_effect(String const& drop_effect)
+{
+    set_drop_effect(FlyString { drop_effect });
+}
+
+void DataTransfer::set_drop_effect(FlyString drop_effect)
 {
     using namespace DataTransferEffect;
 
@@ -151,7 +93,12 @@ void DataTransfer::set_drop_effect(Utf16FlyString drop_effect)
         m_drop_effect = AK::move(drop_effect);
 }
 
-void DataTransfer::set_effect_allowed(Utf16FlyString effect_allowed)
+void DataTransfer::set_effect_allowed(String const& effect_allowed)
+{
+    set_effect_allowed(FlyString { effect_allowed });
+}
+
+void DataTransfer::set_effect_allowed(FlyString effect_allowed)
 {
     // On setting, if drag data store's mode is the read/write mode and the new value is one of "none", "copy", "copyLink",
     // "copyMove", "link", "linkMove", "move", "all", or "uninitialized", then the attribute's current value must be set
@@ -160,7 +107,7 @@ void DataTransfer::set_effect_allowed(Utf16FlyString effect_allowed)
         set_effect_allowed_internal(move(effect_allowed));
 }
 
-void DataTransfer::set_effect_allowed_internal(Utf16FlyString effect_allowed)
+void DataTransfer::set_effect_allowed_internal(FlyString effect_allowed)
 {
     // AD-HOC: We need to be able to set the effectAllowed attribute internally regardless of the state of the drag data store.
     using namespace DataTransferEffect;
@@ -174,40 +121,19 @@ GC::Ref<DataTransferItemList> DataTransfer::items()
 {
     // The items attribute must return a DataTransferItemList object associated with the DataTransfer object.
     if (!m_items)
-        m_items = DataTransferItemList::create(*this);
+        m_items = DataTransferItemList::create(realm(), *this);
     return *m_items;
 }
 
 // https://html.spec.whatwg.org/multipage/dnd.html#dom-datatransfer-types
-ReadonlySpan<Utf16String> DataTransfer::types_list() const
+ReadonlySpan<String> DataTransfer::types() const
 {
     // The types attribute must return this DataTransfer object's types array.
     return m_types;
 }
 
-JS::ThrowCompletionOr<JS::Value> DataTransfer::types(JS::Realm& realm)
-{
-    auto& wrapper_world = Bindings::host_defined_wrapper_world(realm);
-    auto& cache = types_cache_for(*this);
-
-    if (auto types_array = cache.types_arrays.get(wrapper_world))
-        return JS::Value { types_array };
-
-    auto& vm = realm.vm();
-    auto types = types_list();
-    auto types_array = MUST(JS::Array::create(realm, 0));
-    for (size_t i = 0; i < types.size(); ++i) {
-        auto wrapped_type = JS::PrimitiveString::create(vm, types[i]);
-        MUST(types_array->create_data_property(JS::PropertyKey { i }, wrapped_type));
-    }
-
-    TRY(types_array->set_integrity_level(JS::Object::IntegrityLevel::Frozen));
-    cache.types_arrays.set(wrapper_world, types_array);
-    return JS::Value { types_array };
-}
-
 // https://html.spec.whatwg.org/multipage/dnd.html#dom-datatransfer-getdata
-Utf16String DataTransfer::get_data(Utf16View format_argument) const
+String DataTransfer::get_data(String const& format_argument) const
 {
     // 1. If the DataTransfer object is no longer associated with a drag data store, then return the empty string.
     if (!m_associated_drag_data_store)
@@ -218,18 +144,28 @@ Utf16String DataTransfer::get_data(Utf16View format_argument) const
         return {};
 
     // 3. Let format be the first argument, converted to ASCII lowercase.
+    auto format = format_argument.to_ascii_lowercase();
+
     // 4. Let convert-to-URL be false.
+    [[maybe_unused]] bool convert_to_url = false;
+
     // 5. If format equals "text", change it to "text/plain".
+    if (format == "text"sv) {
+        format = "text/plain"_string;
+    }
+
     // 6. If format equals "url", change it to "text/uri-list" and set convert-to-URL to true.
-    auto format = normalize_format_for_lookup(format_argument);
-    [[maybe_unused]] auto convert_to_url = format.convert_to_url;
+    else if (format == "url"sv) {
+        format = "text/uri-list"_string;
+        convert_to_url = true;
+    }
 
     // 7. If there is no item in the drag data store item list whose kind is text and whose type string is equal to
     //    format, return the empty string.
     auto item_list = m_associated_drag_data_store->item_list();
 
     auto it = find_if(item_list.begin(), item_list.end(), [&](auto const& item) {
-        return item.kind == DragDataStoreItem::Kind::Text && item.type_string.equals_ignoring_ascii_case(format.type);
+        return item.kind == DragDataStoreItem::Kind::Text && item.type_string == format;
     });
 
     if (it == item_list.end())
@@ -243,11 +179,11 @@ Utf16String DataTransfer::get_data(Utf16View format_argument) const
     //           the first URL from the list, if any, or the empty string otherwise.
 
     // 10. Return result.
-    return result;
+    return MUST(String::from_utf8(result));
 }
 
 // https://html.spec.whatwg.org/multipage/dnd.html#dom-datatransfer-setdata
-void DataTransfer::set_data(Utf16View format_argument, Utf16View value)
+void DataTransfer::set_data(String const& format_argument, String const& value)
 {
     // 1. If the DataTransfer object is no longer associated with a drag data store, then return.
     if (!m_associated_drag_data_store)
@@ -258,7 +194,15 @@ void DataTransfer::set_data(Utf16View format_argument, Utf16View value)
         return;
 
     // 3. Let format be the first argument, converted to ASCII lowercase.
-    auto format = normalize_format_for_storage(format_argument);
+    auto format = format_argument.to_ascii_lowercase();
+
+    // 4. If format equals "text", change it to "text/plain".
+    //    If format equals "url", change it to "text/uri-list".
+    if (format == "text"sv) {
+        format = "text/plain"_string;
+    } else if (format == "url"sv) {
+        format = "text/uri-list"_string;
+    }
 
     // 5. Remove the item in the drag data store item list whose kind is text and whose type string is equal to format, if there is one.
     for (auto const& [i, item] : enumerate(m_associated_drag_data_store->item_list())) {
@@ -273,7 +217,7 @@ void DataTransfer::set_data(Utf16View format_argument, Utf16View value)
     DragDataStoreItem item {};
     item.kind = DragDataStoreItem::Kind::Text;
     item.type_string = format;
-    item.data = Utf16String::from_utf16(value);
+    item.data = MUST(ByteBuffer::copy(value.bytes()));
     add_item(move(item));
 
     update_data_transfer_types_list();
@@ -282,8 +226,10 @@ void DataTransfer::set_data(Utf16View format_argument, Utf16View value)
 // https://html.spec.whatwg.org/multipage/dnd.html#dom-datatransfer-files
 GC::Ref<FileAPI::FileList> DataTransfer::files() const
 {
+    auto& realm = this->realm();
+
     // 1. Start with an empty list L.
-    auto files = FileAPI::FileList::create();
+    auto files = FileAPI::FileList::create(realm);
 
     // 2. If the DataTransfer object is no longer associated with a drag data store, the FileList is empty. Return
     //    the empty list L.
@@ -300,18 +246,16 @@ GC::Ref<FileAPI::FileList> DataTransfer::files() const
         if (item.kind != DragDataStoreItem::Kind::File)
             continue;
 
-        auto blob = FileAPI::Blob::create(MUST(ByteBuffer::copy(item.file_data)), item.type_string.to_utf16_string());
+        auto blob = FileAPI::Blob::create(realm, item.data, item.type_string);
 
-        // File names are UTF-16 at the DOM boundary. The File API still has a
-        // legacy byte-string constructor, so perform this conversion only at
-        // that API boundary.
-        auto file_name = item.file_name.to_utf8();
+        // FIXME: The FileAPI should use ByteString for file names.
+        auto file_name = MUST(String::from_byte_string(item.file_name));
 
         // FIXME: Fill in other fields (e.g. last_modified).
         FileAPI::FilePropertyBag options {};
-        options.type = item.type_string.to_utf16_string();
+        options.type = item.type_string;
 
-        auto file = MUST(FileAPI::File::create({ { blob } }, file_name, move(options)));
+        auto file = MUST(FileAPI::File::create(realm, { GC::make_root(blob) }, file_name, move(options)));
         files->add_file(file);
     }
 
@@ -334,10 +278,12 @@ void DataTransfer::disassociate_with_drag_data_store()
 
 GC::Ref<DataTransferItem> DataTransfer::add_item(DragDataStoreItem item)
 {
+    auto& realm = this->realm();
+
     VERIFY(m_associated_drag_data_store);
     m_associated_drag_data_store->add_item(move(item));
 
-    auto data_transfer_item = DataTransferItem::create(*this, m_associated_drag_data_store->size() - 1);
+    auto data_transfer_item = DataTransferItem::create(realm, *this, m_associated_drag_data_store->size() - 1);
     m_item_list.append(data_transfer_item);
 
     update_data_transfer_types_list();
@@ -362,7 +308,7 @@ void DataTransfer::remove_item(size_t index)
 }
 
 // https://html.spec.whatwg.org/multipage/dnd.html#dom-datatransfer-cleardata
-void DataTransfer::clear_data(Optional<Utf16String> const& maybe_format)
+void DataTransfer::clear_data(Optional<String> maybe_format)
 {
     // 1. If the DataTransfer object is no longer associated with a drag data store, return. Nothing happens.
     if (!m_associated_drag_data_store)
@@ -372,12 +318,17 @@ void DataTransfer::clear_data(Optional<Utf16String> const& maybe_format)
     if (m_associated_drag_data_store->mode() != DragDataStore::Mode::ReadWrite)
         return;
 
-    auto remove_items_from_drag_data_store = [&](Optional<Utf16View> format = {}) {
+    auto remove_items_from_drag_data_store = [&](Optional<String> const& format = {}) {
+        auto did_remove_item = false;
         for (size_t i = m_associated_drag_data_store->item_list().size(); i > 0; --i) {
             auto const& item = m_associated_drag_data_store->item_list().at(i - 1);
-            if (item.kind == DragDataStoreItem::Kind::Text && (!format.has_value() || item.type_string.equals_ignoring_ascii_case(*format)))
-                remove_item(i - 1);
+            if (item.kind == DragDataStoreItem::Kind::Text && (!format.has_value() || item.type_string == *format)) {
+                m_associated_drag_data_store->remove_item_at(i - 1);
+                did_remove_item = true;
+            }
         }
+        if (did_remove_item)
+            update_data_transfer_types_list();
     };
 
     // 3. If the method was called with no arguments, remove each item in the drag data store item list whose kind is
@@ -388,13 +339,21 @@ void DataTransfer::clear_data(Optional<Utf16String> const& maybe_format)
     }
 
     // 4. Set format to format, converted to ASCII lowercase.
-    auto format = normalize_format_for_lookup(maybe_format->utf16_view());
+    auto format = maybe_format->to_ascii_lowercase();
+
+    // 5. If format equals "text", change it to "text/plain".
+    //    If format equals "url", change it to "text/uri-list".
+    if (format == "text"sv) {
+        format = "text/plain"_string;
+    } else if (format == "url"sv) {
+        format = "text/uri-list"_string;
+    }
 
     // 6. Remove each item in the drag data store item list whose kind is Plain Unicode string and whose type string is equal to format.
-    remove_items_from_drag_data_store(format.type);
+    remove_items_from_drag_data_store(format);
 }
 
-bool DataTransfer::contains_item_with_type(DragDataStoreItem::Kind kind, Utf16View type) const
+bool DataTransfer::contains_item_with_type(DragDataStoreItem::Kind kind, String const& type) const
 {
     VERIFY(m_associated_drag_data_store);
 
@@ -431,7 +390,7 @@ size_t DataTransfer::length() const
 void DataTransfer::update_data_transfer_types_list()
 {
     // 1. Let L be an empty sequence.
-    Vector<Utf16String> types;
+    Vector<String> types;
 
     // 2. If the DataTransfer object is still associated with a drag data store, then:
     if (m_associated_drag_data_store) {
@@ -442,7 +401,7 @@ void DataTransfer::update_data_transfer_types_list()
         for (auto const& item : m_associated_drag_data_store->item_list()) {
             switch (item.kind) {
             case DragDataStoreItem::Kind::Text:
-                types.append(item.type_string.to_utf16_string());
+                types.append(item.type_string);
                 break;
             case DragDataStoreItem::Kind::File:
                 contains_file = true;
@@ -454,12 +413,12 @@ void DataTransfer::update_data_transfer_types_list()
         //    an entry to L consisting of the string "Files". (This value can be distinguished from the other values
         //    because it is not lowercase.)
         if (contains_file)
-            types.append("Files"_utf16);
+            types.append("Files"_string);
     }
 
     // 3. Set the DataTransfer object's types array to the result of creating a frozen array from L.
+    set_cached_types(nullptr);
     m_types = move(types);
-    ++m_types_revision;
 }
 
 }

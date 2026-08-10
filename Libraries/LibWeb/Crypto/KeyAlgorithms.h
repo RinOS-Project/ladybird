@@ -8,11 +8,10 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
+#include <AK/String.h>
 #include <LibCrypto/BigInt/UnsignedBigInteger.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibWeb/Crypto/CryptoAlgorithms.h>
-#include <LibWeb/Export.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::Crypto {
@@ -26,24 +25,26 @@ public:
     static GC::Ref<KeyAlgorithm> create(JS::Realm&);
     virtual ~KeyAlgorithm() override = default;
 
-    Utf16String const& name() const { return m_name; }
-    void set_name(Utf16String name) { m_name = move(name); }
-    void set_name(StringView name) { m_name = Utf16String::from_ascii_without_validation(name.bytes()); }
+    String const& name() const { return m_name; }
+    void set_name(String name) { m_name = move(name); }
+
+    JS::Realm& realm() const { return m_realm; }
 
 protected:
     KeyAlgorithm(JS::Realm&);
 
     virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
 private:
     JS_DECLARE_NATIVE_FUNCTION(name_getter);
 
-    Utf16String m_name;
+    String m_name;
+    GC::Ref<JS::Realm> m_realm;
 };
 
 // https://w3c.github.io/webcrypto/#RsaKeyAlgorithm-dictionary
-// WEB_API-exported so tests can fabricate an encode-only RsaKeyAlgorithm.
-class WEB_API RsaKeyAlgorithm : public KeyAlgorithm {
+class RsaKeyAlgorithm : public KeyAlgorithm {
     JS_OBJECT(RsaKeyAlgorithm, KeyAlgorithm);
     GC_DECLARE_ALLOCATOR(RsaKeyAlgorithm);
 
@@ -98,8 +99,7 @@ private:
 };
 
 // https://w3c.github.io/webcrypto/#EcKeyAlgorithm-dictionary
-// WEB_API-exported so tests can inspect decoded named_curve().
-class WEB_API EcKeyAlgorithm : public KeyAlgorithm {
+class EcKeyAlgorithm : public KeyAlgorithm {
     JS_OBJECT(EcKeyAlgorithm, KeyAlgorithm);
     GC_DECLARE_ALLOCATOR(EcKeyAlgorithm);
 

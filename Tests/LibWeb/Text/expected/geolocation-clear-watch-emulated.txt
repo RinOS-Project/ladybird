@@ -1,2 +1,0 @@
-update 1: 37.7647658, -122.4345892
-updates after clearWatch: 1

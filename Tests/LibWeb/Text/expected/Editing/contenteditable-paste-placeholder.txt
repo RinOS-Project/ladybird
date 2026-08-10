@@ -1,3 +1,0 @@
-paste: GivGivee it a try! <img> @ 7
-undo: Give it a try! <img><br> @ 3
-redo: GivGivee it a try! <img> @ 7

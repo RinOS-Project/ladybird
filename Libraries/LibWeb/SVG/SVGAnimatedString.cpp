@@ -5,6 +5,9 @@
  */
 
 #include <LibGC/Heap.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGAnimatedStringPrototype.h>
 #include <LibWeb/SVG/SVGAnimatedString.h>
 #include <LibWeb/SVG/SVGElement.h>
 
@@ -12,13 +15,14 @@ namespace Web::SVG {
 
 GC_DEFINE_ALLOCATOR(SVGAnimatedString);
 
-GC::Ref<SVGAnimatedString> SVGAnimatedString::create(GC::Ref<SVGElement> element, DOM::QualifiedName reflected_attribute, Optional<DOM::QualifiedName> deprecated_reflected_attribute, Optional<Utf16String> initial_value)
+GC::Ref<SVGAnimatedString> SVGAnimatedString::create(JS::Realm& realm, GC::Ref<SVGElement> element, DOM::QualifiedName reflected_attribute, Optional<DOM::QualifiedName> deprecated_reflected_attribute, Optional<FlyString> initial_value)
 {
-    return GC::Heap::the().allocate<SVGAnimatedString>(element, move(reflected_attribute), move(deprecated_reflected_attribute), move(initial_value));
+    return realm.create<SVGAnimatedString>(realm, element, move(reflected_attribute), move(deprecated_reflected_attribute), move(initial_value));
 }
 
-SVGAnimatedString::SVGAnimatedString(GC::Ref<SVGElement> element, DOM::QualifiedName reflected_attribute, Optional<DOM::QualifiedName> deprecated_reflected_attribute, Optional<Utf16String> initial_value)
-    : m_element(element)
+SVGAnimatedString::SVGAnimatedString(JS::Realm& realm, GC::Ref<SVGElement> element, DOM::QualifiedName reflected_attribute, Optional<DOM::QualifiedName> deprecated_reflected_attribute, Optional<FlyString> initial_value)
+    : Bindings::PlatformObject(realm)
+    , m_element(element)
     , m_reflected_attribute(move(reflected_attribute))
     , m_deprecated_reflected_attribute(move(deprecated_reflected_attribute))
     , m_initial_value(move(initial_value))
@@ -27,14 +31,20 @@ SVGAnimatedString::SVGAnimatedString(GC::Ref<SVGElement> element, DOM::Qualified
 
 SVGAnimatedString::~SVGAnimatedString() = default;
 
-void SVGAnimatedString::visit_edges(GC::Cell::Visitor& visitor)
+void SVGAnimatedString::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGAnimatedString);
+    Base::initialize(realm);
+}
+
+void SVGAnimatedString::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_element);
 }
 
 // https://svgwg.org/svg2-draft/types.html#__svg__SVGAnimatedString__baseVal
-Utf16String SVGAnimatedString::base_val() const
+String SVGAnimatedString::base_val() const
 {
     // On getting baseVal or animVal, the following steps are run:
     // 1. If the reflected attribute is not present, then:
@@ -48,7 +58,7 @@ Utf16String SVGAnimatedString::base_val() const
 
         // 2. Otherwise, if the reflected attribute has an initial value, then return it.
         if (m_initial_value.has_value())
-            return m_initial_value.value();
+            return m_initial_value.value().to_string();
 
         // 3. Otherwise, return the empty string.
         return {};
@@ -59,7 +69,7 @@ Utf16String SVGAnimatedString::base_val() const
 }
 
 // https://svgwg.org/svg2-draft/types.html#__svg__SVGAnimatedString__baseVal
-void SVGAnimatedString::set_base_val(Utf16String const& base_val)
+void SVGAnimatedString::set_base_val(String const& base_val)
 {
     // 1. If the reflected attribute is not present, the SVGAnimatedString object is defined to additionally reflect
     //    a second, deprecated attribute, and that deprecated attribute is present, then set that deprecated attribute

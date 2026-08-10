@@ -12,19 +12,21 @@ namespace Web::CSS {
 
 // https://drafts.css-houdini.org/css-typed-om-1/#cssimagevalue
 class CSSImageValue final : public CSSStyleValue {
-    WEB_WRAPPABLE(CSSImageValue, CSSStyleValue);
+    WEB_PLATFORM_OBJECT(CSSImageValue, CSSStyleValue);
     GC_DECLARE_ALLOCATOR(CSSImageValue);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSImageValue> create(NonnullRefPtr<StyleValue const> source_value);
+    [[nodiscard]] static GC::Ref<CSSImageValue> create(JS::Realm&, NonnullRefPtr<StyleValue const> source_value);
 
     virtual ~CSSImageValue() override = default;
 
-    virtual WebIDL::ExceptionOr<Utf16String> to_string() const override;
+    virtual WebIDL::ExceptionOr<String> to_string() const override;
     virtual WebIDL::ExceptionOr<NonnullRefPtr<StyleValue const>> create_an_internal_representation(PropertyNameAndID const&, PerformTypeCheck) const override;
 
 private:
-    explicit CSSImageValue(NonnullRefPtr<StyleValue const> source_value);
+    explicit CSSImageValue(JS::Realm&, NonnullRefPtr<StyleValue const> source_value);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

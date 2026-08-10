@@ -8,7 +8,6 @@
 
 #include <LibJS/Runtime/PrototypeObject.h>
 #include <LibWeb/Bindings/PlatformObject.h>
-#include <LibWeb/Bindings/Wrappable.h>
 
 // expected-error@+1 {{Expected record to have a GC_CELL macro invocation}}
 class TestCellClass : JS::Cell {
@@ -28,8 +27,4 @@ class TestPrototypeClass : JS::PrototypeObject<TestCellClass, TestCellClass> {
 
 // expected-error@+1 {{Expected record to have a WEB_PLATFORM_OBJECT macro invocation}}
 class TestPlatformClass : Web::Bindings::PlatformObject {
-};
-
-// expected-error@+1 {{Expected record to have a WEB_WRAPPABLE macro invocation}}
-class TestWrappableClass : Web::Bindings::Wrappable {
 };

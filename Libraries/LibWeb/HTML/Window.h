@@ -8,79 +8,54 @@
 #pragma once
 
 #include <AK/Badge.h>
-#include <AK/FlyString.h>
 #include <AK/Function.h>
 #include <AK/IterationDecision.h>
-#include <AK/Optional.h>
 #include <AK/RefPtr.h>
-#include <AK/Variant.h>
 #include <LibGC/Heap.h>
-#include <LibJS/Forward.h>
-#include <LibJS/Runtime/Completion.h>
-#include <LibJS/Runtime/Value.h>
-#include <LibWeb/Bindings/Forward.h>
-#include <LibWeb/Bindings/IdleRequest.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/WindowGlobalMixin.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/BarProp.h>
+#include <LibWeb/HTML/CrossOrigin/CrossOriginPropertyDescriptorMap.h>
 #include <LibWeb/HTML/GlobalEventHandlers.h>
 #include <LibWeb/HTML/MimeType.h>
 #include <LibWeb/HTML/Plugin.h>
-#include <LibWeb/HTML/StructuredSerialize.h>
+#include <LibWeb/HTML/ScrollOptions.h>
+#include <LibWeb/HTML/StructuredSerializeOptions.h>
 #include <LibWeb/HTML/UniversalGlobalScope.h>
 #include <LibWeb/HTML/WindowEventHandlers.h>
 #include <LibWeb/HTML/WindowOrWorkerGlobalScope.h>
 #include <LibWeb/HTML/WindowType.h>
-#include <LibWeb/WebIDL/ExceptionOr.h>
+#include <LibWeb/RequestIdleCallback/IdleRequest.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::HTML {
 
-class Window;
-
-}
-
-namespace Web::Bindings {
-
-class PlatformObject;
-class WrapperWorld;
-
-struct IdleRequestOptions;
-struct WindowPostMessageOptions;
-
-WEB_API HTML::Window* window_from_global_object(JS::Object&);
-WEB_API HTML::Window const* window_from_global_object(JS::Object const&);
-WEB_API PlatformObject& platform_object_for_window(HTML::Window&);
-WEB_API PlatformObject& platform_object_for_window(HTML::Window&, JS::Realm&);
-WEB_API WebIDL::ExceptionOr<void> initialize_window_web_interfaces(HTML::Window&);
-WEB_API WebIDL::ExceptionOr<void> initialize_window_web_interfaces(HTML::Window&, JS::Realm&);
-WEB_API WebIDL::ExceptionOr<void> post_message(JS::Realm&, HTML::Window&, JS::Value, WindowPostMessageOptions const&);
-WEB_API WebIDL::UnsignedLong request_animation_frame(HTML::Window&, WebIDL::CallbackType&);
-WEB_API WebIDL::ExceptionOr<WebIDL::UnsignedLong> request_animation_frame(HTML::DedicatedWorkerGlobalScope&, WebIDL::CallbackType&);
-WEB_API WebIDL::UnsignedLong request_idle_callback(HTML::Window&, WebIDL::CallbackType&, IdleRequestOptions const&);
-WEB_API void define_internals_property(JS::Realm&, HTML::Window&, JS::Object& global_object);
-WEB_API JS::Value window_named_item_value(WrapperWorld&, JS::Realm&, HTML::Window const&, Utf16FlyString const&);
-WEB_API JS::ThrowCompletionOr<void> post_message_with_options(JS::Realm&, HTML::Window&, JS::Value, JS::Value options);
-
-}
-
-namespace Web::HTML {
-
 class IdleCallback;
-using AnimationFrameCallbackHandler = Function<void(double)>;
-using IdleCallbackHandler = Function<JS::Completion(GC::Ref<RequestIdleCallback::IdleDeadline>)>;
+
+// https://w3c.github.io/csswg-drafts/cssom-view/#dictdef-scrolltooptions
+struct ScrollToOptions : public ScrollOptions {
+    Optional<double> left;
+    Optional<double> top;
+};
+
+// https://html.spec.whatwg.org/multipage/nav-history-apis.html#windowpostmessageoptions
+struct WindowPostMessageOptions : public StructuredSerializeOptions {
+    String target_origin { "/"_string };
+};
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#specifier-resolution-record
 // A specifier resolution record is a struct. It has the following items:
 struct SpecifierResolution {
     // A serialized base URL
     //    A string-or-null that represents the base URL of the specifier, when one exists.
-    Optional<Utf16String> serialized_base_url;
+    Optional<String> serialized_base_url;
 
     // A specifier
     //     A string representing the specifier.
-    Utf16String specifier;
+    String specifier;
 
     // A specifier as a URL
     //     A URL-or-null that represents the URL in case of a URL-like module specifier.
@@ -95,30 +70,26 @@ class WEB_API Window final
     , public GlobalEventHandlers
     , public WindowEventHandlers
     , public WindowOrWorkerGlobalScopeMixin
-    , public UniversalGlobalScopeMixin {
-    WEB_WRAPPABLE(Window, DOM::EventTarget);
+    , public UniversalGlobalScopeMixin
+    , public Bindings::WindowGlobalMixin {
+    WEB_PLATFORM_OBJECT(Window, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(Window);
-
-    friend WebIDL::ExceptionOr<void> Bindings::initialize_window_web_interfaces(Window&);
-    friend WebIDL::ExceptionOr<void> Bindings::initialize_window_web_interfaces(Window&, JS::Realm&);
 
 public:
     static constexpr bool OVERRIDES_FINALIZE = true;
 
-    [[nodiscard]] static GC::Ref<Window> create();
+    [[nodiscard]] static GC::Ref<Window> create(JS::Realm&);
 
     ~Window();
-
-    JS::Realm& principal_realm() const;
-    EnvironmentSettingsObject& relevant_settings_object() const;
-    void set_environment_settings_object(Badge<WindowEnvironmentSettingsObject>, WindowEnvironmentSettingsObject&);
 
     using UniversalGlobalScopeMixin::atob;
     using UniversalGlobalScopeMixin::btoa;
     using UniversalGlobalScopeMixin::queue_microtask;
+    using UniversalGlobalScopeMixin::structured_clone;
     using WindowOrWorkerGlobalScopeMixin::clear_interval;
     using WindowOrWorkerGlobalScopeMixin::clear_timeout;
     using WindowOrWorkerGlobalScopeMixin::create_image_bitmap;
+    using WindowOrWorkerGlobalScopeMixin::fetch;
     using WindowOrWorkerGlobalScopeMixin::report_error;
     using WindowOrWorkerGlobalScopeMixin::set_interval;
     using WindowOrWorkerGlobalScopeMixin::set_timeout;
@@ -129,6 +100,9 @@ public:
     // ^WindowOrWorkerGlobalScopeMixin
     virtual DOM::EventTarget& this_impl() override { return *this; }
     virtual DOM::EventTarget const& this_impl() const override { return *this; }
+
+    // ^JS::Object
+    virtual JS::ThrowCompletionOr<bool> internal_set_prototype_of(JS::Object* prototype) override;
 
     virtual Optional<URL::Origin> extract_an_origin() const override { return window_or_worker_global_scope_extract_an_origin(); }
 
@@ -144,27 +118,27 @@ public:
     BrowsingContext const* browsing_context() const;
     BrowsingContext* browsing_context();
 
-    GC::Ptr<LocalNavigable> navigable() const;
+    GC::Ptr<Navigable> navigable() const;
 
     void append_resolved_module(SpecifierResolution resolution) { m_resolved_module_set.append(move(resolution)); }
     Vector<SpecifierResolution> const& resolved_module_set() const { return m_resolved_module_set; }
 
-    WebIDL::ExceptionOr<GC::Ptr<WindowProxy>> window_open_steps(Utf16View url, Utf16View target, Utf16View features);
+    WebIDL::ExceptionOr<GC::Ptr<WindowProxy>> window_open_steps(StringView url, StringView target, StringView features);
 
     struct OpenedWindow {
-        GC::Ptr<LocalNavigable> navigable;
+        GC::Ptr<Navigable> navigable;
         TokenizedFeature::NoOpener no_opener { TokenizedFeature::NoOpener::No };
         WindowType window_type { WindowType::ExistingOrNone };
     };
-    WebIDL::ExceptionOr<OpenedWindow> window_open_steps_internal(Utf16View url, Utf16View target, Utf16View features);
+    WebIDL::ExceptionOr<OpenedWindow> window_open_steps_internal(StringView url, StringView target, StringView features);
 
     DOM::Event* current_event() { return m_current_event.ptr(); }
     DOM::Event const* current_event() const { return m_current_event.ptr(); }
     void set_current_event(DOM::Event* event);
 
-    Optional<CSS::FeatureValue> query_media_feature(CSS::MediaFeatureID) const;
+    Optional<CSS::MediaFeatureValue> query_media_feature(CSS::MediaFeatureID) const;
 
-    void fire_a_page_transition_event(Utf16FlyString const& event_name, bool persisted);
+    void fire_a_page_transition_event(FlyString const& event_name, bool persisted);
 
     WebIDL::ExceptionOr<GC::Ref<Storage>> local_storage();
     WebIDL::ExceptionOr<GC::Ref<Storage>> session_storage();
@@ -180,19 +154,24 @@ public:
     // https://html.spec.whatwg.org/multipage/interaction.html#history-action-activation
     bool has_history_action_activation() const;
 
+    WebIDL::ExceptionOr<void> initialize_web_interfaces(Badge<WindowEnvironmentSettingsObject>);
+
     Vector<GC::Ref<Plugin>> pdf_viewer_plugin_objects();
     Vector<GC::Ref<MimeType>> pdf_viewer_mime_type_objects();
+
+    CrossOriginPropertyDescriptorMap const& cross_origin_property_descriptor_map() const { return m_cross_origin_property_descriptor_map; }
+    CrossOriginPropertyDescriptorMap& cross_origin_property_descriptor_map() { return m_cross_origin_property_descriptor_map; }
 
     // JS API functions
     GC::Ref<WindowProxy> window() const;
     GC::Ref<WindowProxy> self() const;
     GC::Ref<DOM::Document const> document() const;
-    Utf16String name() const;
-    void set_name(Utf16View);
-    Utf16String status() const;
+    String name() const;
+    void set_name(String const&);
+    String status() const;
     void close();
     bool closed() const;
-    void set_status(Utf16View);
+    void set_status(String const&);
     [[nodiscard]] GC::Ref<Location> location();
     GC::Ref<History> history() const;
     GC::Ref<Navigation> navigation();
@@ -216,29 +195,25 @@ public:
     WebIDL::ExceptionOr<void> set_opener(JS::Value);
     GC::Ptr<WindowProxy const> parent() const;
     GC::Ptr<DOM::Element const> frame_element() const;
-    WebIDL::ExceptionOr<GC::Ptr<WindowProxy>> open(Optional<Utf16String> const& url, Optional<Utf16String> const& target, Optional<Utf16String> const& features);
+    WebIDL::ExceptionOr<GC::Ptr<WindowProxy>> open(Optional<String> const& url, Optional<String> const& target, Optional<String> const& features);
 
     [[nodiscard]] GC::Ref<Navigator> navigator();
     [[nodiscard]] GC::Ref<CloseWatcherManager> close_watcher_manager();
     [[nodiscard]] GC::Ref<CookieStore::CookieStore> cookie_store();
     [[nodiscard]] GC::Ref<Speech::SpeechSynthesis> speech_synthesis();
 
-    void alert(Utf16String const& message = {});
-    bool confirm(Optional<Utf16String> const& message);
-    Optional<Utf16String> prompt(Optional<Utf16String> const& message, Optional<Utf16String> const& default_);
+    void alert(String const& message = {});
+    bool confirm(Optional<String> const& message);
+    Optional<String> prompt(Optional<String> const& message, Optional<String> const& default_);
 
-    WebIDL::ExceptionOr<void> post_message(JS::Realm&, JS::Value message, Utf16String const&, GC::RootVector<GC::Ref<JS::Object>> const&);
-    struct PostMessageOptions {
-        StructuredSerializeOptions structured_serialize_options;
-        Utf16String target_origin;
-    };
-    WebIDL::ExceptionOr<void> post_message(JS::Realm&, JS::Value message, PostMessageOptions const&);
+    WebIDL::ExceptionOr<void> post_message(JS::Value message, String const&, Vector<GC::Root<JS::Object>> const&);
+    WebIDL::ExceptionOr<void> post_message(JS::Value message, WindowPostMessageOptions const&);
 
-    Variant<GC::Ref<DOM::Event>, Empty> event() const;
+    Variant<GC::Root<DOM::Event>, Empty> event() const;
 
-    [[nodiscard]] GC::Ref<CSS::CSSStyleProperties> get_computed_style(DOM::Element&, Optional<Utf16String> const& pseudo_element) const;
+    [[nodiscard]] GC::Ref<CSS::CSSStyleProperties> get_computed_style(DOM::Element&, Optional<String> const& pseudo_element) const;
 
-    WebIDL::ExceptionOr<GC::Ref<CSS::MediaQueryList>> match_media(Utf16View query);
+    WebIDL::ExceptionOr<GC::Ref<CSS::MediaQueryList>> match_media(String const& query);
     [[nodiscard]] GC::Ref<CSS::Screen> screen();
     [[nodiscard]] GC::Ptr<CSS::VisualViewport> visual_viewport();
 
@@ -252,11 +227,10 @@ public:
 
     double scroll_x() const;
     double scroll_y() const;
-    using ScrollToOptions = Bindings::ScrollToOptions;
-    void scroll(ScrollToOptions const&, GC::Ptr<WebIDL::Promise>);
-    void scroll(double x, double y, GC::Ptr<WebIDL::Promise>);
-    void scroll_by(ScrollToOptions, GC::Ptr<WebIDL::Promise>);
-    void scroll_by(double x, double y, GC::Ptr<WebIDL::Promise>);
+    GC::Ref<WebIDL::Promise> scroll(ScrollToOptions const&);
+    GC::Ref<WebIDL::Promise> scroll(double x, double y);
+    GC::Ref<WebIDL::Promise> scroll_by(ScrollToOptions);
+    GC::Ref<WebIDL::Promise> scroll_by(double x, double y);
 
     i32 screen_x() const;
     i32 screen_y() const;
@@ -267,11 +241,10 @@ public:
     AnimationFrameCallbackDriver& animation_frame_callback_driver();
     bool has_animation_frame_callbacks();
 
-    WebIDL::UnsignedLong request_animation_frame(AnimationFrameCallbackHandler);
+    WebIDL::UnsignedLong request_animation_frame(GC::Ref<WebIDL::CallbackType>);
     void cancel_animation_frame(WebIDL::UnsignedLong handle);
 
-    using IdleRequestOptions = Bindings::IdleRequestOptions;
-    u32 request_idle_callback(IdleCallbackHandler, IdleRequestOptions const&);
+    u32 request_idle_callback(WebIDL::CallbackType&, RequestIdleCallback::IdleRequestOptions const&);
     void cancel_idle_callback(u32 handle);
 
     GC::Ptr<Selection::Selection> get_selection() const;
@@ -298,25 +271,27 @@ public:
     static void set_internals_object_exposed(bool);
     static bool is_internals_object_exposed();
 
-    [[nodiscard]] OrderedHashMap<Utf16FlyString, GC::Ref<LocalNavigable>> document_tree_child_navigable_target_name_property_set();
+    [[nodiscard]] OrderedHashMap<FlyString, GC::Ref<Navigable>> document_tree_child_navigable_target_name_property_set();
 
-    [[nodiscard]] Variant<Empty, GC::Ref<WindowProxy>, GC::Ref<DOM::Element>, GC::Ref<DOM::HTMLCollection>> named_item(Utf16FlyString const&) const;
-    [[nodiscard]] Vector<Utf16FlyString> supported_property_names() const override;
+    [[nodiscard]] Vector<FlyString> supported_property_names() const override;
+    [[nodiscard]] JS::Value named_item_value(FlyString const&) const override;
 
-    bool find(Utf16View string);
+    bool find(String const& string);
 
     static void for_each_active(Function<IterationDecision(Window&)> callback);
 
 private:
-    Window();
+    explicit Window(JS::Realm&);
 
     virtual bool is_universal_global_scope_mixin() const final { return true; }
 
     virtual void visit_edges(Cell::Visitor&) override;
     virtual void finalize() override;
 
+    virtual bool is_html_window() const override { return true; }
+
     // ^HTML::GlobalEventHandlers
-    virtual GC::Ptr<DOM::EventTarget> global_event_handlers_to_event_target(Utf16FlyString const&) override { return *this; }
+    virtual GC::Ptr<DOM::EventTarget> global_event_handlers_to_event_target(FlyString const&) override { return *this; }
 
     // ^HTML::WindowEventHandlers
     virtual GC::Ptr<DOM::EventTarget> window_event_handlers_to_event_target() override { return *this; }
@@ -324,16 +299,15 @@ private:
     void invoke_idle_callbacks();
 
     struct [[nodiscard]] NamedObjects {
-        Vector<GC::Ref<LocalNavigable>> navigables;
+        Vector<GC::Ref<Navigable>> navigables;
         Vector<GC::Ref<DOM::Element>> elements;
     };
-    NamedObjects named_objects(Utf16View name);
+    NamedObjects named_objects(StringView name);
 
-    WebIDL::ExceptionOr<void> window_post_message_steps(JS::Realm&, JS::Value, PostMessageOptions const&);
+    WebIDL::ExceptionOr<void> window_post_message_steps(JS::Value, WindowPostMessageOptions const&);
 
     // https://html.spec.whatwg.org/multipage/window-object.html#concept-document-window
     GC::Ptr<DOM::Document> m_associated_document;
-    GC::Ptr<WindowEnvironmentSettingsObject> m_environment_settings_object;
 
     GC::Ptr<DOM::Event> m_current_event;
 
@@ -371,6 +345,9 @@ private:
     // https://html.spec.whatwg.org/multipage/system-state.html#pdf-viewer-mime-type-objects
     Vector<GC::Ref<MimeType>> m_pdf_viewer_mime_type_objects;
 
+    // [[CrossOriginPropertyDescriptorMap]], https://html.spec.whatwg.org/multipage/browsers.html#crossoriginpropertydescriptormap
+    CrossOriginPropertyDescriptorMap m_cross_origin_property_descriptor_map;
+
     // https://html.spec.whatwg.org/multipage/interaction.html#user-activation-data-model
     HighResolutionTime::DOMHighResTimeStamp m_last_activation_timestamp { AK::Infinity<double> };
 
@@ -379,7 +356,7 @@ private:
 
     // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-window-status
     // When the Window object is created, the attribute must be set to the empty string. It does not do anything else.
-    Utf16String m_status;
+    String m_status;
 
     GC::Ptr<BarProp const> m_locationbar;
     GC::Ptr<BarProp const> m_menubar;
@@ -395,3 +372,6 @@ private:
 void run_animation_frame_callbacks(DOM::Document&, double now);
 
 }
+
+template<>
+inline bool JS::Object::fast_is<Web::HTML::Window>() const { return is_html_window(); }

@@ -8,7 +8,6 @@
 #include <LibWeb/Fetch/Response.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/Navigable.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/MixedContent/AbstractOperations.h>
 #include <LibWeb/SecureContexts/AbstractOperations.h>
@@ -53,14 +52,14 @@ ProhibitsMixedSecurityContexts does_settings_prohibit_mixed_security_contexts(GC
         return ProhibitsMixedSecurityContexts::ProhibitsMixedSecurityContexts;
 
     // 2. If settings’ global object is a window, then:
-    if (auto* window = HTML::window_from_global_object(settings->global_object())) {
+    if (is<HTML::Window>(settings->global_object())) {
         // 1. Set document to settings’ global object's associated Document.
-        auto document = window->document();
+        auto document = as<HTML::Window>(settings->global_object()).document();
 
         // 2. For each navigable navigable in document’s ancestor navigables:
         for (auto const& navigable : document->ancestor_navigables()) {
             // 1. If navigable’s active document's origin is a potentially trustworthy origin, then return "Prohibits Mixed Security Contexts".
-            if (SecureContexts::is_origin_potentially_trustworthy(*navigable->active_document_origin()) == SecureContexts::Trustworthiness::PotentiallyTrustworthy)
+            if (SecureContexts::is_origin_potentially_trustworthy(navigable->active_document()->origin()) == SecureContexts::Trustworthiness::PotentiallyTrustworthy)
                 return ProhibitsMixedSecurityContexts::ProhibitsMixedSecurityContexts;
         }
     }

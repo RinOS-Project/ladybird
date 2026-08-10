@@ -19,7 +19,6 @@
 #include <LibURL/Forward.h>
 #include <LibWeb/Forward.h>
 #include <LibWebView/Forward.h>
-#include <LibWebView/PrivateBrowsing.h>
 
 namespace WebView {
 
@@ -33,25 +32,20 @@ struct CookieStorageKey {
 
 class WEBVIEW_API CookieJar {
 public:
-    static ErrorOr<Database::MigrationOutcome> migrate_schema(Database::Database&, Database::MigrationMode = Database::MigrationMode::Apply);
-
     static ErrorOr<NonnullOwnPtr<CookieJar>> create(Database::Database&);
-    static NonnullOwnPtr<CookieJar> create(IsPrivate = IsPrivate::No);
+    static NonnullOwnPtr<CookieJar> create();
 
     ~CookieJar();
 
     String get_cookie(URL::URL const& url, HTTP::Cookie::Source source);
     void set_cookie(URL::URL const& url, HTTP::Cookie::ParsedCookie const& parsed_cookie, HTTP::Cookie::Source source);
     void update_cookie(HTTP::Cookie::Cookie);
-    ErrorOr<void> set_cookie_from_devtools(URL::URL const&, Optional<CookieStorageKey> old_key, HTTP::Cookie::Cookie);
-    bool delete_cookie(CookieStorageKey const&);
     void dump_cookies();
     Vector<HTTP::Cookie::Cookie> get_all_cookies();
     Vector<HTTP::Cookie::Cookie> get_all_cookies_webdriver(URL::URL const& url);
     Vector<HTTP::Cookie::Cookie> get_all_cookies_cookiestore(URL::URL const& url);
     Optional<HTTP::Cookie::Cookie> get_named_cookie(URL::URL const& url, StringView name);
     void expire_cookies_with_time_offset(AK::Duration);
-    void delete_all_cookies(URL::URL const&);
     void expire_cookies_accessed_since(UnixDateTime since);
     Requests::CacheSizes estimate_storage_size_accessed_since(UnixDateTime since) const;
 
@@ -65,8 +59,6 @@ private:
     class WEBVIEW_API TransientStorage {
     public:
         using Cookies = HashMap<CookieStorageKey, HTTP::Cookie::Cookie>;
-
-        explicit TransientStorage(IsPrivate);
 
         void set_cookies(Cookies);
         void set_cookie(CookieStorageKey, HTTP::Cookie::Cookie);
@@ -99,9 +91,8 @@ private:
 
     private:
         using CookieEntry = decltype(declval<Cookies>().take_all_matching(nullptr))::ValueType;
-        void send_cookie_changed_notifications(ReadonlySpan<CookieEntry>, bool inform_web_view_about_changed_domains = true);
+        static void send_cookie_changed_notifications(ReadonlySpan<CookieEntry>, bool inform_web_view_about_changed_domains = true);
 
-        IsPrivate m_is_private { IsPrivate::No };
         Cookies m_cookies;
         Cookies m_dirty_cookies;
     };
@@ -115,7 +106,7 @@ private:
         RefPtr<Core::Timer> synchronization_timer {};
     };
 
-    CookieJar(Optional<PersistedStorage>, IsPrivate);
+    explicit CookieJar(Optional<PersistedStorage>);
 
     AK_MAKE_NONCOPYABLE(CookieJar);
     AK_MAKE_NONMOVABLE(CookieJar);

@@ -1,4 +1,0 @@
-wheelDeltaX: 0
-wheelDeltaY: -100
-wheelDelta: -100
-scrollY: 100

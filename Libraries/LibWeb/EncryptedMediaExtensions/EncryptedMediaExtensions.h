@@ -7,16 +7,32 @@
 
 #pragma once
 
-#include <AK/Optional.h>
-#include <AK/Utf16String.h>
-#include <AK/Vector.h>
-#include <LibWeb/Bindings/MediaKeySystemAccess.h>
+#include <AK/Types.h>
+#include <LibWeb/Bindings/MediaKeySystemAccessPrototype.h>
+
+namespace Web::Bindings {
+
+// https://w3c.github.io/encrypted-media/#dom-mediakeysystemmediacapability
+struct MediaKeySystemMediaCapability {
+    Utf16String content_type;
+    Optional<Utf16String> encryption_scheme;
+    Utf16String robustness;
+};
+
+// https://w3c.github.io/encrypted-media/#dom-mediakeysystemconfiguration
+struct MediaKeySystemConfiguration {
+    Utf16String label;
+    Vector<Utf16String> init_data_types;
+    Vector<MediaKeySystemMediaCapability> audio_capabilities;
+    Vector<MediaKeySystemMediaCapability> video_capabilities;
+    Bindings::MediaKeysRequirement distinctive_identifier { Bindings::MediaKeysRequirement::Optional };
+    Bindings::MediaKeysRequirement persistent_state { Bindings::MediaKeysRequirement::Optional };
+    Optional<Vector<Utf16String>> session_types;
+};
+
+}
 
 namespace Web::EncryptedMediaExtensions {
-
-using MediaKeysRequirement = Bindings::MediaKeysRequirement;
-using MediaKeySystemConfiguration = Bindings::MediaKeySystemConfiguration;
-using MediaKeySystemMediaCapability = Bindings::MediaKeySystemMediaCapability;
 
 struct MediaKeyRestrictions {
     bool distinctive_identifiers { true };
@@ -36,7 +52,7 @@ enum ConsentStatus {
 
 struct ConsentConfiguration {
     ConsentStatus status { ConsentStatus::ConsentDenied };
-    Optional<MediaKeySystemConfiguration> configuration;
+    Optional<Bindings::MediaKeySystemConfiguration> configuration;
 };
 
 }

@@ -1,7 +1,9 @@
+#import <WebAssembly/Module.idl>
+
 // https://webassembly.github.io/spec/js-api/#instances
 [LegacyNamespace=WebAssembly, Exposed=*]
 interface Instance {
-    [ImplementedInBindings] constructor(Module module, optional object importObject);
+    constructor(Module module, optional object importObject);
 
-    [ImplementedInBindings, NeedsCallerRealm] readonly attribute object exports;
+    readonly attribute object exports;
 };

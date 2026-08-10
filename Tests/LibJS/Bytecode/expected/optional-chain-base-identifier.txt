@@ -1,29 +1,32 @@
-$abc8a5d2 optional-chain-base-identifier.js:1:1
+$5b93d13b optional-chain-base-identifier.js:1:1
   Registers: 9
-  Blocks:    3
+  Blocks:    4
   Constants:
     [0] = Int32(44)
     [1] = Undefined
 
 block0:
-  [   0] NewObject dst:reg5
-  [  10] NewObject dst:reg6
-  [  20] InitObjectLiteralProperty object:reg6, `b`, src:Int32(44), shape_cache_index:1, property_slot:0
-  [  38] CacheObjectShape object:reg6
-  [  48] InitObjectLiteralProperty object:reg5, `a`, src:reg6, shape_cache_index:0, property_slot:0
-  [  60] CacheObjectShape object:reg5
-  [  70] SetGlobal `obj`, src:reg5
-  [  80] MovSrcUndefined dst:reg5
-  [  88] GetGlobal dst:reg7, `obj`
-  [  98] GetById dst:reg8, base:reg7, `a` (obj.a)
-  [  b0] Mov2 c0_dst:reg5, c0_src:reg7, c1_dst:reg6, c1_src:reg8
-  [  c8] JumpNullish condition:reg6, true_target:block1, false_target:block2
+  [   0] GetLexicalEnvironment dst:reg4
+  [   8] NewObject dst:reg5
+  [  18] NewObject dst:reg6
+  [  28] InitObjectLiteralProperty object:reg6, `b`, src:Int32(44), shape_cache_index:1, property_slot:0
+  [  40] CacheObjectShape object:reg6
+  [  50] InitObjectLiteralProperty object:reg5, `a`, src:reg6, shape_cache_index:0, property_slot:0
+  [  68] CacheObjectShape object:reg5
+  [  78] SetGlobal `obj`, src:reg5
+  [  90] Mov dst:reg5, src:Undefined
+  [  a0] GetGlobal dst:reg7, `obj`
+  [  b8] GetById dst:reg8, base:reg7, `a` (obj.a)
+  [  d8] Mov2 dst1:reg5, src1:reg7, dst2:reg6, src2:reg8
+  [  f0] JumpNullish condition:reg6, true_target:block1, false_target:block3
 
 block1:
-  [  d8] MovSrcUndefined dst:reg6
-  [  e0] End value:reg6
+  [ 100] Mov dst:reg6, src:Undefined
 
 block2:
-  [  e8] Mov dst:reg5, src:reg6
-  [  f8] GetById dst:reg6, base:reg6, `b`
   [ 110] End value:reg6
+
+block3:
+  [ 118] Mov dst:reg5, src:reg6
+  [ 128] GetById dst:reg6, base:reg6, `b`
+  [ 148] End value:reg6

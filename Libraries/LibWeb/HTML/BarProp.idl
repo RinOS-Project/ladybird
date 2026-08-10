@@ -1,3 +1,4 @@
+
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#barprop
 [Exposed=Window]
 interface BarProp {

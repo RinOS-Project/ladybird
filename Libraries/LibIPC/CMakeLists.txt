@@ -3,27 +3,30 @@ set(SOURCES
     Connection.cpp
     Decoder.cpp
     Encoder.cpp
-    File.cpp
-    Message.cpp
-    ReceivedMessageBytes.cpp
     TransportHandle.cpp
 )
 
 if (APPLE AND NOT IOS)
     list(APPEND SOURCES
         AttachmentMachPort.cpp
+        File.cpp
         MachBootstrapListener.cpp
+        Message.cpp
         TransportBootstrapMach.cpp
         TransportMachPort.cpp)
 elseif (UNIX OR AK_OS_RINOS)
     list(APPEND SOURCES
         Attachment.cpp
+        File.cpp
+        Message.cpp
         TransportSocket.cpp)
 else()
     list(APPEND SOURCES
         Attachment.cpp
+        FileWindows.cpp
+        MessageWindows.cpp
         TransportSocketWindows.cpp)
 endif()
 
 ladybird_lib(LibIPC ipc)
-target_link_libraries(LibIPC PRIVATE LibCore LibSync LibThreading LibURL)
+target_link_libraries(LibIPC PRIVATE LibCore LibURL LibThreading)

@@ -26,7 +26,6 @@
 namespace JS {
 
 #define JS_OBJECT(class_, base_class) GC_CELL(class_, base_class)
-#define JS_OBJECT_WITH_CUSTOM_CLASS_NAME(class_, base_class) GC_CELL_WITH_CUSTOM_CLASS_NAME(class_, base_class)
 
 struct PrivateElement {
     enum class Kind {
@@ -192,17 +191,39 @@ public:
     [[nodiscard]] bool may_interfere_with_indexed_property_access() const { return m_flags & Flag::MayInterfereWithIndexedPropertyAccess; }
     void set_may_interfere_with_indexed_property_access() { m_flags |= Flag::MayInterfereWithIndexedPropertyAccess; }
 
-    // Objects with this flag must not participate in AddOwnProperty IC caching:
-    // ordinary_set_with_own_descriptor() skips emitting AddOwnProperty metadata,
-    // and AddOwnProperty cache-hit paths check the flag before consuming an
-    // existing cache entry. Both sides are required: a plain object can share a
-    // Shape* with a flagged object, e.g. Object.create(Element.prototype), and
-    // prime a cache entry; the flagged object must still fail the consumption
-    // check. Conversely, only checking consumption would leave permanently-dead
-    // cache entries that evict useful ones.
-    [[nodiscard]] bool requires_slow_add_own_property() const { return m_flags & Flag::RequiresSlowAddOwnProperty; }
-    void set_requires_slow_add_own_property() { m_flags |= Flag::RequiresSlowAddOwnProperty; }
-    void clear_requires_slow_add_own_property() { m_flags &= ~Flag::RequiresSlowAddOwnProperty; }
+    class IndexedPropertiesConstAdapter {
+    public:
+        explicit IndexedPropertiesConstAdapter(Object const& object)
+            : m_object(object)
+        {
+        }
+
+        [[nodiscard]] size_t array_like_size() const { return m_object.indexed_array_like_size(); }
+        [[nodiscard]] bool is_empty() const { return m_object.indexed_real_size() == 0; }
+
+    private:
+        Object const& m_object;
+    };
+
+    class IndexedPropertiesAdapter : public IndexedPropertiesConstAdapter {
+    public:
+        explicit IndexedPropertiesAdapter(Object& object)
+            : IndexedPropertiesConstAdapter(object)
+            , m_object(object)
+        {
+        }
+
+        void put(u32 index, Value value, PropertyAttributes attributes = default_attributes)
+        {
+            m_object.indexed_put(index, value, attributes);
+        }
+
+    private:
+        Object& m_object;
+    };
+
+    IndexedPropertiesAdapter indexed_properties() { return IndexedPropertiesAdapter(*this); }
+    IndexedPropertiesConstAdapter indexed_properties() const { return IndexedPropertiesConstAdapter(*this); }
 
     ThrowCompletionOr<bool> ordinary_set_with_own_descriptor(PropertyKey const&, Value, Value, Optional<PropertyDescriptor>, CacheableSetPropertyMetadata* = nullptr, PropertyLookupPhase = PropertyLookupPhase::OwnProperty);
 
@@ -238,9 +259,7 @@ public:
     using IntrinsicAccessor = Value (*)(Realm&);
     void define_intrinsic_accessor(PropertyKey const&, PropertyAttributes attributes, IntrinsicAccessor accessor);
 
-    void define_native_function(Realm&, PropertyKey const&, NativeFunctionPointer, i32 length, PropertyAttributes attributes, Optional<Bytecode::Builtin> builtin = {});
     void define_native_function(Realm&, PropertyKey const&, ESCAPING Function<ThrowCompletionOr<Value>(VM&)>, i32 length, PropertyAttributes attributes, Optional<Bytecode::Builtin> builtin = {});
-    void define_native_accessor(Realm&, PropertyKey const&, NativeFunctionPointer getter, NativeFunctionPointer setter, PropertyAttributes attributes);
     void define_native_accessor(Realm&, PropertyKey const&, ESCAPING Function<ThrowCompletionOr<Value>(VM&)> getter, ESCAPING Function<ThrowCompletionOr<Value>(VM&)> setter, PropertyAttributes attributes);
     void define_native_javascript_backed_function(PropertyKey const&, GC::Ref<NativeJavaScriptBackedFunction> function, i32 length, PropertyAttributes attributes);
 
@@ -269,20 +288,15 @@ public:
     virtual bool is_global_object() const { return false; }
     virtual bool is_proxy_object() const { return false; }
     virtual bool is_native_function() const { return false; }
-    [[nodiscard]] bool is_raw_native_function() const { return m_flags & Flag::IsRawNativeFunction; }
     [[nodiscard]] bool is_ecmascript_function_object() const { return m_flags & Flag::IsECMAScriptFunctionObject; }
     void set_is_ecmascript_function_object() { m_flags |= Flag::IsECMAScriptFunctionObject; }
     void set_is_function() { m_flags |= Flag::IsFunction; }
-    void set_is_raw_native_function() { m_flags |= Flag::IsRawNativeFunction; }
     void clear_is_function() { m_flags &= ~Flag::IsFunction; }
     virtual bool is_array_iterator() const { return false; }
     virtual bool is_raw_json_object() const { return false; }
     virtual bool is_set_object() const { return false; }
     virtual bool is_map_object() const { return false; }
     virtual bool is_weak_map() const { return false; }
-    virtual ErrorData* error_data() { return nullptr; }
-    virtual ErrorData const* error_data() const { return nullptr; }
-    bool has_error_data() const { return error_data(); }
 
     virtual bool is_typed_array_base() const { return false; }
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, Type) \
@@ -302,10 +316,10 @@ public:
     // B.3.7 The [[IsHTMLDDA]] Internal Slot, https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot
     virtual bool is_htmldda() const { return false; }
 
-    bool has_parameter_map() const { return shape().has_parameter_map(); }
+    bool has_parameter_map() const { return m_flags & Flag::HasParameterMap; }
+    void set_has_parameter_map() { m_flags |= Flag::HasParameterMap; }
 
     virtual void visit_edges(Cell::Visitor&) override;
-    virtual size_t external_memory_size() const override;
 
     Value get_direct(size_t index) const { return m_named_properties[index]; }
     void put_direct(size_t index, Value value) { m_named_properties[index] = value; }
@@ -336,7 +350,7 @@ public:
                 callback(m_indexed_elements[i]);
             break;
         case IndexedStorageKind::Holey:
-            for (u32 i = 0, available_elements = min(m_indexed_array_like_size, indexed_elements_capacity()); i < available_elements; ++i) {
+            for (u32 i = 0; i < m_indexed_array_like_size; ++i) {
                 if (!m_indexed_elements[i].is_special_empty_value())
                     callback(m_indexed_elements[i]);
             }
@@ -386,19 +400,19 @@ protected:
 
 private:
     struct Flag {
-        static constexpr u16 IsExtensible = 1 << 0;
-        static constexpr u16 IsRawNativeFunction = 1 << 1;
-        static constexpr u16 HasMagicalLengthProperty = 1 << 2;
-        static constexpr u16 IsTypedArray = 1 << 3;
-        static constexpr u16 MayInterfereWithIndexedPropertyAccess = 1 << 4;
-        static constexpr u16 HasIntrinsicAccessors = 1 << 5;
-        static constexpr u16 IsECMAScriptFunctionObject = 1 << 6;
-        static constexpr u16 IsFunction = 1 << 7;
-        static constexpr u16 RequiresSlowAddOwnProperty = 1 << 8;
+        static constexpr u8 IsExtensible = 1 << 0;
+        static constexpr u8 HasParameterMap = 1 << 1;
+        static constexpr u8 HasMagicalLengthProperty = 1 << 2;
+        static constexpr u8 IsTypedArray = 1 << 3;
+        static constexpr u8 MayInterfereWithIndexedPropertyAccess = 1 << 4;
+        static constexpr u8 HasIntrinsicAccessors = 1 << 5;
+        static constexpr u8 IsECMAScriptFunctionObject = 1 << 6;
+        static constexpr u8 IsFunction = 1 << 7;
     };
 
-    u16 m_flags { Flag::IsExtensible };
+    u8 m_flags { Flag::IsExtensible };
     IndexedStorageKind m_indexed_storage_kind { IndexedStorageKind::None };
+    // 2 bytes padding
     u32 m_indexed_array_like_size { 0 };
     void set_shape(Shape& shape) { m_shape = &shape; }
 
@@ -413,8 +427,6 @@ private:
     void free_indexed_elements();
     void ensure_named_storage_capacity(u32 needed);
     bool named_storage_is_inline() const { return m_named_properties == const_cast<Object*>(this)->m_inline_named_storage; }
-    size_t named_storage_external_memory_size() const;
-    size_t indexed_storage_external_memory_size() const;
 
 public:
     static constexpr u32 INLINE_NAMED_PROPERTY_CAPACITY = 2;
@@ -428,7 +440,7 @@ private:
 };
 
 #if !defined(AK_OS_WINDOWS)
-static_assert(sizeof(Object) <= 72, "Keep the size of JS::Object down!");
+static_assert(sizeof(Object) <= 64, "Keep the size of JS::Object down!");
 #endif
 
 }

@@ -6,9 +6,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
-#include <LibWeb/Bindings/DOMMatrixReadOnly.h>
-#include <LibWeb/Bindings/DOMPointReadOnly.h>
+#include <LibWeb/Bindings/DOMPointReadOnlyPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Geometry/DOMMatrix.h>
 #include <LibWeb/Geometry/DOMPoint.h>
 #include <LibWeb/Geometry/DOMPointReadOnly.h>
@@ -19,52 +18,56 @@ namespace Web::Geometry {
 
 GC_DEFINE_ALLOCATOR(DOMPointReadOnly);
 
-GC::Ref<DOMPointReadOnly> DOMPointReadOnly::create(double x, double y, double z, double w)
+GC::Ref<DOMPointReadOnly> DOMPointReadOnly::construct_impl(JS::Realm& realm, double x, double y, double z, double w)
 {
-    return GC::Heap::the().allocate<DOMPointReadOnly>(x, y, z, w);
+    return realm.create<DOMPointReadOnly>(realm, x, y, z, w);
 }
 
-GC::Ref<DOMPointReadOnly> DOMPointReadOnly::create()
+GC::Ref<DOMPointReadOnly> DOMPointReadOnly::create(JS::Realm& realm)
 {
-    return GC::Heap::the().allocate<DOMPointReadOnly>();
+    return realm.create<DOMPointReadOnly>(realm);
 }
 
-GC::Ref<DOMPointReadOnly> DOMPointReadOnly::dom_point_read_only_from_point(Bindings::DOMPointInit const& other)
-{
-    return create(other.x, other.y, other.z, other.w);
-}
-
-DOMPointReadOnly::DOMPointReadOnly(double x, double y, double z, double w)
-    : m_x(x)
+DOMPointReadOnly::DOMPointReadOnly(JS::Realm& realm, double x, double y, double z, double w)
+    : PlatformObject(realm)
+    , m_x(x)
     , m_y(y)
     , m_z(z)
     , m_w(w)
 {
 }
 
-DOMPointReadOnly::DOMPointReadOnly()
+DOMPointReadOnly::DOMPointReadOnly(JS::Realm& realm)
+    : PlatformObject(realm)
 {
+}
+
+// https://drafts.fxtf.org/geometry/#dom-dompointreadonly-frompoint
+GC::Ref<DOMPointReadOnly> DOMPointReadOnly::from_point(JS::VM& vm, DOMPointInit const& other)
+{
+    // The fromPoint(other) static method on DOMPointReadOnly must create a DOMPointReadOnly from the dictionary other.
+    return construct_impl(*vm.current_realm(), other.x, other.y, other.z, other.w);
 }
 
 DOMPointReadOnly::~DOMPointReadOnly() = default;
 
 // https://drafts.fxtf.org/geometry/#dom-dompointreadonly-matrixtransform
-WebIDL::ExceptionOr<GC::Ref<DOMPoint>> DOMPointReadOnly::matrix_transform(GC::Ref<DOMMatrix> matrix_object) const
+WebIDL::ExceptionOr<GC::Ref<DOMPoint>> DOMPointReadOnly::matrix_transform(DOMMatrixInit& matrix) const
 {
     // 1. Let matrixObject be the result of invoking create a DOMMatrix from the dictionary matrix.
-    // NB: This is done by the binding helper before entering the implementation.
+    auto matrix_object = TRY(DOMMatrix::create_from_dom_matrix_init(realm(), matrix));
 
     // 2. Return the result of invoking transform a point with a matrix, given the current point and matrixObject. The current point does not get modified.
     return matrix_object->transform_point(*this);
 }
 
-WebIDL::ExceptionOr<GC::Ref<DOMPoint>> DOMPointReadOnly::matrix_transform(Bindings::DOMMatrixInit const& matrix) const
+void DOMPointReadOnly::initialize(JS::Realm& realm)
 {
-    auto matrix_object = DOMMatrix::create_from_dom_matrix_init(TRY(validate_and_fixup_dom_matrix_init(matrix)));
-    return matrix_transform(matrix_object);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(DOMPointReadOnly);
+    Base::initialize(realm);
 }
 
-WebIDL::ExceptionOr<void> DOMPointReadOnly::serialization_steps(HTML::StructuredSerializeWriter& serialized, bool, HTML::SerializationMemory&)
+WebIDL::ExceptionOr<void> DOMPointReadOnly::serialization_steps(HTML::TransferDataEncoder& serialized, bool, HTML::SerializationMemory&)
 {
     // 1. Set serialized.[[X]] to value’s x coordinate.
     serialized.encode(m_x);
@@ -81,19 +84,19 @@ WebIDL::ExceptionOr<void> DOMPointReadOnly::serialization_steps(HTML::Structured
     return {};
 }
 
-WebIDL::ExceptionOr<void> DOMPointReadOnly::deserialization_steps(JS::Realm& realm, HTML::StructuredSerializeReader& serialized, HTML::DeserializationMemory&)
+WebIDL::ExceptionOr<void> DOMPointReadOnly::deserialization_steps(HTML::TransferDataDecoder& serialized, HTML::DeserializationMemory&)
 {
     // 1. Set value’s x coordinate to serialized.[[X]].
-    m_x = TRY(HTML::decode_or_throw_data_clone_error<double>(realm, serialized));
+    m_x = serialized.decode<double>();
 
     // 2. Set value’s y coordinate to serialized.[[Y]].
-    m_y = TRY(HTML::decode_or_throw_data_clone_error<double>(realm, serialized));
+    m_y = serialized.decode<double>();
 
     // 3. Set value’s z coordinate to serialized.[[Z]].
-    m_z = TRY(HTML::decode_or_throw_data_clone_error<double>(realm, serialized));
+    m_z = serialized.decode<double>();
 
     // 4. Set value’s w coordinate to serialized.[[W]].
-    m_w = TRY(HTML::decode_or_throw_data_clone_error<double>(realm, serialized));
+    m_w = serialized.decode<double>();
 
     return {};
 }

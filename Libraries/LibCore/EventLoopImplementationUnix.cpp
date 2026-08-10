@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/BinaryHeap.h>
 #include <AK/HashMap.h>
-#include <AK/NeverDestroyed.h>
 #include <AK/Singleton.h>
 #include <AK/TemporaryChange.h>
 #include <AK/Time.h>
@@ -17,10 +17,8 @@
 #include <LibCore/Platform/ScopedAutoreleasePool.h>
 #include <LibCore/System.h>
 #include <LibCore/ThreadEventQueue.h>
-#include <LibCore/TimeoutSet.h>
-#include <LibSync/Mutex.h>
-#include <LibSync/Once.h>
-#include <LibSync/RWLock.h>
+#include <LibThreading/Mutex.h>
+#include <LibThreading/RWLock.h>
 #include <pthread.h>
 #include <sys/select.h>
 #include <unistd.h>
@@ -30,36 +28,12 @@ namespace Core {
 namespace {
 
 struct ThreadData;
+class TimeoutSet;
 
-thread_local ThreadData* s_this_thread_data;
-static pthread_key_t s_this_thread_data_key;
-
-static void destroy_thread_data(void*);
-
-static auto& thread_data()
-{
-    static NeverDestroyed<HashMap<pthread_t, ThreadData*>> thread_data;
-    return *thread_data;
-}
-
-static auto& thread_data_lock()
-{
-    static NeverDestroyed<Sync::RWLock> lock;
-    return *lock;
-}
-
-static auto& thread_data_key_once()
-{
-    static NeverDestroyed<Sync::OnceFlag> once;
-    return *once;
-}
-
-static void ensure_thread_data_key()
-{
-    Sync::call_once(thread_data_key_once(), [] {
-        VERIFY(pthread_key_create(&s_this_thread_data_key, destroy_thread_data) == 0);
-    });
-}
+HashMap<pthread_t, ThreadData*> s_thread_data;
+Threading::RWLock s_thread_data_lock;
+thread_local pthread_t s_thread_id;
+thread_local OwnPtr<ThreadData> s_this_thread_data;
 
 short notification_type_to_poll_events(NotificationType type)
 {
@@ -75,6 +49,136 @@ bool has_flag(int value, int flag)
 {
     return (value & flag) == flag;
 }
+
+class EventLoopTimeout {
+public:
+    static constexpr ssize_t INVALID_INDEX = NumericLimits<ssize_t>::max();
+
+    EventLoopTimeout() { }
+    virtual ~EventLoopTimeout() = default;
+
+    virtual void fire(TimeoutSet& timeout_set, MonotonicTime time) = 0;
+
+    MonotonicTime fire_time() const { return m_fire_time; }
+
+    void absolutize(Badge<TimeoutSet>, MonotonicTime current_time)
+    {
+        m_fire_time = current_time + m_duration;
+    }
+
+    ssize_t& index(Badge<TimeoutSet>) { return m_index; }
+    void set_index(Badge<TimeoutSet>, ssize_t index) { m_index = index; }
+
+    bool is_scheduled() const { return m_index != INVALID_INDEX; }
+
+    void set_sequence_id(u64 id) { m_sequence_id = id; }
+    u64 sequence_id() const { return m_sequence_id; }
+
+protected:
+    union {
+        AK::Duration m_duration;
+        MonotonicTime m_fire_time;
+    };
+
+private:
+    ssize_t m_index = INVALID_INDEX;
+    u64 m_sequence_id { 0 };
+};
+
+class TimeoutSet {
+public:
+    TimeoutSet() = default;
+
+    Optional<MonotonicTime> next_timer_expiration()
+    {
+        if (!m_heap.is_empty()) {
+            return m_heap.peek_min()->fire_time();
+        } else {
+            return {};
+        }
+    }
+
+    void absolutize_relative_timeouts(MonotonicTime current_time)
+    {
+        for (auto timeout : m_scheduled_timeouts) {
+            timeout->absolutize({}, current_time);
+            m_heap.insert(timeout);
+        }
+        m_scheduled_timeouts.clear();
+    }
+
+    size_t fire_expired(MonotonicTime current_time)
+    {
+        size_t fired_count = 0;
+        while (!m_heap.is_empty()) {
+            auto& timeout = *m_heap.peek_min();
+
+            if (timeout.fire_time() <= current_time) {
+                ++fired_count;
+                m_heap.pop_min();
+                timeout.set_index({}, EventLoopTimeout::INVALID_INDEX);
+                timeout.fire(*this, current_time);
+            } else {
+                break;
+            }
+        }
+        return fired_count;
+    }
+
+    void schedule_relative(EventLoopTimeout* timeout)
+    {
+        timeout->set_sequence_id(m_next_sequence_id++);
+        timeout->set_index({}, -1 - static_cast<ssize_t>(m_scheduled_timeouts.size()));
+        m_scheduled_timeouts.append(timeout);
+    }
+
+    void schedule_absolute(EventLoopTimeout* timeout)
+    {
+        timeout->set_sequence_id(m_next_sequence_id++);
+        m_heap.insert(timeout);
+    }
+
+    void unschedule(EventLoopTimeout* timeout)
+    {
+        if (timeout->index({}) < 0) {
+            size_t i = -1 - timeout->index({});
+            size_t j = m_scheduled_timeouts.size() - 1;
+            VERIFY(m_scheduled_timeouts[i] == timeout);
+            swap(m_scheduled_timeouts[i], m_scheduled_timeouts[j]);
+            swap(m_scheduled_timeouts[i]->index({}), m_scheduled_timeouts[j]->index({}));
+            (void)m_scheduled_timeouts.take_last();
+        } else {
+            m_heap.pop(timeout->index({}));
+        }
+        timeout->set_index({}, EventLoopTimeout::INVALID_INDEX);
+    }
+
+    void clear()
+    {
+        for (auto* timeout : m_heap.nodes_in_arbitrary_order())
+            timeout->set_index({}, EventLoopTimeout::INVALID_INDEX);
+        m_heap.clear();
+        for (auto* timeout : m_scheduled_timeouts)
+            timeout->set_index({}, EventLoopTimeout::INVALID_INDEX);
+        m_scheduled_timeouts.clear();
+    }
+
+private:
+    IntrusiveBinaryHeap<
+        EventLoopTimeout*,
+        decltype([](EventLoopTimeout* a, EventLoopTimeout* b) {
+            if (a->fire_time() == b->fire_time())
+                return a->sequence_id() < b->sequence_id();
+            return a->fire_time() < b->fire_time();
+        }),
+        decltype([](EventLoopTimeout* timeout, size_t index) {
+            timeout->set_index({}, static_cast<ssize_t>(index));
+        }),
+        8>
+        m_heap;
+    Vector<EventLoopTimeout*, 8> m_scheduled_timeouts;
+    u64 m_next_sequence_id { 0 };
+};
 
 class EventLoopTimer final : public EventLoopTimeout {
 public:
@@ -120,30 +224,29 @@ public:
 struct ThreadData {
     static ThreadData& the()
     {
-        ensure_thread_data_key();
+        if (s_thread_id == 0)
+            s_thread_id = pthread_self();
         ThreadData* data = nullptr;
         if (!s_this_thread_data) {
             data = new ThreadData;
-            s_this_thread_data = data;
-            VERIFY(pthread_setspecific(s_this_thread_data_key, s_this_thread_data) == 0);
+            s_this_thread_data = adopt_own(*data);
 
-            Sync::RWLockLocker<Sync::LockMode::Write> locker(thread_data_lock());
-            thread_data().set(s_this_thread_data->thread_id, s_this_thread_data);
+            Threading::RWLockLocker<Threading::LockMode::Write> locker(s_thread_data_lock);
+            s_thread_data.set(s_thread_id, s_this_thread_data.ptr());
         } else {
-            data = s_this_thread_data;
+            data = s_this_thread_data.ptr();
         }
         return *data;
     }
 
     static ThreadData* for_thread(pthread_t thread_id)
     {
-        // NOTE: thread_data_lock() is supposed to be held by the caller.
-        return thread_data().get(thread_id).value_or(nullptr);
+        // NOTE: s_thread_data_lock is supposed to be held by the caller.
+        return s_thread_data.get(thread_id).value_or(nullptr);
     }
 
     ThreadData()
     {
-        thread_id = pthread_self();
         pid = getpid();
 
         auto result = Core::System::pipe2(O_CLOEXEC);
@@ -164,11 +267,11 @@ struct ThreadData {
         close(wake_pipe_fds[0]);
         close(wake_pipe_fds[1]);
 
-        Sync::RWLockLocker<Sync::LockMode::Write> locker(thread_data_lock());
-        thread_data().remove(thread_id);
+        Threading::RWLockLocker<Threading::LockMode::Write> locker(s_thread_data_lock);
+        s_thread_data.remove(s_thread_id);
     }
 
-    Sync::RecursiveMutex mutex;
+    Threading::Mutex mutex;
 
     // Each thread has its own timers, notifiers and a wake pipe.
     TimeoutSet timeouts;
@@ -182,14 +285,7 @@ struct ThreadData {
     Array<int, 2> wake_pipe_fds { -1, -1 };
 
     pid_t pid { 0 };
-    pthread_t thread_id { 0 };
 };
-
-static void destroy_thread_data(void* value)
-{
-    s_this_thread_data = nullptr;
-    delete static_cast<ThreadData*>(value);
-}
 
 }
 
@@ -238,7 +334,7 @@ void EventLoopImplementationUnix::wake()
 void EventLoopManagerUnix::wait_for_events(EventLoopImplementation::PumpMode mode)
 {
     auto& thread_data = ThreadData::the();
-    Sync::MutexLocker locker(thread_data.mutex);
+    Threading::MutexLocker locker(thread_data.mutex);
 
 retry:
     bool has_pending_events = ThreadEventQueue::current().has_pending_events();
@@ -473,7 +569,7 @@ void EventLoopManagerUnix::handle_signal(int signal_number)
     VERIFY(signal_number != 0);
 
     // Use the thread-local directly instead of ThreadData::the() to avoid
-    // taking a write lock on thread_data_lock(). Signal handlers must not
+    // taking a write lock on s_thread_data_lock. Signal handlers must not
     // acquire locks, as we may already be holding one on this thread.
     if (!s_this_thread_data)
         return;
@@ -530,9 +626,9 @@ intptr_t EventLoopManagerUnix::register_timer(EventReceiver& object, int millise
 {
     VERIFY(milliseconds >= 0);
     auto& thread_data = ThreadData::the();
-    Sync::MutexLocker locker(thread_data.mutex);
+    Threading::MutexLocker locker(thread_data.mutex);
     auto timer = new EventLoopTimer;
-    timer->owner_thread = thread_data.thread_id;
+    timer->owner_thread = s_thread_id;
     timer->owner = object;
     timer->interval = AK::Duration::from_milliseconds(milliseconds);
     timer->reload(MonotonicTime::now_coarse());
@@ -544,11 +640,11 @@ intptr_t EventLoopManagerUnix::register_timer(EventReceiver& object, int millise
 void EventLoopManagerUnix::unregister_timer(intptr_t timer_id)
 {
     auto* timer = bit_cast<EventLoopTimer*>(timer_id);
-    Sync::RWLockLocker<Sync::LockMode::Read> locker(thread_data_lock());
+    Threading::RWLockLocker<Threading::LockMode::Read> locker(s_thread_data_lock);
     auto* thread_data_ptr = ThreadData::for_thread(timer->owner_thread);
     if (!thread_data_ptr)
         return;
-    Sync::MutexLocker thread_data_content_locker(thread_data_ptr->mutex);
+    Threading::MutexLocker thread_data_content_locker(thread_data_ptr->mutex);
     auto& thread_data = *thread_data_ptr;
     auto expected = false;
     if (timer->is_being_deleted.compare_exchange_strong(expected, true, AK::MemoryOrder::memory_order_acq_rel)) {
@@ -561,7 +657,7 @@ void EventLoopManagerUnix::unregister_timer(intptr_t timer_id)
 void EventLoopManagerUnix::register_notifier(Notifier& notifier)
 {
     auto& thread_data = ThreadData::the();
-    Sync::MutexLocker locker(thread_data.mutex);
+    Threading::MutexLocker locker(thread_data.mutex);
 
     thread_data.notifier_to_index.set(&notifier, thread_data.poll_fds.size());
     thread_data.notifiers.append(&notifier);
@@ -569,16 +665,16 @@ void EventLoopManagerUnix::register_notifier(Notifier& notifier)
     auto events = notification_type_to_poll_events(notifier.type());
     thread_data.poll_fds.append({ .fd = notifier.fd(), .events = events, .revents = 0 });
 
-    notifier.set_owner_thread(thread_data.thread_id);
+    notifier.set_owner_thread(s_thread_id);
 }
 
 void EventLoopManagerUnix::unregister_notifier(Notifier& notifier)
 {
-    Sync::RWLockLocker<Sync::LockMode::Read> locker(thread_data_lock());
+    Threading::RWLockLocker<Threading::LockMode::Read> locker(s_thread_data_lock);
     auto* thread_data = ThreadData::for_thread(notifier.owner_thread());
     if (!thread_data)
         return;
-    Sync::MutexLocker thread_data_content_locker(thread_data->mutex);
+    Threading::MutexLocker thread_data_content_locker(thread_data->mutex);
 
     auto notifier_index = thread_data->notifier_to_index.take(&notifier).release_value();
 

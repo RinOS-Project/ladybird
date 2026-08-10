@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/HashMap.h>
-#include <AK/Utf16String.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibURL/Origin.h>
 #include <LibURL/URL.h>
@@ -23,7 +22,7 @@ class ListOfAvailableImages : public JS::Cell {
 
 public:
     struct Key {
-        Utf16String url;
+        String url;
         HTML::CORSSettingAttribute mode;
         Optional<URL::Origin> origin;
 
@@ -35,26 +34,21 @@ public:
     };
 
     struct Entry {
-        Entry(GC::Ref<DecodedImageData> image_data, bool ignore_higher_layer_caching, u64 cache_touch_serial)
+        Entry(GC::Ref<DecodedImageData> image_data, bool ignore_higher_layer_caching)
             : image_data(move(image_data))
             , ignore_higher_layer_caching(ignore_higher_layer_caching)
-            , cache_touch_serial(cache_touch_serial)
         {
         }
 
         GC::Ref<DecodedImageData> image_data;
         bool ignore_higher_layer_caching { false };
-        u64 cache_touch_serial { 0 };
     };
 
     ListOfAvailableImages();
     ~ListOfAvailableImages();
 
-    [[nodiscard]] static GC::Ref<ListOfAvailableImages> create();
-
     void add(Key const&, GC::Ref<DecodedImageData>, bool ignore_higher_layer_caching);
     void remove(Key const&);
-    void prune_to_limits(size_t external_memory_limit, size_t count_limit);
     [[nodiscard]] Entry* get(Key const&);
 
     void visit_edges(JS::Cell::Visitor& visitor) override;

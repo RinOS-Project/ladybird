@@ -1,10 +1,14 @@
+include(audio)
+if (NOT AK_OS_RINOS)
+    include(SDL3)
+endif()
+
 set(SOURCES
     ConnectionFromClient.cpp
     ConsoleGlobalEnvironmentExtensions.cpp
     DevToolsConsoleClient.cpp
     PageClient.cpp
     PageHost.cpp
-    WebContentCompositorHost.cpp
     WebContentConsoleClient.cpp
     WebDriverConnection.cpp
     WebUIConnection.cpp
@@ -28,23 +32,19 @@ target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${CMAKE_CU
 target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${LADYBIRD_SOURCE_DIR}>)
 target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${LADYBIRD_SOURCE_DIR}/Services/>)
 
-target_link_libraries(webcontentservice PUBLIC LibCore LibCrypto LibDevTools LibFileSystem LibGfx LibHTTP LibIPC LibJS LibMain LibMedia LibWasm LibWeb LibWebSocket LibRequests LibWebView LibImageDecoderClient LibGC)
-target_link_libraries(webcontentservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
-target_link_libraries(webcontentservice PRIVATE SDL3::SDL3)
-target_compile_options(webcontentservice PRIVATE $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wexit-time-destructors>)
+target_link_libraries(webcontentservice PUBLIC LibCore LibCrypto LibFileSystem LibGfx LibHTTP LibIPC LibJS LibMain LibMedia LibWeb LibWebSocket LibRequests LibWebView LibImageDecoderClient LibGC)
+if (RINOS_LEGACY_OPENSSL)
+    target_link_libraries(webcontentservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+endif()
+if (NOT AK_OS_RINOS)
+    target_link_libraries(webcontentservice PRIVATE SDL3::SDL3)
+else()
+    message(STATUS "RinOS policy: SDL3/Gamepad backend excluded from WebContent.")
+endif()
 
 add_executable(WebContent main.cpp)
 
-if (LINUX)
-    target_sources(WebContent PRIVATE ../RendererSandboxLinux.cpp)
-elseif (APPLE)
-    target_sources(WebContent PRIVATE ../RendererSandboxMacOS.cpp)
-else()
-    target_sources(WebContent PRIVATE ../RendererSandboxUnimplemented.cpp)
-endif()
-
-target_link_libraries(WebContent PRIVATE webcontentservice LibSandbox LibURL)
-target_compile_options(WebContent PRIVATE $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wexit-time-destructors>)
+target_link_libraries(WebContent PRIVATE webcontentservice LibURL)
 
 if (AK_OS_RINOS)
     add_library(rinoswebcontentbridge STATIC RinOSCompatBridge.cpp)
@@ -56,7 +56,7 @@ if (AK_OS_RINOS)
 endif()
 
 if(WIN32)
-    ladybird_windows_bin(WebContent CONSOLE)
+    lagom_windows_bin(WebContent CONSOLE)
 endif()
 
 
@@ -66,7 +66,6 @@ target_sources(webcontentservice PUBLIC FILE_SET server TYPE HEADERS
           ConsoleGlobalEnvironmentExtensions.h
           Forward.h
           PageHost.h
-          WebContentCompositorHost.h
           WebContentConsoleClient.h
           WebDriverConnection.h
 )

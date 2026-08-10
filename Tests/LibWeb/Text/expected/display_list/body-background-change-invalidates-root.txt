@@ -1,2 +1,0 @@
-stale propagated background painted: false
-fresh propagated background painted: true

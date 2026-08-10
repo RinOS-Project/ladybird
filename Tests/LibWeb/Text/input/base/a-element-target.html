@@ -4,15 +4,12 @@
 <script>
     asyncTest(done => {
         window.onload = () => {
-            const initialFrameLocation = frame.contentDocument.location.href;
             frame.onload = () => {
-                const frameLocation = frame.contentDocument.location.href;
-                if (frameLocation === initialFrameLocation)
-                    return;
-
-                println(frameLocation.includes("a-element-target-sub-alt.html") ? "Parent frame navigated successfully!" : "Parent frame incorrectly navigated to " + frameLocation);
-                done();
-            };
+                frame.onload = () => {
+                    println(frame.contentDocument.location.href.includes("a-element-target-sub-alt.html")? "Parent frame navigated successfully!" : "Parent frame incorrectly navigated to " + frame.contentDocument.location.href);
+                    done();
+                }
+            }
             frame.contentDocument.getElementById("frame").contentDocument.getElementById("a").click();
         };
     });

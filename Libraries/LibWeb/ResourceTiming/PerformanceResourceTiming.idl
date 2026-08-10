@@ -1,3 +1,5 @@
+#import <PerformanceTimeline/PerformanceEntry.idl>
+
 // https://w3c.github.io/resource-timing/#dom-renderblockingstatustype
 enum RenderBlockingStatusType {
     "blocking",
@@ -7,8 +9,8 @@ enum RenderBlockingStatusType {
 // https://w3c.github.io/resource-timing/#dom-performanceresourcetiming
 [Exposed=(Window,Worker)]
 interface PerformanceResourceTiming : PerformanceEntry {
-    readonly attribute Utf16DOMString initiatorType;
-    readonly attribute Utf16DOMString deliveryType;
+    readonly attribute DOMString initiatorType;
+    readonly attribute DOMString deliveryType;
     readonly attribute ByteString nextHopProtocol;
     readonly attribute DOMHighResTimeStamp workerStart;
     readonly attribute DOMHighResTimeStamp redirectStart;

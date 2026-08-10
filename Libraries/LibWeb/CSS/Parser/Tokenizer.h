@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, the SerenityOS developers.
- * Copyright (c) 2021-2026, Sam Atkins <sam@ladybird.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,18 +10,12 @@
 #include <AK/Optional.h>
 #include <AK/StringView.h>
 #include <AK/Types.h>
-#include <AK/Utf16View.h>
 #include <AK/Utf8View.h>
 #include <LibWeb/CSS/Parser/Token.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::CSS::Parser {
-
-enum class TokenizerInput {
-    DecodedText,
-    EncodedBytes,
-};
 
 class U32Twin {
 public:
@@ -66,8 +60,7 @@ public:
 
 class WEB_API Tokenizer {
 public:
-    static Vector<Token> tokenize(StringView input, StringView encoding, TokenizerInput = TokenizerInput::DecodedText);
-    static Vector<Token> tokenize(Utf16View input);
+    static Vector<Token> tokenize(StringView input, StringView encoding);
 
     [[nodiscard]] static Token create_eof_token();
 
@@ -93,7 +86,7 @@ private:
     [[nodiscard]] Token consume_an_ident_like_token();
     [[nodiscard]] Number consume_a_number();
     [[nodiscard]] double convert_a_string_to_a_number(StringView);
-    [[nodiscard]] Utf16FlyString consume_an_ident_sequence();
+    [[nodiscard]] FlyString consume_an_ident_sequence();
     [[nodiscard]] u32 consume_escaped_code_point();
     [[nodiscard]] Token consume_a_url_token(size_t start_byte_offset);
     void consume_the_remnants_of_a_bad_url();
@@ -106,10 +99,10 @@ private:
 
     String m_decoded_input;
     Utf8View m_utf8_view;
-    Utf8CodePointIterator m_utf8_iterator;
-    Utf8CodePointIterator m_prev_utf8_iterator;
-    SourcePosition m_position;
-    SourcePosition m_prev_position;
+    AK::Utf8CodePointIterator m_utf8_iterator;
+    AK::Utf8CodePointIterator m_prev_utf8_iterator;
+    Token::Position m_position;
+    Token::Position m_prev_position;
 };
 
 }

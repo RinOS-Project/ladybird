@@ -9,29 +9,29 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <AK/String.h>
-#include <AK/Vector.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibJS/Runtime/Object.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CSS/MediaQuery.h>
-#include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::CSS {
 
 // https://www.w3.org/TR/cssom-1/#the-medialist-interface
-class MediaList final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(MediaList, Bindings::GCAllocatedWrappable);
+class MediaList final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(MediaList, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(MediaList);
 
 public:
-    [[nodiscard]] static GC::Ref<MediaList> create(Vector<NonnullRefPtr<MediaQuery>>&&);
+    [[nodiscard]] static GC::Ref<MediaList> create(JS::Realm&, Vector<NonnullRefPtr<MediaQuery>>&&);
     virtual ~MediaList() override = default;
 
-    Utf16String media_text() const;
-    void set_media_text(Utf16View);
+    String media_text() const;
+    void set_media_text(StringView);
     size_t length() const { return m_media.size(); }
-    Optional<Utf16String> item(u32 index) const;
-    void append_medium(Utf16View);
-    WebIDL::ExceptionOr<void> delete_medium(Utf16View);
+    Optional<String> item(u32 index) const;
+    void append_medium(StringView);
+    WebIDL::ExceptionOr<void> delete_medium(StringView);
+
+    virtual Optional<JS::Value> item_value(size_t index) const override;
 
     bool evaluate(DOM::Document const&);
     bool matches() const;
@@ -41,9 +41,10 @@ public:
     void dump(StringBuilder&, int indent_levels = 0) const;
 
 private:
-    MediaList(Vector<NonnullRefPtr<MediaQuery>>&&);
+    MediaList(JS::Realm&, Vector<NonnullRefPtr<MediaQuery>>&&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Visitor&) override;
 
     GC::Ptr<StyleSheet> m_associated_style_sheet;
     Vector<NonnullRefPtr<MediaQuery>> m_media;

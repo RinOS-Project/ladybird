@@ -27,11 +27,7 @@
         <script>
             function waitForFonts() {
                 iframe.contentDocument.fonts.ready.then(() => {
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            document.documentElement.classList = "";
-                        });
-                    });
+                    document.documentElement.classList = "";
                 });
             }
         </script>

@@ -15,7 +15,7 @@ namespace Web::HTML {
 class HTMLAreaElement final
     : public HTMLElement
     , public HTMLHyperlinkElementUtils {
-    WEB_WRAPPABLE(HTMLAreaElement, HTMLElement);
+    WEB_PLATFORM_OBJECT(HTMLAreaElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLAreaElement);
 
 public:
@@ -26,12 +26,14 @@ private:
     HTMLAreaElement(DOM::Document&, DOM::QualifiedName);
 
     virtual bool is_html_area_element() const override { return true; }
+
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     virtual Optional<URL::Origin> extract_an_origin() const final { return hyperlink_element_utils_extract_an_origin(); }
 
     // ^DOM::Element
-    virtual void attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
+    virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
     virtual i32 default_tab_index_value() const override;
 
     // ^HTML::HTMLHyperlinkElementUtils

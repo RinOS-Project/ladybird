@@ -6,45 +6,52 @@
 
 #pragma once
 
-#include <LibURL/Origin.h>
-#include <LibWeb/Bindings/PasswordCredential.h>
+#include <LibJS/Forward.h>
+#include <LibWeb/Bindings/PasswordCredentialPrototype.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CredentialManagement/Credential.h>
 #include <LibWeb/CredentialManagement/CredentialUserData.h>
 #include <LibWeb/HTML/HTMLFormElement.h>
 
 namespace Web::CredentialManagement {
 
-// https://www.w3.org/TR/credential-management-1/#dictdef-passwordcredentialdata
-using PasswordCredentialData = Bindings::PasswordCredentialData;
-
 // https://www.w3.org/TR/credential-management-1/#passwordcredential
 class PasswordCredential final
     : public Credential
     , public CredentialUserData {
-    WEB_WRAPPABLE(PasswordCredential, Credential);
+    WEB_PLATFORM_OBJECT(PasswordCredential, Credential);
     GC_DECLARE_ALLOCATOR(PasswordCredential);
 
 public:
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PasswordCredential>> create(URL::Origin, GC::Ref<HTML::HTMLFormElement>);
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PasswordCredential>> create(URL::Origin, PasswordCredentialData const&);
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PasswordCredential>> create_for_constructor(JS::Object&, GC::Ref<HTML::HTMLFormElement>);
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PasswordCredential>> create_for_constructor(JS::Object&, PasswordCredentialData const&);
+    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PasswordCredential>> construct_impl(JS::Realm&, GC::Ref<HTML::HTMLFormElement>);
+    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<PasswordCredential>> construct_impl(JS::Realm&, PasswordCredentialData const&);
 
     virtual ~PasswordCredential() override;
 
-    Utf16String const& password() const { return m_password; }
+    String const& password() const { return m_password; }
     URL::Origin const& origin() const { return m_origin; }
 
-    Utf16FlyString const& type() const override;
+    String type() const override { return "password"_string; }
 
 private:
-    PasswordCredential(PasswordCredentialData, URL::Origin);
+    PasswordCredential(JS::Realm&, PasswordCredentialData const&, URL::Origin);
+    virtual void initialize(JS::Realm&) override;
 
     // TODO: Use Core::SecretString when it comes back
-    Utf16String m_password;
+    String m_password;
 
     // https://www.w3.org/TR/credential-management-1/#dom-credential-origin-slot
     URL::Origin m_origin;
 };
+
+// https://www.w3.org/TR/credential-management-1/#dictdef-passwordcredentialdata
+struct PasswordCredentialData : CredentialData {
+    Optional<String> name;
+    Optional<String> icon_url;
+    String password;
+};
+
+// https://www.w3.org/TR/credential-management-1/#typedefdef-passwordcredentialinit
+using PasswordCredentialInit = Variant<PasswordCredentialData, GC::Root<HTML::HTMLFormElement>>;
 
 }

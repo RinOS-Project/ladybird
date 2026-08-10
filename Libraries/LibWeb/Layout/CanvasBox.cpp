@@ -9,8 +9,10 @@
 
 namespace Web::Layout {
 
-CanvasBox::CanvasBox(DOM::Document& document, HTML::HTMLCanvasElement& element, NonnullRefPtr<CSS::ComputedValues const> style)
-    : ReplacedBox(document, element, style)
+GC_DEFINE_ALLOCATOR(CanvasBox);
+
+CanvasBox::CanvasBox(DOM::Document& document, HTML::HTMLCanvasElement& element, GC::Ref<CSS::ComputedProperties> style)
+    : ReplacedBox(document, element, move(style))
 {
 }
 
@@ -25,7 +27,7 @@ CSS::SizeWithAspectRatio CanvasBox::compute_auto_content_box_size() const
     return { width, height, CSSPixelFraction(width, height) };
 }
 
-RefPtr<Painting::Paintable> CanvasBox::create_paintable() const
+GC::Ptr<Painting::Paintable> CanvasBox::create_paintable() const
 {
     return Painting::CanvasPaintable::create(*this);
 }

@@ -1,2 +1,0 @@
-Overflow extends scroll width: true
-Horizontal scroll offset: 50

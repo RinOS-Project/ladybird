@@ -21,14 +21,58 @@ extern "C" {
 
 namespace AK {
 
-Utf16String Utf16String::to_lowercase(Optional<Utf16View> const& locale) const
+#ifdef AK_OS_RINOS
+
+// RinOS: case operations via libunicode codepoint-level conversion, then back to Utf16
+Utf16String Utf16String::to_lowercase(Optional<StringView> const&) const
+{
+    if (has_ascii_storage())
+        return to_ascii_lowercase();
+    auto utf8 = to_utf8();
+    auto lowered = MUST(utf8.to_lowercase());
+    return Utf16String::from_utf8(lowered);
+}
+
+Utf16String Utf16String::to_uppercase(Optional<StringView> const&) const
+{
+    if (has_ascii_storage())
+        return to_ascii_uppercase();
+    auto utf8 = to_utf8();
+    auto uppered = MUST(utf8.to_uppercase());
+    return Utf16String::from_utf8(uppered);
+}
+
+Utf16String Utf16String::to_titlecase(Optional<StringView> const& locale, TrailingCodePointTransformation trailing_code_point_transformation) const
+{
+    auto utf8 = to_utf8();
+    auto titled = MUST(utf8.to_titlecase(locale, trailing_code_point_transformation));
+    return Utf16String::from_utf8(titled);
+}
+
+Utf16String Utf16String::to_casefold() const
+{
+    auto utf8 = to_utf8();
+    auto folded = MUST(utf8.to_casefold());
+    return Utf16String::from_utf8(folded);
+}
+
+Utf16String Utf16String::to_fullwidth() const
+{
+    auto utf8 = to_utf8();
+    auto wide = MUST(utf8.to_fullwidth());
+    return Utf16String::from_utf8(wide);
+}
+
+#else // !AK_OS_RINOS
+
+Utf16String Utf16String::to_lowercase(Optional<StringView> const& locale) const
 {
     if (has_ascii_storage() && !locale.has_value())
         return to_ascii_lowercase();
 
     Optional<Unicode::LocaleData&> locale_data;
     if (locale.has_value())
-        locale_data = Unicode::LocaleData::for_locale(locale->bytes());
+        locale_data = Unicode::LocaleData::for_locale(*locale);
 
     auto icu_string = Unicode::icu_string(*this);
     locale_data.has_value() ? icu_string.toLower(locale_data->locale()) : icu_string.toLower();
@@ -36,14 +80,14 @@ Utf16String Utf16String::to_lowercase(Optional<Utf16View> const& locale) const
     return Unicode::icu_string_to_utf16_string(icu_string);
 }
 
-Utf16String Utf16String::to_uppercase(Optional<Utf16View> const& locale) const
+Utf16String Utf16String::to_uppercase(Optional<StringView> const& locale) const
 {
     if (has_ascii_storage() && !locale.has_value())
         return to_ascii_uppercase();
 
     Optional<Unicode::LocaleData&> locale_data;
     if (locale.has_value())
-        locale_data = Unicode::LocaleData::for_locale(locale->bytes());
+        locale_data = Unicode::LocaleData::for_locale(*locale);
 
     auto icu_string = Unicode::icu_string(*this);
     locale_data.has_value() ? icu_string.toUpper(locale_data->locale()) : icu_string.toUpper();
@@ -51,11 +95,11 @@ Utf16String Utf16String::to_uppercase(Optional<Utf16View> const& locale) const
     return Unicode::icu_string_to_utf16_string(icu_string);
 }
 
-Utf16String Utf16String::to_titlecase(Optional<Utf16View> const& locale, TrailingCodePointTransformation trailing_code_point_transformation) const
+Utf16String Utf16String::to_titlecase(Optional<StringView> const& locale, TrailingCodePointTransformation trailing_code_point_transformation) const
 {
     Optional<Unicode::LocaleData&> locale_data;
     if (locale.has_value())
-        locale_data = Unicode::LocaleData::for_locale(locale->bytes());
+        locale_data = Unicode::LocaleData::for_locale(*locale);
 
     u32 options = 0;
     if (trailing_code_point_transformation == TrailingCodePointTransformation::PreserveExisting)

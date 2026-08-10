@@ -22,28 +22,30 @@ public:
     }
     virtual ~TimeStyleValue() override = default;
 
-    Time time() const { return Time(m_value->time.value, static_cast<TimeUnit>(m_value->time.unit)); }
-    virtual double raw_value() const override { return m_value->time.value; }
-    virtual Utf16FlyString unit_name() const override { return time().unit_name(); }
+    Time const& time() const { return m_time; }
+    virtual double raw_value() const override { return m_time.raw_value(); }
+    virtual FlyString unit_name() const override { return m_time.unit_name(); }
 
-    ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const&) const;
+    virtual void serialize(StringBuilder& builder, SerializationMode mode) const override { m_time.serialize(builder, mode); }
 
-    void serialize(StringBuilder& builder, SerializationMode mode) const { time().serialize(builder, mode); }
+    bool equals(StyleValue const& other) const override
+    {
+        if (type() != other.type())
+            return false;
+        auto const& other_time = other.as_time();
+        return m_time == other_time.m_time;
+    }
 
-    bool equals(StyleValue const& other) const;
+    virtual bool is_computationally_independent() const override { return true; }
 
 private:
-    friend class StyleValue;
-
-    explicit TimeStyleValue(StyleValueFFI::StyleValueData const* data)
-        : DimensionStyleValue(Type::Time, data)
-    {
-    }
-
     explicit TimeStyleValue(Time time)
-        : DimensionStyleValue(Type::Time, StyleValueFFI::rust_style_value_create_time(time.raw_value(), to_underlying(time.unit())))
+        : DimensionStyleValue(Type::Time)
+        , m_time(move(time))
     {
     }
+
+    Time m_time;
 };
 
 }

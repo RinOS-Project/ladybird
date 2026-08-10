@@ -5,9 +5,10 @@
  */
 
 #include <LibGfx/Matrix4x4.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGPatternElementPrototype.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/DOM/Document.h>
-#include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/SVGPatternBox.h>
 #include <LibWeb/Layout/SVGSVGBox.h>
 #include <LibWeb/Painting/DisplayList.h>
@@ -18,7 +19,6 @@
 #include <LibWeb/Painting/StackingContext.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/AttributeParser.h>
-#include <LibWeb/SVG/FragmentIdentifier.h>
 #include <LibWeb/SVG/SVGGraphicsElement.h>
 #include <LibWeb/SVG/SVGPatternElement.h>
 
@@ -31,9 +31,11 @@ SVGPatternElement::SVGPatternElement(DOM::Document& document, DOM::QualifiedName
 {
 }
 
-void SVGPatternElement::initialize_element()
+void SVGPatternElement::initialize(JS::Realm& realm)
 {
-    SVGFitToViewBox::initialize_fit_to_view_box();
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGPatternElement);
+    Base::initialize(realm);
+    SVGFitToViewBox::initialize(realm);
 }
 
 void SVGPatternElement::visit_edges(Cell::Visitor& visitor)
@@ -43,36 +45,36 @@ void SVGPatternElement::visit_edges(Cell::Visitor& visitor)
     SVGFitToViewBox::visit_edges(visitor);
 }
 
-void SVGPatternElement::attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
+void SVGPatternElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
 {
     Base::attribute_changed(name, old_value, value, namespace_);
     SVGFitToViewBox::attribute_changed(*this, name, value);
 
     if (name == AttributeNames::patternUnits) {
-        m_pattern_units = AttributeParser::parse_units(value.value_or({}));
+        m_pattern_units = AttributeParser::parse_units(value.value_or(String {}));
     } else if (name == AttributeNames::patternContentUnits) {
-        m_pattern_content_units = AttributeParser::parse_units(value.value_or({}));
+        m_pattern_content_units = AttributeParser::parse_units(value.value_or(String {}));
     } else if (name == AttributeNames::patternTransform) {
-        if (auto transform_list = AttributeParser::parse_transform(value.value_or({})); transform_list.has_value()) {
+        if (auto transform_list = AttributeParser::parse_transform(value.value_or(String {})); transform_list.has_value()) {
             m_pattern_transform = transform_from_transform_list(*transform_list);
         } else {
             m_pattern_transform = {};
         }
     } else if (name == AttributeNames::x) {
-        m_x = AttributeParser::parse_number_percentage(value.value_or({}));
+        m_x = AttributeParser::parse_number_percentage(value.value_or(String {}));
     } else if (name == AttributeNames::y) {
-        m_y = AttributeParser::parse_number_percentage(value.value_or({}));
+        m_y = AttributeParser::parse_number_percentage(value.value_or(String {}));
     } else if (name == AttributeNames::width) {
-        m_width = AttributeParser::parse_number_percentage(value.value_or({}));
+        m_width = AttributeParser::parse_number_percentage(value.value_or(String {}));
     } else if (name == AttributeNames::height) {
-        m_height = AttributeParser::parse_number_percentage(value.value_or({}));
+        m_height = AttributeParser::parse_number_percentage(value.value_or(String {}));
     }
 }
 
-GC::Ptr<SVGPatternElement const> SVGPatternElement::linked_pattern(GC::RootHashTable<SVGPatternElement const*>& seen_patterns) const
+GC::Ptr<SVGPatternElement const> SVGPatternElement::linked_pattern(HashTable<SVGPatternElement const*>& seen_patterns) const
 {
     // FIXME: This can only resolve same-document references. The spec allows cross-document references.
-    auto link = has_attribute(AttributeNames::href) ? get_attribute(AttributeNames::href) : get_attribute(AttributeNames::xlink_href);
+    auto link = has_attribute(AttributeNames::href) ? get_attribute(AttributeNames::href) : get_attribute("xlink:href"_fly_string);
     if (!link.has_value() || link->is_empty())
         return {};
 
@@ -84,7 +86,7 @@ GC::Ptr<SVGPatternElement const> SVGPatternElement::linked_pattern(GC::RootHashT
     if (!id.has_value() || id->is_empty())
         return {};
 
-    auto element = document().get_element_by_id(decode_fragment_identifier(id.value()));
+    auto element = document().get_element_by_id(id.value());
     if (!element)
         return {};
 
@@ -103,11 +105,11 @@ GC::Ptr<SVGPatternElement const> SVGPatternElement::linked_pattern(GC::RootHashT
 
 GC::Ptr<SVGPatternElement const> SVGPatternElement::pattern_content_element() const
 {
-    GC::RootHashTable<SVGPatternElement const*> seen_patterns;
+    HashTable<SVGPatternElement const*> seen_patterns;
     return pattern_content_element_impl(seen_patterns);
 }
 
-GC::Ptr<SVGPatternElement const> SVGPatternElement::pattern_content_element_impl(GC::RootHashTable<SVGPatternElement const*>& seen_patterns) const
+GC::Ptr<SVGPatternElement const> SVGPatternElement::pattern_content_element_impl(HashTable<SVGPatternElement const*>& seen_patterns) const
 {
     if (child_element_count() > 0)
         return this;
@@ -119,11 +121,11 @@ GC::Ptr<SVGPatternElement const> SVGPatternElement::pattern_content_element_impl
 // https://svgwg.org/svg2-draft/pservers.html#PatternElementPatternUnitsAttribute
 SVGUnits SVGPatternElement::pattern_units() const
 {
-    GC::RootHashTable<SVGPatternElement const*> seen_patterns;
+    HashTable<SVGPatternElement const*> seen_patterns;
     return pattern_units_impl(seen_patterns);
 }
 
-SVGUnits SVGPatternElement::pattern_units_impl(GC::RootHashTable<SVGPatternElement const*>& seen_patterns) const
+SVGUnits SVGPatternElement::pattern_units_impl(HashTable<SVGPatternElement const*>& seen_patterns) const
 {
     if (m_pattern_units.has_value())
         return *m_pattern_units;
@@ -136,11 +138,11 @@ SVGUnits SVGPatternElement::pattern_units_impl(GC::RootHashTable<SVGPatternEleme
 // https://svgwg.org/svg2-draft/pservers.html#PatternElementPatternContentUnitsAttribute
 SVGUnits SVGPatternElement::pattern_content_units() const
 {
-    GC::RootHashTable<SVGPatternElement const*> seen_patterns;
+    HashTable<SVGPatternElement const*> seen_patterns;
     return pattern_content_units_impl(seen_patterns);
 }
 
-SVGUnits SVGPatternElement::pattern_content_units_impl(GC::RootHashTable<SVGPatternElement const*>& seen_patterns) const
+SVGUnits SVGPatternElement::pattern_content_units_impl(HashTable<SVGPatternElement const*>& seen_patterns) const
 {
     if (m_pattern_content_units.has_value())
         return *m_pattern_content_units;
@@ -153,11 +155,11 @@ SVGUnits SVGPatternElement::pattern_content_units_impl(GC::RootHashTable<SVGPatt
 // https://svgwg.org/svg2-draft/pservers.html#PatternElementPatternTransformAttribute
 Optional<Gfx::AffineTransform> SVGPatternElement::pattern_transform() const
 {
-    GC::RootHashTable<SVGPatternElement const*> seen_patterns;
+    HashTable<SVGPatternElement const*> seen_patterns;
     return pattern_transform_impl(seen_patterns);
 }
 
-Optional<Gfx::AffineTransform> SVGPatternElement::pattern_transform_impl(GC::RootHashTable<SVGPatternElement const*>& seen_patterns) const
+Optional<Gfx::AffineTransform> SVGPatternElement::pattern_transform_impl(HashTable<SVGPatternElement const*>& seen_patterns) const
 {
     if (m_pattern_transform.has_value())
         return m_pattern_transform;
@@ -169,11 +171,11 @@ Optional<Gfx::AffineTransform> SVGPatternElement::pattern_transform_impl(GC::Roo
 // https://svgwg.org/svg2-draft/pservers.html#PatternElementXAttribute
 NumberPercentage SVGPatternElement::pattern_x() const
 {
-    GC::RootHashTable<SVGPatternElement const*> seen_patterns;
+    HashTable<SVGPatternElement const*> seen_patterns;
     return pattern_x_impl(seen_patterns);
 }
 
-NumberPercentage SVGPatternElement::pattern_x_impl(GC::RootHashTable<SVGPatternElement const*>& seen_patterns) const
+NumberPercentage SVGPatternElement::pattern_x_impl(HashTable<SVGPatternElement const*>& seen_patterns) const
 {
     if (m_x.has_value())
         return *m_x;
@@ -185,11 +187,11 @@ NumberPercentage SVGPatternElement::pattern_x_impl(GC::RootHashTable<SVGPatternE
 // https://svgwg.org/svg2-draft/pservers.html#PatternElementYAttribute
 NumberPercentage SVGPatternElement::pattern_y() const
 {
-    GC::RootHashTable<SVGPatternElement const*> seen_patterns;
+    HashTable<SVGPatternElement const*> seen_patterns;
     return pattern_y_impl(seen_patterns);
 }
 
-NumberPercentage SVGPatternElement::pattern_y_impl(GC::RootHashTable<SVGPatternElement const*>& seen_patterns) const
+NumberPercentage SVGPatternElement::pattern_y_impl(HashTable<SVGPatternElement const*>& seen_patterns) const
 {
     if (m_y.has_value())
         return *m_y;
@@ -201,11 +203,11 @@ NumberPercentage SVGPatternElement::pattern_y_impl(GC::RootHashTable<SVGPatternE
 // https://svgwg.org/svg2-draft/pservers.html#PatternElementWidthAttribute
 NumberPercentage SVGPatternElement::pattern_width() const
 {
-    GC::RootHashTable<SVGPatternElement const*> seen_patterns;
+    HashTable<SVGPatternElement const*> seen_patterns;
     return pattern_width_impl(seen_patterns);
 }
 
-NumberPercentage SVGPatternElement::pattern_width_impl(GC::RootHashTable<SVGPatternElement const*>& seen_patterns) const
+NumberPercentage SVGPatternElement::pattern_width_impl(HashTable<SVGPatternElement const*>& seen_patterns) const
 {
     if (m_width.has_value())
         return *m_width;
@@ -217,11 +219,11 @@ NumberPercentage SVGPatternElement::pattern_width_impl(GC::RootHashTable<SVGPatt
 // https://svgwg.org/svg2-draft/pservers.html#PatternElementHeightAttribute
 NumberPercentage SVGPatternElement::pattern_height() const
 {
-    GC::RootHashTable<SVGPatternElement const*> seen_patterns;
+    HashTable<SVGPatternElement const*> seen_patterns;
     return pattern_height_impl(seen_patterns);
 }
 
-NumberPercentage SVGPatternElement::pattern_height_impl(GC::RootHashTable<SVGPatternElement const*>& seen_patterns) const
+NumberPercentage SVGPatternElement::pattern_height_impl(HashTable<SVGPatternElement const*>& seen_patterns) const
 {
     if (m_height.has_value())
         return *m_height;
@@ -247,7 +249,7 @@ Optional<Painting::PaintStyle> SVGPatternElement::to_gfx_paint_style(SVGPaintCon
     if (!pattern_box)
         return {};
 
-    auto pattern_paintable = pattern_box->paintable_box();
+    auto* pattern_paintable = pattern_box->paintable_box();
     if (!pattern_paintable)
         return {};
 
@@ -287,28 +289,34 @@ Optional<Painting::PaintStyle> SVGPatternElement::to_gfx_paint_style(SVGPaintCon
     auto svg_offset = recording_context.rounded_device_point(svg_element_rect.location()).to_type<int>().to_type<float>();
     tile_rect.translate_by(svg_offset);
 
+    auto display_list = Painting::DisplayList::create(Painting::AccumulatedVisualContextTree::create());
+    Painting::DisplayListRecorder display_list_recorder(*display_list);
     auto content_origin = paint_context.paint_transform.map(Gfx::FloatPoint { 0, 0 }) + svg_offset;
-    auto visual_context_tree = Painting::AccumulatedVisualContextTree::create_with_content_offset(-Gfx::IntPoint(content_origin.to_type<int>()));
-    auto display_list = Painting::DisplayList::create(visual_context_tree);
-    Painting::DisplayListRecorder display_list_recorder(*display_list, visual_context_tree, recording_context.display_list_recorder().resource_storage());
+    display_list_recorder.translate(-Gfx::IntPoint(content_origin.to_type<int>()));
     auto paint_context_copy = recording_context.clone(display_list_recorder);
 
     Gfx::AffineTransform target_svg_transform;
-    auto paintable = target_layout_node.paintable();
-    if (auto const* svg_graphics_paintable = as_if<Painting::SVGGraphicsPaintable>(paintable.ptr()))
+    if (auto const* svg_graphics_paintable = as_if<Painting::SVGGraphicsPaintable>(*target_layout_node.first_paintable()))
         target_svg_transform = svg_graphics_paintable->computed_transforms().svg_transform();
     paint_context_copy.set_svg_transform(target_svg_transform);
 
     Painting::StackingContext::paint_svg(paint_context_copy, *pattern_paintable, Painting::PaintPhase::Foreground);
 
     Optional<Gfx::AffineTransform> user_space_pattern_transform;
-    auto const& css_transformations = computed_values()->transformations();
+    auto css_transformations = computed_properties()->transformations();
     if (!css_transformations.is_empty()) {
         auto matrix = Gfx::FloatMatrix4x4::identity();
-        for (auto const& css_transform : css_transformations)
-            matrix = matrix * css_transform->to_matrix(*pattern_paintable);
-
-        user_space_pattern_transform = extract_2d_affine_transform(matrix);
+        bool transform_valid = true;
+        for (auto const& css_transform : css_transformations) {
+            auto result = css_transform->to_matrix(*pattern_paintable);
+            if (result.is_error()) {
+                transform_valid = false;
+                break;
+            }
+            matrix = matrix * result.release_value();
+        }
+        if (transform_valid)
+            user_space_pattern_transform = extract_2d_affine_transform(matrix);
     } else {
         user_space_pattern_transform = pattern_transform();
     }
@@ -325,9 +333,47 @@ Optional<Painting::PaintStyle> SVGPatternElement::to_gfx_paint_style(SVGPaintCon
         }
     }
 
-    return Painting::PaintStyle { Painting::PatternPaintStyle { { *display_list, move(visual_context_tree) }, tile_rect, device_pattern_transform } };
+    return Painting::SVGPatternPaintStyle::create(display_list, tile_rect, device_pattern_transform);
 }
 
-// Reflected length accessors are generated by SVGElement's reflection macro.
+// https://svgwg.org/svg2-draft/pservers.html#PatternElementXAttribute
+GC::Ref<SVGAnimatedLength> SVGPatternElement::x() const
+{
+    // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
+    // FIXME: Create a proper animated value when animations are supported.
+    auto base_length = SVGLength::create(realm(), 0, m_x.value_or(NumberPercentage::create_number(0)).value(), SVGLength::ReadOnly::No);
+    auto anim_length = SVGLength::create(realm(), 0, m_x.value_or(NumberPercentage::create_number(0)).value(), SVGLength::ReadOnly::Yes);
+    return SVGAnimatedLength::create(realm(), base_length, anim_length);
+}
+
+// https://svgwg.org/svg2-draft/pservers.html#PatternElementYAttribute
+GC::Ref<SVGAnimatedLength> SVGPatternElement::y() const
+{
+    // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
+    // FIXME: Create a proper animated value when animations are supported.
+    auto base_length = SVGLength::create(realm(), 0, m_y.value_or(NumberPercentage::create_number(0)).value(), SVGLength::ReadOnly::No);
+    auto anim_length = SVGLength::create(realm(), 0, m_y.value_or(NumberPercentage::create_number(0)).value(), SVGLength::ReadOnly::Yes);
+    return SVGAnimatedLength::create(realm(), base_length, anim_length);
+}
+
+// https://svgwg.org/svg2-draft/pservers.html#PatternElementWidthAttribute
+GC::Ref<SVGAnimatedLength> SVGPatternElement::width() const
+{
+    // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
+    // FIXME: Create a proper animated value when animations are supported.
+    auto base_length = SVGLength::create(realm(), 0, m_width.value_or(NumberPercentage::create_number(0)).value(), SVGLength::ReadOnly::No);
+    auto anim_length = SVGLength::create(realm(), 0, m_width.value_or(NumberPercentage::create_number(0)).value(), SVGLength::ReadOnly::Yes);
+    return SVGAnimatedLength::create(realm(), base_length, anim_length);
+}
+
+// https://svgwg.org/svg2-draft/pservers.html#PatternElementHeightAttribute
+GC::Ref<SVGAnimatedLength> SVGPatternElement::height() const
+{
+    // FIXME: Populate the unit type when it is parsed (0 here is "unknown").
+    // FIXME: Create a proper animated value when animations are supported.
+    auto base_length = SVGLength::create(realm(), 0, m_height.value_or(NumberPercentage::create_number(0)).value(), SVGLength::ReadOnly::No);
+    auto anim_length = SVGLength::create(realm(), 0, m_height.value_or(NumberPercentage::create_number(0)).value(), SVGLength::ReadOnly::Yes);
+    return SVGAnimatedLength::create(realm(), base_length, anim_length);
+}
 
 }

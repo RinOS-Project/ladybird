@@ -8,6 +8,7 @@ elseif (APPLE AND NOT IOS)
     set(LADYBIRD_AUDIO_BACKEND "AUDIO_UNIT")
     return()
 elseif (NOT WIN32)
+    find_package(PkgConfig REQUIRED)
     pkg_check_modules(PULSEAUDIO IMPORTED_TARGET libpulse)
 
     if (PULSEAUDIO_FOUND)

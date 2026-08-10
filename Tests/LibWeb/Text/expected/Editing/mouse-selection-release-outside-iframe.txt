@@ -1,2 +1,0 @@
-selection after release: L
-selection after unpressed move: L

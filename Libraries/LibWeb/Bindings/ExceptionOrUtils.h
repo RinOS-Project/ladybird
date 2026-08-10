@@ -7,8 +7,6 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <AK/String.h>
-#include <AK/Utf16String.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
@@ -25,16 +23,6 @@ constexpr bool IsThrowCompletionOr = false;
 
 template<typename T>
 constexpr bool IsThrowCompletionOr<JS::ThrowCompletionOr<T>> = true;
-
-ALWAYS_INLINE Utf16String attribute_value_to_utf16(Utf16String const& value)
-{
-    return value;
-}
-
-ALWAYS_INLINE Utf16String attribute_value_to_utf16(String const& value)
-{
-    return Utf16String::from_utf8(value);
-}
 
 namespace Detail {
 
@@ -74,10 +62,11 @@ ALWAYS_INLINE JS::Completion exception_to_throw_completion(JS::VM& vm, auto&& ex
 {
     return exception.visit(
         [&](WebIDL::SimpleException const& exception) {
+            auto message = exception.message.visit([](auto const& s) -> StringView { return s; });
             switch (exception.type) {
 #define E(x)                             \
     case WebIDL::SimpleExceptionType::x: \
-        return vm.template throw_completion<JS::x>(exception.message.utf16_view());
+        return vm.template throw_completion<JS::x>(message);
 
                 ENUMERATE_SIMPLE_WEBIDL_EXCEPTION_TYPES(E)
 

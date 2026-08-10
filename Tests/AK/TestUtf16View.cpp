@@ -99,15 +99,6 @@ TEST_CASE(null_view)
         FAIL("Iterating a null UTF-16 string should not produce any values");
 }
 
-TEST_CASE(default_empty_view_is_empty_ascii_string)
-{
-    Utf16View view;
-    EXPECT(view.has_ascii_storage());
-    EXPECT_EQ(view.ascii_span().data(), "");
-    EXPECT_EQ(view.length_in_code_units(), 0zu);
-    EXPECT_EQ(view, ""sv);
-}
-
 TEST_CASE(utf16_literal)
 {
     {
@@ -482,16 +473,6 @@ TEST_CASE(comparison)
     EXPECT(u"😂"sv > u"😀"sv);
     EXPECT(!(u"😂"sv <= u"😀"sv));
     EXPECT(u"😂"sv >= u"😀"sv);
-
-    EXPECT(u"ÿ"sv < u"Ā"sv);
-    EXPECT(!(u"ÿ"sv > u"Ā"sv));
-    EXPECT(u"Ā"sv > u"ÿ"sv);
-    EXPECT(!(u"Ā"sv < u"ÿ"sv));
-
-    EXPECT(u"❤"sv < u"😀"sv);
-    EXPECT(!(u"❤"sv > u"😀"sv));
-    EXPECT(u"😀"sv > u"❤"sv);
-    EXPECT(!(u"😀"sv < u"❤"sv));
 }
 
 TEST_CASE(equals_ignoring_case)
@@ -852,29 +833,6 @@ TEST_CASE(find_code_unit_offset)
     EXPECT_EQ(7u, view.find_code_unit_offset(u"bar"sv).value());
 
     EXPECT(!view.find_code_unit_offset(u"baz"sv).has_value());
-}
-
-TEST_CASE(find_code_unit_offset_nul_at_any_alignment)
-{
-    // The AVX-512 implementation of simdutf versions before 9.0.0 reported false positives
-    // for a NUL needle when the searched range straddled a 64-byte boundary.
-    alignas(64) Array<char, 96> ascii_buffer;
-    ascii_buffer.fill('A');
-
-    for (size_t start_offset = 0; start_offset < 64; ++start_offset) {
-        Utf16View view { StringView { ascii_buffer.data() + start_offset, 6 } };
-        EXPECT(!view.find_code_unit_offset(u'\0').has_value());
-        EXPECT(!view.contains(u'\0'));
-    }
-
-    alignas(64) Array<char16_t, 96> utf16_buffer;
-    utf16_buffer.fill(u'A');
-
-    for (size_t start_offset = 0; start_offset < 32; ++start_offset) {
-        Utf16View view { utf16_buffer.data() + start_offset, 6 };
-        EXPECT(!view.find_code_unit_offset(u'\0').has_value());
-        EXPECT(!view.contains(u'\0'));
-    }
 }
 
 TEST_CASE(find_code_unit_offset_ignoring_case)

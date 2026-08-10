@@ -1,2 +1,0 @@
-PASS: duplicate nonce script blocked
-PASS: valid nonce script executed

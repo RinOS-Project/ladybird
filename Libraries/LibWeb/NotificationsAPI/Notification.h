@@ -7,41 +7,38 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <AK/Utf16String.h>
+#include <AK/String.h>
 #include <AK/Vector.h>
-#include <LibJS/Forward.h>
+#include <LibJS/Runtime/Realm.h>
 #include <LibJS/Runtime/Value.h>
-#include <LibWeb/Bindings/Notification.h>
 #include <LibWeb/DOM/EventTarget.h>
-#include <LibWeb/Export.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/HighResolutionTime/EpochTimeStamp.h>
 
 namespace Web::NotificationsAPI {
 
-using NotificationDirection = Bindings::NotificationDirection;
-
 struct NotificationAction {
-    Utf16String action;
-    Utf16String title;
-    Optional<Utf16String> navigate;
-    Optional<Utf16String> icon;
+    String action;
+    String title;
+    Optional<String> navigate;
+    Optional<String> icon;
 };
 
 struct NotificationOptions {
-    NotificationDirection direction { NotificationDirection::Auto };
-    Utf16String language;
-    Utf16String body;
-    Optional<Utf16String> navigate;
-    Utf16String tag;
-    Optional<Utf16String> image;
-    Optional<Utf16String> icon;
-    Optional<Utf16String> badge;
+    Bindings::NotificationDirection dir = Bindings::NotificationDirection::Auto;
+    String lang = ""_string;
+    String body = ""_string;
+    Optional<String> navigate;
+    String tag = ""_string;
+    Optional<String> image;
+    Optional<String> icon;
+    Optional<String> badge;
+    // VibratePattern vibrate;  // FIXME: properly implement vibrate pattern
     Optional<HighResolutionTime::EpochTimeStamp> timestamp;
-    bool renotify { false };
+    bool renotify = false;
     Optional<bool> silent;
-    bool require_interaction { false };
-    HTML::StorageSerializationRecord data;
+    bool require_interaction = false;
+    JS::Value data;
     Vector<NotificationAction> actions;
 };
 
@@ -51,12 +48,12 @@ struct NotificationOptions {
 struct ConceptNotification {
     // FIXME: A notification has an associated service worker registration (null or a service worker registration). It is initially null.
     String title;
-    NotificationDirection direction;
-    Utf16String language;
-    Utf16String body;
+    Bindings::NotificationDirection direction;
+    String language;
+    String body;
     Optional<URL::URL> navigation_url;
-    Utf16String tag;
-    HTML::StorageSerializationRecord data;
+    String tag;
+    HTML::SerializationRecord data;
     HighResolutionTime::EpochTimeStamp timestamp;
     URL::Origin origin = URL::Origin({}); // FIXME: Is this a hack ? There is no default constructor to URL::Origin and the value for `origin` is set in `create-a-notification-with-a-settings-object`
     bool renotify_preference;
@@ -72,8 +69,8 @@ struct ConceptNotification {
 
     // https://notifications.spec.whatwg.org/#action
     struct Action {
-        Utf16String name;
-        Utf16String title;
+        String name;
+        String title;
         Optional<URL::URL> navigation_url;
         Optional<URL::URL> icon_url;
         // FIXME: icon resource
@@ -83,32 +80,32 @@ struct ConceptNotification {
 
 // https://notifications.spec.whatwg.org/#notifications
 class WEB_API Notification final : public DOM::EventTarget {
-    WEB_WRAPPABLE(Notification, DOM::EventTarget);
+    WEB_PLATFORM_OBJECT(Notification, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(Notification);
 
 public:
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<Notification>> create_with_global_scope(
-        HTML::WindowOrWorkerGlobalScopeMixin&,
+    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<Notification>> construct_impl(
+        JS::Realm& realm,
         String const& title,
-        NotificationOptions options);
-    [[nodiscard]] static WebIDL::ExceptionOr<NotificationOptions> options_from_bindings(JS::VM&, Bindings::NotificationOptions const&);
-    [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<Notification>> create_for_constructor(JS::Object&, Utf16String const& title, Bindings::NotificationOptions const&);
+        NotificationOptions const& options);
 
     // https://notifications.spec.whatwg.org/#create-a-notification-with-a-settings-object
     static WebIDL::ExceptionOr<ConceptNotification> create_a_notification_with_a_settings_object(
+        JS::Realm& realm,
         String const& title,
-        NotificationOptions options,
+        NotificationOptions const& options,
         GC::Ref<HTML::EnvironmentSettingsObject> settings);
 
     // https://notifications.spec.whatwg.org/#create-a-notification
     static WebIDL::ExceptionOr<ConceptNotification> create_a_notification(
+        JS::Realm& realm,
         String const& title,
-        NotificationOptions options,
+        NotificationOptions const& options,
         URL::Origin origin,
         URL::URL base_url,
         HighResolutionTime::EpochTimeStamp fallback_timestamp);
 
-    static unsigned long max_actions()
+    static unsigned long max_actions(JS::VM&)
     {
         // FIXME: Change the number of max_actions supported when actions will actually be supported
         // It seems like Chrome is 2, Firefox is undefined, Safari is undefined
@@ -116,12 +113,11 @@ public:
     }
 
     String const& title() const { return m_notification.title; }
-    NotificationDirection direction() const { return m_notification.direction; }
-    NotificationDirection notification_direction() const { return direction(); }
-    Utf16String const& lang() const { return m_notification.language; }
-    Utf16String const& body() const { return m_notification.body; }
+    Bindings::NotificationDirection dir() const { return m_notification.direction; }
+    String const& lang() const { return m_notification.language; }
+    String const& body() const { return m_notification.body; }
     String navigate() const { return m_notification.navigation_url.has_value() ? m_notification.navigation_url->serialize() : ""_string; }
-    Utf16String const& tag() const { return m_notification.tag; }
+    String const& tag() const { return m_notification.tag; }
     String image() const { return m_notification.image_url.has_value() ? m_notification.image_url->serialize() : ""_string; }
     String icon() const { return m_notification.icon_url.has_value() ? m_notification.icon_url->serialize() : ""_string; }
     String badge() const { return m_notification.badge_url.has_value() ? m_notification.badge_url->serialize() : ""_string; }
@@ -130,13 +126,12 @@ public:
     Optional<bool> silent() const { return m_notification.silent_preference; }
     bool require_interaction() const { return m_notification.require_interaction_preference; }
     Vector<NotificationAction> actions() const;
-    HTML::StorageSerializationRecord const& serialized_data() const { return m_notification.data; }
-    JS::Value data(JS::Object const& relevant_global_object) const;
+    JS::Value data() const;
 
 private:
-    Notification();
+    Notification(JS::Realm&);
 
-    static Utf16String serialize_url_for_bindings(Optional<URL::URL> const&);
+    virtual void initialize(JS::Realm&) override;
 
     ConceptNotification m_notification;
 };

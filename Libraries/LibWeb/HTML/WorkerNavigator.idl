@@ -1,3 +1,13 @@
+#import <GPC/GlobalPrivacyControl.idl>
+#import <HTML/NavigatorConcurrentHardware.idl>
+#import <HTML/NavigatorDeviceMemory.idl>
+#import <HTML/NavigatorID.idl>
+#import <HTML/NavigatorLanguage.idl>
+#import <HTML/NavigatorOnLine.idl>
+#import <MediaCapabilitiesAPI/MediaCapabilities.idl>
+#import <Serial/Serial.idl>
+#import <StorageAPI/NavigatorStorage.idl>
+
 // https://html.spec.whatwg.org/multipage/workers.html#workernavigator
 [Exposed=Worker]
 interface WorkerNavigator {
@@ -9,9 +19,6 @@ interface WorkerNavigator {
 
     // https://w3c.github.io/ServiceWorker/#navigator-serviceworker
     [SecureContext, SameObject] readonly attribute ServiceWorkerContainer serviceWorker;
-
-    // https://w3c.github.io/permissions/#navigator-and-workernavigator-extension
-    [SameObject, Experimental] readonly attribute Permissions permissions;
 };
 
 Navigator includes GlobalPrivacyControl;
@@ -20,5 +27,4 @@ WorkerNavigator includes NavigatorLanguage;
 WorkerNavigator includes NavigatorOnLine;
 WorkerNavigator includes NavigatorConcurrentHardware;
 WorkerNavigator includes NavigatorStorage;
-WorkerNavigator includes NavigatorLocks;
 WorkerNavigator includes NavigatorDeviceMemory;

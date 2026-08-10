@@ -1,21 +1,19 @@
+#import <DOM/Event.idl>
+
 // https://drafts.csswg.org/css-animations-1/#animationevent
-// https://drafts.csswg.org/css-animations-2/#interface-animationevent
 [Exposed=Window]
 interface AnimationEvent : Event {
-    constructor([Utf16FlyString] Utf16CSSOMString type, optional AnimationEventInit animationEventInitDict = {});
-    readonly attribute Utf16CSSOMString animationName;
+    constructor(CSSOMString type, optional AnimationEventInit animationEventInitDict = {});
+    readonly attribute CSSOMString animationName;
     readonly attribute double elapsedTime;
-    readonly attribute Utf16CSSOMString pseudoElement;
-    readonly attribute CSSAnimation? animation;
+    readonly attribute CSSOMString pseudoElement;
 };
 
 // https://drafts.csswg.org/css-animations-1/#dictdef-animationeventinit
-// https://drafts.csswg.org/css-animations-2/#interface-animationevent
 dictionary AnimationEventInit : EventInit {
-    Utf16CSSOMString animationName = "";
+    CSSOMString animationName = "";
     double elapsedTime = 0.0;
-    Utf16CSSOMString pseudoElement = "";
-    CSSAnimation? animation = null;
+    CSSOMString pseudoElement = "";
 };
 
 // https://drafts.csswg.org/css-animations/#interface-globaleventhandlers-idl

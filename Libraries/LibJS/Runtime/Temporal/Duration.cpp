@@ -10,7 +10,6 @@
 #include <AK/GenericShorthands.h>
 #include <AK/Math.h>
 #include <AK/NumericLimits.h>
-#include <AK/Utf16StringBuilder.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/Intrinsics.h>
@@ -73,7 +72,7 @@ Duration::Duration(double years, double months, double weeks, double days, doubl
 }
 
 // maxTimeDuration = 2**53 × 10**9 - 1 = 9,007,199,254,740,991,999,999,999
-TimeDuration const& MAX_TIME_DURATION = *new TimeDuration("9007199254740991999999999"_sbigint);
+TimeDuration const MAX_TIME_DURATION = "9007199254740991999999999"_sbigint;
 
 // 7.5.4 ZeroDateDuration ( ), https://tc39.es/proposal-temporal/#sec-temporal-zerodateduration
 DateDuration zero_date_duration(VM& vm)
@@ -361,7 +360,7 @@ ThrowCompletionOr<GC::Ref<Duration>> to_temporal_duration(VM& vm, Value item)
             return vm.throw_completion<TypeError>(ErrorType::NotAString, item);
 
         // b. Return ? ParseTemporalDurationString(item).
-        return TRY(parse_temporal_duration_string(vm, item.as_string().utf16_string_view()));
+        return TRY(parse_temporal_duration_string(vm, item.as_string().utf8_string_view()));
     }
 
     // 3. Let result be a new Partial Duration Record with each field set to 0.
@@ -846,10 +845,10 @@ Crypto::BigFraction total_time_duration(TimeDuration const& time_duration, Unit 
 }
 
 // 7.5.33 ComputeNudgeWindow ( sign, duration, originEpochNs, isoDateTime, timeZone, calendar, increment, unit, additionalShift ), https://tc39.es/proposal-temporal/#sec-temporal-computenudgewindow
-ThrowCompletionOr<NudgeWindow> compute_nudge_window(VM& vm, i8 sign, InternalDuration const& duration, Crypto::SignedBigInteger const& origin_epoch_ns, ISODateTime const& iso_date_time, Optional<Utf16View> time_zone, Utf16View calendar, u64 increment, Unit unit, bool additional_shift)
+ThrowCompletionOr<NudgeWindow> compute_nudge_window(VM& vm, i8 sign, InternalDuration const& duration, Crypto::SignedBigInteger const& origin_epoch_ns, ISODateTime const& iso_date_time, Optional<String const&> time_zone, String const& calendar, u64 increment, Unit unit, bool additional_shift)
 {
-    DateDuration start_date_duration;
-    DateDuration end_date_duration;
+    DateDuration start_duration;
+    DateDuration end_duration;
 
     double r1 = 0;
     double r2 = 0;
@@ -871,10 +870,10 @@ ThrowCompletionOr<NudgeWindow> compute_nudge_window(VM& vm, i8 sign, InternalDur
         r2 = r1 + signed_increment;
 
         // e. Let startDuration be ? CreateDateDurationRecord(r1, 0, 0, 0).
-        start_date_duration = TRY(create_date_duration_record(vm, r1, 0, 0, 0));
+        start_duration = TRY(create_date_duration_record(vm, r1, 0, 0, 0));
 
         // f. Let endDuration be ? CreateDateDurationRecord(r2, 0, 0, 0).
-        end_date_duration = TRY(create_date_duration_record(vm, r2, 0, 0, 0));
+        end_duration = TRY(create_date_duration_record(vm, r2, 0, 0, 0));
     }
     // 2. Else if unit is MONTH, then
     else if (unit == Unit::Month) {
@@ -891,10 +890,10 @@ ThrowCompletionOr<NudgeWindow> compute_nudge_window(VM& vm, i8 sign, InternalDur
         r2 = r1 + signed_increment;
 
         // e. Let startDuration be ? AdjustDateDurationRecord(duration.[[Date]], 0, 0, r1).
-        start_date_duration = TRY(adjust_date_duration_record(vm, duration.date, 0, 0, r1));
+        start_duration = TRY(adjust_date_duration_record(vm, duration.date, 0, 0, r1));
 
         // f. Let endDuration be ? AdjustDateDurationRecord(duration.[[Date]], 0, 0, r2).
-        end_date_duration = TRY(adjust_date_duration_record(vm, duration.date, 0, 0, r2));
+        end_duration = TRY(adjust_date_duration_record(vm, duration.date, 0, 0, r2));
     }
     // 3. Else if unit is WEEK, then
     else if (unit == Unit::Week) {
@@ -920,10 +919,10 @@ ThrowCompletionOr<NudgeWindow> compute_nudge_window(VM& vm, i8 sign, InternalDur
         r2 = weeks + signed_increment;
 
         // h. Let startDuration be ? AdjustDateDurationRecord(duration.[[Date]], 0, r1).
-        start_date_duration = TRY(adjust_date_duration_record(vm, duration.date, 0, r1));
+        start_duration = TRY(adjust_date_duration_record(vm, duration.date, 0, r1));
 
         // i. Let endDuration be ? AdjustDateDurationRecord(duration.[[Date]], 0, r2).
-        end_date_duration = TRY(adjust_date_duration_record(vm, duration.date, 0, r2));
+        end_duration = TRY(adjust_date_duration_record(vm, duration.date, 0, r2));
     }
     // 4. Else,
     else {
@@ -940,10 +939,10 @@ ThrowCompletionOr<NudgeWindow> compute_nudge_window(VM& vm, i8 sign, InternalDur
         r2 = days + signed_increment;
 
         // e. Let startDuration be ? AdjustDateDurationRecord(duration.[[Date]], r1).
-        start_date_duration = TRY(adjust_date_duration_record(vm, duration.date, r1));
+        start_duration = TRY(adjust_date_duration_record(vm, duration.date, r1));
 
         // f. Let endDuration be ? AdjustDateDurationRecord(duration.[[Date]], r2).
-        end_date_duration = TRY(adjust_date_duration_record(vm, duration.date, r2));
+        end_duration = TRY(adjust_date_duration_record(vm, duration.date, r2));
     }
 
     // 5. Assert: If sign = 1, r1 ≥ 0 and r1 < r2.
@@ -956,15 +955,15 @@ ThrowCompletionOr<NudgeWindow> compute_nudge_window(VM& vm, i8 sign, InternalDur
     Crypto::SignedBigInteger start_epoch_ns;
     Crypto::SignedBigInteger end_epoch_ns;
 
-    // 7. If DateDurationSign(startDateDuration) = 0, then
-    if (date_duration_sign(start_date_duration) == 0) {
+    // 7. If r1 = 0, then
+    if (r1 == 0) {
         // a. Let startEpochNs be originEpochNs.
         start_epoch_ns = origin_epoch_ns;
     }
     // 8. Else,
     else {
         // a. Let start be ? CalendarDateAdd(calendar, isoDateTime.[[ISODate]], startDuration, CONSTRAIN).
-        auto start = TRY(calendar_date_add(vm, calendar, iso_date_time.iso_date, start_date_duration, Overflow::Constrain));
+        auto start = TRY(calendar_date_add(vm, calendar, iso_date_time.iso_date, start_duration, Overflow::Constrain));
 
         // b. Let startDateTime be CombineISODateAndTimeRecord(start, isoDateTime.[[Time]]).
         auto start_date_time = combine_iso_date_and_time_record(start, iso_date_time.time);
@@ -982,7 +981,7 @@ ThrowCompletionOr<NudgeWindow> compute_nudge_window(VM& vm, i8 sign, InternalDur
     }
 
     // 9. Let end be ? CalendarDateAdd(calendar, isoDateTime.[[ISODate]], endDuration, CONSTRAIN).
-    auto end = TRY(calendar_date_add(vm, calendar, iso_date_time.iso_date, end_date_duration, Overflow::Constrain));
+    auto end = TRY(calendar_date_add(vm, calendar, iso_date_time.iso_date, end_duration, Overflow::Constrain));
 
     // 10. Let endDateTime be CombineISODateAndTimeRecord(end, isoDateTime.[[Time]]).
     auto end_date_time = combine_iso_date_and_time_record(end, iso_date_time.time);
@@ -998,18 +997,12 @@ ThrowCompletionOr<NudgeWindow> compute_nudge_window(VM& vm, i8 sign, InternalDur
         end_epoch_ns = TRY(get_epoch_nanoseconds_for(vm, *time_zone, end_date_time, Disambiguation::Compatible));
     }
 
-    // 13. Let startDuration be CombineDateAndTimeDuration(startDateDuration, 0).
-    auto start_duration = combine_date_and_time_duration(start_date_duration, TimeDuration { 0 });
-
-    // 14. Let endDuration be CombineDateAndTimeDuration(endDateDuration, 0).
-    auto end_duration = combine_date_and_time_duration(end_date_duration, TimeDuration { 0 });
-
-    // 15. Return the Record { [[R1]]: r1, [[R2]]: r2, [[StartEpochNs]]: startEpochNs, [[EndEpochNs]]: endEpochNs, [[StartDuration]]: startDuration, [[EndDuration]]: endDuration }.
-    return NudgeWindow { r1, r2, move(start_epoch_ns), move(end_epoch_ns), move(start_duration), move(end_duration) };
+    // 13. Return the Record { [[R1]]: r1, [[R2]]: r2, [[StartEpochNs]]: startEpochNs, [[EndEpochNs]]: endEpochNs, [[StartDuration]]: startDuration, [[EndDuration]]: endDuration }.
+    return NudgeWindow { r1, r2, move(start_epoch_ns), move(end_epoch_ns), start_duration, end_duration };
 }
 
 // 7.5.34 NudgeToCalendarUnit ( sign, duration, originEpochNs, destEpochNs, isoDateTime, timeZone, calendar, increment, unit, roundingMode ), https://tc39.es/proposal-temporal/#sec-temporal-nudgetocalendarunit
-ThrowCompletionOr<CalendarNudgeResult> nudge_to_calendar_unit(VM& vm, i8 sign, InternalDuration const& duration, Crypto::SignedBigInteger const& origin_epoch_ns, Crypto::SignedBigInteger const& dest_epoch_ns, ISODateTime const& iso_date_time, Optional<Utf16View> time_zone, Utf16View calendar, u64 increment, Unit unit, RoundingMode rounding_mode)
+ThrowCompletionOr<CalendarNudgeResult> nudge_to_calendar_unit(VM& vm, i8 sign, InternalDuration const& duration, Crypto::SignedBigInteger const& origin_epoch_ns, Crypto::SignedBigInteger const& dest_epoch_ns, ISODateTime const& iso_date_time, Optional<String const&> time_zone, String const& calendar, u64 increment, Unit unit, RoundingMode rounding_mode)
 {
     // 1. Let didExpandCalendarUnit be false.
     auto did_expand_calendar_unit = false;
@@ -1071,10 +1064,10 @@ ThrowCompletionOr<CalendarNudgeResult> nudge_to_calendar_unit(VM& vm, i8 sign, I
     // 10. Set endEpochNs to nudgeWindow.[[StartEpochNs]].
 
     // 11. Let startDuration be nudgeWindow.[[StartDuration]].
-    auto start_duration = move(nudge_window.start_duration);
+    auto start_duration = nudge_window.start_duration;
 
     // 12. Let endDuration be nudgeWindow.[[EndDuration]].
-    auto end_duration = move(nudge_window.end_duration);
+    auto end_duration = nudge_window.end_duration;
 
     // 13. Assert: startEpochNs ≠ endEpochNs.
     VERIFY(start_epoch_ns != end_epoch_ns);
@@ -1126,7 +1119,7 @@ ThrowCompletionOr<CalendarNudgeResult> nudge_to_calendar_unit(VM& vm, i8 sign, I
         rounded_unit = apply_unsigned_rounding_mode(fabs(total), fabs(r1), fabs(r2), unsigned_rounding_mode);
     }
 
-    InternalDuration result_duration;
+    DateDuration result_duration;
     Crypto::SignedBigInteger nudged_epoch_ns;
 
     // 22. If roundedUnit is abs(r2), then
@@ -1135,7 +1128,7 @@ ThrowCompletionOr<CalendarNudgeResult> nudge_to_calendar_unit(VM& vm, i8 sign, I
         did_expand_calendar_unit = true;
 
         // b. Let resultDuration be endDuration.
-        result_duration = move(end_duration);
+        result_duration = end_duration;
 
         // c. Let nudgedEpochNs be endEpochNs.
         nudged_epoch_ns = move(end_epoch_ns);
@@ -1143,21 +1136,24 @@ ThrowCompletionOr<CalendarNudgeResult> nudge_to_calendar_unit(VM& vm, i8 sign, I
     // 23. Else,
     else {
         // a. Let resultDuration be startDuration.
-        result_duration = move(start_duration);
+        result_duration = start_duration;
 
         // b. Let nudgedEpochNs be startEpochNs.
         nudged_epoch_ns = move(start_epoch_ns);
     }
 
-    // 24. Let nudgeResult be Duration Nudge Result Record { [[Duration]]: resultDuration, [[NudgedEpochNs]]: nudgedEpochNs, [[DidExpandCalendarUnit]]: didExpandCalendarUnit }.
-    DurationNudgeResult nudge_result { .duration = move(result_duration), .nudged_epoch_ns = move(nudged_epoch_ns), .did_expand_calendar_unit = did_expand_calendar_unit };
+    // 24. Set resultDuration to CombineDateAndTimeDuration(resultDuration, 0).
+    auto result_date_and_time_duration = combine_date_and_time_duration(result_duration, TimeDuration { 0 });
 
-    // 25. Return the Record { [[NudgeResult]]: nudgeResult, [[Total]]: total }.
+    // 25. Let nudgeResult be Duration Nudge Result Record { [[Duration]]: resultDuration, [[NudgedEpochNs]]: nudgedEpochNs, [[DidExpandCalendarUnit]]: didExpandCalendarUnit }.
+    DurationNudgeResult nudge_result { .duration = move(result_date_and_time_duration), .nudged_epoch_ns = move(nudged_epoch_ns), .did_expand_calendar_unit = did_expand_calendar_unit };
+
+    // 26. Return the Record { [[NudgeResult]]: nudgeResult, [[Total]]: total }.
     return CalendarNudgeResult { .nudge_result = move(nudge_result), .total = move(total_mv) };
 }
 
 // 7.5.35 NudgeToZonedTime ( sign, duration, isoDateTime, timeZone, calendar, increment, unit, roundingMode ), https://tc39.es/proposal-temporal/#sec-temporal-nudgetozonedtime
-ThrowCompletionOr<DurationNudgeResult> nudge_to_zoned_time(VM& vm, i8 sign, InternalDuration const& duration, ISODateTime const& iso_date_time, Utf16View time_zone, Utf16View calendar, u64 increment, Unit unit, RoundingMode rounding_mode)
+ThrowCompletionOr<DurationNudgeResult> nudge_to_zoned_time(VM& vm, i8 sign, InternalDuration const& duration, ISODateTime const& iso_date_time, String const& time_zone, String const& calendar, u64 increment, Unit unit, RoundingMode rounding_mode)
 {
     // 1. Let start be ? CalendarDateAdd(calendar, isoDateTime.[[ISODate]], duration.[[Date]], CONSTRAIN).
     auto start = TRY(calendar_date_add(vm, calendar, iso_date_time.iso_date, duration.date, Overflow::Constrain));
@@ -1298,7 +1294,7 @@ ThrowCompletionOr<DurationNudgeResult> nudge_to_day_or_time(VM& vm, InternalDura
 }
 
 // 7.5.37 BubbleRelativeDuration ( sign, duration, nudgedEpochNs, isoDateTime, timeZone, calendar, largestUnit, smallestUnit ), https://tc39.es/proposal-temporal/#sec-temporal-bubblerelativeduration
-ThrowCompletionOr<InternalDuration> bubble_relative_duration(VM& vm, i8 sign, InternalDuration duration, Crypto::SignedBigInteger const& nudged_epoch_ns, ISODateTime const& iso_date_time, Optional<Utf16View> time_zone, Utf16View calendar, Unit largest_unit, Unit smallest_unit)
+ThrowCompletionOr<InternalDuration> bubble_relative_duration(VM& vm, i8 sign, InternalDuration duration, Crypto::SignedBigInteger const& nudged_epoch_ns, ISODateTime const& iso_date_time, Optional<String const&> time_zone, String const& calendar, Unit largest_unit, Unit smallest_unit)
 {
     // 1. If smallestUnit is largestUnit, return duration.
     if (smallest_unit == largest_unit)
@@ -1399,7 +1395,7 @@ ThrowCompletionOr<InternalDuration> bubble_relative_duration(VM& vm, i8 sign, In
 }
 
 // 7.5.38 RoundRelativeDuration ( duration, originEpochNs, destEpochNs, isoDateTime, timeZone, calendar, largestUnit, increment, smallestUnit, roundingMode ), https://tc39.es/proposal-temporal/#sec-temporal-roundrelativeduration
-ThrowCompletionOr<InternalDuration> round_relative_duration(VM& vm, InternalDuration duration, Crypto::SignedBigInteger const& origin_epoch_ns, Crypto::SignedBigInteger const& dest_epoch_ns, ISODateTime const& iso_date_time, Optional<Utf16View> time_zone, Utf16View calendar, Unit largest_unit, u64 increment, Unit smallest_unit, RoundingMode rounding_mode)
+ThrowCompletionOr<InternalDuration> round_relative_duration(VM& vm, InternalDuration duration, Crypto::SignedBigInteger const& origin_epoch_ns, Crypto::SignedBigInteger const& dest_epoch_ns, ISODateTime const& iso_date_time, Optional<String const&> time_zone, String const& calendar, Unit largest_unit, u64 increment, Unit smallest_unit, RoundingMode rounding_mode)
 {
     // 1. Let irregularLengthUnit be false.
     auto irregular_length_unit = false;
@@ -1453,7 +1449,7 @@ ThrowCompletionOr<InternalDuration> round_relative_duration(VM& vm, InternalDura
 }
 
 // 7.5.39 TotalRelativeDuration ( duration, originEpochNs, destEpochNs, isoDateTime, timeZone, calendar, unit ), https://tc39.es/proposal-temporal/#sec-temporal-totalrelativeduration
-ThrowCompletionOr<Crypto::BigFraction> total_relative_duration(VM& vm, InternalDuration const& duration, Crypto::SignedBigInteger const& origin_epoch_ns, Crypto::SignedBigInteger const& dest_epoch_ns, ISODateTime const& iso_date_time, Optional<Utf16View> time_zone, Utf16View calendar, Unit unit)
+ThrowCompletionOr<Crypto::BigFraction> total_relative_duration(VM& vm, InternalDuration const& duration, Crypto::SignedBigInteger const& origin_epoch_ns, Crypto::SignedBigInteger const& dest_epoch_ns, ISODateTime const& iso_date_time, Optional<String const&> time_zone, String const& calendar, Unit unit)
 {
     // 1. If IsCalendarUnit(unit) is true, or timeZone is not UNSET and unit is DAY, then
     if (is_calendar_unit(unit) || (time_zone.has_value() && unit == Unit::Day)) {
@@ -1475,13 +1471,13 @@ ThrowCompletionOr<Crypto::BigFraction> total_relative_duration(VM& vm, InternalD
 }
 
 // 7.5.40 TemporalDurationToString ( duration, precision ), https://tc39.es/proposal-temporal/#sec-temporal-temporaldurationtostring
-Utf16String temporal_duration_to_string(Duration const& duration, Precision precision)
+String temporal_duration_to_string(Duration const& duration, Precision precision)
 {
     // 1. Let sign be DurationSign(duration).
     auto sign = duration_sign(duration);
 
     // 2. Let datePart be the empty String.
-    Utf16StringBuilder date_part;
+    StringBuilder date_part;
 
     // 3. If duration.[[Years]] ≠ 0, then
     if (duration.years() != 0) {
@@ -1509,7 +1505,7 @@ Utf16String temporal_duration_to_string(Duration const& duration, Precision prec
     }
 
     // 7. Let timePart be the empty String.
-    Utf16StringBuilder time_part;
+    StringBuilder time_part;
 
     // 8. If duration.[[Hours]] ≠ 0, then
     if (duration.hours() != 0) {
@@ -1539,7 +1535,7 @@ Utf16String temporal_duration_to_string(Duration const& duration, Precision prec
         auto division_result = seconds_duration.divided_by(NANOSECONDS_PER_SECOND);
 
         // a. Let secondsPart be abs(truncate(secondsDuration / 10**9)) formatted as a decimal number.
-        auto seconds_part = MUST(division_result.quotient.unsigned_value().to_base_utf16(10));
+        auto seconds_part = MUST(division_result.quotient.unsigned_value().to_base(10));
 
         // b. Let subSecondsPart be FormatFractionalSeconds(abs(remainder(secondsDuration, 10**9)), precision).
         auto sub_seconds_part = format_fractional_seconds(division_result.remainder.unsigned_value().to_u64(), precision);
@@ -1553,20 +1549,17 @@ Utf16String temporal_duration_to_string(Duration const& duration, Precision prec
     auto sign_part = sign < 0 ? "-"sv : ""sv;
 
     // 15. Let result be the string concatenation of signPart, the code unit 0x0050 (LATIN CAPITAL LETTER P) and datePart.
-    Utf16StringBuilder result;
-    result.append_ascii(sign_part);
-    result.append_ascii('P');
-    result.append(date_part.view());
+    StringBuilder result;
+    result.appendff("{}P{}", sign_part, date_part.string_view());
 
     // 16. If timePart is not the empty String, then
     if (!time_part.is_empty()) {
         // a. Set result to the string concatenation of result, the code unit 0x0054 (LATIN CAPITAL LETTER T), and timePart.
-        result.append_ascii('T');
-        result.append(time_part.view());
+        result.appendff("T{}", time_part.string_view());
     }
 
     // 17. Return result.
-    return result.to_string();
+    return MUST(result.to_string());
 }
 
 // 7.5.41 AddDurations ( operation, duration, other ), https://tc39.es/proposal-temporal/#sec-temporal-adddurations

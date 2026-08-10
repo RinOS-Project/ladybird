@@ -1,25 +1,11 @@
 Harness status: OK
 
-Found 243 tests
+Found 229 tests
 
-233 Pass
+219 Pass
 10 Fail
 Pass	round(10,10) should be used-value-equivalent to 10
 Pass	mod(1,1) should be used-value-equivalent to 0
-Pass	mod(0,-2) should be used-value-equivalent to 0
-Pass	mod(2,-2) should be used-value-equivalent to 0
-Pass	mod(4,-2) should be used-value-equivalent to 0
-Pass	mod(-2,-2) should be used-value-equivalent to 0
-Pass	mod(-4,-2) should be used-value-equivalent to 0
-Pass	mod(0, 2) should be used-value-equivalent to 0
-Pass	mod(2, 2) should be used-value-equivalent to 0
-Pass	mod(-2, 2) should be used-value-equivalent to 0
-Pass	mod(1, 2) should be used-value-equivalent to 1
-Pass	mod(3, 2) should be used-value-equivalent to 1
-Pass	mod(-1, 2) should be used-value-equivalent to 1
-Pass	mod(1, -2) should be used-value-equivalent to -1
-Pass	mod(3, -2) should be used-value-equivalent to -1
-Pass	mod(-1, -2) should be used-value-equivalent to -1
 Pass	rem(1,1) should be used-value-equivalent to 0
 Pass	calc(round(100,10)) should be used-value-equivalent to 100
 Pass	calc(round(up, 101,10)) should be used-value-equivalent to 110

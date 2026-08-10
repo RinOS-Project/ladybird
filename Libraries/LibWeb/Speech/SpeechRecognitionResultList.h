@@ -9,18 +9,18 @@
 #include <AK/Vector.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Speech/SpeechRecognitionResult.h>
 
 namespace Web::Speech {
 
-class SpeechRecognitionResultList final : public Bindings::GCAllocatedWrappable {
-    WEB_WRAPPABLE(SpeechRecognitionResultList, Bindings::GCAllocatedWrappable);
+class SpeechRecognitionResultList final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(SpeechRecognitionResultList, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(SpeechRecognitionResultList);
 
 public:
-    [[nodiscard]] static GC::Ref<SpeechRecognitionResultList> create();
+    [[nodiscard]] static GC::Ref<SpeechRecognitionResultList> create(JS::Realm&);
     virtual ~SpeechRecognitionResultList() override;
 
     // https://wicg.github.io/speech-api/#dom-speechrecognitionresultlist-length
@@ -30,9 +30,10 @@ public:
     GC::Ptr<SpeechRecognitionResult> item(size_t index) const;
 
 private:
-    explicit SpeechRecognitionResultList();
+    explicit SpeechRecognitionResultList(JS::Realm&);
 
-    virtual void visit_edges(GC::Cell::Visitor&) override;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
     Vector<GC::Ref<SpeechRecognitionResult>> m_results;
 };

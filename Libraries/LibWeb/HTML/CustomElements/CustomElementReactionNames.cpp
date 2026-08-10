@@ -9,7 +9,7 @@
 namespace Web::HTML::CustomElementReactionNames {
 
 #define __ENUMERATE_CUSTOM_ELEMENT_REACTION_NAME(name) \
-    Utf16FlyString const& name = *new Utf16FlyString(#name##_utf16_fly_string);
+    FlyString name = #name##_fly_string;
 ENUMERATE_CUSTOM_ELEMENT_REACTION_NAMES
 #undef __ENUMERATE_CUSTOM_ELEMENT_REACTION_NAME
 

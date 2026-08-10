@@ -41,46 +41,25 @@ Optional<TimeUnit> time_unit_from_string(StringView time_unit)
     return {};
 }
 
-Optional<TimeUnit> time_unit_from_string(Utf16View time_unit)
-{
-    if (time_unit == "second"sv)
-        return TimeUnit::Second;
-    if (time_unit == "minute"sv)
-        return TimeUnit::Minute;
-    if (time_unit == "hour"sv)
-        return TimeUnit::Hour;
-    if (time_unit == "day"sv)
-        return TimeUnit::Day;
-    if (time_unit == "week"sv)
-        return TimeUnit::Week;
-    if (time_unit == "month"sv)
-        return TimeUnit::Month;
-    if (time_unit == "quarter"sv)
-        return TimeUnit::Quarter;
-    if (time_unit == "year"sv)
-        return TimeUnit::Year;
-    return {};
-}
-
-Utf16String time_unit_to_string(TimeUnit time_unit)
+StringView time_unit_to_string(TimeUnit time_unit)
 {
     switch (time_unit) {
     case TimeUnit::Second:
-        return "second"_utf16;
+        return "second"sv;
     case TimeUnit::Minute:
-        return "minute"_utf16;
+        return "minute"sv;
     case TimeUnit::Hour:
-        return "hour"_utf16;
+        return "hour"sv;
     case TimeUnit::Day:
-        return "day"_utf16;
+        return "day"sv;
     case TimeUnit::Week:
-        return "week"_utf16;
+        return "week"sv;
     case TimeUnit::Month:
-        return "month"_utf16;
+        return "month"sv;
     case TimeUnit::Quarter:
-        return "quarter"_utf16;
+        return "quarter"sv;
     case TimeUnit::Year:
-        return "year"_utf16;
+        return "year"sv;
     }
     VERIFY_NOT_REACHED();
 }
@@ -129,35 +108,6 @@ static constexpr URelativeDateTimeUnit icu_time_unit(TimeUnit unit)
     VERIFY_NOT_REACHED();
 }
 
-NumericDisplay numeric_display_from_string(StringView numeric_display)
-{
-    if (numeric_display == "always"sv)
-        return NumericDisplay::Always;
-    if (numeric_display == "auto"sv)
-        return NumericDisplay::Auto;
-    VERIFY_NOT_REACHED();
-}
-
-NumericDisplay numeric_display_from_string(Utf16View numeric_display)
-{
-    if (numeric_display == "always"sv)
-        return NumericDisplay::Always;
-    if (numeric_display == "auto"sv)
-        return NumericDisplay::Auto;
-    VERIFY_NOT_REACHED();
-}
-
-Utf16String numeric_display_to_string(NumericDisplay numeric_display)
-{
-    switch (numeric_display) {
-    case NumericDisplay::Always:
-        return "always"_utf16;
-    case NumericDisplay::Auto:
-        return "auto"_utf16;
-    }
-    VERIFY_NOT_REACHED();
-}
-
 static constexpr UDateRelativeDateTimeFormatterStyle icu_relative_date_time_style(Style unit_display)
 {
     switch (unit_display) {
@@ -171,19 +121,19 @@ static constexpr UDateRelativeDateTimeFormatterStyle icu_relative_date_time_styl
     VERIFY_NOT_REACHED();
 }
 
-static Utf16String icu_relative_time_format_field_to_string(i32 field)
+static constexpr StringView icu_relative_time_format_field_to_string(i32 field)
 {
     switch (field) {
     case PartitionRange::LITERAL_FIELD:
-        return "literal"_utf16;
+        return "literal"sv;
     case UNUM_INTEGER_FIELD:
-        return "integer"_utf16;
+        return "integer"sv;
     case UNUM_FRACTION_FIELD:
-        return "fraction"_utf16;
+        return "fraction"sv;
     case UNUM_DECIMAL_SEPARATOR_FIELD:
-        return "decimal"_utf16;
+        return "decimal"sv;
     case UNUM_GROUPING_SEPARATOR_FIELD:
-        return "group"_utf16;
+        return "group"sv;
     }
     VERIFY_NOT_REACHED();
 }
@@ -289,11 +239,11 @@ private:
     NonnullOwnPtr<icu::RelativeDateTimeFormatter> m_formatter;
 };
 
-NonnullOwnPtr<RelativeTimeFormat> RelativeTimeFormat::create(Utf16View locale, Style style)
+NonnullOwnPtr<RelativeTimeFormat> RelativeTimeFormat::create(StringView locale, Style style)
 {
     UErrorCode status = U_ZERO_ERROR;
 
-    auto locale_data = LocaleData::for_locale(locale.bytes());
+    auto locale_data = LocaleData::for_locale(locale);
     VERIFY(locale_data.has_value());
 
     auto* number_formatter = icu::NumberFormat::createInstance(locale_data->locale(), UNUM_DECIMAL, status);

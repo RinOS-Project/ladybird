@@ -6,37 +6,39 @@
 
 #pragma once
 
-#include <LibWeb/Forward.h>
-#include <LibWeb/HTML/Canvas/AbstractCanvasMixin.h>
+#include <LibWeb/HTML/Canvas/CanvasState.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/canvas.html#canvastextdrawingstyles
-template<typename CanvasType>
-class CanvasTextDrawingStyles : protected virtual AbstractCanvasMixin {
+template<typename IncludingClass, typename CanvasType>
+class CanvasTextDrawingStyles {
 public:
     ~CanvasTextDrawingStyles() = default;
-    Utf16String font() const;
-    void set_font(Utf16View font) override;
+    ByteString font() const;
+    void set_font(StringView font);
 
     // https://html.spec.whatwg.org/multipage/canvas.html#font-style-source-object
     Variant<DOM::Document*, HTML::WorkerGlobalScope*> get_font_source_for_font_style_source_object(CanvasType& font_style_source_object);
 
-    CanvasTextAlign text_align() const { return drawing_state().text_align; }
-    void set_text_align(CanvasTextAlign text_align) { drawing_state().text_align = text_align; }
+    Bindings::CanvasTextAlign text_align() const { return my_drawing_state().text_align; }
+    void set_text_align(Bindings::CanvasTextAlign text_align) { my_drawing_state().text_align = text_align; }
 
-    CanvasTextBaseline text_baseline() const { return drawing_state().text_baseline; }
-    void set_text_baseline(CanvasTextBaseline text_baseline) { drawing_state().text_baseline = text_baseline; }
+    Bindings::CanvasTextBaseline text_baseline() const { return my_drawing_state().text_baseline; }
+    void set_text_baseline(Bindings::CanvasTextBaseline text_baseline) { my_drawing_state().text_baseline = text_baseline; }
 
-    CanvasDirection direction() const { return drawing_state().direction; }
-    void set_direction(CanvasDirection direction) { drawing_state().direction = direction; }
+    Bindings::CanvasDirection direction() const { return my_drawing_state().direction; }
+    void set_direction(Bindings::CanvasDirection direction) { my_drawing_state().direction = direction; }
 
-    Utf16String letter_spacing() const;
-    void set_letter_spacing(Utf16View);
-    float resolved_letter_spacing() const override;
+    String letter_spacing() const;
+    void set_letter_spacing(StringView);
 
 protected:
     CanvasTextDrawingStyles() = default;
+
+private:
+    CanvasState::DrawingState& my_drawing_state() { return static_cast<IncludingClass&>(*this).drawing_state(); }
+    CanvasState::DrawingState const& my_drawing_state() const { return static_cast<IncludingClass const&>(*this).drawing_state(); }
 };
 
 }

@@ -19,7 +19,6 @@ public:
     virtual ReadonlySpan<FlatPtr> possible_values() const = 0;
 
 protected:
-    ConservativeVectorBase();
     explicit ConservativeVectorBase(Heap&);
     ~ConservativeVectorBase();
 
@@ -36,13 +35,13 @@ class GC_API ConservativeVector final
     , public Vector<T, inline_capacity> {
 
 public:
-    ConservativeVector()
-        : ConservativeVectorBase()
+    explicit ConservativeVector(Heap& heap)
+        : ConservativeVectorBase(heap)
     {
     }
 
-    ConservativeVector(Vector<T, inline_capacity> const& other)
-        : ConservativeVectorBase()
+    ConservativeVector(Heap& heap, Vector<T, inline_capacity> const& other)
+        : ConservativeVectorBase(heap)
         , Vector<T, inline_capacity>(other)
     {
     }

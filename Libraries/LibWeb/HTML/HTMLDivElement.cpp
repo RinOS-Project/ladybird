@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLDivElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/HTML/HTMLDivElement.h>
@@ -19,7 +22,7 @@ HTMLDivElement::HTMLDivElement(DOM::Document& document, DOM::QualifiedName quali
 
 HTMLDivElement::~HTMLDivElement() = default;
 
-bool HTMLDivElement::is_presentational_hint(Utf16FlyString const& name) const
+bool HTMLDivElement::is_presentational_hint(FlyString const& name) const
 {
     if (Base::is_presentational_hint(name))
         return true;
@@ -28,21 +31,27 @@ bool HTMLDivElement::is_presentational_hint(Utf16FlyString const& name) const
 }
 
 // https://html.spec.whatwg.org/multipage/rendering.html#flow-content-3
-void HTMLDivElement::apply_presentational_hints(Vector<CSS::StyleProperty>& properties) const
+void HTMLDivElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
 {
-    Base::apply_presentational_hints(properties);
-    for_each_attribute([&](Utf16FlyString const& name, Utf16View value) {
+    Base::apply_presentational_hints(cascaded_properties);
+    for_each_attribute([&](auto& name, auto& value) {
         if (name == HTML::AttributeNames::align) {
-            if (value.equals_ignoring_ascii_case(u"left"sv))
-                properties.append({ .property_id = CSS::PropertyID::TextAlign, .value = CSS::KeywordStyleValue::create(CSS::Keyword::LibwebLeft) });
-            else if (value.equals_ignoring_ascii_case(u"right"sv))
-                properties.append({ .property_id = CSS::PropertyID::TextAlign, .value = CSS::KeywordStyleValue::create(CSS::Keyword::LibwebRight) });
-            else if (value.equals_ignoring_ascii_case(u"center"sv))
-                properties.append({ .property_id = CSS::PropertyID::TextAlign, .value = CSS::KeywordStyleValue::create(CSS::Keyword::LibwebCenter) });
-            else if (value.equals_ignoring_ascii_case(u"justify"sv))
-                properties.append({ .property_id = CSS::PropertyID::TextAlign, .value = CSS::KeywordStyleValue::create(CSS::Keyword::Justify) });
+            if (value.equals_ignoring_ascii_case("left"sv))
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::LibwebLeft));
+            else if (value.equals_ignoring_ascii_case("right"sv))
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::LibwebRight));
+            else if (value.equals_ignoring_ascii_case("center"sv))
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::LibwebCenter));
+            else if (value.equals_ignoring_ascii_case("justify"sv))
+                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::TextAlign, CSS::KeywordStyleValue::create(CSS::Keyword::Justify));
         }
     });
+}
+
+void HTMLDivElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLDivElement);
+    Base::initialize(realm);
 }
 
 }

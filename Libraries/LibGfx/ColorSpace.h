@@ -37,8 +37,6 @@ public:
     // and only provide a specialization for sk_sp<SkColorSpace>.
     template<typename T>
     T& color_space();
-    template<typename T>
-    T const& color_space() const;
 
 private:
     template<typename T>
@@ -46,7 +44,7 @@ private:
     template<typename T>
     friend ErrorOr<T> IPC::decode(IPC::Decoder&);
 
-    explicit ColorSpace(NonnullOwnPtr<Details::ColorSpaceImpl>&&);
+    explicit ColorSpace(NonnullOwnPtr<Details::ColorSpaceImpl>&& color_pace);
 
     NonnullOwnPtr<Details::ColorSpaceImpl> m_color_space;
 };

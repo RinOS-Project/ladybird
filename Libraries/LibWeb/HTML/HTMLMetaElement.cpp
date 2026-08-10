@@ -6,7 +6,8 @@
  */
 
 #include <AK/GenericLexer.h>
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/HTMLMetaElementPrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/CSS/StyleValues/ColorSchemeStyleValue.h>
@@ -17,7 +18,6 @@
 #include <LibWeb/HTML/HTMLHeadElement.h>
 #include <LibWeb/HTML/HTMLMetaElement.h>
 #include <LibWeb/HTML/PolicyContainers.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 #include <LibWeb/Page/Page.h>
 
@@ -32,9 +32,15 @@ HTMLMetaElement::HTMLMetaElement(DOM::Document& document, DOM::QualifiedName qua
 
 HTMLMetaElement::~HTMLMetaElement() = default;
 
+void HTMLMetaElement::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLMetaElement);
+    Base::initialize(realm);
+}
+
 Optional<HTMLMetaElement::HttpEquivAttributeState> HTMLMetaElement::http_equiv_state() const
 {
-    auto value = get_attribute_value_view(HTML::AttributeNames::http_equiv).value_or({});
+    auto value = get_attribute_value(HTML::AttributeNames::http_equiv);
 
 #define __ENUMERATE_HTML_META_HTTP_EQUIV_ATTRIBUTE(keyword, state) \
     if (value.equals_ignoring_ascii_case(keyword##sv))             \
@@ -45,23 +51,23 @@ Optional<HTMLMetaElement::HttpEquivAttributeState> HTMLMetaElement::http_equiv_s
     return OptionalNone {};
 }
 
-void HTMLMetaElement::update_metadata(Optional<Utf16String> const& old_name)
+void HTMLMetaElement::update_metadata(Optional<String> const& old_name)
 {
-    if (auto name = get_attribute_value_view(AttributeNames::name); name.has_value()) {
-        if (name->equals_ignoring_ascii_case(u"theme-color"sv)) {
+    if (name().has_value()) {
+        if (name()->equals_ignoring_ascii_case("theme-color"sv)) {
             document().obtain_theme_color();
-        } else if (name->equals_ignoring_ascii_case(u"color-scheme"sv)) {
+        } else if (name()->equals_ignoring_ascii_case("color-scheme"sv)) {
             document().obtain_supported_color_schemes();
-        } else if (name->equals_ignoring_ascii_case(u"referrer"sv)) {
+        } else if (name()->equals_ignoring_ascii_case("referrer"sv)) {
             // 2. If element does not have a name attribute whose value is an ASCII case-insensitive match for "referrer", then return.
             update_referrer_policy();
         }
     }
 
     if (old_name.has_value()) {
-        if (old_name->equals_ignoring_ascii_case(u"theme-color"sv)) {
+        if (old_name->equals_ignoring_ascii_case("theme-color"sv)) {
             document().obtain_theme_color();
-        } else if (old_name->equals_ignoring_ascii_case(u"color-scheme"sv)) {
+        } else if (old_name->equals_ignoring_ascii_case("color-scheme"sv)) {
             document().obtain_supported_color_schemes();
         }
 
@@ -84,17 +90,17 @@ void HTMLMetaElement::update_referrer_policy()
         return;
 
     // 4. Let value be the value of element's content attribute, converted to ASCII lowercase.
-    auto value = content->utf16_view();
+    auto value = content->bytes_as_string_view();
 
     // 5. If value is one of the values given in the first column of the following table, then set value to the value given in the second column:
     ReferrerPolicy::ReferrerPolicy policy;
-    if (value.equals_ignoring_ascii_case(u"never"sv))
+    if (value.equals_ignoring_ascii_case("never"sv))
         policy = ReferrerPolicy::ReferrerPolicy::NoReferrer;
-    else if (value.equals_ignoring_ascii_case(u"default"sv))
+    else if (value.equals_ignoring_ascii_case("default"sv))
         policy = ReferrerPolicy::DEFAULT_REFERRER_POLICY;
-    else if (value.equals_ignoring_ascii_case(u"always"sv))
+    else if (value.equals_ignoring_ascii_case("always"sv))
         policy = ReferrerPolicy::ReferrerPolicy::UnsafeURL;
-    else if (value.equals_ignoring_ascii_case(u"origin-when-crossorigin"sv))
+    else if (value.equals_ignoring_ascii_case("origin-when-crossorigin"sv))
         policy = ReferrerPolicy::ReferrerPolicy::OriginWhenCrossOrigin;
     // 6. If value is a referrer policy, then...
     else if (auto parsed_policy = ReferrerPolicy::from_string(value); parsed_policy.has_value())
@@ -116,9 +122,6 @@ void HTMLMetaElement::inserted()
     // When a meta element is inserted into the document, if its http-equiv attribute is present and represents one of
     // the above states, then the user agent must run the algorithm appropriate for that state, as described in the
     // following list:
-    if (!in_a_document_tree())
-        return;
-
     auto http_equiv = http_equiv_state();
     if (http_equiv.has_value()) {
         switch (http_equiv.value()) {
@@ -134,7 +137,7 @@ void HTMLMetaElement::inserted()
             if (!has_attribute(AttributeNames::content))
                 break;
 
-            auto input = get_attribute_value_view(AttributeNames::content).value_or({});
+            auto input = get_attribute_value(AttributeNames::content);
             if (input.is_empty())
                 break;
 
@@ -160,32 +163,28 @@ void HTMLMetaElement::inserted()
                 break;
 
             // 2. If the element's content attribute contains a U+002C COMMA character (,), then return.
-            auto content = get_attribute_value_view(AttributeNames::content).value_or({});
-            if (content.contains(u","sv))
+            auto content = get_attribute_value(AttributeNames::content);
+            if (content.contains(","sv))
                 break;
 
             // 3. Let input be the value of the element's content attribute.
             // 4. Let position point at the first character of input.
-            auto input = content;
-            size_t position = 0;
+            GenericLexer lexer { content };
 
             // 5. Skip ASCII whitespace within input given position.
-            while (position < input.length_in_code_units() && Web::Infra::is_ascii_whitespace(input.code_unit_at(position)))
-                ++position;
+            lexer.ignore_while(Web::Infra::is_ascii_whitespace);
 
             // 6. Collect a sequence of code points that are not ASCII whitespace from input given position.
             // 7. Let candidate be the string that resulted from the previous step.
-            auto candidate_start = position;
-            while (position < input.length_in_code_units() && !Web::Infra::is_ascii_whitespace(input.code_unit_at(position)))
-                ++position;
-            auto candidate = input.substring_view(candidate_start, position - candidate_start);
+            auto candidate = lexer.consume_until(Web::Infra::is_ascii_whitespace);
 
             // 8. If candidate is the empty string, return.
             if (candidate.is_empty())
                 break;
 
             // 9. Set the pragma-set default language to candidate.
-            document().set_pragma_set_default_language(Utf16String::from_utf16(candidate));
+            auto language = String::from_utf8_without_validation(candidate.bytes());
+            document().set_pragma_set_default_language(language);
             document().document_element()->invalidate_lang_value();
             break;
         }
@@ -197,14 +196,15 @@ void HTMLMetaElement::inserted()
                 break;
 
             // 2. If the meta element has no content attribute, or if that attribute's value is the empty string, then return.
-            auto input = get_attribute_value_view(AttributeNames::content).value_or({});
+            auto input = get_attribute_value(AttributeNames::content);
             if (input.is_empty())
                 break;
 
             // 3. Let policy be the result of executing Content Security Policy's parse a serialized Content Security
             //    Policy algorithm on the meta element's content attribute's value, with a source of "meta", and a
             //    disposition of "enforce".
-            auto policy = ContentSecurityPolicy::Policy::parse_a_serialized_csp(GC::Heap::the(), input, ContentSecurityPolicy::Policy::Source::Meta, ContentSecurityPolicy::Policy::Disposition::Enforce);
+            auto& realm = this->realm();
+            auto policy = ContentSecurityPolicy::Policy::parse_a_serialized_csp(realm.heap(), input, ContentSecurityPolicy::Policy::Source::Meta, ContentSecurityPolicy::Policy::Disposition::Enforce);
 
             // 4. Remove all occurrences of the report-uri, frame-ancestors, and sandbox directives from policy.
             policy->remove_directive({}, ContentSecurityPolicy::Directives::Names::ReportUri);
@@ -215,7 +215,9 @@ void HTMLMetaElement::inserted()
             policy->set_self_origin({}, document().origin());
 
             // 5. Enforce the policy policy.
-            document().relevant_settings_object().policy_container()->csp_list->enforce_policy(policy);
+            auto policy_list = ContentSecurityPolicy::PolicyList::from_object(realm.global_object());
+            VERIFY(policy_list);
+            policy_list->enforce_policy(policy);
             break;
         }
         default:
@@ -225,13 +227,13 @@ void HTMLMetaElement::inserted()
     }
 }
 
-void HTMLMetaElement::removed_from(IsSubtreeRoot is_subtree_root, Node* old_ancestor, Node& old_root)
+void HTMLMetaElement::removed_from(Node* old_parent, Node& old_root)
 {
-    Base::removed_from(is_subtree_root, old_ancestor, old_root);
+    Base::removed_from(old_parent, old_root);
     update_metadata();
 }
 
-void HTMLMetaElement::attribute_changed(Utf16FlyString const& local_name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
+void HTMLMetaElement::attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
 {
     Base::attribute_changed(local_name, old_value, value, namespace_);
     if (local_name == HTML::AttributeNames::name) {

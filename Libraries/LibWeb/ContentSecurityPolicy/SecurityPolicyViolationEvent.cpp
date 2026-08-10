@@ -4,20 +4,26 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SecurityPolicyViolationEventPrototype.h>
 #include <LibWeb/ContentSecurityPolicy/SecurityPolicyViolationEvent.h>
 
 namespace Web::ContentSecurityPolicy {
 
 GC_DEFINE_ALLOCATOR(SecurityPolicyViolationEvent);
 
-GC::Ref<SecurityPolicyViolationEvent> SecurityPolicyViolationEvent::create(Utf16FlyString const& event_name, SecurityPolicyViolationEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
+GC::Ref<SecurityPolicyViolationEvent> SecurityPolicyViolationEvent::create(JS::Realm& realm, FlyString const& event_name, SecurityPolicyViolationEventInit const& event_init)
 {
-    return GC::Heap::the().allocate<SecurityPolicyViolationEvent>(event_name, event_init, time_stamp);
+    return realm.create<SecurityPolicyViolationEvent>(realm, event_name, event_init);
 }
 
-SecurityPolicyViolationEvent::SecurityPolicyViolationEvent(Utf16FlyString const& event_name, SecurityPolicyViolationEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp time_stamp)
-    : Event(FlyString { event_name.view().to_utf8_but_should_be_ported_to_utf16() }, event_init, time_stamp)
+WebIDL::ExceptionOr<GC::Ref<SecurityPolicyViolationEvent>> SecurityPolicyViolationEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, SecurityPolicyViolationEventInit const& event_init)
+{
+    return realm.create<SecurityPolicyViolationEvent>(realm, event_name, event_init);
+}
+
+SecurityPolicyViolationEvent::SecurityPolicyViolationEvent(JS::Realm& realm, FlyString const& event_name, SecurityPolicyViolationEventInit const& event_init)
+    : Event(realm, event_name, event_init)
     , m_document_uri(event_init.document_uri)
     , m_referrer(event_init.referrer)
     , m_blocked_uri(event_init.blocked_uri)
@@ -34,5 +40,11 @@ SecurityPolicyViolationEvent::SecurityPolicyViolationEvent(Utf16FlyString const&
 }
 
 SecurityPolicyViolationEvent::~SecurityPolicyViolationEvent() = default;
+
+void SecurityPolicyViolationEvent::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SecurityPolicyViolationEvent);
+    Base::initialize(realm);
+}
 
 }

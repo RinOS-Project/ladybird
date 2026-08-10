@@ -6,7 +6,8 @@
  */
 
 #include <AK/Vector.h>
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/WorkerGlobalScopePrototype.h>
 #include <LibWeb/CSS/FontFaceSet.h>
 #include <LibWeb/ContentSecurityPolicy/Directives/Directive.h>
 #include <LibWeb/ContentSecurityPolicy/Policy.h>
@@ -18,34 +19,30 @@
 #include <LibWeb/HTML/MessagePort.h>
 #include <LibWeb/HTML/PolicyContainers.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
 #include <LibWeb/HTML/WorkerLocation.h>
 #include <LibWeb/HTML/WorkerNavigator.h>
 #include <LibWeb/Page/Page.h>
-#include <LibWeb/ServiceWorker/ServiceWorkerGlobalScope.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(WorkerGlobalScope);
 
-WorkerGlobalScope::WorkerGlobalScope(GC::Ref<Web::Page> page)
-    : DOM::EventTarget()
+WorkerGlobalScope::WorkerGlobalScope(JS::Realm& realm, GC::Ref<Web::Page> page)
+    : DOM::EventTarget(realm)
     , m_page(page)
 {
 }
 
 WorkerGlobalScope::~WorkerGlobalScope() = default;
 
-JS::Realm& WorkerGlobalScope::realm() const
-{
-    return Bindings::main_world_realm(*this);
-}
-
 void WorkerGlobalScope::initialize_web_interfaces_impl()
 {
-    WindowOrWorkerGlobalScopeMixin::initialize();
+    auto& realm = this->realm();
+    Base::initialize(realm);
+
+    WindowOrWorkerGlobalScopeMixin::initialize(realm);
 
     m_navigator = WorkerNavigator::create(*this);
 }
@@ -90,7 +87,8 @@ void WorkerGlobalScope::close_a_worker()
 }
 
 // https://html.spec.whatwg.org/multipage/workers.html#importing-scripts-and-libraries
-WebIDL::ExceptionOr<void> WorkerGlobalScope::import_scripts(Vector<Utf16String> const& urls, PerformTheFetchHook perform_fetch)
+// https://whatpr.org/html/9893/workers.html#importing-scripts-and-libraries
+WebIDL::ExceptionOr<void> WorkerGlobalScope::import_scripts(Vector<String> const& urls, PerformTheFetchHook perform_fetch)
 {
     // The algorithm may optionally be customized by supplying custom perform the fetch hooks,
     // which if provided will be used when invoking fetch a classic worker-imported script.
@@ -98,8 +96,8 @@ WebIDL::ExceptionOr<void> WorkerGlobalScope::import_scripts(Vector<Utf16String> 
 
     // FIXME: 1. If worker global scope's type is "module", throw a TypeError exception.
 
-    // 2. Let settings object be the current settings object.
-    auto& settings_object = HTML::current_settings_object();
+    // 2. Let settings object be the current principal settings object.
+    auto& settings_object = HTML::current_principal_settings_object();
 
     // 3. If urls is empty, return.
     if (urls.is_empty())
@@ -116,7 +114,7 @@ WebIDL::ExceptionOr<void> WorkerGlobalScope::import_scripts(Vector<Utf16String> 
 
         // 2. If urlRecord is failure, then throw a "SyntaxError" DOMException.
         if (!url_record.has_value())
-            return WebIDL::SyntaxError::create("Invalid URL"_utf16);
+            return WebIDL::SyntaxError::create(realm(), "Invalid URL"_utf16);
 
         // 3. Append urlRecord to urlRecords.
         url_records.unchecked_append(url_record.release_value());
@@ -170,14 +168,15 @@ ENUMERATE_WORKER_GLOBAL_SCOPE_EVENT_HANDLERS(__ENUMERATE)
 GC::Ref<CSS::FontFaceSet> WorkerGlobalScope::fonts()
 {
     if (!m_fonts)
-        m_fonts = CSS::FontFaceSet::create(relevant_settings_object(*this));
+        m_fonts = CSS::FontFaceSet::create(realm());
     return *m_fonts;
 }
 
 GC::Ref<PolicyContainer> WorkerGlobalScope::policy_container() const
 {
+    auto& heap = this->heap();
     if (!m_policy_container) {
-        m_policy_container = GC::Heap::the().allocate<PolicyContainer>(GC::Heap::the());
+        m_policy_container = heap.allocate<PolicyContainer>(heap);
     }
     return *m_policy_container;
 }
@@ -185,6 +184,8 @@ GC::Ref<PolicyContainer> WorkerGlobalScope::policy_container() const
 // https://html.spec.whatwg.org/multipage/browsers.html#initialize-worker-policy-container
 void WorkerGlobalScope::initialize_policy_container(GC::Ref<Fetch::Infrastructure::Response const> response, GC::Ref<EnvironmentSettingsObject> environment)
 {
+    auto& realm = this->realm();
+
     // 1. If workerGlobalScope's url is local but its scheme is not "blob":
     if (m_url.has_value() && Fetch::Infrastructure::is_local_url(m_url.value()) && m_url->scheme() != "blob"sv) {
         // FIXME: 1. Assert: workerGlobalScope's owner set's size is 1.
@@ -195,7 +196,7 @@ void WorkerGlobalScope::initialize_policy_container(GC::Ref<Fetch::Infrastructur
 
     // 2. Otherwise, set workerGlobalScope's policy container to the result of creating a policy container from a fetch
     //    response given response and environment.
-    m_policy_container = create_a_policy_container_from_a_fetch_response(response, environment);
+    m_policy_container = create_a_policy_container_from_a_fetch_response(realm.heap(), response, environment);
 }
 
 // https://w3c.github.io/webappsec-csp/#run-global-object-csp-initialization
@@ -219,37 +220,6 @@ ContentSecurityPolicy::Directives::Directive::Result WorkerGlobalScope::run_csp_
 
     // 3. Return result.
     return result;
-}
-
-}
-
-namespace Web::Bindings {
-
-HTML::WorkerGlobalScope* worker_global_scope_from_global_object(JS::Object& object)
-{
-    return Bindings::impl_from<HTML::WorkerGlobalScope>(&object);
-}
-
-HTML::WorkerGlobalScope const* worker_global_scope_from_global_object(JS::Object const& object)
-{
-    return Bindings::impl_from<HTML::WorkerGlobalScope>(&object);
-}
-
-ServiceWorker::ServiceWorkerGlobalScope* service_worker_global_scope_from_global_object(JS::Object& object)
-{
-    return Bindings::impl_from<ServiceWorker::ServiceWorkerGlobalScope>(&object);
-}
-
-JS::Realm& main_world_realm(HTML::WorkerGlobalScope const& worker_global_scope)
-{
-    auto wrapper = worker_global_scope.cached_main_world_wrapper();
-    VERIFY(wrapper);
-    return wrapper->realm();
-}
-
-void initialize_worker_web_interfaces(HTML::WorkerGlobalScope& worker_global_scope)
-{
-    worker_global_scope.initialize_web_interfaces_impl();
 }
 
 }

@@ -1,3 +1,6 @@
+#import <Compression/CompressionStream.idl>
+#import <Streams/GenericTransformStream.idl>
+
 // https://compression.spec.whatwg.org/#decompressionstream
 [Exposed=*]
 interface DecompressionStream {

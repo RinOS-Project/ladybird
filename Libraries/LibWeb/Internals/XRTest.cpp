@@ -4,11 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
-#include <LibWeb/Bindings/FakeXRDevice.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/Bindings/WrapperWorld.h>
-#include <LibWeb/HTML/Window.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/XRTestPrototype.h>
 #include <LibWeb/Internals/FakeXRDevice.h>
 #include <LibWeb/Internals/XRTest.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
@@ -18,39 +15,47 @@ namespace Web::Internals {
 
 GC_DEFINE_ALLOCATOR(XRTest);
 
-GC::Ref<XRTest> XRTest::create(HTML::Window& window)
-{
-    return GC::Heap::the().allocate<XRTest>(window);
-}
-
-XRTest::XRTest(HTML::Window& window)
-    : InternalsBase(window)
+XRTest::XRTest(JS::Realm& realm)
+    : InternalsBase(realm)
 {
 }
 
 XRTest::~XRTest() = default;
 
-void XRTest::simulate_device_connection(JS::Realm& realm, FakeXRDeviceInit const&, GC::Ref<WebIDL::Promise> promise) const
+void XRTest::initialize(JS::Realm& realm)
+{
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(XRTest);
+    Base::initialize(realm);
+}
+
+GC::Ref<WebIDL::Promise> XRTest::simulate_device_connection(FakeXRDeviceInit const&) const
 {
     // Simulates connecting a device to the system.
     // Used to instantiate a fake device for use in tests.
     // FIXME: Actually perform whatever device connection steps are needed once those are implemented.
-    auto fake_device = FakeXRDevice::create(window());
-    WebIDL::resolve_promise(promise, Bindings::wrap(Bindings::host_defined_wrapper_world(realm), realm, fake_device));
+    auto& realm = HTML::relevant_realm(*this);
+    auto promise = WebIDL::create_promise(realm);
+    WebIDL::resolve_promise(realm, promise, FakeXRDevice::create(realm));
+    return promise;
 }
 
-WebIDL::ExceptionOr<void> XRTest::simulate_user_activation(WebIDL::CallbackType& function) const
+void XRTest::simulate_user_activation(GC::Ref<WebIDL::CallbackType> function) const
 {
-    // FIXME: Actually simulate a user activation here.
-    TRY(WebIDL::invoke_callback(function, {}, {}));
-    return {};
+    // Simulates a user activation (aka user gesture) for the current scope.
+    // The activation is only guaranteed to be valid in the provided function and only applies to WebXR
+    // Device API methods.
+    // FIXME: Actually simulate a user activation here
+    (void)WebIDL::invoke_callback(*function, {}, {});
 }
 
-void XRTest::disconnect_all_devices(GC::Ref<WebIDL::Promise> promise) const
+GC::Ref<WebIDL::Promise> XRTest::disconnect_all_devices() const
 {
     // Disconnect all fake devices
     // FIXME: Actually disconnect fake devices once we have any.
-    WebIDL::resolve_promise(promise);
+    auto& realm = HTML::relevant_realm(*this);
+    auto promise = WebIDL::create_promise(realm);
+    WebIDL::resolve_promise(realm, promise);
+    return promise;
 }
 
 }

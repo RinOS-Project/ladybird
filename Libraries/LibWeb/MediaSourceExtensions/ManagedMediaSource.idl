@@ -1,3 +1,6 @@
+#import <DOM/EventHandler.idl>
+#import <MediaSourceExtensions/MediaSource.idl>
+
 // https://w3c.github.io/media-source/#managedmediasource-interface
 [Exposed=(Window,DedicatedWorker), Experimental]
 interface ManagedMediaSource : MediaSource {

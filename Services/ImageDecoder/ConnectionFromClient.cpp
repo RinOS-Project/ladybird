@@ -6,18 +6,13 @@
 
 #include <AK/Debug.h>
 #include <AK/IDAllocator.h>
-#include <AK/NonnullRefPtr.h>
 #include <ImageDecoder/ConnectionFromClient.h>
 #include <ImageDecoder/ImageDecoderClientEndpoint.h>
-#include <LibCore/EventLoop.h>
-#include <LibCore/Process.h>
 #include <LibCore/System.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImageFormats/ImageDecoder.h>
 #include <LibGfx/ImageFormats/TIFFMetadata.h>
 #include <LibIPC/TransportHandle.h>
-#include <LibSync/Mutex.h>
-#include <LibThreading/ThreadPool.h>
 
 namespace ImageDecoder {
 
@@ -46,7 +41,8 @@ void ConnectionFromClient::die()
     s_client_ids.deallocate(client_id);
 
     if (s_connections.is_empty()) {
-        Core::Process::terminate_immediately(0);
+        Threading::quit_background_thread();
+        Core::EventLoop::current().quit(0);
     }
 }
 
@@ -152,14 +148,16 @@ static ErrorOr<ConnectionFromClient::DecodeResult> decode_image_to_details(Core:
         bitmaps.ensure_capacity(batch_size);
         for (u32 i = 0; i < batch_size; ++i) {
             auto frame_or_error = decoder->frame(i, ideal_size);
-            if (frame_or_error.is_error())
-                break;
-            auto frame = frame_or_error.release_value();
-            frame.image->set_alpha_type_destructive(Gfx::AlphaType::Premultiplied);
-            bitmaps.unchecked_append(frame.image);
-            // If frame_duration() returned 0, use the actual decoded duration.
-            if (result.durations[i] == 0)
-                result.durations[i] = frame.duration;
+            if (frame_or_error.is_error()) {
+                bitmaps.unchecked_append({});
+            } else {
+                auto frame = frame_or_error.release_value();
+                frame.image->set_alpha_type_destructive(Gfx::AlphaType::Premultiplied);
+                bitmaps.unchecked_append(frame.image);
+                // If frame_duration() returned 0, use the actual decoded duration.
+                if (result.durations[i] == 0)
+                    result.durations[i] = frame.duration;
+            }
         }
 
         // Keep decoder alive for future frame requests.
@@ -177,50 +175,33 @@ static ErrorOr<ConnectionFromClient::DecodeResult> decode_image_to_details(Core:
     return result;
 }
 
-NonnullRefPtr<ConnectionFromClient::PendingJob> ConnectionFromClient::start_decode_image_job(i64 request_id, Core::AnonymousBuffer encoded_buffer, Optional<Gfx::IntSize> ideal_size, Optional<ByteString> mime_type)
+NonnullRefPtr<ConnectionFromClient::Job> ConnectionFromClient::make_decode_image_job(i64 request_id, Core::AnonymousBuffer encoded_buffer, Optional<Gfx::IntSize> ideal_size, Optional<ByteString> mime_type)
 {
-    auto job = make_ref_counted<PendingJob>();
-    auto& main_thread_event_loop = Core::EventLoop::current();
-    Threading::ThreadPool::the().submit(
-        [strong_this = NonnullRefPtr(*this), job, &main_thread_event_loop, request_id, encoded_buffer = move(encoded_buffer), ideal_size = move(ideal_size), mime_type = move(mime_type)]() mutable {
-            auto result = decode_image_to_details(move(encoded_buffer), ideal_size, mime_type);
+    return Job::construct(
+        [encoded_buffer = move(encoded_buffer), ideal_size = move(ideal_size), mime_type = move(mime_type)](auto&) mutable -> ErrorOr<DecodeResult> {
+            return TRY(decode_image_to_details(move(encoded_buffer), ideal_size, mime_type));
+        },
+        [strong_this = NonnullRefPtr(*this), request_id](DecodeResult result) {
+            i64 session_id = 0;
 
-            main_thread_event_loop.deferred_invoke([strong_this = move(strong_this), job = move(job), request_id, result = move(result)] mutable {
-                auto current_job = strong_this->m_pending_jobs.get(request_id);
-                if (!current_job.has_value() || current_job.value() != job.ptr())
-                    return;
+            if (result.decoder) {
+                // This is a streaming animated decode. Create a session.
+                session_id = strong_this->m_next_session_id++;
+                auto session = make<AnimationSession>();
+                session->encoded_data = move(result.encoded_data);
+                session->decoder = move(result.decoder);
+                session->frame_count = result.frame_count;
+                strong_this->m_animation_sessions.set(session_id, move(session));
+            }
 
-                if (job->is_canceled()) {
-                    strong_this->m_pending_jobs.remove(request_id);
-                    return;
-                }
-
-                if (result.is_error()) {
-                    if (strong_this->is_open())
-                        strong_this->async_did_fail_to_decode_image(request_id, MUST(String::formatted("Decoding failed: {}", result.release_error())));
-                    strong_this->m_pending_jobs.remove(request_id);
-                    return;
-                }
-
-                auto result_value = result.release_value();
-                i64 session_id = 0;
-
-                if (result_value.decoder) {
-                    // This is a streaming animated decode. Create a session.
-                    session_id = strong_this->m_next_session_id++;
-                    auto session = make_ref_counted<AnimationSession>();
-                    session->encoded_data = move(result_value.encoded_data);
-                    session->decoder = move(result_value.decoder);
-                    session->frame_count = result_value.frame_count;
-                    strong_this->m_animation_sessions.set(session_id, move(session));
-                }
-
-                strong_this->async_did_decode_image(request_id, result_value.is_animated, result_value.loop_count, move(result_value.bitmaps), move(result_value.durations), result_value.scale, move(result_value.color_profile), session_id);
-                strong_this->m_pending_jobs.remove(request_id);
-            });
+            strong_this->async_did_decode_image(request_id, result.is_animated, result.loop_count, move(result.bitmaps), move(result.durations), result.scale, move(result.color_profile), session_id);
+            strong_this->m_pending_jobs.remove(request_id);
+        },
+        [strong_this = NonnullRefPtr(*this), request_id](Error error) {
+            if (strong_this->is_open())
+                strong_this->async_did_fail_to_decode_image(request_id, MUST(String::formatted("Decoding failed: {}", error)));
+            strong_this->m_pending_jobs.remove(request_id);
         });
-
-    return job;
 }
 
 void ConnectionFromClient::decode_image(Core::AnonymousBuffer encoded_buffer, Optional<Gfx::IntSize> ideal_size, Optional<ByteString> mime_type, i64 request_id)
@@ -231,13 +212,68 @@ void ConnectionFromClient::decode_image(Core::AnonymousBuffer encoded_buffer, Op
         return;
     }
 
-    if (m_pending_jobs.contains(request_id)) {
+#ifdef AK_OS_RINOS
+    // RinOS 固有の上限: 決定論的に振る舞うため、サイズ/同時実行を制限する。
+    // これらに該当するリクエストは即座に失敗として返し、呼び出し元に
+    // プレースホルダ扱いさせる (layout を壊さずに先へ進む)。
+    constexpr size_t kRinosMaxEncodedBytes = 4 * 1024 * 1024;      // 4 MiB
+    constexpr int kRinosMaxIdealEdge = 512;                         // 512x512
+    constexpr size_t kRinosMaxDecodedBytes = 16 * 1024 * 1024;     // 16 MiB
+    constexpr size_t kRinosMaxPendingJobs = 8;
+
+    if (encoded_buffer.size() > kRinosMaxEncodedBytes) {
+        dbgln("[ImageDecoder] rejecting oversized input bytes={} (cap={})",
+            encoded_buffer.size(), kRinosMaxEncodedBytes);
+        async_did_fail_to_decode_image(request_id, "Encoded image exceeds RinOS size cap"_string);
+        return;
+    }
+
+    if (m_pending_jobs.size() >= kRinosMaxPendingJobs) {
+        dbgln("[ImageDecoder] rejecting request id={} pending={} (cap={})",
+            request_id, m_pending_jobs.size(), kRinosMaxPendingJobs);
+        async_did_fail_to_decode_image(request_id, "ImageDecoder queue full"_string);
+        return;
+    }
+
+    if (ideal_size.has_value()) {
+        auto size = ideal_size.value();
+        if (size.width() > kRinosMaxIdealEdge || size.height() > kRinosMaxIdealEdge) {
+            auto clamped_w = min(size.width(), kRinosMaxIdealEdge);
+            auto clamped_h = min(size.height(), kRinosMaxIdealEdge);
+            ideal_size = Gfx::IntSize { clamped_w, clamped_h };
+        }
+        // デコード後 pixel データ換算で上限超えは拒否 (BGRA 4 bytes/pixel)
+        auto const& clamped = ideal_size.value();
+        auto estimated_bytes = static_cast<size_t>(clamped.width()) * static_cast<size_t>(clamped.height()) * 4u;
+        if (estimated_bytes > kRinosMaxDecodedBytes) {
+            dbgln("[ImageDecoder] rejecting oversized decoded bytes est={} (cap={})",
+                estimated_bytes, kRinosMaxDecodedBytes);
+            async_did_fail_to_decode_image(request_id, "Decoded image exceeds RinOS size cap"_string);
+            return;
+        }
+    }
+
+    {
+        static uint64_t s_dec_seq = 0;
+        static uint64_t s_dec_last_logged = 0;
+        s_dec_seq++;
+        if (s_dec_seq <= 5 || (s_dec_seq - s_dec_last_logged) >= 60) {
+            s_dec_last_logged = s_dec_seq;
+            int iw = ideal_size.has_value() ? ideal_size.value().width() : -1;
+            int ih = ideal_size.has_value() ? ideal_size.value().height() : -1;
+            dbgln("[ImageDecoder] decode_image seq={} id={} bytes={} ideal={}x{} pending_before={}",
+                s_dec_seq, request_id, encoded_buffer.size(), iw, ih, m_pending_jobs.size());
+        }
+    }
+#endif
+
+    auto set_result = m_pending_jobs.set(request_id, make_decode_image_job(request_id, move(encoded_buffer), ideal_size, move(mime_type)), AK::HashSetExistingEntryBehavior::Keep);
+
+    if (set_result != HashSetResult::InsertedNewEntry) {
         m_pending_jobs.take(request_id).value()->cancel();
         did_misbehave("Duplicate decode request id");
         return;
     }
-
-    m_pending_jobs.set(request_id, start_decode_image_job(request_id, move(encoded_buffer), ideal_size, move(mime_type)));
 }
 
 void ConnectionFromClient::cancel_decoding(i64 request_id)
@@ -253,81 +289,41 @@ void ConnectionFromClient::request_animation_frames(i64 session_id, u32 start_fr
     if (it == m_animation_sessions.end())
         return;
 
-    auto session = it->value;
-    u32 const frame_count = session->frame_count;
+    auto& session = *it->value;
+    auto decoder = session.decoder;
+    u32 const frame_count = session.frame_count;
 
     if (start_frame_index >= frame_count)
         return;
 
     u32 const end_index = min(frame_count, start_frame_index + min(count, frame_count - start_frame_index));
 
-    if (auto previous_job = m_pending_frame_jobs.take(session_id); previous_job.has_value())
-        previous_job.value()->cancel();
-
-    m_pending_frame_jobs.set(session_id, start_frame_decode_job(session_id, move(session), start_frame_index, end_index));
-}
-
-NonnullRefPtr<ConnectionFromClient::PendingJob> ConnectionFromClient::start_frame_decode_job(i64 session_id, NonnullRefPtr<AnimationSession> session, u32 start_frame_index, u32 end_index)
-{
-    auto job = make_ref_counted<PendingJob>();
-    auto& main_thread_event_loop = Core::EventLoop::current();
-    Threading::ThreadPool::the().submit(
-        [strong_this = NonnullRefPtr(*this), job, session = move(session), &main_thread_event_loop, session_id, start_frame_index, end_index]() mutable {
-            auto result = [&]() -> ErrorOr<FrameDecodeResult> {
-                if (job->is_canceled())
-                    return FrameDecodeResult {};
-
-                Sync::MutexLocker locker { session->decoder_mutex };
-                if (!session->decoder)
-                    return Error::from_string_literal("Animation session has no decoder");
-
-                Vector<Gfx::ImageFrameDescriptor> frames;
-                frames.ensure_capacity(end_index - start_frame_index);
-                for (u32 i = start_frame_index; i < end_index; ++i) {
-                    if (job->is_canceled())
-                        return FrameDecodeResult {};
-
-                    auto frame_or_error = session->decoder->frame(i);
-                    if (frame_or_error.is_error()) {
-                        if (frames.is_empty())
-                            return frame_or_error.release_error();
-                        break;
-                    }
-                    auto frame = frame_or_error.release_value();
-                    frame.image->set_alpha_type_destructive(Gfx::AlphaType::Premultiplied);
-                    frames.unchecked_append(move(frame));
-                }
-                return frames;
-            }();
-
-            main_thread_event_loop.deferred_invoke([strong_this = move(strong_this), job = move(job), session_id, result = move(result)] mutable {
-                auto current_job = strong_this->m_pending_frame_jobs.get(session_id);
-                if (!current_job.has_value() || current_job.value() != job.ptr())
-                    return;
-
-                if (job->is_canceled()) {
-                    strong_this->m_pending_frame_jobs.remove(session_id);
-                    return;
-                }
-
-                if (result.is_error()) {
-                    if (strong_this->is_open())
-                        strong_this->async_did_fail_animation_decode(session_id, MUST(String::formatted("Frame decode failed: {}", result.release_error())));
-                    strong_this->m_pending_frame_jobs.remove(session_id);
-                    return;
-                }
-
-                auto frames = result.release_value();
-                Vector<RefPtr<Gfx::Bitmap>> bitmaps;
-                bitmaps.ensure_capacity(frames.size());
-                for (auto& frame : frames)
-                    bitmaps.unchecked_append(move(frame.image));
-                strong_this->async_did_decode_animation_frames(session_id, Gfx::BitmapSequence { move(bitmaps) });
-                strong_this->m_pending_frame_jobs.remove(session_id);
-            });
+    auto job = FrameDecodeJob::construct(
+        [decoder, start_frame_index, end_index](auto&) -> ErrorOr<Vector<Gfx::ImageFrameDescriptor>> {
+            Vector<Gfx::ImageFrameDescriptor> frames;
+            frames.ensure_capacity(end_index - start_frame_index);
+            for (u32 i = start_frame_index; i < end_index; ++i) {
+                auto frame = TRY(decoder->frame(i));
+                frame.image->set_alpha_type_destructive(Gfx::AlphaType::Premultiplied);
+                frames.unchecked_append(move(frame));
+            }
+            return frames;
+        },
+        [strong_this = NonnullRefPtr(*this), session_id](Vector<Gfx::ImageFrameDescriptor> frames) {
+            Vector<RefPtr<Gfx::Bitmap>> bitmaps;
+            bitmaps.ensure_capacity(frames.size());
+            for (auto& frame : frames)
+                bitmaps.unchecked_append(move(frame.image));
+            strong_this->async_did_decode_animation_frames(session_id, Gfx::BitmapSequence { move(bitmaps) });
+            strong_this->m_pending_frame_jobs.remove(session_id);
+        },
+        [strong_this = NonnullRefPtr(*this), session_id](Error error) {
+            if (strong_this->is_open())
+                strong_this->async_did_fail_animation_decode(session_id, MUST(String::formatted("Frame decode failed: {}", error)));
+            strong_this->m_pending_frame_jobs.remove(session_id);
         });
 
-    return job;
+    m_pending_frame_jobs.set(session_id, move(job));
 }
 
 void ConnectionFromClient::stop_animation_decode(i64 session_id)

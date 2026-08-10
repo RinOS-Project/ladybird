@@ -6,57 +6,59 @@
 
 #pragma once
 
+#include <AK/FlyString.h>
 #include <AK/Optional.h>
-#include <AK/Utf16FlyString.h>
-#include <AK/Utf16String.h>
-#include <AK/Utf16View.h>
 #include <LibGC/Ptr.h>
-#include <LibJS/Forward.h>
-#include <LibWeb/Bindings/StorageEvent.h>
 #include <LibWeb/DOM/Event.h>
-#include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 
 namespace Web::HTML {
 
-class Storage;
-
-using StorageEventInit = Bindings::StorageEventInit;
+// https://html.spec.whatwg.org/multipage/webstorage.html#storageeventinit
+struct StorageEventInit : public DOM::EventInit {
+    Optional<String> key;
+    Optional<String> old_value;
+    Optional<String> new_value;
+    String url;
+    GC::Ptr<Storage> storage_area;
+};
 
 // https://html.spec.whatwg.org/multipage/webstorage.html#storageevent
 class StorageEvent : public DOM::Event {
-    WEB_WRAPPABLE(StorageEvent, DOM::Event);
+    WEB_PLATFORM_OBJECT(StorageEvent, DOM::Event);
     GC_DECLARE_ALLOCATOR(StorageEvent);
 
 public:
-    [[nodiscard]] static GC::Ref<StorageEvent> create(Utf16FlyString const& event_name, StorageEventInit const&, HighResolutionTime::DOMHighResTimeStamp);
+    [[nodiscard]] static GC::Ref<StorageEvent> create(JS::Realm&, FlyString const& event_name, StorageEventInit const& event_init = {});
+    static GC::Ref<StorageEvent> construct_impl(JS::Realm&, FlyString const& event_name, StorageEventInit const& event_init);
 
     virtual ~StorageEvent() override;
 
-    Optional<Utf16String> const& key() const { return m_key; }
-    Optional<Utf16String> const& old_value() const { return m_old_value; }
-    Optional<Utf16String> const& new_value() const { return m_new_value; }
-    Utf16String const& url() const { return m_url; }
+    Optional<String> const& key() const { return m_key; }
+    Optional<String> const& old_value() const { return m_old_value; }
+    Optional<String> const& new_value() const { return m_new_value; }
+    String const& url() const { return m_url; }
     GC::Ptr<Storage const> storage_area() const { return m_storage_area; }
 
-    void init_storage_event(Utf16FlyString const& type,
+    void init_storage_event(String const& type,
         bool bubbles = false,
         bool cancelable = false,
-        Optional<Utf16String> const& key = {},
-        Optional<Utf16String> const& old_value = {},
-        Optional<Utf16String> const& new_value = {},
-        Utf16View url = {},
+        Optional<String> const& key = {},
+        Optional<String> const& old_value = {},
+        Optional<String> const& new_value = {},
+        String const& url = {},
         GC::Ptr<Storage> storage_area = {});
 
 protected:
     virtual void visit_edges(Visitor& visitor) override;
+    virtual void initialize(JS::Realm&) override;
 
 private:
-    StorageEvent(Utf16FlyString const& event_name, StorageEventInit const& event_init, HighResolutionTime::DOMHighResTimeStamp);
+    StorageEvent(JS::Realm&, FlyString const& event_name, StorageEventInit const& event_init);
 
-    Optional<Utf16String> m_key;
-    Optional<Utf16String> m_old_value;
-    Optional<Utf16String> m_new_value;
-    Utf16String m_url;
+    Optional<String> m_key;
+    Optional<String> m_old_value;
+    Optional<String> m_new_value;
+    String m_url;
     GC::Ptr<Storage> m_storage_area;
 };
 

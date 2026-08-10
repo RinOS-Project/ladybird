@@ -1,3 +1,5 @@
+#import <RequestIdleCallback/IdleDeadline.idl>
+
 dictionary IdleRequestOptions {
     unsigned long timeout;
 };

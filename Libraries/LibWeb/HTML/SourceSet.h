@@ -6,11 +6,9 @@
 
 #pragma once
 
-#include <AK/Utf16String.h>
 #include <AK/Variant.h>
 #include <LibURL/URL.h>
-#include <LibWeb/Forward.h>
-#include <LibWeb/PixelUnits.h>
+#include <LibWeb/CSS/CalculatedOr.h>
 
 namespace Web::HTML {
 
@@ -24,7 +22,7 @@ struct ImageSource {
         CSSPixels value { 0 };
     };
 
-    Utf16String url;
+    String url;
     Variant<Empty, PixelDensityDescriptorValue, WidthDescriptorValue> descriptor;
 };
 
@@ -35,12 +33,12 @@ struct ImageSourceAndPixelDensity {
 
 // https://html.spec.whatwg.org/multipage/images.html#source-set
 struct SourceSet {
-    static SourceSet create(DOM::Element const& element, Utf16View default_source, Utf16View srcset, Utf16View sizes, HTML::HTMLImageElement const* img = nullptr);
+    static SourceSet create(DOM::Element const& element, String const& default_source, String const& srcset, String const& sizes, HTML::HTMLImageElement const* img = nullptr);
 
     [[nodiscard]] bool is_empty() const;
 
     // https://html.spec.whatwg.org/multipage/images.html#select-an-image-source-from-a-source-set
-    [[nodiscard]] ImageSourceAndPixelDensity select_an_image_source(double device_pixel_ratio);
+    [[nodiscard]] ImageSourceAndPixelDensity select_an_image_source();
 
     // https://html.spec.whatwg.org/multipage/images.html#normalise-the-source-densities
     void normalize_source_densities(DOM::Element const&);
@@ -48,10 +46,10 @@ struct SourceSet {
     SourceSet();
 
     Vector<ImageSource> m_sources;
-    NonnullRefPtr<CSS::StyleValue const> m_source_size;
+    CSS::LengthOrCalculated m_source_size;
 };
 
-SourceSet parse_a_srcset_attribute(Utf16View);
-[[nodiscard]] NonnullRefPtr<CSS::StyleValue const> parse_a_sizes_attribute(DOM::Element const& element, Utf16View sizes, HTML::HTMLImageElement const* img = nullptr);
+SourceSet parse_a_srcset_attribute(StringView);
+[[nodiscard]] CSS::LengthOrCalculated parse_a_sizes_attribute(DOM::Element const& element, StringView sizes, HTML::HTMLImageElement const* img = nullptr);
 
 }

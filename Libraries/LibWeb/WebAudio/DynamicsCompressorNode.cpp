@@ -4,11 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/DynamicsCompressorNodePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/WebAudio/AudioParam.h>
-#include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/DynamicsCompressorNode.h>
-#include <LibWeb/WebAudio/Rendering/RenderNodes.h>
 
 namespace Web::WebAudio {
 
@@ -16,41 +15,44 @@ GC_DEFINE_ALLOCATOR(DynamicsCompressorNode);
 
 DynamicsCompressorNode::~DynamicsCompressorNode() = default;
 
-WebIDL::ExceptionOr<GC::Ref<DynamicsCompressorNode>> DynamicsCompressorNode::create(GC::Ref<BaseAudioContext> context, DynamicsCompressorOptions const& options)
+WebIDL::ExceptionOr<GC::Ref<DynamicsCompressorNode>> DynamicsCompressorNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, DynamicsCompressorOptions const& options)
+{
+    return construct_impl(realm, context, options);
+}
+
+// https://webaudio.github.io/web-audio-api/#dom-dynamicscompressornode-dynamicscompressornode
+WebIDL::ExceptionOr<GC::Ref<DynamicsCompressorNode>> DynamicsCompressorNode::construct_impl(JS::Realm& realm, GC::Ref<BaseAudioContext> context, DynamicsCompressorOptions const& options)
 {
     // Create the node and allocate memory
-    auto node = GC::Heap::the().allocate<DynamicsCompressorNode>(context, options);
+    auto node = realm.create<DynamicsCompressorNode>(realm, context, options);
 
     // Default options for channel count and interpretation
     // https://webaudio.github.io/web-audio-api/#DynamicsCompressorNode
     AudioNodeDefaultOptions default_options;
-    default_options.channel_count_mode = ChannelCountMode::ClampedMax;
-    default_options.channel_interpretation = ChannelInterpretation::Speakers;
+    default_options.channel_count_mode = Bindings::ChannelCountMode::ClampedMax;
+    default_options.channel_interpretation = Bindings::ChannelInterpretation::Speakers;
     default_options.channel_count = 2;
     // FIXME: Set tail-time to yes
 
     TRY(node->initialize_audio_node_options(options, default_options));
 
-    // FIXME: Implement actual dynamics compression; for now the signal passes through unchanged.
-    node->queue_render_node_creation(make<Rendering::PassthroughRenderNode>(node->node_id(), BaseAudioContext::render_quantum_size()));
-
     return node;
 }
 
-// https://webaudio.github.io/web-audio-api/#dom-dynamicscompressornode-dynamicscompressornode
-WebIDL::ExceptionOr<GC::Ref<DynamicsCompressorNode>> DynamicsCompressorNode::create_for_constructor(GC::Ref<BaseAudioContext> context, DynamicsCompressorOptions const& options)
+DynamicsCompressorNode::DynamicsCompressorNode(JS::Realm& realm, GC::Ref<BaseAudioContext> context, DynamicsCompressorOptions const& options)
+    : AudioNode(realm, context)
+    , m_threshold(AudioParam::create(realm, context, options.threshold, -100, 0, Bindings::AutomationRate::KRate, AudioParam::FixedAutomationRate::Yes))
+    , m_knee(AudioParam::create(realm, context, options.knee, 0, 40, Bindings::AutomationRate::KRate, AudioParam::FixedAutomationRate::Yes))
+    , m_ratio(AudioParam::create(realm, context, options.ratio, 1, 20, Bindings::AutomationRate::KRate, AudioParam::FixedAutomationRate::Yes))
+    , m_attack(AudioParam::create(realm, context, options.attack, 0, 1, Bindings::AutomationRate::KRate, AudioParam::FixedAutomationRate::Yes))
+    , m_release(AudioParam::create(realm, context, options.release, 0, 1, Bindings::AutomationRate::KRate, AudioParam::FixedAutomationRate::Yes))
 {
-    return create(context, options);
 }
 
-DynamicsCompressorNode::DynamicsCompressorNode(GC::Ref<BaseAudioContext> context, DynamicsCompressorOptions const& options)
-    : AudioNode(context)
-    , m_threshold(AudioParam::create(context, this, options.threshold, -100, 0, AutomationRate::KRate, AudioParam::FixedAutomationRate::Yes))
-    , m_knee(AudioParam::create(context, this, options.knee, 0, 40, AutomationRate::KRate, AudioParam::FixedAutomationRate::Yes))
-    , m_ratio(AudioParam::create(context, this, options.ratio, 1, 20, AutomationRate::KRate, AudioParam::FixedAutomationRate::Yes))
-    , m_attack(AudioParam::create(context, this, options.attack, 0, 1, AutomationRate::KRate, AudioParam::FixedAutomationRate::Yes))
-    , m_release(AudioParam::create(context, this, options.release, 0, 1, AutomationRate::KRate, AudioParam::FixedAutomationRate::Yes))
+void DynamicsCompressorNode::initialize(JS::Realm& realm)
 {
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(DynamicsCompressorNode);
+    Base::initialize(realm);
 }
 
 void DynamicsCompressorNode::visit_edges(Cell::Visitor& visitor)
@@ -64,11 +66,11 @@ void DynamicsCompressorNode::visit_edges(Cell::Visitor& visitor)
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audionode-channelcountmode
-WebIDL::ExceptionOr<void> DynamicsCompressorNode::set_channel_count_mode(ChannelCountMode mode)
+WebIDL::ExceptionOr<void> DynamicsCompressorNode::set_channel_count_mode(Bindings::ChannelCountMode mode)
 {
-    if (mode == ChannelCountMode::Max) {
+    if (mode == Bindings::ChannelCountMode::Max) {
         // Return a NotSupportedError if 'max' is used
-        return WebIDL::NotSupportedError::create("DynamicsCompressorNode does not support 'max' as channelCountMode."_utf16);
+        return WebIDL::NotSupportedError::create(realm(), "DynamicsCompressorNode does not support 'max' as channelCountMode."_utf16);
     }
 
     // If the mode is valid, call the base class implementation
@@ -79,7 +81,7 @@ WebIDL::ExceptionOr<void> DynamicsCompressorNode::set_channel_count_mode(Channel
 WebIDL::ExceptionOr<void> DynamicsCompressorNode::set_channel_count(WebIDL::UnsignedLong channel_count)
 {
     if (channel_count > 2) {
-        return WebIDL::NotSupportedError::create("DynamicsCompressorNode does not support channel count greater than 2"_utf16);
+        return WebIDL::NotSupportedError::create(realm(), "DynamicsCompressorNode does not support channel count greater than 2"_utf16);
     }
 
     return AudioNode::set_channel_count(channel_count);

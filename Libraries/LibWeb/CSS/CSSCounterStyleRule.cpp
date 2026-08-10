@@ -4,36 +4,26 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
+#include <LibWeb/Bindings/CSSCounterStyleRulePrototype.h>
+#include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSCounterStyleRule.h>
-#include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/Enums.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/Serialize.h>
-#include <LibWeb/CSS/StyleScope.h>
 #include <LibWeb/CSS/StyleValues/CounterStyleSystemStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
-#include <LibWeb/DOM/Node.h>
 
 namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(CSSCounterStyleRule);
 
-static Utf16String serialize_counter_style_descriptor(RefPtr<StyleValue const> const& descriptor)
+GC::Ref<CSSCounterStyleRule> CSSCounterStyleRule::create(JS::Realm& realm, FlyString name, RefPtr<StyleValue const> system, RefPtr<StyleValue const> negative, RefPtr<StyleValue const> prefix, RefPtr<StyleValue const> suffix, RefPtr<StyleValue const> range, RefPtr<StyleValue const> pad, RefPtr<StyleValue const> fallback, RefPtr<StyleValue const> symbols, RefPtr<StyleValue const> additive_symbols, RefPtr<StyleValue const> speak_as)
 {
-    if (!descriptor)
-        return {};
-
-    return descriptor->to_utf16_string(SerializationMode::Normal);
+    return realm.create<CSSCounterStyleRule>(realm, name, move(system), move(negative), move(prefix), move(suffix), move(range), move(pad), move(fallback), move(symbols), move(additive_symbols), move(speak_as));
 }
 
-GC::Ref<CSSCounterStyleRule> CSSCounterStyleRule::create(Utf16FlyString name, RefPtr<StyleValue const> system, RefPtr<StyleValue const> negative, RefPtr<StyleValue const> prefix, RefPtr<StyleValue const> suffix, RefPtr<StyleValue const> range, RefPtr<StyleValue const> pad, RefPtr<StyleValue const> fallback, RefPtr<StyleValue const> symbols, RefPtr<StyleValue const> additive_symbols, RefPtr<StyleValue const> speak_as)
-{
-    return GC::Heap::the().allocate<CSSCounterStyleRule>(name, move(system), move(negative), move(prefix), move(suffix), move(range), move(pad), move(fallback), move(symbols), move(additive_symbols), move(speak_as));
-}
-
-CSSCounterStyleRule::CSSCounterStyleRule(Utf16FlyString name, RefPtr<StyleValue const> system, RefPtr<StyleValue const> negative, RefPtr<StyleValue const> prefix, RefPtr<StyleValue const> suffix, RefPtr<StyleValue const> range, RefPtr<StyleValue const> pad, RefPtr<StyleValue const> fallback, RefPtr<StyleValue const> symbols, RefPtr<StyleValue const> additive_symbols, RefPtr<StyleValue const> speak_as)
-    : CSSRule(Type::CounterStyle)
+CSSCounterStyleRule::CSSCounterStyleRule(JS::Realm& realm, FlyString name, RefPtr<StyleValue const> system, RefPtr<StyleValue const> negative, RefPtr<StyleValue const> prefix, RefPtr<StyleValue const> suffix, RefPtr<StyleValue const> range, RefPtr<StyleValue const> pad, RefPtr<StyleValue const> fallback, RefPtr<StyleValue const> symbols, RefPtr<StyleValue const> additive_symbols, RefPtr<StyleValue const> speak_as)
+    : CSSRule(realm, Type::CounterStyle)
     , m_name(move(name))
     , m_system(move(system))
     , m_negative(move(negative))
@@ -48,81 +38,77 @@ CSSCounterStyleRule::CSSCounterStyleRule(Utf16FlyString name, RefPtr<StyleValue 
 {
 }
 
-Utf16String CSSCounterStyleRule::serialized() const
+String CSSCounterStyleRule::serialized() const
 {
-    Utf16StringBuilder builder;
+    StringBuilder builder;
     builder.appendff("@counter-style {} {{", serialize_an_identifier(m_name));
 
     if (m_system) {
-        builder.append_ascii(" system: "sv);
+        builder.append(" system: "sv);
         m_system->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii(';');
+        builder.append(';');
     }
 
     if (m_negative) {
-        builder.append_ascii(" negative: "sv);
+        builder.append(" negative: "sv);
         m_negative->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii(';');
+        builder.append(';');
     }
 
     if (m_prefix) {
-        builder.append_ascii(" prefix: "sv);
+        builder.append(" prefix: "sv);
         m_prefix->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii(';');
+        builder.append(';');
     }
 
     if (m_suffix) {
-        builder.append_ascii(" suffix: "sv);
+        builder.append(" suffix: "sv);
         m_suffix->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii(';');
+        builder.append(';');
     }
 
     if (m_range) {
-        builder.append_ascii(" range: "sv);
+        builder.append(" range: "sv);
         m_range->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii(';');
+        builder.append(';');
     }
 
     if (m_pad) {
-        builder.append_ascii(" pad: "sv);
+        builder.append(" pad: "sv);
         m_pad->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii(';');
+        builder.append(';');
     }
 
     if (m_fallback) {
-        builder.append_ascii(" fallback: "sv);
+        builder.append(" fallback: "sv);
         m_fallback->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii(';');
+        builder.append(';');
     }
 
     if (m_symbols) {
-        builder.append_ascii(" symbols: "sv);
+        builder.append(" symbols: "sv);
         m_symbols->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii(';');
+        builder.append(';');
     }
 
     if (m_additive_symbols) {
-        builder.append_ascii(" additive-symbols: "sv);
+        builder.append(" additive-symbols: "sv);
         m_additive_symbols->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii(';');
+        builder.append(';');
     }
 
     if (m_speak_as) {
-        builder.append_ascii(" speak-as: "sv);
+        builder.append(" speak-as: "sv);
         m_speak_as->serialize(builder, SerializationMode::Normal);
-        builder.append_ascii(';');
+        builder.append(';');
     }
 
-    builder.append_ascii(" }"sv);
-    return builder.to_string();
+    builder.append(" }"sv);
+    return MUST(builder.to_string());
 }
 
-void CSSCounterStyleRule::set_name(Utf16String const& name)
-{
-    set_name(Utf16FlyString { name });
-}
-
-void CSSCounterStyleRule::set_name(Utf16FlyString name)
+// https://drafts.csswg.org/css-counter-styles-3/#dom-csscounterstylerule-name
+void CSSCounterStyleRule::set_name(FlyString name)
 {
     // On setting the name attribute, run the following steps:
 
@@ -136,20 +122,21 @@ void CSSCounterStyleRule::set_name(Utf16FlyString name)
 
     // 3. Replace the associated rule’s name with an identifier equal to the value.
     m_name = move(name);
-
-    clear_caches();
 }
 
-Utf16String CSSCounterStyleRule::system() const
+FlyString CSSCounterStyleRule::system() const
 {
-    return serialize_counter_style_descriptor(m_system);
+    if (!m_system)
+        return ""_fly_string;
+
+    return m_system->to_string(SerializationMode::Normal);
 }
 
 // https://drafts.csswg.org/css-counter-styles-3/#dom-csscounterstylerule-system
-void CSSCounterStyleRule::set_system(Utf16String const& system)
+void CSSCounterStyleRule::set_system(FlyString const& system)
 {
     // 1. parse the given value as the descriptor associated with the attribute.
-    Parser::ParsingParams parsing_params;
+    Parser::ParsingParams parsing_params { realm() };
     auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::System), system);
 
     // 2. If the result is invalid according to the given descriptor’s grammar, or would cause the @counter-style rule
@@ -168,112 +155,119 @@ void CSSCounterStyleRule::set_system(Utf16String const& system)
 
     // 4. Set the descriptor to the value.
     m_system = value;
-
-    clear_caches();
 }
 
-Utf16String CSSCounterStyleRule::negative() const
+FlyString CSSCounterStyleRule::negative() const
 {
-    return serialize_counter_style_descriptor(m_negative);
+    if (!m_negative)
+        return ""_fly_string;
+
+    return m_negative->to_string(SerializationMode::Normal);
 }
 
-void CSSCounterStyleRule::set_negative(Utf16String const& negative)
+void CSSCounterStyleRule::set_negative(FlyString const& negative)
 {
-    Parser::ParsingParams parsing_params;
+    Parser::ParsingParams parsing_params { realm() };
 
-    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Negative), negative)) {
+    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Negative), negative))
         m_negative = value;
-        clear_caches();
-    }
 }
 
-Utf16String CSSCounterStyleRule::prefix() const
+FlyString CSSCounterStyleRule::prefix() const
 {
-    return serialize_counter_style_descriptor(m_prefix);
+    if (!m_prefix)
+        return ""_fly_string;
+
+    return m_prefix->to_string(SerializationMode::Normal);
 }
 
-void CSSCounterStyleRule::set_prefix(Utf16String const& prefix)
+void CSSCounterStyleRule::set_prefix(FlyString const& prefix)
 {
-    Parser::ParsingParams parsing_params;
+    Parser::ParsingParams parsing_params { realm() };
 
-    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Prefix), prefix)) {
+    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Prefix), prefix))
         m_prefix = value;
-        clear_caches();
-    }
 }
 
-Utf16String CSSCounterStyleRule::suffix() const
+FlyString CSSCounterStyleRule::suffix() const
 {
-    return serialize_counter_style_descriptor(m_suffix);
+    if (!m_suffix)
+        return ""_fly_string;
+
+    return m_suffix->to_string(SerializationMode::Normal);
 }
 
-void CSSCounterStyleRule::set_suffix(Utf16String const& suffix)
+void CSSCounterStyleRule::set_suffix(FlyString const& suffix)
 {
-    Parser::ParsingParams parsing_params;
+    Parser::ParsingParams parsing_params { realm() };
 
-    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Suffix), suffix)) {
+    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Suffix), suffix))
         m_suffix = value;
-        clear_caches();
-    }
 }
 
-Utf16String CSSCounterStyleRule::range() const
+FlyString CSSCounterStyleRule::range() const
 {
-    return serialize_counter_style_descriptor(m_range);
+    if (!m_range)
+        return ""_fly_string;
+
+    return m_range->to_string(SerializationMode::Normal);
 }
 
-void CSSCounterStyleRule::set_range(Utf16String const& range)
+void CSSCounterStyleRule::set_range(FlyString const& range)
 {
-    Parser::ParsingParams parsing_params;
+    Parser::ParsingParams parsing_params { realm() };
 
-    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Range), range)) {
+    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Range), range))
         m_range = value;
-        clear_caches();
-    }
 }
 
-Utf16String CSSCounterStyleRule::pad() const
+FlyString CSSCounterStyleRule::pad() const
 {
-    return serialize_counter_style_descriptor(m_pad);
+    if (!m_pad)
+        return ""_fly_string;
+
+    return m_pad->to_string(SerializationMode::Normal);
 }
 
-void CSSCounterStyleRule::set_pad(Utf16String const& pad)
+void CSSCounterStyleRule::set_pad(FlyString const& pad)
 {
-    Parser::ParsingParams parsing_params;
+    Parser::ParsingParams parsing_params { realm() };
 
-    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Pad), pad)) {
+    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Pad), pad))
         m_pad = value;
-        clear_caches();
-    }
 }
 
-Utf16String CSSCounterStyleRule::fallback() const
+FlyString CSSCounterStyleRule::fallback() const
 {
-    return serialize_counter_style_descriptor(m_fallback);
+    if (!m_fallback)
+        return ""_fly_string;
+
+    return m_fallback->to_string(SerializationMode::Normal);
 }
 
-void CSSCounterStyleRule::set_fallback(Utf16String const& fallback)
+void CSSCounterStyleRule::set_fallback(FlyString const& fallback)
 {
-    Parser::ParsingParams parsing_params;
+    Parser::ParsingParams parsing_params { realm() };
 
-    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Fallback), fallback)) {
+    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Fallback), fallback))
         m_fallback = value;
-        clear_caches();
-    }
 }
 
-Utf16String CSSCounterStyleRule::symbols() const
+FlyString CSSCounterStyleRule::symbols() const
 {
-    return serialize_counter_style_descriptor(m_symbols);
+    if (!m_symbols)
+        return ""_fly_string;
+
+    return m_symbols->to_string(SerializationMode::Normal);
 }
 
 // https://drafts.csswg.org/css-counter-styles-3/#dom-csscounterstylerule-symbols
-void CSSCounterStyleRule::set_symbols(Utf16String const& symbols)
+void CSSCounterStyleRule::set_symbols(FlyString const& symbols)
 {
     // On setting, run the following steps:
 
     // 1. parse the given value as the descriptor associated with the attribute.
-    Parser::ParsingParams parsing_params;
+    Parser::ParsingParams parsing_params { realm() };
 
     auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::Symbols), symbols);
 
@@ -288,22 +282,23 @@ void CSSCounterStyleRule::set_symbols(Utf16String const& symbols)
 
     // 4. Set the descriptor to the value.
     m_symbols = value;
-
-    clear_caches();
 }
 
-Utf16String CSSCounterStyleRule::additive_symbols() const
+FlyString CSSCounterStyleRule::additive_symbols() const
 {
-    return serialize_counter_style_descriptor(m_additive_symbols);
+    if (!m_additive_symbols)
+        return ""_fly_string;
+
+    return m_additive_symbols->to_string(SerializationMode::Normal);
 }
 
 // https://drafts.csswg.org/css-counter-styles-3/#dom-csscounterstylerule-additivesymbols
-void CSSCounterStyleRule::set_additive_symbols(Utf16String const& additive_symbols)
+void CSSCounterStyleRule::set_additive_symbols(FlyString const& additive_symbols)
 {
     // On setting, run the following steps:
 
     // 1. parse the given value as the descriptor associated with the attribute.
-    Parser::ParsingParams parsing_params;
+    Parser::ParsingParams parsing_params { realm() };
 
     auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::AdditiveSymbols), additive_symbols);
 
@@ -318,38 +313,28 @@ void CSSCounterStyleRule::set_additive_symbols(Utf16String const& additive_symbo
 
     // 4. Set the descriptor to the value.
     m_additive_symbols = value;
-
-    clear_caches();
 }
 
-Utf16String CSSCounterStyleRule::speak_as() const
+FlyString CSSCounterStyleRule::speak_as() const
 {
-    return serialize_counter_style_descriptor(m_speak_as);
+    if (!m_speak_as)
+        return ""_fly_string;
+
+    return m_speak_as->to_string(SerializationMode::Normal);
 }
 
-void CSSCounterStyleRule::set_speak_as(Utf16String const& speak_as)
+void CSSCounterStyleRule::set_speak_as(FlyString const& speak_as)
 {
-    Parser::ParsingParams parsing_params;
+    Parser::ParsingParams parsing_params { realm() };
 
-    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::SpeakAs), speak_as)) {
+    if (auto value = parse_css_descriptor(parsing_params, CSS::AtRuleID::CounterStyle, DescriptorNameAndID::from_id(CSS::DescriptorID::SpeakAs), speak_as))
         m_speak_as = value;
-        clear_caches();
-    }
 }
 
-void CSSCounterStyleRule::clear_caches()
+void CSSCounterStyleRule::initialize(JS::Realm& realm)
 {
-    Base::clear_caches();
-
-    auto* parent_style_sheet = this->parent_style_sheet();
-
-    if (!parent_style_sheet)
-        return;
-
-    parent_style_sheet->for_each_owning_style_scope([&](StyleScope& style_scope) {
-        style_scope.invalidate_counter_style_cache();
-        style_scope.node().invalidate_style(DOM::StyleInvalidationReason::CounterStyleCacheInvalidated);
-    });
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSCounterStyleRule);
+    Base::initialize(realm);
 }
 
 }

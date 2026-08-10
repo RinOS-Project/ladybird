@@ -42,7 +42,7 @@ class TestType(Enum):
         obj._value_ = args[0]
         return obj
 
-    def __init__(self, _: int, input_path: str, expected_path: str):
+    def __init__(self, _: str, input_path: str, expected_path: str):
         self.input_path = input_path
         self.expected_path = expected_path
 
@@ -62,8 +62,8 @@ class ResourceAndType:
 
 
 test_type = TestType.TEXT
-raw_reference_paths = []  # As specified in the test HTML
-reference_paths = []  # With parent directories
+raw_reference_path = None  # As specified in the test HTML
+reference_path = None  # With parent directories
 
 
 class LinkedResourceFinder(HTMLParser):
@@ -73,10 +73,7 @@ class LinkedResourceFinder(HTMLParser):
         self._match_css_url_ = re.compile(r"url\(['\"]?(?P<url>[^'\")]+)['\"]?\)")
         self._match_css_import_string_ = re.compile(r"@import\s+\"(?P<url>[^\")]+)\"")
         self._match_fetch_import_path = re.compile(r"fetch\((\"|\')(?P<url>.*)(\"|\')\)")
-        self._match_import_call = re.compile(r"import\(['\"](?P<url>.*?)['\"].*\)")
-        self._match_import_statement = re.compile(r"import (.*? from )?['\"](?P<url>.*?)['\"]")
-        self._match_src_assignment = re.compile(r"\.src ?= ?['\"](?P<url>.*?)['\"]")
-        self._match_worker_import_path = re.compile(r"Worker\(['\"](?P<url>.*)['\"]\)")
+        self._match_worker_import_path = re.compile(r"Worker\(\"(?P<url>.*)\"\)")
         self._resources = set()
 
     @property
@@ -119,21 +116,6 @@ class LinkedResourceFinder(HTMLParser):
             for match in fetch_iterator:
                 self._resources.add(match.group("url"))
 
-            # Look for uses of import()
-            import_call_iterator = self._match_import_call.finditer(data)
-            for match in import_call_iterator:
-                self._resources.add(match.group("url"))
-
-            # Look for uses of import statements
-            import_statement_iterator = self._match_import_statement.finditer(data)
-            for match in import_statement_iterator:
-                self._resources.add(match.group("url"))
-
-            # Look for uses of .src = "..."
-            src_assignment_iterator = self._match_src_assignment.finditer(data)
-            for match in src_assignment_iterator:
-                self._resources.add(match.group("url"))
-
             # Look for uses of Worker()
             filepath_iterator = self._match_worker_import_path.finditer(data)
             for match in filepath_iterator:
@@ -142,25 +124,27 @@ class LinkedResourceFinder(HTMLParser):
 
 class TestTypeIdentifier(HTMLParser):
     """Identifies what kind of test the page is, and stores it in self.test_type
-    For reference tests, the URLs of the reference pages are saved as self.reference_paths
+    For reference tests, the URL of the reference page is saved as self.reference_path
     """
 
     def __init__(self, url):
         super().__init__()
         self.url = url
         self.test_type = TestType.TEXT
-        self.reference_paths = []
+        self.reference_path = None
+        self.ref_test_link_found = False
 
     def handle_starttag(self, tag, attrs):
         if ":" in tag:
             tag = tag.split(":", 1)[-1]
         if tag == "link":
             attr_dict = dict(attrs)
-            rel_tokens = (attr_dict.get("rel") or "").split()
-            href = attr_dict.get("href")
-            if href is not None and ("match" in rel_tokens or "mismatch" in rel_tokens):
+            if "rel" in attr_dict and (attr_dict["rel"] == "match" or attr_dict["rel"] == "mismatch"):
+                if self.ref_test_link_found:
+                    raise RuntimeError("Ref tests with multiple match or mismatch links are not currently supported")
                 self.test_type = TestType.REF
-                self.reference_paths.append(href)
+                self.reference_path = attr_dict["href"]
+                self.ref_test_link_found = True
 
 
 def map_to_path(
@@ -174,7 +158,6 @@ def map_to_path(
         if source.resource.startswith("/") or not is_resource:
             file_path = Path(base_directory, source.resource.lstrip("/"))
         else:
-            assert resource_path is not None
             parsed_url = urlparse(source.resource)
             if parsed_url.scheme != "":
                 print(f"Skipping '{source.resource}'. Downloading external resources is not supported.")
@@ -220,27 +203,22 @@ def modify_sources(files, resources: list[ResourceAndType]) -> None:
         parent_folder_count = len(Path(non_prefixed_path).parent.parts) - 1
         parent_folder_path = "../" * parent_folder_count
 
-        # Open the file in binary mode. Some WPT test files (e.g,
-        # encoding-detection tests) are intentionally stored in a legacy
-        # encoding rather than UTF-8. We only rewrite ASCII path references
-        # below, so byte-level replacements preserve the original encoding of
-        # the non-ASCII content.
-        with open(file, "rb") as f:
+        with open(file, "r") as f:
             page_source = f.read()
 
         # Iterate all scripts and overwrite the src attribute
         for resource in map(lambda r: r.resource, resources):
             if resource.startswith("/"):
                 new_src_value = parent_folder_path + resource[1::]
-                page_source = page_source.replace(resource.encode(), new_src_value.encode())
+                page_source = page_source.replace(resource, new_src_value)
 
-        # Look for mentions of reference pages, and update their hrefs
-        for raw_reference_path, reference_path in zip(raw_reference_paths, reference_paths):
+        # Look for mentions of the reference page, and update their href
+        if raw_reference_path is not None:
             new_reference_path = parent_folder_path + "../../expected/wpt-import/" + reference_path[::]
-            page_source = page_source.replace(raw_reference_path.encode(), new_reference_path.encode())
+            page_source = page_source.replace(raw_reference_path, new_reference_path)
 
-        with open(file, "wb") as f:
-            f.write(page_source)
+        with open(file, "w") as f:
+            f.write(str(page_source))
 
 
 def normalize_url(url):
@@ -361,29 +339,26 @@ def main():
     resource_path = "/".join(Path(url_to_import).parts[2::])
 
     with urlopen(url_to_import) as response:
-        # Some WPT test files (e.g. `encoding-detection` tests) are intentionally stored in a
-        # legacy encoding rather than UTF-8. We only parse the ASCII tag structure here, so
-        # replacing undecodable bytes with U+FFFD is safe and avoids a UnicodeDecodeError.
-        page = response.read().decode("utf-8", errors="replace")
+        page = response.read().decode("utf-8")
 
-    global test_type, reference_paths, raw_reference_paths
+    global test_type, reference_path, raw_reference_path
     if is_crash_test(url_to_import):
         test_type = TestType.CRASH
     else:
         identifier = TestTypeIdentifier(url_to_import)
         identifier.feed(page)
         test_type = identifier.test_type
-        raw_reference_paths = identifier.reference_paths
+        raw_reference_path = identifier.reference_path
 
-    print(f"Identified {url_to_import} as type {test_type}, refs {raw_reference_paths}")
+    print(f"Identified {url_to_import} as type {test_type}, ref {raw_reference_path}")
 
     main_file = [ResourceAndType(resource_path, ResourceType.INPUT)]
     main_paths = map_to_path(main_file, wpt_base_url, False)
 
-    if test_type == TestType.REF and not raw_reference_paths:
+    if test_type == TestType.REF and raw_reference_path is None:
         raise RuntimeError("Failed to file reference path in ref test")
 
-    for raw_reference_path in raw_reference_paths:
+    if raw_reference_path is not None:
         if raw_reference_path.startswith("/"):
             reference_path = raw_reference_path
             main_paths.append(
@@ -400,7 +375,6 @@ def main():
                     Path(test_type.expected_path + "/" + reference_path).absolute(),
                 )
             )
-        reference_paths.append(reference_path)
 
     files_to_modify = download_files(main_paths, wpt_base_url, skip_existing)
     download_headers_files(main_paths, wpt_base_url, skip_existing)
@@ -413,10 +387,7 @@ def main():
     expected_parser = LinkedResourceFinder()
     for path in main_paths[1:]:
         with urlopen(path.source) as response:
-            # Some WPT test files (e.g. `encoding-detection` tests) are intentionally stored in a
-            # legacy encoding rather than UTF-8. We only parse the ASCII tag structure here, so
-            # replacing undecodable bytes with U+FFFD is safe and avoids a UnicodeDecodeError.
-            page = response.read().decode("utf-8", errors="replace")
+            page = response.read().decode("utf-8")
             expected_parser.feed(page)
     additional_resources.extend(
         list(map(lambda s: ResourceAndType(s, ResourceType.EXPECTED), expected_parser.resources))

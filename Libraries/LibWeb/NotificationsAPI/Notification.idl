@@ -1,3 +1,6 @@
+#import <DOM/EventTarget.idl>
+#import <HighResolutionTime/EpochTimeStamp.idl>
+
 // https://notifications.spec.whatwg.org/#notification
 [Exposed=(Window,Worker)]
 interface Notification : EventTarget {
@@ -14,14 +17,14 @@ interface Notification : EventTarget {
     [FIXME] attribute EventHandler onclose;
 
     readonly attribute Utf16DOMString title;
-    [ImplementedAs=notification_direction] readonly attribute NotificationDirection dir;
+    readonly attribute NotificationDirection dir;
     readonly attribute Utf16DOMString lang;
     readonly attribute Utf16DOMString body;
-    readonly attribute Utf16USVString navigate;
+    readonly attribute USVString navigate;
     readonly attribute Utf16DOMString tag;
-    readonly attribute Utf16USVString image;
-    readonly attribute Utf16USVString icon;
-    readonly attribute Utf16USVString badge;
+    readonly attribute USVString image;
+    readonly attribute USVString icon;
+    readonly attribute USVString badge;
     // FIXME: [SameObject] readonly attribute FrozenArray<unsigned long> vibrate;
     readonly attribute EpochTimeStamp timestamp;
     readonly attribute boolean renotify;
@@ -35,13 +38,13 @@ interface Notification : EventTarget {
 
 dictionary NotificationOptions {
     NotificationDirection dir = "auto";
-    Utf16DOMString lang = "";
-    Utf16DOMString body = "";
-    Utf16USVString navigate;
-    Utf16DOMString tag = "";
-    Utf16USVString image;
-    Utf16USVString icon;
-    Utf16USVString badge;
+    DOMString lang = "";
+    DOMString body = "";
+    USVString navigate;
+    DOMString tag = "";
+    USVString image;
+    USVString icon;
+    USVString badge;
     // FIXME: VibratePattern vibrate;
     EpochTimeStamp timestamp;
     boolean renotify = false;
@@ -64,10 +67,10 @@ enum NotificationDirection {
 };
 
 dictionary NotificationAction {
-    required Utf16DOMString action;
-    required Utf16DOMString title;
-    Utf16USVString navigate;
-    Utf16USVString icon;
+    required DOMString action;
+    required DOMString title;
+    USVString navigate;
+    USVString icon;
 };
 
 [FIXME] callback NotificationPermissionCallback = undefined (NotificationPermission permission);

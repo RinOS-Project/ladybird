@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Heap.h>
 #include <LibWeb/DOM/AccessibilityTreeNode.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
@@ -15,9 +14,9 @@ namespace Web::DOM {
 
 GC_DEFINE_ALLOCATOR(AccessibilityTreeNode);
 
-GC::Ref<AccessibilityTreeNode> AccessibilityTreeNode::create(DOM::Node const* value)
+GC::Ref<AccessibilityTreeNode> AccessibilityTreeNode::create(Document* document, DOM::Node const* value)
 {
-    return GC::Heap::the().allocate<AccessibilityTreeNode>(value);
+    return document->realm().create<AccessibilityTreeNode>(value);
 }
 
 AccessibilityTreeNode::AccessibilityTreeNode(GC::Ptr<DOM::Node const> value)
@@ -26,7 +25,7 @@ AccessibilityTreeNode::AccessibilityTreeNode(GC::Ptr<DOM::Node const> value)
     m_children = {};
 }
 
-void AccessibilityTreeNode::serialize_tree_as_json(JsonObjectSerializer<Utf16StringBuilder>& object, Document const& document) const
+void AccessibilityTreeNode::serialize_tree_as_json(JsonObjectSerializer<StringBuilder>& object, Document const& document) const
 {
     if (value()->is_document()) {
         VERIFY_NOT_REACHED();
@@ -40,12 +39,12 @@ void AccessibilityTreeNode::serialize_tree_as_json(JsonObjectSerializer<Utf16Str
             bool has_role = role.has_value() && !ARIA::is_abstract_role(*role);
 
             auto name = MUST(element->accessible_name(document));
-            MUST(object.add("name"sv, name.utf16_view()));
+            MUST(object.add("name"sv, name));
             auto description = MUST(element->accessible_description(document));
-            MUST(object.add("description"sv, description.utf16_view()));
+            MUST(object.add("description"sv, description));
 
             if (has_role)
-                MUST(object.add("role"sv, ARIA::role_name(*role).utf16_view()));
+                MUST(object.add("role"sv, ARIA::role_name(*role)));
             else
                 MUST(object.add("role"sv, ""sv));
         } else {
@@ -55,7 +54,7 @@ void AccessibilityTreeNode::serialize_tree_as_json(JsonObjectSerializer<Utf16Str
         MUST(object.add("type"sv, "text"sv));
 
         auto const* text_node = static_cast<DOM::Text const*>(value().ptr());
-        MUST(object.add("name"sv, text_node->data().utf16_view()));
+        MUST(object.add("name"sv, text_node->data().to_utf8()));
         MUST(object.add("role"sv, "text leaf"sv));
     }
 
@@ -66,7 +65,7 @@ void AccessibilityTreeNode::serialize_tree_as_json(JsonObjectSerializer<Utf16Str
         for (auto& child : children()) {
             if (child->value()->is_uninteresting_whitespace_node())
                 continue;
-            JsonObjectSerializer<Utf16StringBuilder> child_object = MUST(node_children.add_object());
+            JsonObjectSerializer<StringBuilder> child_object = MUST(node_children.add_object());
             child->serialize_tree_as_json(child_object, document);
             MUST(child_object.finish());
         }

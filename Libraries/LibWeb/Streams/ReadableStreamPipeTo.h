@@ -30,6 +30,7 @@ public:
 
 private:
     ReadableStreamPipeTo(
+        GC::Ref<JS::Realm>,
         GC::Ref<WebIDL::Promise>,
         GC::Ref<ReadableStream> source,
         GC::Ref<WritableStream> destination,
@@ -40,8 +41,6 @@ private:
         bool prevent_cancel);
 
     virtual void visit_edges(Cell::Visitor& visitor) override;
-
-    JS::Realm& promise_realm() const;
 
     void read_chunk();
     void write_chunk();
@@ -57,6 +56,7 @@ private:
     bool check_for_forward_close();
     bool check_for_backward_close();
 
+    GC::Ref<JS::Realm> m_realm;
     GC::Ref<WebIDL::Promise> m_promise;
 
     GC::Ref<ReadableStream> m_source;

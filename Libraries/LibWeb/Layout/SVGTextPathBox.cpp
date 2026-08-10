@@ -9,12 +9,14 @@
 
 namespace Web::Layout {
 
-SVGTextPathBox::SVGTextPathBox(DOM::Document& document, SVG::SVGTextPathElement& element, NonnullRefPtr<CSS::ComputedValues const> style)
+GC_DEFINE_ALLOCATOR(SVGTextPathBox);
+
+SVGTextPathBox::SVGTextPathBox(DOM::Document& document, SVG::SVGTextPathElement& element, GC::Ref<CSS::ComputedProperties> style)
     : SVGGraphicsBox(document, element, style)
 {
 }
 
-RefPtr<Painting::Paintable> SVGTextPathBox::create_paintable() const
+GC::Ptr<Painting::Paintable> SVGTextPathBox::create_paintable() const
 {
     return Painting::SVGPathPaintable::create(*this);
 }

@@ -6,7 +6,6 @@
 
 #include <AK/Array.h>
 #include <AK/JsonObject.h>
-#include <AK/NeverDestroyed.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
 #include <LibWeb/WebDriver/Error.h>
@@ -15,11 +14,7 @@
 namespace Web::WebDriver {
 
 // https://w3c.github.io/webdriver/#dfn-user-prompt-handler
-static UserPromptHandler& user_prompt_handler_storage()
-{
-    static auto& handler = *new UserPromptHandler;
-    return handler;
-}
+static UserPromptHandler s_user_prompt_handler;
 
 // https://w3c.github.io/webdriver/#dfn-known-prompt-handlers
 static constexpr Array known_prompt_handlers { "dismiss"sv, "accept"sv, "dismiss and notify"sv, "accept and notify"sv, "ignore"sv };
@@ -109,41 +104,12 @@ StringView PromptHandlerConfiguration::serialize() const
 
 UserPromptHandler const& user_prompt_handler()
 {
-    return user_prompt_handler_storage();
+    return s_user_prompt_handler;
 }
 
 void set_user_prompt_handler(UserPromptHandler user_prompt_handler)
 {
-    user_prompt_handler_storage() = move(user_prompt_handler);
-}
-
-// https://w3c.github.io/webdriver/#dfn-get-the-prompt-handler
-PromptHandlerConfiguration get_the_prompt_handler(PromptType type)
-{
-    static NeverDestroyed<UserPromptHandler::ValueType> empty_user_prompt_handler;
-
-    // 1. If the user prompt handler is null, let handlers be an empty map. Otherwise let handlers be user prompt
-    //    handler.
-    auto const& handlers = user_prompt_handler_storage().has_value() ? *user_prompt_handler_storage() : *empty_user_prompt_handler;
-
-    // 2. If handlers contains type return handlers[type].
-    if (auto handler = handlers.get(type); handler.has_value())
-        return *handler;
-
-    // 3. If handlers contains "default" return handlers["default"].
-    if (auto handler = handlers.get(PromptType::Default); handler.has_value())
-        return *handler;
-
-    // 4. If type is "beforeUnload", return a prompt handler configuration with handler "accept" and notify false.
-    if (type == PromptType::BeforeUnload)
-        return { .handler = PromptHandler::Accept, .notify = PromptHandlerConfiguration::Notify::No };
-
-    // 5. If handlers contains "fallbackDefault" return handlers["fallbackDefault"].
-    if (auto handler = handlers.get(PromptType::FallbackDefault); handler.has_value())
-        return *handler;
-
-    // 6. Return a prompt handler configuration with handler "dismiss" and notify true.
-    return { .handler = PromptHandler::Dismiss, .notify = PromptHandlerConfiguration::Notify::Yes };
+    s_user_prompt_handler = move(user_prompt_handler);
 }
 
 // https://w3c.github.io/webdriver/#dfn-deserialize-as-an-unhandled-prompt-behavior
@@ -226,13 +192,13 @@ Response deserialize_as_an_unhandled_prompt_behavior(JsonValue value)
 bool check_user_prompt_handler_matches(JsonObject const& requested_prompt_handler)
 {
     // 1. If the user prompt handler is null, return true.
-    if (!user_prompt_handler_storage().has_value())
+    if (!s_user_prompt_handler.has_value())
         return true;
 
     // 2. For each request prompt type → request handler in requested prompt handler:
     auto result = requested_prompt_handler.try_for_each_member([&](String const& request_prompt_type, JsonValue const& request_handler) -> ErrorOr<void> {
         // 1. If the user prompt handler contains request prompt type:
-        if (auto handler = user_prompt_handler_storage()->get(prompt_type_from_string(request_prompt_type)); handler.has_value()) {
+        if (auto handler = s_user_prompt_handler->get(prompt_type_from_string(request_prompt_type)); handler.has_value()) {
             // 1. If the requested prompt handler's handler is not equal to the user prompt handler's handler, return false.
             if (handler != PromptHandlerConfiguration::deserialize(request_handler))
                 return AK::Error::from_string_literal("Prompt handler mismatch");
@@ -249,13 +215,13 @@ bool check_user_prompt_handler_matches(JsonObject const& requested_prompt_handle
 void update_the_user_prompt_handler(JsonObject const& requested_prompt_handler)
 {
     // 1. If the user prompt handler is null, set the user prompt handler to an empty map.
-    if (!user_prompt_handler_storage().has_value())
-        user_prompt_handler_storage() = UserPromptHandler::ValueType {};
+    if (!s_user_prompt_handler.has_value())
+        s_user_prompt_handler = UserPromptHandler::ValueType {};
 
     // 2. For each request prompt type → request handler in requested prompt handler:
     requested_prompt_handler.for_each_member([&](String const& request_prompt_type, JsonValue const& request_handler) {
         // 1. Set user prompt handler[request prompt type] to request handler.
-        user_prompt_handler_storage()->set(
+        s_user_prompt_handler->set(
             prompt_type_from_string(request_prompt_type),
             PromptHandlerConfiguration::deserialize(request_handler));
     });
@@ -265,13 +231,13 @@ void update_the_user_prompt_handler(JsonObject const& requested_prompt_handler)
 JsonValue serialize_the_user_prompt_handler()
 {
     // 1. If the user prompt handler is null, return "dismiss and notify".
-    if (!user_prompt_handler_storage().has_value())
+    if (!s_user_prompt_handler.has_value())
         return "dismiss and notify"sv;
 
     // 2. If the user prompt handler has size 1, and user prompt handler contains "fallbackDefault", return the result
     //    of serialize a prompt handler configuration with user prompt handler["fallbackDefault"].
-    if (user_prompt_handler_storage()->size() == 1) {
-        if (auto handler = user_prompt_handler_storage()->get(PromptType::FallbackDefault); handler.has_value())
+    if (s_user_prompt_handler->size() == 1) {
+        if (auto handler = s_user_prompt_handler->get(PromptType::FallbackDefault); handler.has_value())
             return handler->serialize();
     }
 
@@ -279,7 +245,7 @@ JsonValue serialize_the_user_prompt_handler()
     JsonObject serialized;
 
     // 4. For each key → value of user prompt handler:
-    for (auto const& [key, value] : *user_prompt_handler_storage()) {
+    for (auto const& [key, value] : *s_user_prompt_handler) {
         // 1. Set serialized[key] to serialize a prompt handler configuration with value.
         serialized.set(prompt_type_to_string(key), value.serialize());
     }

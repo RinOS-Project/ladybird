@@ -5,30 +5,29 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/ByteBuffer.h>
 #include <AK/FlyString.h>
-#include <LibGC/Heap.h>
-#include <LibJS/Runtime/VM.h>
+#include <LibJS/Runtime/TypedArray.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/TextDecoderPrototype.h>
 #include <LibWeb/Encoding/TextDecoder.h>
+#include <LibWeb/WebIDL/AbstractOperations.h>
+#include <LibWeb/WebIDL/Buffers.h>
 
 namespace Web::Encoding {
 
 GC_DEFINE_ALLOCATOR(TextDecoder);
 
-WebIDL::ExceptionOr<GC::Ref<TextDecoder>> TextDecoder::create(Utf16String const& label, TextDecoderOptions const& options)
-{
-    return create(Utf16FlyString::from_utf16(label.utf16_view()), options);
-}
-
 // https://encoding.spec.whatwg.org/#dom-textdecoder
-WebIDL::ExceptionOr<GC::Ref<TextDecoder>> TextDecoder::create(Utf16FlyString label, TextDecoderOptions const& options)
+WebIDL::ExceptionOr<GC::Ref<TextDecoder>> TextDecoder::construct_impl(JS::Realm& realm, FlyString label, Optional<TextDecoderOptions> const& options)
 {
+    auto& vm = realm.vm();
+
     // 1. Let encoding be the result of getting an encoding from label.
-    auto encoding = TextCodec::get_standardized_encoding(label.view());
+    auto encoding = TextCodec::get_standardized_encoding(label);
 
     // 2. If encoding is failure or replacement, then throw a RangeError.
     if (!encoding.has_value() || encoding->equals_ignoring_ascii_case("replacement"sv))
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Invalid encoding"_utf16 };
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, TRY_OR_THROW_OOM(vm, String::formatted("Invalid encoding {}", label)) };
 
     // 3. Set this’s encoding to encoding.
     // https://encoding.spec.whatwg.org/#dom-textdecoder-encoding
@@ -36,76 +35,51 @@ WebIDL::ExceptionOr<GC::Ref<TextDecoder>> TextDecoder::create(Utf16FlyString lab
     auto lowercase_encoding_name = encoding.value().to_ascii_lowercase_string();
 
     // 4. If options["fatal"] is true, then set this’s error mode to "fatal".
-    auto error_mode = options.fatal ? TextCodec::ErrorMode::Fatal : TextCodec::ErrorMode::Replacement;
+    auto fatal = options.value_or({}).fatal;
 
     // 5. Set this’s ignore BOM to options["ignoreBOM"].
-    auto ignore_bom = options.ignore_bom;
+    auto ignore_bom = options.value_or({}).ignore_bom;
 
     // NOTE: This should happen in decode(), but we don't support streaming yet and share decoders across calls.
-    return GC::Heap::the().allocate<TextDecoder>(lowercase_encoding_name, error_mode, ignore_bom);
+    auto decoder = TextCodec::decoder_for_exact_name(encoding.value());
+    VERIFY(decoder.has_value());
+
+    return realm.create<TextDecoder>(realm, *decoder, lowercase_encoding_name, fatal, ignore_bom);
 }
 
 // https://encoding.spec.whatwg.org/#dom-textdecoder
-TextDecoder::TextDecoder(FlyString encoding, TextCodec::ErrorMode error_mode, bool ignore_bom)
-    : TextDecoderCommonMixin(move(encoding), error_mode, ignore_bom)
+TextDecoder::TextDecoder(JS::Realm& realm, TextCodec::Decoder& decoder, FlyString encoding, bool fatal, bool ignore_bom)
+    : PlatformObject(realm)
+    , m_decoder(decoder)
+    , m_encoding(move(encoding))
+    , m_fatal(fatal)
+    , m_ignore_bom(ignore_bom)
 {
-    set_decoder_to_new_instance_of_encoding_decoder();
 }
 
 TextDecoder::~TextDecoder() = default;
 
-WebIDL::ExceptionOr<String> TextDecoder::decode(Optional<WebIDL::BufferSourceVariant> const& input, Optional<TextDecodeOptions> const& options) const
+void TextDecoder::initialize(JS::Realm& realm)
 {
-    Optional<ByteBuffer> data_buffer;
-    if (input.has_value()) {
-        auto data_buffer_or_error = WebIDL::get_buffer_source_copy(WebIDL::BufferSource { *input });
-        if (data_buffer_or_error.is_error())
-            return WebIDL::OperationError::create("Failed to copy bytes from ArrayBuffer"_utf16);
-        data_buffer = data_buffer_or_error.release_value();
-    }
-
-    return decode(data_buffer.map([](auto const& buffer) { return buffer.bytes(); }), options.has_value() && options->stream);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(TextDecoder);
+    Base::initialize(realm);
 }
 
 // https://encoding.spec.whatwg.org/#dom-textdecoder-decode
-WebIDL::ExceptionOr<String> TextDecoder::decode(Optional<ReadonlyBytes> input, bool stream) const
+WebIDL::ExceptionOr<String> TextDecoder::decode(Optional<GC::Root<WebIDL::BufferSource>> const& input, Optional<TextDecodeOptions> const&) const
 {
-    auto& vm = JS::VM::the();
+    if (!input.has_value())
+        return TRY_OR_THROW_OOM(vm(), m_decoder.to_utf8({}));
 
-    auto decode_bytes = [&](ErrorOr<String> decoded) -> WebIDL::ExceptionOr<String> {
-        if (decoded.is_error()) {
-            // Decoder errors in fatal mode are reported as a TypeError. Only
-            // allocation failures should become an internal out-of-memory
-            // exception; do not assert that every codec error is ENOMEM.
-            if (decoded.error().code() == ENOMEM)
-                return vm.throw_completion<JS::InternalError>(vm.error_message(JS::VM::ErrorMessage::OutOfMemory));
-            return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Decoding failed"_utf16 };
-        }
-        return decoded.release_value();
-    };
-
-    if (stream)
-        return decode_bytes(m_decoder->to_utf8(input.has_value() ? input.value() : ReadonlyBytes {}));
-
-    // A non-streaming decode signals end-of-queue to the decoder. This flushes any pending partial sequence.
-    // encoding_rs permanently finishes a decoder after that operation, so replace it before returning; the
-    // TextDecoder object must be reusable for a subsequent independent decode().
-    auto decoded_or_error = m_decoder->to_utf8(input.has_value() ? input.value() : ReadonlyBytes {});
-    if (decoded_or_error.is_error()) {
-        set_decoder_to_new_instance_of_encoding_decoder();
-        return decode_bytes(move(decoded_or_error));
-    }
-
-    auto final_or_error = m_decoder->finish();
-    set_decoder_to_new_instance_of_encoding_decoder();
-
-    auto decoded = TRY(decode_bytes(move(decoded_or_error)));
-    auto final = TRY(decode_bytes(move(final_or_error)));
-
-    StringBuilder result;
-    TRY_OR_THROW_OOM(vm, result.try_append(decoded.bytes_as_string_view()));
-    TRY_OR_THROW_OOM(vm, result.try_append(final.bytes_as_string_view()));
-    return TRY_OR_THROW_OOM(vm, result.to_string());
+    // FIXME: Implement the streaming stuff.
+    auto data_buffer_or_error = WebIDL::get_buffer_source_copy(*input.value()->raw_object());
+    if (data_buffer_or_error.is_error())
+        return WebIDL::OperationError::create(realm(), "Failed to copy bytes from ArrayBuffer"_utf16);
+    auto& data_buffer = data_buffer_or_error.value();
+    auto result = TRY_OR_THROW_OOM(vm(), m_decoder.to_utf8({ data_buffer.data(), data_buffer.size() }));
+    if (this->fatal() && result.contains(0xfffd))
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Decoding failed"sv };
+    return result;
 }
 
 }

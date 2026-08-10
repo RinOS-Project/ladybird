@@ -6,6 +6,7 @@
  */
 
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/ImageFormats/ImageDecoder.h>
 #include <LibImageDecoderClient/Client.h>
 #include <LibWebView/Plugins/ImageCodecPlugin.h>
 #include <LibWebView/Utilities.h>
