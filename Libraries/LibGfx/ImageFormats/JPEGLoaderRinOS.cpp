@@ -34,7 +34,7 @@ struct JPEGLoadingContext {
         Vector<u32> pixels;
         TRY(pixels.try_resize(pixel_count.value()));
 
-        auto rc = rjpeg_decode(data.data(), data.size(), pixels.data(), size.width(), size.height());
+        auto rc = rjpeg_decode(data.data(), data.size(), pixels.data(), pixel_count.value(), size.width(), size.height());
         if (rc != RJPEG_OK)
             return Error::from_string_literal("JPEGImageDecoderPlugin: Failed to decode JPEG data");
 
