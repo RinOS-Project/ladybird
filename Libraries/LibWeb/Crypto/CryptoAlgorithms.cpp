@@ -12,6 +12,7 @@
 #include <AK/HashTable.h>
 #include <AK/QuickSort.h>
 #include <AK/Random.h>
+#include <AK/Tuple.h>
 #include <LibCrypto/ASN1/ASN1.h>
 #include <LibCrypto/ASN1/Constants.h>
 #include <LibCrypto/ASN1/DER.h>
@@ -291,6 +292,104 @@ static WebIDL::ExceptionOr<ByteBuffer> generate_random_key(JS::VM& vm, WebIDL::U
     fill_with_random(key_buffer);
 #endif
     return key_buffer;
+}
+
+#if defined(AK_OS_RINOS)
+static void secure_zeroize(ByteBuffer& buffer)
+{
+    volatile u8* bytes = buffer.data();
+    for (size_t index = 0; index < buffer.size(); ++index)
+        bytes[index] = 0;
+}
+#endif
+
+using EcGeneratedKeyPair = Tuple<::Crypto::UnsignedBigInteger, ::Crypto::Curves::SECPxxxr1Point>;
+
+static WebIDL::ExceptionOr<EcGeneratedKeyPair> generate_ec_key_pair(JS::Realm& realm, StringView named_curve)
+{
+#if defined(AK_OS_RINOS)
+    // RinOS supports P-256 here. Keep the private scalar in a local scratch
+    // buffer until the shared WebCrypto entropy owner has completed its bounded
+    // full read, then derive the public point from that exact scalar.
+    if (named_curve == "P-256"sv) {
+        constexpr size_t private_key_size = 32;
+        constexpr size_t maximum_attempts = 128;
+        ::Crypto::Curves::SECP256r1 curve;
+        auto private_key_bytes = TRY_OR_THROW_OOM(realm.vm(), ByteBuffer::create_uninitialized(private_key_size));
+
+        for (size_t attempt = 0; attempt < maximum_attempts; ++attempt) {
+            if (rin_webcrypto_get_random_values(private_key_bytes.data(), private_key_bytes.size()) != 0) {
+                secure_zeroize(private_key_bytes);
+                return WebIDL::OperationError::create(realm, "Secure randomness is unavailable"_utf16);
+            }
+
+            auto private_key = ::Crypto::UnsignedBigInteger::import_data(private_key_bytes);
+            auto public_key = curve.generate_public_key(private_key);
+            if (!public_key.is_error()) {
+                secure_zeroize(private_key_bytes);
+                return EcGeneratedKeyPair { move(private_key), public_key.release_value() };
+            }
+        }
+
+        secure_zeroize(private_key_bytes);
+        return WebIDL::OperationError::create(realm, "Failed to generate a valid P-256 private key"_utf16);
+    }
+#endif
+
+    Variant<Empty, ::Crypto::Curves::SECP256r1, ::Crypto::Curves::SECP384r1, ::Crypto::Curves::SECP521r1> curve;
+    if (named_curve.is_one_of("P-256"sv, "P-384"sv, "P-521"sv)) {
+        if (named_curve == "P-256")
+            curve = ::Crypto::Curves::SECP256r1 {};
+        else if (named_curve == "P-384")
+            curve = ::Crypto::Curves::SECP384r1 {};
+        else if (named_curve == "P-521")
+            curve = ::Crypto::Curves::SECP521r1 {};
+        else
+            VERIFY_NOT_REACHED();
+    } else {
+        return WebIDL::NotSupportedError::create(realm, "Only 'P-256', 'P-384' and 'P-521' is supported"_utf16);
+    }
+
+    auto private_key = curve.visit(
+        [](Empty const&) -> ErrorOr<::Crypto::UnsignedBigInteger> { VERIFY_NOT_REACHED(); },
+        [](auto instance) { return instance.generate_private_key(); });
+    if (private_key.is_error())
+        return WebIDL::OperationError::create(realm, "Failed to create valid crypto instance"_utf16);
+
+    auto private_key_data = private_key.release_value();
+    auto public_key = curve.visit(
+        [](Empty const&) -> ErrorOr<::Crypto::Curves::SECPxxxr1Point> { VERIFY_NOT_REACHED(); },
+        [&](auto instance) { return instance.generate_public_key(private_key_data); });
+    if (public_key.is_error())
+        return WebIDL::OperationError::create(realm, "Failed to create valid crypto instance"_utf16);
+
+    return EcGeneratedKeyPair { move(private_key_data), public_key.release_value() };
+}
+
+static WebIDL::ExceptionOr<ByteBuffer> generate_x25519_private_key(JS::Realm& realm)
+{
+#if defined(AK_OS_RINOS)
+    auto private_key = TRY_OR_THROW_OOM(realm.vm(), ByteBuffer::create_uninitialized(32));
+    if (rin_webcrypto_get_random_values(private_key.data(), private_key.size()) != 0) {
+        secure_zeroize(private_key);
+        return WebIDL::OperationError::create(realm, "Secure randomness is unavailable"_utf16);
+    }
+
+    u8 nonzero = 0;
+    for (auto byte : private_key.bytes())
+        nonzero |= byte;
+    if (nonzero == 0) {
+        secure_zeroize(private_key);
+        return WebIDL::OperationError::create(realm, "Secure randomness produced an invalid X25519 private key"_utf16);
+    }
+    return private_key;
+#else
+    ::Crypto::Curves::X25519 curve;
+    auto private_key = curve.generate_private_key();
+    if (private_key.is_error())
+        return WebIDL::OperationError::create(realm, "Failed to generate private key"_utf16);
+    return private_key.release_value();
+#endif
 }
 
 JS::ThrowCompletionOr<GC::Ref<JS::Object>> EncapsulatedKey::to_object(JS::Realm& realm)
@@ -3871,47 +3970,10 @@ WebIDL::ExceptionOr<Variant<GC::Ref<CryptoKey>, GC::Ref<CryptoKeyPair>>> ECDSA::
 
     auto const& normalized_algorithm = static_cast<EcKeyGenParams const&>(params);
 
-    // 2. If the namedCurve member of normalizedAlgorithm is "P-256", "P-384" or "P-521":
-    // Generate an Elliptic Curve key pair, as defined in [RFC6090]
-    // with domain parameters for the curve identified by the namedCurve member of normalizedAlgorithm.
-    Variant<Empty, ::Crypto::Curves::SECP256r1, ::Crypto::Curves::SECP384r1, ::Crypto::Curves::SECP521r1> curve;
-    if (normalized_algorithm.named_curve.is_one_of("P-256"sv, "P-384"sv, "P-521"sv)) {
-        if (normalized_algorithm.named_curve == "P-256")
-            curve = ::Crypto::Curves::SECP256r1 {};
-        else if (normalized_algorithm.named_curve == "P-384")
-            curve = ::Crypto::Curves::SECP384r1 {};
-        else if (normalized_algorithm.named_curve == "P-521")
-            curve = ::Crypto::Curves::SECP521r1 {};
-        else
-            VERIFY_NOT_REACHED();
-    } else {
-        // If the namedCurve member of normalizedAlgorithm is a value specified in an applicable specification:
-        // Perform the ECDSA generation steps specified in that specification,
-        // passing in normalizedAlgorithm and resulting in an elliptic curve key pair.
-
-        // Otherwise: throw a NotSupportedError
-        return WebIDL::NotSupportedError::create(m_realm, "Only 'P-256', 'P-384' and 'P-521' is supported"_utf16);
-    }
-
-    // NOTE: Spec jumps to 6 here for some reason
-    // 6. If performing the key generation operation results in an error, then throw an OperationError.
-    auto maybe_private_key_data = curve.visit(
-        [](Empty const&) -> ErrorOr<::Crypto::UnsignedBigInteger> { VERIFY_NOT_REACHED(); },
-        [](auto instance) { return instance.generate_private_key(); });
-
-    if (maybe_private_key_data.is_error())
-        return WebIDL::OperationError::create(m_realm, "Failed to create valid crypto instance"_utf16);
-
-    auto private_key_data = maybe_private_key_data.release_value();
-
-    auto maybe_public_key_data = curve.visit(
-        [](Empty const&) -> ErrorOr<::Crypto::Curves::SECPxxxr1Point> { VERIFY_NOT_REACHED(); },
-        [&](auto instance) { return instance.generate_public_key(private_key_data); });
-
-    if (maybe_public_key_data.is_error())
-        return WebIDL::OperationError::create(m_realm, "Failed to create valid crypto instance"_utf16);
-
-    auto public_key_data = maybe_public_key_data.release_value();
+    // 2. Generate an elliptic curve key pair using the domain parameters for namedCurve.
+    auto key_pair_data = TRY(generate_ec_key_pair(*m_realm, normalized_algorithm.named_curve));
+    auto private_key_data = move(key_pair_data.template get<0>());
+    auto public_key_data = move(key_pair_data.template get<1>());
     auto ec_public_key = ::Crypto::PK::ECPublicKey { public_key_data };
 
     // 7. Let algorithm be a new EcKeyAlgorithm object.
@@ -4937,47 +4999,10 @@ WebIDL::ExceptionOr<Variant<GC::Ref<CryptoKey>, GC::Ref<CryptoKeyPair>>> ECDH::g
 
     auto const& normalized_algorithm = static_cast<EcKeyGenParams const&>(params);
 
-    // 2. If the namedCurve member of normalizedAlgorithm is "P-256", "P-384" or "P-521":
-    // Generate an Elliptic Curve key pair, as defined in [RFC6090]
-    // with domain parameters for the curve identified by the namedCurve member of normalizedAlgorithm.
-    Variant<Empty, ::Crypto::Curves::SECP256r1, ::Crypto::Curves::SECP384r1, ::Crypto::Curves::SECP521r1> curve;
-    if (normalized_algorithm.named_curve.is_one_of("P-256"sv, "P-384"sv, "P-521"sv)) {
-        if (normalized_algorithm.named_curve == "P-256")
-            curve = ::Crypto::Curves::SECP256r1 {};
-        else if (normalized_algorithm.named_curve == "P-384")
-            curve = ::Crypto::Curves::SECP384r1 {};
-        else if (normalized_algorithm.named_curve == "P-521")
-            curve = ::Crypto::Curves::SECP521r1 {};
-        else
-            VERIFY_NOT_REACHED();
-    } else {
-        // If the namedCurve member of normalizedAlgorithm is a value specified in an applicable specification
-        // that specifies the use of that value with ECDH:
-        // Perform the ECDH generation steps specified in that specification,
-        // passing in normalizedAlgorithm and resulting in an elliptic curve key pair.
-
-        // Otherwise: throw a NotSupportedError
-        return WebIDL::NotSupportedError::create(m_realm, "Only 'P-256', 'P-384' and 'P-521' is supported"_utf16);
-    }
-
-    // 3. If performing the operation results in an error, then throw a OperationError.
-    auto maybe_private_key_data = curve.visit(
-        [](Empty const&) -> ErrorOr<::Crypto::UnsignedBigInteger> { VERIFY_NOT_REACHED(); },
-        [](auto instance) { return instance.generate_private_key(); });
-
-    if (maybe_private_key_data.is_error())
-        return WebIDL::OperationError::create(m_realm, "Failed to create valid crypto instance"_utf16);
-
-    auto private_key_data = maybe_private_key_data.release_value();
-
-    auto maybe_public_key_data = curve.visit(
-        [](Empty const&) -> ErrorOr<::Crypto::Curves::SECPxxxr1Point> { VERIFY_NOT_REACHED(); },
-        [&](auto instance) { return instance.generate_public_key(private_key_data); });
-
-    if (maybe_public_key_data.is_error())
-        return WebIDL::OperationError::create(m_realm, "Failed to create valid crypto instance"_utf16);
-
-    auto public_key_data = maybe_public_key_data.release_value();
+    // 2. Generate an elliptic curve key pair using the domain parameters for namedCurve.
+    auto key_pair_data = TRY(generate_ec_key_pair(*m_realm, normalized_algorithm.named_curve));
+    auto private_key_data = move(key_pair_data.template get<0>());
+    auto public_key_data = move(key_pair_data.template get<1>());
     auto ec_public_key = ::Crypto::PK::ECPublicKey { public_key_data };
 
     // 4. Let algorithm be a new EcKeyAlgorithm object.
@@ -7127,11 +7152,7 @@ WebIDL::ExceptionOr<Variant<GC::Ref<CryptoKey>, GC::Ref<CryptoKeyPair>>> X25519:
     // 2. Generate an X25519 key pair, with the private key being 32 random bytes,
     //    and the public key being X25519(a, 9), as defined in [RFC7748], section 6.1.
     ::Crypto::Curves::X25519 curve;
-    auto maybe_private_key = curve.generate_private_key();
-    if (maybe_private_key.is_error())
-        return WebIDL::OperationError::create(m_realm, "Failed to generate private key"_utf16);
-
-    auto private_key_data = maybe_private_key.release_value();
+    auto private_key_data = TRY(generate_x25519_private_key(*m_realm));
 
     auto maybe_public_key = curve.generate_public_key(private_key_data);
     if (maybe_public_key.is_error())
