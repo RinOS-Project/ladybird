@@ -68,6 +68,12 @@ set(GENERATED_SOURCES
 ladybird_lib(LibWebView webview EXPLICIT_SYMBOL_EXPORT)
 target_link_libraries(LibWebView PRIVATE LibCore LibDatabase LibDevTools LibFileSystem LibGfx LibHTTP LibImageDecoderClient LibIPC LibRequests LibJS LibWeb LibUnicode LibURL LibSyntax LibTextCodec)
 
+if (AK_OS_RINOS)
+    target_include_directories(LibWebView PRIVATE
+        ${LADYBIRD_SOURCE_DIR}/../../src/shared
+    )
+endif()
+
 # Third-party
 if (HAS_FONTCONFIG)
     target_link_libraries(LibWebView PRIVATE Fontconfig::Fontconfig)

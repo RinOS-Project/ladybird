@@ -7,6 +7,7 @@
 #pragma once
 
 #include <LibGfx/Path.h>
+#include <LibGfx/RinOSPathFlatten.h>
 
 namespace Gfx {
 
@@ -58,15 +59,20 @@ private:
     PathImplAquamarine(PathImplAquamarine const&);
 
     Contour& ensure_current_contour();
+    void reject_path();
+    bool append_decomposed_point(Gfx::RinOSPathFlatten::Point);
+    static bool append_decomposed_point_callback(
+        void*, Gfx::RinOSPathFlatten::Point);
     void append_rectangle(FloatRect const&);
-    void append_sampled_curve(Function<FloatPoint(float)> const& sampler);
     Optional<FloatPoint> point_along_first_contour(float distance) const;
 
     Vector<Contour> m_contours;
     FloatPoint m_last_point {};
     FloatPoint m_last_move_to {};
     WindingRule m_fill_type { WindingRule::Nonzero };
+    size_t m_point_count { 0 };
     bool m_has_current_point { false };
+    bool m_valid { true };
 };
 
 }

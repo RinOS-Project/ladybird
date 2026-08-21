@@ -1,0 +1,8 @@
+#import <CredentialManagement/AuthenticatorResponse.idl>
+
+[Exposed=Window, SecureContext]
+interface AuthenticatorAssertionResponse : AuthenticatorResponse {
+    readonly attribute ArrayBuffer authenticatorData;
+    readonly attribute ArrayBuffer signature;
+    readonly attribute ArrayBuffer? userHandle;
+};

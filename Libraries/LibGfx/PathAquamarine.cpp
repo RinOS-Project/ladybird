@@ -6,13 +6,47 @@
 
 #include <AK/StringBuilder.h>
 #include <AK/Utf16String.h>
+#include <LibCore/Resource.h>
 #include <LibGfx/PathAquamarine.h>
 #include <LibGfx/TextLayout.h>
 #include <math.h>
+#include <stdlib.h>
+
+extern "C" {
+#include <aquamarine.h>
+}
 
 namespace Gfx {
 
-static constexpr int s_curve_subdivisions = 16;
+static constexpr size_t s_max_contours = 16384;
+static constexpr size_t s_max_points = 131072;
+static constexpr RinOSPathFlatten::Config s_flatten_config { 0.25f, 12 };
+
+static AqFont const* path_bitmap_font()
+{
+    static AqFont const* s_font = nullptr;
+    static bool s_attempted_load = false;
+    if (s_attempted_load)
+        return s_font ? s_font : aq_font_builtin_8x16();
+
+    s_attempted_load = true;
+    aq_set_allocator(
+        [](unsigned size) -> void* { return malloc(size); },
+        [](void* pointer) { free(pointer); });
+    auto resource_or_error = Core::Resource::load_from_uri(
+        "resource://fonts/browser-ui.psf"sv);
+    if (!resource_or_error.is_error()) {
+        auto resource = resource_or_error.release_value();
+        auto data = resource->data();
+        s_font = aq_font_load_psf(data.data(), data.size());
+    }
+    return s_font ? s_font : aq_font_builtin_8x16();
+}
+
+static bool valid_path_point(FloatPoint const& point)
+{
+    return RinOSPathFlatten::valid_point({ point.x(), point.y() });
+}
 
 NonnullOwnPtr<PathImplAquamarine> PathImplAquamarine::create()
 {
@@ -28,7 +62,9 @@ void PathImplAquamarine::clear()
     m_contours.clear();
     m_last_point = {};
     m_last_move_to = {};
+    m_point_count = 0;
     m_has_current_point = false;
+    m_valid = true;
 }
 
 PathImplAquamarine::Contour& PathImplAquamarine::ensure_current_contour()
@@ -38,13 +74,68 @@ PathImplAquamarine::Contour& PathImplAquamarine::ensure_current_contour()
     return m_contours.last();
 }
 
+void PathImplAquamarine::reject_path()
+{
+    m_contours.clear();
+    m_last_point = {};
+    m_last_move_to = {};
+    m_point_count = 0;
+    m_has_current_point = false;
+    m_valid = false;
+}
+
+bool PathImplAquamarine::append_decomposed_point(RinOSPathFlatten::Point point)
+{
+    auto needs_new_contour = m_contours.is_empty() || m_contours.last().closed;
+    auto required_points = needs_new_contour ? 2u : 1u;
+    if (!m_valid || !m_has_current_point
+        || !RinOSPathFlatten::valid_point(point)
+        || (needs_new_contour && m_contours.size() >= s_max_contours)
+        || required_points > s_max_points - min(m_point_count, s_max_points)) {
+        reject_path();
+        return false;
+    }
+    auto& contour = ensure_current_contour();
+    if (contour.points.is_empty()) {
+        contour.points.append(m_last_point);
+        ++m_point_count;
+    }
+    FloatPoint converted { point.x, point.y };
+    if (contour.points.last() != converted) {
+        contour.points.append(converted);
+        ++m_point_count;
+    }
+    m_last_point = converted;
+    m_has_current_point = true;
+    return true;
+}
+
+bool PathImplAquamarine::append_decomposed_point_callback(
+    void* opaque, RinOSPathFlatten::Point point)
+{
+    if (!opaque)
+        return false;
+    return static_cast<PathImplAquamarine*>(opaque)->append_decomposed_point(point);
+}
+
 void PathImplAquamarine::move_to(Gfx::FloatPoint const& point)
 {
-    auto& contour = ensure_current_contour();
-    if (!contour.points.is_empty())
+    if (!m_valid || !valid_path_point(point) || m_point_count >= s_max_points) {
+        reject_path();
+        return;
+    }
+    if (m_contours.is_empty()) {
         m_contours.append({});
-    auto& current = ensure_current_contour();
+    } else if (m_contours.last().closed || !m_contours.last().points.is_empty()) {
+        if (m_contours.size() >= s_max_contours) {
+            reject_path();
+            return;
+        }
+        m_contours.append({});
+    }
+    auto& current = m_contours.last();
     current.points.append(point);
+    ++m_point_count;
     m_last_point = point;
     m_last_move_to = point;
     m_has_current_point = true;
@@ -52,22 +143,20 @@ void PathImplAquamarine::move_to(Gfx::FloatPoint const& point)
 
 void PathImplAquamarine::line_to(Gfx::FloatPoint const& point)
 {
+    if (!m_valid || !valid_path_point(point)) {
+        reject_path();
+        return;
+    }
     if (!m_has_current_point) {
         move_to(point);
         return;
     }
-
-    auto& contour = ensure_current_contour();
-    if (contour.points.is_empty())
-        contour.points.append(m_last_point);
-    if (contour.points.last() != point)
-        contour.points.append(point);
-    m_last_point = point;
+    (void)append_decomposed_point({ point.x(), point.y() });
 }
 
 void PathImplAquamarine::close()
 {
-    if (m_contours.is_empty())
+    if (!m_valid || m_contours.is_empty())
         return;
     auto& contour = m_contours.last();
     if (contour.points.size() >= 2)
@@ -75,40 +164,24 @@ void PathImplAquamarine::close()
     m_last_point = m_last_move_to;
 }
 
-void PathImplAquamarine::append_sampled_curve(Function<FloatPoint(float)> const& sampler)
+void PathImplAquamarine::elliptical_arc_to(FloatPoint point, FloatSize radii,
+    float x_axis_rotation, bool large_arc, bool sweep)
 {
-    for (int index = 1; index <= s_curve_subdivisions; ++index) {
-        float t = static_cast<float>(index) / static_cast<float>(s_curve_subdivisions);
-        line_to(sampler(t));
+    if (!m_valid || !valid_path_point(point)) {
+        reject_path();
+        return;
     }
-}
-
-void PathImplAquamarine::elliptical_arc_to(FloatPoint point, FloatSize radii, float, bool large_arc, bool sweep)
-{
     if (!m_has_current_point) {
         move_to(point);
         return;
     }
-
-    auto start = m_last_point;
-    auto delta = point - start;
-    auto length = sqrtf(delta.x() * delta.x() + delta.y() * delta.y());
-    if (length <= 0.001f) {
-        line_to(point);
-        return;
-    }
-
-    auto midpoint = FloatPoint { (start.x() + point.x()) * 0.5f, (start.y() + point.y()) * 0.5f };
-    auto normal = FloatPoint { -delta.y() / length, delta.x() / length };
-    float arc_height = max(radii.width(), radii.height());
-    if (arc_height <= 0.0f)
-        arc_height = length * 0.25f;
-    if (large_arc)
-        arc_height *= 1.5f;
-    if (!sweep)
-        arc_height = -arc_height;
-    auto control = midpoint + normal * arc_height;
-    quadratic_bezier_curve_to(control, point);
+    auto result = RinOSPathFlatten::elliptical_arc(
+        s_flatten_config, { m_last_point.x(), m_last_point.y() },
+        { point.x(), point.y() }, radii.width(), radii.height(),
+        x_axis_rotation, large_arc, sweep,
+        append_decomposed_point_callback, this);
+    if (result != RinOSPathFlatten::Result::Ok)
+        reject_path();
 }
 
 void PathImplAquamarine::arc_to(FloatPoint point, float radius, bool large_arc, bool sweep)
@@ -118,38 +191,39 @@ void PathImplAquamarine::arc_to(FloatPoint point, float radius, bool large_arc, 
 
 void PathImplAquamarine::quadratic_bezier_curve_to(FloatPoint through, FloatPoint point)
 {
+    if (!m_valid || !valid_path_point(through) || !valid_path_point(point)) {
+        reject_path();
+        return;
+    }
     if (!m_has_current_point) {
         move_to(point);
         return;
     }
-
-    auto start = m_last_point;
-    append_sampled_curve([&](float t) {
-        float mt = 1.0f - t;
-        return FloatPoint {
-            mt * mt * start.x() + 2.0f * mt * t * through.x() + t * t * point.x(),
-            mt * mt * start.y() + 2.0f * mt * t * through.y() + t * t * point.y(),
-        };
-    });
+    auto result = RinOSPathFlatten::quadratic(
+        s_flatten_config, { m_last_point.x(), m_last_point.y() },
+        { through.x(), through.y() }, { point.x(), point.y() },
+        append_decomposed_point_callback, this);
+    if (result != RinOSPathFlatten::Result::Ok)
+        reject_path();
 }
 
 void PathImplAquamarine::cubic_bezier_curve_to(FloatPoint c1, FloatPoint c2, FloatPoint p2)
 {
+    if (!m_valid || !valid_path_point(c1) || !valid_path_point(c2)
+        || !valid_path_point(p2)) {
+        reject_path();
+        return;
+    }
     if (!m_has_current_point) {
         move_to(p2);
         return;
     }
-
-    auto start = m_last_point;
-    append_sampled_curve([&](float t) {
-        float mt = 1.0f - t;
-        float mt2 = mt * mt;
-        float t2 = t * t;
-        return FloatPoint {
-            mt2 * mt * start.x() + 3.0f * mt2 * t * c1.x() + 3.0f * mt * t2 * c2.x() + t2 * t * p2.x(),
-            mt2 * mt * start.y() + 3.0f * mt2 * t * c1.y() + 3.0f * mt * t2 * c2.y() + t2 * t * p2.y(),
-        };
-    });
+    auto result = RinOSPathFlatten::cubic(
+        s_flatten_config, { m_last_point.x(), m_last_point.y() },
+        { c1.x(), c1.y() }, { c2.x(), c2.y() }, { p2.x(), p2.y() },
+        append_decomposed_point_callback, this);
+    if (result != RinOSPathFlatten::Result::Ok)
+        reject_path();
 }
 
 void PathImplAquamarine::append_rectangle(FloatRect const& rect)
@@ -171,21 +245,84 @@ void PathImplAquamarine::text(Utf8View const& text, Font const& font)
 
 void PathImplAquamarine::text(Utf16View const& text, Font const& font)
 {
-    auto glyphs = shape_text({ 0.0f, font.pixel_metrics().ascent }, 0.0f, text, font, GlyphRun::TextType::Common);
+    auto baseline = m_has_current_point ? m_last_point : FloatPoint {};
+    auto glyphs = shape_text(baseline, 0.0f, text, font,
+        GlyphRun::TextType::Common);
     glyph_run(*glyphs);
 }
 
 void PathImplAquamarine::glyph_run(GlyphRun const& glyph_run)
 {
-    auto line_height = max(glyph_run.font().pixel_metrics().line_spacing(), 1.0f);
+    if (!m_valid)
+        return;
+    auto const* bitmap_font = path_bitmap_font();
+    if (!bitmap_font || bitmap_font->glyph_w <= 0 || bitmap_font->glyph_h <= 0) {
+        reject_path();
+        return;
+    }
+    auto target_height = max(glyph_run.font().pixel_size(), 1.0f);
+    auto target_width = target_height * static_cast<float>(bitmap_font->glyph_w)
+        / static_cast<float>(bitmap_font->glyph_h);
+    auto scale_x = target_width / static_cast<float>(bitmap_font->glyph_w);
+    auto scale_y = target_height / static_cast<float>(bitmap_font->glyph_h);
+    auto bytes_per_row = (bitmap_font->glyph_w + 7) / 8;
+
     for (auto const& glyph : glyph_run.glyphs()) {
-        auto width = max(glyph.glyph_width, 1.0f);
-        append_rectangle({ glyph.position.x(), glyph.position.y(), width, line_height });
+        auto glyph_index = aq_font_lookup_glyph(bitmap_font, glyph.glyph_id);
+        auto const* bitmap = aq_font_glyph_data(bitmap_font, glyph_index);
+        if (!bitmap) {
+            glyph_index = aq_font_lookup_glyph(bitmap_font, '?');
+            bitmap = aq_font_glyph_data(bitmap_font, glyph_index);
+        }
+        if (!bitmap)
+            continue;
+
+        for (int row = 0; row < bitmap_font->glyph_h; ++row) {
+            int column = 0;
+            while (column < bitmap_font->glyph_w) {
+                auto byte_index = row * bytes_per_row + column / 8;
+                auto bit_index = 7 - (column % 8);
+                if ((bitmap[byte_index] & (1 << bit_index)) == 0) {
+                    ++column;
+                    continue;
+                }
+                auto run_start = column;
+                do {
+                    ++column;
+                    if (column >= bitmap_font->glyph_w)
+                        break;
+                    byte_index = row * bytes_per_row + column / 8;
+                    bit_index = 7 - (column % 8);
+                } while ((bitmap[byte_index] & (1 << bit_index)) != 0);
+                append_rectangle({
+                    glyph.position.x() + static_cast<float>(run_start) * scale_x,
+                    glyph.position.y() + static_cast<float>(row) * scale_y,
+                    static_cast<float>(column - run_start) * scale_x,
+                    scale_y,
+                });
+                if (!m_valid)
+                    return;
+            }
+        }
     }
 }
 
 void PathImplAquamarine::offset(Gfx::FloatPoint const& delta)
 {
+    if (!m_valid || !valid_path_point(delta)) {
+        reject_path();
+        return;
+    }
+    for (auto const& contour : m_contours) {
+        for (auto const& point : contour.points) {
+            FloatPoint translated = point;
+            translated.translate_by(delta);
+            if (!valid_path_point(translated)) {
+                reject_path();
+                return;
+            }
+        }
+    }
     for (auto& contour : m_contours) {
         for (auto& point : contour.points)
             point.translate_by(delta);
@@ -197,10 +334,21 @@ void PathImplAquamarine::offset(Gfx::FloatPoint const& delta)
 void PathImplAquamarine::append_path(Gfx::Path const& other)
 {
     auto const& other_impl = static_cast<PathImplAquamarine const&>(other.impl());
+    if (!m_valid || !other_impl.m_valid
+        || other_impl.m_contours.size() > s_max_contours - min(m_contours.size(), s_max_contours)
+        || other_impl.m_point_count > s_max_points - min(m_point_count, s_max_points)) {
+        reject_path();
+        return;
+    }
     for (auto const& contour : other_impl.contours())
         m_contours.append(contour);
+    m_point_count += other_impl.m_point_count;
     if (!other_impl.is_empty()) {
         m_last_point = other_impl.last_point();
+        for (auto const& contour : other_impl.contours()) {
+            if (!contour.points.is_empty())
+                m_last_move_to = contour.points.first();
+        }
         m_has_current_point = true;
     }
 }
@@ -215,6 +363,8 @@ void PathImplAquamarine::intersect(Gfx::Path const& other)
 
 bool PathImplAquamarine::is_empty() const
 {
+    if (!m_valid)
+        return true;
     for (auto const& contour : m_contours) {
         if (!contour.points.is_empty())
             return false;
@@ -229,6 +379,8 @@ Gfx::FloatPoint PathImplAquamarine::last_point() const
 
 Gfx::FloatRect PathImplAquamarine::bounding_box() const
 {
+    if (!m_valid)
+        return {};
     bool has_point = false;
     float min_x = 0;
     float min_y = 0;
@@ -262,6 +414,8 @@ void PathImplAquamarine::set_fill_type(Gfx::WindingRule winding_rule)
 
 bool PathImplAquamarine::contains(FloatPoint point, Gfx::WindingRule winding_rule) const
 {
+    if (!m_valid || !valid_path_point(point))
+        return false;
     float const scan_y = point.y();
     int winding = 0;
     bool inside_even_odd = false;
@@ -298,12 +452,22 @@ NonnullOwnPtr<PathImpl> PathImplAquamarine::clone() const
 NonnullOwnPtr<PathImpl> PathImplAquamarine::copy_transformed(Gfx::AffineTransform const& transform) const
 {
     auto transformed = adopt_own(*new PathImplAquamarine(*this));
+    if (!transformed->m_valid)
+        return transformed;
     for (auto& contour : transformed->m_contours) {
-        for (auto& point : contour.points)
+        for (auto& point : contour.points) {
             point.transform_by(transform);
+            if (!valid_path_point(point)) {
+                transformed->reject_path();
+                return transformed;
+            }
+        }
     }
     transformed->m_last_point.transform_by(transform);
     transformed->m_last_move_to.transform_by(transform);
+    if (!valid_path_point(transformed->m_last_point)
+        || !valid_path_point(transformed->m_last_move_to))
+        transformed->reject_path();
     return transformed;
 }
 
@@ -357,6 +521,8 @@ NonnullOwnPtr<PathImpl> PathImplAquamarine::place_text_along(Utf16View const& te
 String PathImplAquamarine::to_svg_string() const
 {
     StringBuilder builder;
+    if (!m_valid)
+        return MUST(builder.to_string());
     for (auto const& contour : m_contours) {
         if (contour.points.is_empty())
             continue;

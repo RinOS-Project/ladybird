@@ -25,7 +25,7 @@ public:
     GC::Ref<SubtleCrypto> subtle() const;
 
     WebIDL::ExceptionOr<GC::Root<WebIDL::ArrayBufferView>> get_random_values(GC::Root<WebIDL::ArrayBufferView>) const;
-    String random_uuid() const;
+    WebIDL::ExceptionOr<String> random_uuid() const;
 
 protected:
     virtual void initialize(JS::Realm&) override;

@@ -66,11 +66,11 @@ void WorkerAgentParent::initialize(JS::Realm& realm)
 void WorkerAgentParent::setup_worker_ipc_callbacks(JS::Realm& realm)
 {
     // NOTE: As long as WorkerAgentParent is alive, realm and m_worker_ipc will be alive.
-    m_worker_ipc->on_request_cookie = [realm = GC::RawRef { realm }](URL::URL const& url, HTTP::Cookie::Source source) {
+    m_worker_ipc->on_request_cookie = [realm = GC::RawRef<JS::Realm> { realm }](URL::URL const& url, HTTP::Cookie::Source source) {
         auto& client = Bindings::principal_host_defined_page(realm).client();
         return client.page_did_request_cookie(url, source);
     };
-    m_worker_ipc->on_request_worker_agent = [realm = GC::RawRef { realm }](Web::Bindings::AgentType worker_type) -> Messages::WebWorkerClient::RequestWorkerAgentResponse {
+    m_worker_ipc->on_request_worker_agent = [realm = GC::RawRef<JS::Realm> { realm }](Web::Bindings::AgentType worker_type) -> Messages::WebWorkerClient::RequestWorkerAgentResponse {
         auto& client = Bindings::principal_host_defined_page(realm).client();
         auto response = client.request_worker_agent(worker_type);
         return { move(response.worker_handle), move(response.request_server_handle), move(response.image_decoder_handle) };

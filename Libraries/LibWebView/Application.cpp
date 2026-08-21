@@ -26,6 +26,10 @@
 #include <LibWebView/Utilities.h>
 #include <LibWebView/WebContentClient.h>
 
+#if defined(AK_OS_RINOS)
+#    include "webcontent_bridge_recovery_policy.h"
+#endif
+
 #if defined(AK_OS_MACOS)
 #    include <LibIPC/MachBootstrapListener.h>
 #    include <LibIPC/Transport.h>
@@ -623,8 +627,17 @@ ErrorOr<int> Application::execute()
     OwnPtr<HeadlessWebView> view;
     RefPtr<Core::Timer> screenshot_timer;
 
-    bool should_create_implicit_headless_bootstrap_view = m_browser_options.headless_mode.has_value()
+    bool should_create_implicit_headless_bootstrap_view;
+#if defined(AK_OS_RINOS)
+    should_create_implicit_headless_bootstrap_view =
+        rin_webcontent_should_create_implicit_headless_bootstrap_view(
+            m_browser_options.headless_mode.has_value() ? 1 : 0,
+            m_browser_options.skip_implicit_headless_bootstrap_view == SkipImplicitHeadlessBootstrapView::Yes ? 1 : 0)
+        != 0;
+#else
+    should_create_implicit_headless_bootstrap_view = m_browser_options.headless_mode.has_value()
         && m_browser_options.skip_implicit_headless_bootstrap_view == SkipImplicitHeadlessBootstrapView::No;
+#endif
 
     if (should_create_implicit_headless_bootstrap_view) {
         auto theme_path = LexicalPath::join(WebView::s_ladybird_resource_root, "themes"sv, "Default.ini"sv);

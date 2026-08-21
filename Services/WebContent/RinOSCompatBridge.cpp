@@ -29,6 +29,8 @@
 #include <LibWebView/Utilities.h>
 
 #include "webcontent_service_abi.h"
+#include "webcontent_bridge_recovery_policy.h"
+#include "webcontent_service_policy.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -99,6 +101,29 @@ static constexpr StringView s_metrics_script = R"JS((() => {
         const viewportHeight = Math.round(window.innerHeight || 0);
         const contentWidth = Math.round((root && root.scrollWidth) || viewportWidth);
         const contentHeight = Math.round((root && root.scrollHeight) || viewportHeight);
+        const active = document.activeElement;
+        const tag = active && String(active.tagName || "").toLowerCase();
+        const inputType = tag === "input" ? String(active.type || "text").toLowerCase() : "";
+        const textInputTypes = new Set(["text", "search", "url", "email", "tel", "password", "number"]);
+        const textInputEnabled = !!active && !active.disabled && !active.readOnly && (
+            (tag === "input" && textInputTypes.has(inputType)) ||
+            tag === "textarea" || active.isContentEditable);
+        let textInputContentType = 0;
+        if (inputType === "password") textInputContentType = 1;
+        else if (inputType === "url") textInputContentType = 2;
+        else if (inputType === "number") textInputContentType = 3;
+        let inputRect = { x: 0, y: 0, width: 0, height: 0 };
+        if (textInputEnabled) {
+            const elementRect = active.getBoundingClientRect();
+            inputRect = elementRect;
+            if (active.isContentEditable) {
+                const selection = window.getSelection();
+                if (selection && selection.rangeCount > 0) {
+                    const caretRect = selection.getRangeAt(0).getBoundingClientRect();
+                    if (caretRect && (caretRect.width || caretRect.height)) inputRect = caretRect;
+                }
+            }
+        }
         return {
             scrollX: Math.round(window.scrollX || 0),
             scrollY: Math.round(window.scrollY || 0),
@@ -109,7 +134,13 @@ static constexpr StringView s_metrics_script = R"JS((() => {
             maxScrollX: Math.max(0, contentWidth - viewportWidth),
             maxScrollY: Math.max(0, contentHeight - viewportHeight),
             title: String(document.title || ""),
-            url: String(location.href || "about:blank")
+            url: String(location.href || "about:blank"),
+            textInputEnabled,
+            textInputContentType,
+            textInputX: Math.round(inputRect.x || 0),
+            textInputY: Math.round(inputRect.y || 0),
+            textInputWidth: Math.max(1, Math.round(inputRect.width || 1)),
+            textInputHeight: Math.max(1, Math.round(inputRect.height || 1))
         };
     } catch (error) {
         return { error: String((error && error.message) || error || "metrics failed") };
@@ -212,20 +243,38 @@ public:
         WebView::RequestServerOptions& request_server_options,
         WebView::WebContentOptions& web_content_options) override
     {
+        RinWebContentBridgeLaunchPolicyV1 policy {};
+        VERIFY(rin_webcontent_bridge_launch_policy_v1(&policy));
         browser_options.headless_mode = WebView::HeadlessMode::Manual;
-        browser_options.skip_implicit_headless_bootstrap_view = WebView::SkipImplicitHeadlessBootstrapView::Yes;
-        browser_options.disable_sql_database = WebView::DisableSQLDatabase::Yes;
-        browser_options.disable_spare_web_content_processes = WebView::DisableSpareWebContentProcesses::Yes;
-        browser_options.allow_popups = WebView::AllowPopups::Yes;
+        browser_options.skip_implicit_headless_bootstrap_view = policy.skip_implicit_headless_bootstrap_view
+            ? WebView::SkipImplicitHeadlessBootstrapView::Yes
+            : WebView::SkipImplicitHeadlessBootstrapView::No;
+        browser_options.disable_sql_database = policy.disable_sql_database
+            ? WebView::DisableSQLDatabase::Yes
+            : WebView::DisableSQLDatabase::No;
+        browser_options.disable_spare_web_content_processes = policy.disable_spare_webcontent_processes
+            ? WebView::DisableSpareWebContentProcesses::Yes
+            : WebView::DisableSpareWebContentProcesses::No;
+        browser_options.allow_popups = policy.allow_popups
+            ? WebView::AllowPopups::Yes
+            : WebView::AllowPopups::No;
 
         // RinOS bridge-mode startup is currently more reliable without RequestServer disk cache setup.
-        request_server_options.http_disk_cache_mode = WebView::HTTPDiskCacheMode::Disabled;
+        request_server_options.http_disk_cache_mode = policy.disable_http_disk_cache
+            ? WebView::HTTPDiskCacheMode::Disabled
+            : WebView::HTTPDiskCacheMode::Enabled;
         if (request_server_options.certificates.is_empty())
             request_server_options.certificates.append("/System/Trust/roots.rinca"sv);
 
-        web_content_options.force_cpu_painting = WebView::ForceCPUPainting::Yes;
-        web_content_options.force_fontconfig = WebView::ForceFontconfig::Yes;
-        web_content_options.paint_viewport_scrollbars = WebView::PaintViewportScrollbars::No;
+        web_content_options.force_cpu_painting = policy.force_cpu_painting
+            ? WebView::ForceCPUPainting::Yes
+            : WebView::ForceCPUPainting::No;
+        web_content_options.force_fontconfig = policy.force_fontconfig
+            ? WebView::ForceFontconfig::Yes
+            : WebView::ForceFontconfig::No;
+        web_content_options.paint_viewport_scrollbars = policy.disable_viewport_scrollbars
+            ? WebView::PaintViewportScrollbars::No
+            : WebView::PaintViewportScrollbars::Yes;
         web_content_options.disable_site_isolation = WebView::DisableSiteIsolation::Yes;
 
         static bool did_log_bridge_options = false;
@@ -357,27 +406,28 @@ struct PageSession {
                 mark_dirty();
                 return;
             }
+            RinWebContentBridgeLoadFinishPlanV1 plan {};
+            VERIFY(rin_webcontent_bridge_load_finish_plan_v1(
+                has_first_paint_for_active_navigation() ? 1 : 0, &plan));
             committed_url = serialized;
             metrics_dirty = true;
             refresh_metrics(true);
-            if (has_first_paint_for_active_navigation()) {
-                loading = false;
-                progress_percent = 100;
+            loading = plan.loading != 0;
+            if (progress_percent < plan.progress_floor)
+                progress_percent = plan.progress_floor;
+            if (plan.clear_pending_url)
                 pending_url = {};
-                waiting_for_first_paint_after_load_finish = false;
-                // P5-2: ロード完了 & 初回描画済み → COMPLETE
+            waiting_for_first_paint_after_load_finish = plan.waiting_for_first_paint != 0;
+            if (plan.load_phase == RIN_WEBCONTENT_BRIDGE_LOAD_PHASE_COMPLETE) {
                 load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_COMPLETE;
                 load_phase_started_ms = monotonic_time_ms();
                 load_suspected_stall = false;
             } else {
-                loading = true;
-                if (progress_percent < 95)
-                    progress_percent = 95;
                 pending_url = serialized;
-                waiting_for_first_paint_after_load_finish = true;
-                // P5-2: load finish は来たが初回描画待ち → PAINT
                 load_phase_current = RIN_WEBCONTENT_LOAD_PHASE_PAINT;
                 load_phase_started_ms = monotonic_time_ms();
+            }
+            if (plan.kick_first_frame) {
                 kick_first_frame_if_needed("load-finish-before-first-paint"sv, false);
             }
             auto message = ByteString::formatted("[webcontent] page {} load finish {}\n", page_id, serialized);
@@ -454,10 +504,16 @@ struct PageSession {
             metrics_dirty = true;
             ++paint_revision;
             last_paint_revision_seen = paint_revision;
-            if (first_paint_for_active_navigation && waiting_for_first_paint_after_load_finish) {
+            RinWebContentBridgeFirstPaintPlanV1 plan {};
+            VERIFY(rin_webcontent_bridge_first_paint_plan_v1(
+                first_paint_for_active_navigation ? 1 : 0,
+                waiting_for_first_paint_after_load_finish ? 1 : 0,
+                &plan));
+            if (plan.complete_load) {
                 loading = false;
-                progress_percent = 100;
-                pending_url = {};
+                progress_percent = plan.progress_value;
+                if (plan.clear_pending_url)
+                    pending_url = {};
                 waiting_for_first_paint_after_load_finish = false;
             }
             clear_first_frame_wait();
@@ -471,9 +527,15 @@ struct PageSession {
             crashed = true;
             progress_percent = 0;
             crash_reason = ByteString { "WebContent crashed" };
-            if (pending_url.is_empty() && !committed_url.is_empty())
+            RinWebContentBridgeCrashPlanV1 plan {};
+            VERIFY(rin_webcontent_bridge_crash_plan_v1(
+                pending_url.is_empty() ? 1 : 0,
+                committed_url.is_empty() ? 1 : 0,
+                &plan));
+            if (plan.copy_committed_to_pending)
                 pending_url = committed_url;
-            waiting_for_first_paint_after_load_finish = false;
+            if (plan.clear_first_paint_wait)
+                waiting_for_first_paint_after_load_finish = false;
             clear_pending_load_request();
             clear_first_frame_wait();
             auto message = ByteString::formatted(
@@ -943,6 +1005,18 @@ struct PageSession {
             else
                 committed_url = move(reported_url);
         }
+        if (auto value = object.get_bool("textInputEnabled"sv); value.has_value())
+            text_input_enabled = *value;
+        if (auto value = object.get_i32("textInputContentType"sv); value.has_value())
+            text_input_content_type = clamp(*value, 0, 3);
+        if (auto value = object.get_i32("textInputX"sv); value.has_value())
+            text_input_x = *value;
+        if (auto value = object.get_i32("textInputY"sv); value.has_value())
+            text_input_y = *value;
+        if (auto value = object.get_i32("textInputWidth"sv); value.has_value())
+            text_input_width = max(*value, 1);
+        if (auto value = object.get_i32("textInputHeight"sv); value.has_value())
+            text_input_height = max(*value, 1);
 
         metrics_dirty = false;
     }
@@ -952,6 +1026,7 @@ struct PageSession {
         crashed = false;
         crash_reason = {};
         builtin_shell_url = {};
+        text_input_enabled = false;
         // Navigation has been accepted even if the cold WebContent view has not
         // emitted on_load_start yet. Publish the pending state immediately so
         // the browser does not mistake service startup latency for a crash.
@@ -977,6 +1052,7 @@ struct PageSession {
     {
         crashed = false;
         crash_reason = {};
+        text_input_enabled = false;
         auto shell_url = base_url.is_empty() ? ByteString { "about:blank" } : base_url;
         builtin_shell_url = is_browser_builtin_url(shell_url) ? shell_url : ByteString {};
         loading = true;
@@ -1166,13 +1242,24 @@ struct PageSession {
             view->enqueue_input_event(Web::InputEvent { move(up) });
         };
 
-        if (request.text[0] != '\0') {
-            auto text = ByteString { request.text };
-            for (auto ch : text.bytes()) {
+        size_t text_length = 0;
+        while (text_length < sizeof(request.text) && request.text[text_length] != '\0')
+            ++text_length;
+        if (text_length == sizeof(request.text))
+            return false;
+
+        if (text_length != 0) {
+            auto text_or_error = String::from_utf8(StringView { request.text, text_length });
+            if (text_or_error.is_error())
+                return false;
+            auto text = text_or_error.release_value();
+            for (auto code_point : text.code_points()) {
                 Web::KeyEvent event {};
-                if (!map_ascii_key(ch, event))
-                    continue;
-                send_key(event.key, event.code_point, event.modifiers);
+                if (code_point <= 0x7Fu && map_ascii_key(code_point, event))
+                    send_key(event.key, event.code_point, event.modifiers);
+                else
+                    send_key(Web::UIEvents::KeyCode::Key_Invalid,
+                             code_point, Web::UIEvents::KeyModifier::Mod_None);
             }
             metrics_dirty = true;
             mark_dirty();
@@ -1219,6 +1306,8 @@ struct PageSession {
             state.flags |= RIN_WEBCONTENT_STATE_FLAG_CRASHED;
         if (dirty)
             state.flags |= RIN_WEBCONTENT_STATE_FLAG_DIRTY;
+        if (text_input_enabled)
+            state.flags |= RIN_WEBCONTENT_STATE_FLAG_TEXT_INPUT_ENABLED;
 
         state.progress_percent = static_cast<u32>(max(progress_percent, 0));
         state.state_revision = state_revision;
@@ -1252,6 +1341,11 @@ struct PageSession {
         if (load_suspected_stall)
             state.flags |= RIN_WEBCONTENT_STATE_FLAG_SUSPECTED_STALL;
         copy_c_string(state.load_current_url, sizeof(state.load_current_url), load_current_url_str);
+        state.text_input_content_type = static_cast<u32>(text_input_content_type);
+        state.text_input_x = text_input_x;
+        state.text_input_y = text_input_y;
+        state.text_input_width = text_input_width;
+        state.text_input_height = text_input_height;
     }
 
     u32 page_id { 0 };
@@ -1259,6 +1353,12 @@ struct PageSession {
     int requested_viewport_height { 600 };
     int reported_viewport_width { 800 };
     int reported_viewport_height { 600 };
+    bool text_input_enabled { false };
+    int text_input_content_type { 0 };
+    int text_input_x { 0 };
+    int text_input_y { 0 };
+    int text_input_width { 1 };
+    int text_input_height { 1 };
     NonnullOwnPtr<BridgeView> view;
 
     bool loading { false };
@@ -1489,8 +1589,18 @@ static void handle_client(int client_fd)
     RinWebContentMsgHeader header {};
     if (!recv_all(client_fd, &header, sizeof(header)))
         return;
-    if (header.magic != RIN_WEBCONTENT_MAGIC || header.version != RIN_WEBCONTENT_VERSION)
+    if (!rin_webcontent_service_request_header_valid(&header))
         return;
+
+    if (header.command == RIN_WEBCONTENT_CMD_GET_CAPABILITIES_V1) {
+        RinWebContentCapabilitiesV1 capabilities {};
+        if (!rin_webcontent_service_capabilities_build(&header, &capabilities)) {
+            (void)send_message(client_fd, header.command, -EINVAL, header.page_id, nullptr, 0);
+            return;
+        }
+        (void)send_message(client_fd, header.command, 0, 0, &capabilities, sizeof(capabilities));
+        return;
+    }
 
     Vector<u8> payload;
     if (header.payload_len > 0) {

@@ -47,7 +47,10 @@ add_executable(WebContent main.cpp)
 target_link_libraries(WebContent PRIVATE webcontentservice LibURL)
 
 if (AK_OS_RINOS)
-    add_library(rinoswebcontentbridge STATIC RinOSCompatBridge.cpp)
+    add_library(rinoswebcontentbridge STATIC
+        RinOSCompatBridge.cpp
+        ${LADYBIRD_SOURCE_DIR}/../../src/shared/webcontent_bridge_recovery_policy.c
+    )
     target_include_directories(rinoswebcontentbridge PRIVATE
         ${LADYBIRD_SOURCE_DIR}/../../src/shared
         ${LADYBIRD_SOURCE_DIR}/../../src/apps/common

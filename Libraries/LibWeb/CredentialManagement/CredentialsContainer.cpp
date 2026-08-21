@@ -5,6 +5,7 @@
  */
 
 #include <LibWeb/CredentialManagement/CredentialsContainer.h>
+#include <LibWeb/WebIDL/DOMException.h>
 
 namespace Web::CredentialManagement {
 
@@ -18,9 +19,13 @@ GC::Ref<CredentialsContainer> CredentialsContainer::create(JS::Realm& realm)
 CredentialsContainer::~CredentialsContainer() { }
 
 // https://www.w3.org/TR/credential-management-1/#dom-credentialscontainer-get
-GC::Ref<WebIDL::Promise> CredentialsContainer::get(CredentialRequestOptions const&)
+GC::Ref<WebIDL::Promise> CredentialsContainer::get(CredentialRequestOptions const& options)
 {
     auto* realm = vm().current_realm();
+    if (options.public_key.has_value()) {
+        return WebIDL::create_rejected_promise_from_exception(*realm,
+            WebIDL::NotSupportedError::create(*realm, "Rin Pass WebAuthn broker is unavailable"_utf16));
+    }
     return WebIDL::create_rejected_promise_from_exception(*realm, vm().throw_completion<JS::InternalError>(JS::ErrorType::NotImplemented, "get"sv));
 }
 
@@ -32,9 +37,13 @@ GC::Ref<WebIDL::Promise> CredentialsContainer::store(Credential const&)
 }
 
 // https://www.w3.org/TR/credential-management-1/#dom-credentialscontainer-create
-GC::Ref<WebIDL::Promise> CredentialsContainer::create(CredentialCreationOptions const&)
+GC::Ref<WebIDL::Promise> CredentialsContainer::create(CredentialCreationOptions const& options)
 {
     auto* realm = vm().current_realm();
+    if (options.public_key.has_value()) {
+        return WebIDL::create_rejected_promise_from_exception(*realm,
+            WebIDL::NotSupportedError::create(*realm, "Rin Pass WebAuthn broker is unavailable"_utf16));
+    }
     return WebIDL::create_rejected_promise_from_exception(*realm, vm().throw_completion<JS::InternalError>(JS::ErrorType::NotImplemented, "create"sv));
 }
 

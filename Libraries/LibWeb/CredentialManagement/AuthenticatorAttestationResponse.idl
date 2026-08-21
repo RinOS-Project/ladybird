@@ -1,0 +1,19 @@
+#import <CredentialManagement/AuthenticatorResponse.idl>
+
+enum AuthenticatorTransport {
+    "usb",
+    "nfc",
+    "ble",
+    "smart-card",
+    "hybrid",
+    "internal"
+};
+
+[Exposed=Window, SecureContext]
+interface AuthenticatorAttestationResponse : AuthenticatorResponse {
+    readonly attribute ArrayBuffer attestationObject;
+    sequence<AuthenticatorTransport> getTransports();
+    ArrayBuffer getAuthenticatorData();
+    ArrayBuffer? getPublicKey();
+    long getPublicKeyAlgorithm();
+};
