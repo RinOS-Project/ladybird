@@ -43,6 +43,10 @@
 #include <LibWeb/Crypto/SubtleCrypto.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 
+#if defined(AK_OS_RINOS)
+extern "C" int rin_webcrypto_get_random_values(void*, size_t);
+#endif
+
 namespace Web::Crypto {
 
 static JS::ThrowCompletionOr<HashAlgorithmIdentifier> hash_algorithm_identifier_from_value(JS::VM& vm, JS::Value const hash_value)
@@ -273,10 +277,19 @@ static WebIDL::ExceptionOr<void> validate_jwk_key_ops(JS::Realm& realm, Bindings
     return {};
 }
 
-static WebIDL::ExceptionOr<ByteBuffer> generate_random_key(JS::VM& vm, u16 const size_in_bits)
+static WebIDL::ExceptionOr<ByteBuffer> generate_random_key(JS::VM& vm, WebIDL::UnsignedLong const size_in_bits)
 {
+    constexpr auto max_key_size_in_bits = 65536u * 8u;
+    if (size_in_bits == 0 || size_in_bits % 8 != 0 || size_in_bits > max_key_size_in_bits)
+        return WebIDL::OperationError::create(*vm.current_realm(), "Key length must be a non-zero multiple of 8 bits no greater than 524288 bits"_utf16);
+
     auto key_buffer = TRY_OR_THROW_OOM(vm, ByteBuffer::create_uninitialized(size_in_bits / 8));
+#if defined(AK_OS_RINOS)
+    if (rin_webcrypto_get_random_values(key_buffer.data(), key_buffer.size()) != 0)
+        return WebIDL::OperationError::create(*vm.current_realm(), "Secure randomness is unavailable"_utf16);
+#else
     fill_with_random(key_buffer);
+#endif
     return key_buffer;
 }
 
@@ -8134,10 +8147,9 @@ WebIDL::ExceptionOr<Variant<GC::Ref<CryptoKey>, GC::Ref<CryptoKeyPair>>> HMAC::g
     }
 
     // 3. Generate a key of length length bits.
-    auto key_data = MUST(generate_random_key(m_realm->vm(), length));
+    auto key_data = TRY(generate_random_key(m_realm->vm(), length));
 
     // 4. If the key generation step fails, then throw an OperationError.
-    // NOTE: Currently key generation must succeed
 
     // 5. Let key be a new CryptoKey object representing the generated key.
     auto key = CryptoKey::create(m_realm, move(key_data));
@@ -10548,7 +10560,7 @@ WebIDL::ExceptionOr<Variant<GC::Ref<CryptoKey>, GC::Ref<CryptoKeyPair>>> KMAC::g
 
     // 3. Generate a key of length bits.
     // 4. If key generation fails, throw an OperationError.
-    auto key_data = MUST(generate_random_key(m_realm->vm(), length));
+    auto key_data = TRY(generate_random_key(m_realm->vm(), length));
 
     // 5. Let key be a new CryptoKey object representing the generated key.
     auto key = CryptoKey::create(m_realm, move(key_data));
