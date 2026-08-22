@@ -518,12 +518,14 @@ libweb_js_bindings(WebAudio/ScriptProcessorNode)
 libweb_js_bindings(WebAudio/StereoPannerNode)
 if (AK_OS_RINOS)
     # The private RinGL dispatcher owns WebGL objects and buffers before the
-    # public WebGLRenderingContext binding is enabled. These two generated
+    # public WebGLRenderingContext binding is enabled. These generated
     # object bindings provide the InterfaceName/prototype definitions required
     # by the compiled object lifecycle code; they do not expose a canvas
     # context or any command entry point to JavaScript.
     libweb_js_bindings(WebGL/WebGLBuffer)
     libweb_js_bindings(WebGL/WebGLObject)
+    libweb_js_bindings(WebGL/WebGLProgram)
+    libweb_js_bindings(WebGL/WebGLShader)
 else()
     libweb_js_bindings(WebGL/Extensions/ANGLEInstancedArrays)
     libweb_js_bindings(WebGL/Extensions/EXTBlendMinMax)
