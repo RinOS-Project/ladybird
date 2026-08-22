@@ -534,6 +534,90 @@ JS::Value WebGLRenderingContextImpl::get_buffer_parameter(WebIDL::UnsignedLong t
     }
 }
 
+JS::Value WebGLRenderingContextImpl::get_program_parameter(GC::Root<WebGLProgram> program, WebIDL::UnsignedLong pname)
+{
+    if (!make_rin_gl_current())
+        return JS::js_null();
+
+    switch (pname) {
+    case RINGL_LINK_STATUS:
+    case RINGL_VALIDATE_STATUS:
+    case RINGL_ATTACHED_SHADERS:
+    case RINGL_ACTIVE_ATTRIBUTES:
+    case RINGL_ACTIVE_UNIFORMS:
+        break;
+    default:
+        set_error(RINGL_INVALID_ENUM);
+        return JS::js_null();
+    }
+
+    if (!program) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+    auto handle_or_error = program->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+    auto handle = handle_or_error.release_value();
+    if (ringl_is_program(handle) == 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    RinGLProgramInfoV1 info {
+        .struct_size = sizeof(info),
+        .api_version = RINGL_API_VERSION,
+    };
+    if (ringl_get_program_info(handle, &info) != 0)
+        return JS::js_null();
+
+    switch (pname) {
+    case RINGL_LINK_STATUS:
+        return JS::Value(info.link_status == RINGL_TRUE);
+    case RINGL_VALIDATE_STATUS:
+        return JS::Value(info.validate_status == RINGL_TRUE);
+    case RINGL_ATTACHED_SHADERS:
+        return JS::Value(info.attached_shader_count);
+    case RINGL_ACTIVE_ATTRIBUTES:
+        return JS::Value(info.active_attribute_count);
+    case RINGL_ACTIVE_UNIFORMS:
+        return JS::Value(info.active_uniform_count);
+    default:
+        return JS::js_null();
+    }
+}
+
+JS::Value WebGLRenderingContextImpl::get_shader_parameter(GC::Root<WebGLShader> shader, WebIDL::UnsignedLong pname)
+{
+    if (!make_rin_gl_current())
+        return JS::js_null();
+
+    if (pname != RINGL_SHADER_TYPE && pname != RINGL_COMPILE_STATUS) {
+        set_error(RINGL_INVALID_ENUM);
+        return JS::js_null();
+    }
+    if (!shader) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+    auto handle_or_error = shader->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+    auto handle = handle_or_error.release_value();
+    if (ringl_is_shader(handle) == 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    if (pname == RINGL_SHADER_TYPE)
+        return JS::Value(ringl_get_shader_type(handle));
+    return JS::Value(ringl_get_shader_compile_status(handle) == RINGL_TRUE);
+}
+
 Optional<String> WebGLRenderingContextImpl::get_program_info_log(GC::Root<WebGLProgram> program)
 {
     if (!make_rin_gl_current())
@@ -914,6 +998,28 @@ void WebGLRenderingContextImpl::use_program(GC::Root<WebGLProgram> program)
     ringl_use_program(handle);
     if (handle == 0 || ringl_get_current_program() == handle)
         m_current_program = program;
+}
+
+void WebGLRenderingContextImpl::validate_program(GC::Root<WebGLProgram> program)
+{
+    if (!make_rin_gl_current())
+        return;
+    if (!program) {
+        set_error(RINGL_INVALID_OPERATION);
+        return;
+    }
+
+    auto handle_or_error = program->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return;
+    }
+    auto handle = handle_or_error.release_value();
+    if (ringl_is_program(handle) == 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return;
+    }
+    ringl_validate_program(handle);
 }
 
 bool WebGLRenderingContextImpl::is_buffer(GC::Root<WebGLBuffer> buffer)
