@@ -1234,6 +1234,7 @@ if (AK_OS_RINOS)
     # bindings remain disabled until object/state calls are mapped to RinGL.
     list(APPEND SOURCES
         WebGL/OpenGLContext.cpp
+        WebGL/WebGLActiveInfo.cpp
         WebGL/WebGLBuffer.cpp
         WebGL/WebGLFramebuffer.cpp
         WebGL/WebGLObject.cpp

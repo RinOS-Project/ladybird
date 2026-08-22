@@ -10,6 +10,7 @@
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
+#include <LibWeb/WebGL/WebGLActiveInfo.h>
 #include <LibWeb/WebGL/WebGLBuffer.h>
 #include <LibWeb/WebGL/WebGLFramebuffer.h>
 #include <LibWeb/WebGL/WebGLProgram.h>
@@ -560,6 +561,66 @@ JS::Value WebGLRenderingContextImpl::get_buffer_parameter(WebIDL::UnsignedLong t
         set_error(RINGL_INVALID_ENUM);
         return JS::js_null();
     }
+}
+
+GC::Root<WebGLActiveInfo> WebGLRenderingContextImpl::get_active_attrib(
+    GC::Root<WebGLProgram> program, WebIDL::UnsignedLong index)
+{
+    RinGLActiveInfoV1 info {};
+
+    if (!make_rin_gl_current())
+        return {};
+    if (!program) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+    auto handle_or_error = program->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+    info.struct_size = sizeof(info);
+    info.api_version = RINGL_API_VERSION;
+    if (ringl_get_active_attrib(handle_or_error.release_value(), index, &info) != 0)
+        return {};
+    if (info.name_length >= sizeof(info.name)) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+    auto name = String::from_utf8_without_validation(
+        ReadonlyBytes { reinterpret_cast<u8 const*>(info.name), info.name_length });
+    return WebGLActiveInfo::create(realm(), move(name), static_cast<GLenum>(info.type),
+        static_cast<GLsizei>(info.size));
+}
+
+GC::Root<WebGLActiveInfo> WebGLRenderingContextImpl::get_active_uniform(
+    GC::Root<WebGLProgram> program, WebIDL::UnsignedLong index)
+{
+    RinGLActiveInfoV1 info {};
+
+    if (!make_rin_gl_current())
+        return {};
+    if (!program) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+    auto handle_or_error = program->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+    info.struct_size = sizeof(info);
+    info.api_version = RINGL_API_VERSION;
+    if (ringl_get_active_uniform(handle_or_error.release_value(), index, &info) != 0)
+        return {};
+    if (info.name_length >= sizeof(info.name)) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+    auto name = String::from_utf8_without_validation(
+        ReadonlyBytes { reinterpret_cast<u8 const*>(info.name), info.name_length });
+    return WebGLActiveInfo::create(realm(), move(name), static_cast<GLenum>(info.type),
+        static_cast<GLsizei>(info.size));
 }
 
 WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::UnsignedLong pname)
