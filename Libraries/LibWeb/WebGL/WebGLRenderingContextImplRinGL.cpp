@@ -218,8 +218,13 @@ void WebGLRenderingContextImpl::bind_texture(WebIDL::UnsignedLong target, GC::Ro
     }
 
     ringl_bind_texture(target, handle);
-    if (ringl_get_bound_texture(target) == handle)
+    auto active_texture = ringl_get_active_texture();
+    if (ringl_get_bound_texture(target) == handle
+        && active_texture >= RINGL_TEXTURE0
+        && active_texture < RINGL_TEXTURE0 + 8u) {
+        m_rin_texture_bindings_2d[active_texture - RINGL_TEXTURE0] = texture;
         m_texture_binding_2d = texture;
+    }
 }
 
 GC::Root<WebGLBuffer> WebGLRenderingContextImpl::create_buffer()
@@ -411,8 +416,14 @@ void WebGLRenderingContextImpl::delete_texture(GC::Root<WebGLTexture> texture)
     }
 
     ringl_delete_textures(1, &handle);
-    if (m_texture_binding_2d == texture)
-        m_texture_binding_2d = nullptr;
+    for (auto& binding : m_rin_texture_bindings_2d) {
+        if (binding == texture)
+            binding = nullptr;
+    }
+    auto active_texture = ringl_get_active_texture();
+    if (active_texture >= RINGL_TEXTURE0
+        && active_texture < RINGL_TEXTURE0 + 8u)
+        m_texture_binding_2d = m_rin_texture_bindings_2d[active_texture - RINGL_TEXTURE0];
 }
 
 void WebGLRenderingContextImpl::detach_shader(GC::Root<WebGLProgram> program, GC::Root<WebGLShader> shader)
@@ -786,6 +797,10 @@ void WebGLRenderingContextImpl::active_texture(WebIDL::UnsignedLong texture)
     if (!make_rin_gl_current())
         return;
     ringl_active_texture(texture);
+    if (ringl_get_active_texture() == texture
+        && texture >= RINGL_TEXTURE0
+        && texture < RINGL_TEXTURE0 + 8u)
+        m_texture_binding_2d = m_rin_texture_bindings_2d[texture - RINGL_TEXTURE0];
 }
 
 void WebGLRenderingContextImpl::tex_parameteri(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname, WebIDL::Long param)
@@ -1159,6 +1174,8 @@ void WebGLRenderingContextImpl::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_renderbuffer_binding);
     visitor.visit(m_texture_binding_2d);
     visitor.visit(m_texture_binding_cube_map);
+    for (auto& binding : m_rin_texture_bindings_2d)
+        visitor.visit(binding);
 
     visitor.visit(m_uniform_buffer_binding);
     visitor.visit(m_copy_read_buffer_binding);

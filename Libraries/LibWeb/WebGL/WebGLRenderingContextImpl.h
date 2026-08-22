@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/Array.h>
 #include <AK/NonnullOwnPtr.h>
 #include <LibGC/Ptr.h>
 #include <LibWeb/Bindings/PlatformObject.h>
@@ -151,6 +152,11 @@ protected:
     // private drawing surface could not be realized. Native command methods
     // must use this instead of calling RinGL without a current context.
     bool make_rin_gl_current();
+
+    // RinGL exposes eight independently bound WebGL 1 texture units. Keep
+    // the Ladybird object cache in the same shape, rather than treating the
+    // most recently bound unit as a process-wide TEXTURE_BINDING_2D value.
+    Array<GC::Ptr<WebGLTexture>, 8> m_rin_texture_bindings_2d;
 #endif
 
     virtual void visit_edges(JS::Cell::Visitor&) override;
