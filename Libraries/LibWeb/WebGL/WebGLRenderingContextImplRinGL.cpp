@@ -11,6 +11,7 @@
 #include <LibWeb/WebGL/WebGLProgram.h>
 #include <LibWeb/WebGL/WebGLRenderingContextImpl.h>
 #include <LibWeb/WebGL/WebGLShader.h>
+#include <LibWeb/WebGL/WebGLTexture.h>
 
 extern "C" {
 #include <ringl/ringl.h>
@@ -140,6 +141,33 @@ void WebGLRenderingContextImpl::bind_buffer(WebIDL::UnsignedLong target, GC::Roo
     m_element_array_buffer_binding = buffer;
 }
 
+void WebGLRenderingContextImpl::bind_texture(WebIDL::UnsignedLong target, GC::Root<WebGLTexture> texture)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    // RinGL currently exposes only the level-zero 2D texture profile. Check
+    // the target before touching the WebGL binding cache.
+    if (target != RINGL_TEXTURE_2D) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+
+    GLuint handle = 0;
+    if (texture) {
+        auto handle_or_error = texture->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+    }
+
+    ringl_bind_texture(target, handle);
+    if (ringl_get_bound_texture(target) == handle)
+        m_texture_binding_2d = texture;
+}
+
 GC::Root<WebGLBuffer> WebGLRenderingContextImpl::create_buffer()
 {
     if (!make_rin_gl_current())
@@ -176,6 +204,18 @@ GC::Root<WebGLShader> WebGLRenderingContextImpl::create_shader(WebIDL::UnsignedL
     if (handle == 0)
         return {};
     return WebGLShader::create(realm(), *this, handle, type);
+}
+
+GC::Root<WebGLTexture> WebGLRenderingContextImpl::create_texture()
+{
+    if (!make_rin_gl_current())
+        return {};
+
+    GLuint handle = 0;
+    ringl_gen_textures(1, &handle);
+    if (handle == 0)
+        return {};
+    return WebGLTexture::create(realm(), *this, handle);
 }
 
 void WebGLRenderingContextImpl::delete_buffer(GC::Root<WebGLBuffer> buffer)
@@ -235,6 +275,26 @@ void WebGLRenderingContextImpl::delete_shader(GC::Root<WebGLShader> shader)
         handle = handle_or_error.release_value();
     }
     ringl_delete_shader(handle);
+}
+
+void WebGLRenderingContextImpl::delete_texture(GC::Root<WebGLTexture> texture)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    GLuint handle = 0;
+    if (texture) {
+        auto handle_or_error = texture->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+    }
+
+    ringl_delete_textures(1, &handle);
+    if (m_texture_binding_2d == texture)
+        m_texture_binding_2d = nullptr;
 }
 
 void WebGLRenderingContextImpl::detach_shader(GC::Root<WebGLProgram> program, GC::Root<WebGLShader> shader)
@@ -444,6 +504,19 @@ bool WebGLRenderingContextImpl::is_shader(GC::Root<WebGLShader> shader)
     return ringl_is_shader(handle_or_error.release_value()) != 0;
 }
 
+bool WebGLRenderingContextImpl::is_texture(GC::Root<WebGLTexture> texture)
+{
+    if (!make_rin_gl_current() || !texture)
+        return false;
+
+    auto handle_or_error = texture->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return false;
+    }
+    return ringl_is_texture(handle_or_error.release_value()) != 0;
+}
+
 void WebGLRenderingContextImpl::link_program(GC::Root<WebGLProgram> program)
 {
     if (!make_rin_gl_current())
@@ -526,6 +599,13 @@ void WebGLRenderingContextImpl::active_texture(WebIDL::UnsignedLong texture)
     if (!make_rin_gl_current())
         return;
     ringl_active_texture(texture);
+}
+
+void WebGLRenderingContextImpl::tex_parameteri(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname, WebIDL::Long param)
+{
+    if (!make_rin_gl_current())
+        return;
+    ringl_tex_parameteri(target, pname, param);
 }
 
 void WebGLRenderingContextImpl::blend_color(float red, float green, float blue, float alpha)

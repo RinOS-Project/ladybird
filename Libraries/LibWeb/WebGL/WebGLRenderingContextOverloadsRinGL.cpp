@@ -79,4 +79,41 @@ void WebGLRenderingContextOverloads::buffer_sub_data(WebIDL::UnsignedLong target
     ringl_buffer_sub_data(target, offset, static_cast<WebIDL::LongLong>(span.size()), span.data());
 }
 
+void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    if (!pixels) {
+        ringl_tex_image_2d_from_bytes(target, level, internalformat, width, height, border, format, type, nullptr, 0);
+        return;
+    }
+
+    auto span_or_error = get_offset_span<u8 const>(*pixels, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
+    ringl_tex_image_2d_from_bytes(target, level, internalformat, width, height, border, format, type, span.data(), span.size());
+}
+
+void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels)
+{
+    if (!make_rin_gl_current())
+        return;
+    if (!pixels) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+
+    auto span_or_error = get_offset_span<u8 const>(*pixels, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
+    ringl_tex_sub_image_2d_from_bytes(target, level, xoffset, yoffset, width, height, format, type, span.data(), span.size());
+}
+
 }
