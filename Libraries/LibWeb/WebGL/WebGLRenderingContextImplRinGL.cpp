@@ -10,11 +10,14 @@
 #include <LibWeb/WebGL/WebGLBuffer.h>
 #include <LibWeb/WebGL/WebGLFramebuffer.h>
 #include <LibWeb/WebGL/WebGLProgram.h>
+#include <LibWeb/WebGL/WebGLQuery.h>
 #include <LibWeb/WebGL/WebGLRenderbuffer.h>
 #include <LibWeb/WebGL/WebGLRenderingContextImpl.h>
 #include <LibWeb/WebGL/WebGLShader.h>
 #include <LibWeb/WebGL/WebGLTexture.h>
+#include <LibWeb/WebGL/WebGLTransformFeedback.h>
 #include <LibWeb/WebGL/WebGLUniformLocation.h>
+#include <LibWeb/WebGL/WebGLVertexArrayObject.h>
 
 extern "C" {
 #include <ringl/ringl.h>
@@ -1143,6 +1146,33 @@ void WebGLRenderingContextImpl::viewport(WebIDL::Long x, WebIDL::Long y, WebIDL:
     if (!make_rin_gl_current())
         return;
     ringl_viewport(x, y, width, height);
+}
+
+void WebGLRenderingContextImpl::visit_edges(JS::Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+
+    visitor.visit(m_array_buffer_binding);
+    visitor.visit(m_element_array_buffer_binding);
+    visitor.visit(m_current_program);
+    visitor.visit(m_framebuffer_binding);
+    visitor.visit(m_renderbuffer_binding);
+    visitor.visit(m_texture_binding_2d);
+    visitor.visit(m_texture_binding_cube_map);
+
+    visitor.visit(m_uniform_buffer_binding);
+    visitor.visit(m_copy_read_buffer_binding);
+    visitor.visit(m_copy_write_buffer_binding);
+    visitor.visit(m_transform_feedback_buffer_binding);
+    visitor.visit(m_texture_binding_2d_array);
+    visitor.visit(m_texture_binding_3d);
+    visitor.visit(m_transform_feedback_binding);
+    visitor.visit(m_pixel_pack_buffer_binding);
+    visitor.visit(m_pixel_unpack_buffer_binding);
+    visitor.visit(m_current_vertex_array);
+    visitor.visit(m_any_samples_passed);
+    visitor.visit(m_any_samples_passed_conservative);
+    visitor.visit(m_transform_feedback_primitives_written);
 }
 
 }
