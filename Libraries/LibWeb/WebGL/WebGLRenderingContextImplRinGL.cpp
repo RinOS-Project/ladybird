@@ -8,7 +8,9 @@
 #include <AK/NumericLimits.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLBuffer.h>
+#include <LibWeb/WebGL/WebGLFramebuffer.h>
 #include <LibWeb/WebGL/WebGLProgram.h>
+#include <LibWeb/WebGL/WebGLRenderbuffer.h>
 #include <LibWeb/WebGL/WebGLRenderingContextImpl.h>
 #include <LibWeb/WebGL/WebGLShader.h>
 #include <LibWeb/WebGL/WebGLTexture.h>
@@ -142,6 +144,54 @@ void WebGLRenderingContextImpl::bind_buffer(WebIDL::UnsignedLong target, GC::Roo
     m_element_array_buffer_binding = buffer;
 }
 
+void WebGLRenderingContextImpl::bind_framebuffer(WebIDL::UnsignedLong target, GC::Root<WebGLFramebuffer> framebuffer)
+{
+    if (!make_rin_gl_current())
+        return;
+    if (target != RINGL_FRAMEBUFFER) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+
+    GLuint handle = 0;
+    if (framebuffer) {
+        auto handle_or_error = framebuffer->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+    }
+
+    ringl_bind_framebuffer(target, handle);
+    if (ringl_get_bound_framebuffer(target) == handle)
+        m_framebuffer_binding = framebuffer;
+}
+
+void WebGLRenderingContextImpl::bind_renderbuffer(WebIDL::UnsignedLong target, GC::Root<WebGLRenderbuffer> renderbuffer)
+{
+    if (!make_rin_gl_current())
+        return;
+    if (target != RINGL_RENDERBUFFER) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+
+    GLuint handle = 0;
+    if (renderbuffer) {
+        auto handle_or_error = renderbuffer->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+    }
+
+    ringl_bind_renderbuffer(target, handle);
+    if (ringl_get_bound_renderbuffer(target) == handle)
+        m_renderbuffer_binding = renderbuffer;
+}
+
 void WebGLRenderingContextImpl::bind_texture(WebIDL::UnsignedLong target, GC::Root<WebGLTexture> texture)
 {
     if (!make_rin_gl_current())
@@ -181,6 +231,18 @@ GC::Root<WebGLBuffer> WebGLRenderingContextImpl::create_buffer()
     return WebGLBuffer::create(realm(), *this, handle);
 }
 
+GC::Root<WebGLFramebuffer> WebGLRenderingContextImpl::create_framebuffer()
+{
+    if (!make_rin_gl_current())
+        return {};
+
+    GLuint handle = 0;
+    ringl_gen_framebuffers(1, &handle);
+    if (handle == 0)
+        return {};
+    return WebGLFramebuffer::create(realm(), *this, handle);
+}
+
 GC::Root<WebGLProgram> WebGLRenderingContextImpl::create_program()
 {
     if (!make_rin_gl_current())
@@ -190,6 +252,18 @@ GC::Root<WebGLProgram> WebGLRenderingContextImpl::create_program()
     if (handle == 0)
         return {};
     return WebGLProgram::create(realm(), *this, handle);
+}
+
+GC::Root<WebGLRenderbuffer> WebGLRenderingContextImpl::create_renderbuffer()
+{
+    if (!make_rin_gl_current())
+        return {};
+
+    GLuint handle = 0;
+    ringl_gen_renderbuffers(1, &handle);
+    if (handle == 0)
+        return {};
+    return WebGLRenderbuffer::create(realm(), *this, handle);
 }
 
 GC::Root<WebGLShader> WebGLRenderingContextImpl::create_shader(WebIDL::UnsignedLong type)
@@ -241,6 +315,26 @@ void WebGLRenderingContextImpl::delete_buffer(GC::Root<WebGLBuffer> buffer)
         m_element_array_buffer_binding = nullptr;
 }
 
+void WebGLRenderingContextImpl::delete_framebuffer(GC::Root<WebGLFramebuffer> framebuffer)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    GLuint handle = 0;
+    if (framebuffer) {
+        auto handle_or_error = framebuffer->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+    }
+
+    ringl_delete_framebuffers(1, &handle);
+    if (m_framebuffer_binding == framebuffer)
+        m_framebuffer_binding = nullptr;
+}
+
 void WebGLRenderingContextImpl::delete_program(GC::Root<WebGLProgram> program)
 {
     if (!make_rin_gl_current())
@@ -259,6 +353,26 @@ void WebGLRenderingContextImpl::delete_program(GC::Root<WebGLProgram> program)
     ringl_delete_program(handle);
     if (m_current_program == program)
         m_current_program = nullptr;
+}
+
+void WebGLRenderingContextImpl::delete_renderbuffer(GC::Root<WebGLRenderbuffer> renderbuffer)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    GLuint handle = 0;
+    if (renderbuffer) {
+        auto handle_or_error = renderbuffer->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+    }
+
+    ringl_delete_renderbuffers(1, &handle);
+    if (m_renderbuffer_binding == renderbuffer)
+        m_renderbuffer_binding = nullptr;
 }
 
 void WebGLRenderingContextImpl::delete_shader(GC::Root<WebGLShader> shader)
@@ -506,6 +620,19 @@ GC::Root<WebGLUniformLocation> WebGLRenderingContextImpl::get_uniform_location(G
     return WebGLUniformLocation::create(realm(), static_cast<GLuint>(location), program.ptr());
 }
 
+bool WebGLRenderingContextImpl::is_framebuffer(GC::Root<WebGLFramebuffer> framebuffer)
+{
+    if (!make_rin_gl_current() || !framebuffer)
+        return false;
+
+    auto handle_or_error = framebuffer->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return false;
+    }
+    return ringl_is_framebuffer(handle_or_error.release_value()) != 0;
+}
+
 bool WebGLRenderingContextImpl::is_program(GC::Root<WebGLProgram> program)
 {
     if (!make_rin_gl_current() || !program)
@@ -517,6 +644,19 @@ bool WebGLRenderingContextImpl::is_program(GC::Root<WebGLProgram> program)
         return false;
     }
     return ringl_is_program(handle_or_error.release_value()) != 0;
+}
+
+bool WebGLRenderingContextImpl::is_renderbuffer(GC::Root<WebGLRenderbuffer> renderbuffer)
+{
+    if (!make_rin_gl_current() || !renderbuffer)
+        return false;
+
+    auto handle_or_error = renderbuffer->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return false;
+    }
+    return ringl_is_renderbuffer(handle_or_error.release_value()) != 0;
 }
 
 bool WebGLRenderingContextImpl::is_shader(GC::Root<WebGLShader> shader)
@@ -838,6 +978,56 @@ void WebGLRenderingContextImpl::pixel_storei(WebIDL::UnsignedLong pname, WebIDL:
     if (!make_rin_gl_current())
         return;
     ringl_pixel_storei(pname, param);
+}
+
+void WebGLRenderingContextImpl::framebuffer_renderbuffer(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong renderbuffertarget, GC::Root<WebGLRenderbuffer> renderbuffer)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    GLuint handle = 0;
+    if (renderbuffer) {
+        auto handle_or_error = renderbuffer->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+    }
+    ringl_framebuffer_renderbuffer(target, attachment, renderbuffertarget, handle);
+}
+
+void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong textarget, GC::Root<WebGLTexture> texture, WebIDL::Long level)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    GLuint handle = 0;
+    if (texture) {
+        auto handle_or_error = texture->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+    }
+    ringl_framebuffer_texture_2d(target, attachment, textarget, handle, level);
+}
+
+WebIDL::UnsignedLong WebGLRenderingContextImpl::check_framebuffer_status(WebIDL::UnsignedLong target)
+{
+    if (!make_rin_gl_current())
+        return 0;
+    return ringl_check_framebuffer_status(target);
+}
+
+void WebGLRenderingContextImpl::renderbuffer_storage(WebIDL::UnsignedLong target, WebIDL::UnsignedLong internalformat, WebIDL::Long width, WebIDL::Long height)
+{
+    if (!make_rin_gl_current())
+        return;
+    if (internalformat == RINGL_DEPTH_STENCIL)
+        internalformat = RINGL_DEPTH24_STENCIL8;
+    ringl_renderbuffer_storage(target, internalformat, width, height);
 }
 
 void WebGLRenderingContextImpl::scissor(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height)

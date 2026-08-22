@@ -1235,8 +1235,10 @@ if (AK_OS_RINOS)
     list(APPEND SOURCES
         WebGL/OpenGLContext.cpp
         WebGL/WebGLBuffer.cpp
+        WebGL/WebGLFramebuffer.cpp
         WebGL/WebGLObject.cpp
         WebGL/WebGLProgram.cpp
+        WebGL/WebGLRenderbuffer.cpp
         WebGL/WebGLRenderingContextBase.cpp
         WebGL/WebGLRenderingContextImplRinGL.cpp
         WebGL/WebGLRenderingContextOverloadsRinGL.cpp

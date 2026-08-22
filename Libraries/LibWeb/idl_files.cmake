@@ -523,8 +523,10 @@ if (AK_OS_RINOS)
     # by the compiled object lifecycle code; they do not expose a canvas
     # context or any command entry point to JavaScript.
     libweb_js_bindings(WebGL/WebGLBuffer)
+    libweb_js_bindings(WebGL/WebGLFramebuffer)
     libweb_js_bindings(WebGL/WebGLObject)
     libweb_js_bindings(WebGL/WebGLProgram)
+    libweb_js_bindings(WebGL/WebGLRenderbuffer)
     libweb_js_bindings(WebGL/WebGLShader)
     libweb_js_bindings(WebGL/WebGLTexture)
     libweb_js_bindings(WebGL/WebGLUniformLocation)
