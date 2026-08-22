@@ -6,6 +6,7 @@
 
 #include <AK/ByteBuffer.h>
 #include <AK/NumericLimits.h>
+#include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
@@ -528,6 +529,221 @@ JS::Value WebGLRenderingContextImpl::get_buffer_parameter(WebIDL::UnsignedLong t
         return JS::Value(static_cast<double>(ringl_get_buffer_size(target)));
     case RINGL_BUFFER_USAGE:
         return JS::Value(ringl_get_buffer_usage(target));
+    default:
+        set_error(RINGL_INVALID_ENUM);
+        return JS::js_null();
+    }
+}
+
+WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::UnsignedLong pname)
+{
+    if (!make_rin_gl_current())
+        return JS::js_null();
+
+    Array<int32_t, 4> values {};
+    auto get_integer = [&] {
+        if (ringl_get_integerv_bounded(pname, values.data(), values.size()) == 0)
+            return true;
+        set_error(RINGL_INVALID_OPERATION);
+        return false;
+    };
+
+    switch (pname) {
+    case RINGL_ARRAY_BUFFER_BINDING: {
+        if (!get_integer() || values[0] == 0)
+            return JS::js_null();
+        auto buffer = m_array_buffer_binding;
+        if (!buffer) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        auto handle_or_error = buffer->handle(this);
+        if (handle_or_error.is_error()
+            || static_cast<int32_t>(handle_or_error.release_value()) != values[0]) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(buffer);
+    }
+    case RINGL_ELEMENT_ARRAY_BUFFER_BINDING: {
+        if (!get_integer() || values[0] == 0)
+            return JS::js_null();
+        auto buffer = m_element_array_buffer_binding;
+        if (!buffer) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        auto handle_or_error = buffer->handle(this);
+        if (handle_or_error.is_error()
+            || static_cast<int32_t>(handle_or_error.release_value()) != values[0]) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(buffer);
+    }
+    case RINGL_CURRENT_PROGRAM: {
+        if (!get_integer() || values[0] == 0)
+            return JS::js_null();
+        auto program = m_current_program;
+        if (!program) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        auto handle_or_error = program->handle(this);
+        if (handle_or_error.is_error()
+            || static_cast<int32_t>(handle_or_error.release_value()) != values[0]) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(program);
+    }
+    case RINGL_FRAMEBUFFER_BINDING: {
+        if (!get_integer() || values[0] == 0)
+            return JS::js_null();
+        auto framebuffer = m_framebuffer_binding;
+        if (!framebuffer) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        auto handle_or_error = framebuffer->handle(this);
+        if (handle_or_error.is_error()
+            || static_cast<int32_t>(handle_or_error.release_value()) != values[0]) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(framebuffer);
+    }
+    case RINGL_RENDERBUFFER_BINDING: {
+        if (!get_integer() || values[0] == 0)
+            return JS::js_null();
+        auto renderbuffer = m_renderbuffer_binding;
+        if (!renderbuffer) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        auto handle_or_error = renderbuffer->handle(this);
+        if (handle_or_error.is_error()
+            || static_cast<int32_t>(handle_or_error.release_value()) != values[0]) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(renderbuffer);
+    }
+    case RINGL_TEXTURE_BINDING_2D: {
+        if (!get_integer() || values[0] == 0)
+            return JS::js_null();
+        auto texture = m_texture_binding_2d;
+        if (!texture) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        auto handle_or_error = texture->handle(this);
+        if (handle_or_error.is_error()
+            || static_cast<int32_t>(handle_or_error.release_value()) != values[0]) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(texture);
+    }
+    case RINGL_COLOR_CLEAR_VALUE: {
+        RinGLClearValuesV1 clear_values {
+            .struct_size = sizeof(clear_values),
+            .api_version = RINGL_API_VERSION,
+        };
+        if (ringl_get_clear_values(&clear_values) != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        Array<float, 4> result {
+            clear_values.red,
+            clear_values.green,
+            clear_values.blue,
+            clear_values.alpha,
+        };
+        auto bytes_or_error = ByteBuffer::copy(result.span().reinterpret<u8>());
+        if (bytes_or_error.is_error()) {
+            set_error(RINGL_OUT_OF_MEMORY);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+        return JS::Float32Array::create(realm(), result.size(), array_buffer);
+    }
+    case RINGL_DEPTH_CLEAR_VALUE:
+    case RINGL_STENCIL_CLEAR_VALUE: {
+        RinGLClearValuesV1 clear_values {
+            .struct_size = sizeof(clear_values),
+            .api_version = RINGL_API_VERSION,
+        };
+        if (ringl_get_clear_values(&clear_values) != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        if (pname == RINGL_DEPTH_CLEAR_VALUE)
+            return JS::Value(clear_values.depth);
+        return JS::Value(clear_values.stencil);
+    }
+    case RINGL_COLOR_WRITEMASK: {
+        if (!get_integer())
+            return JS::js_null();
+        auto sequence = TRY(JS::Array::create(realm(), values.size()));
+        for (size_t index = 0; index < values.size(); ++index)
+            TRY(sequence->create_data_property(JS::PropertyKey(index), JS::Value(values[index] != 0)));
+        return JS::Value(sequence);
+    }
+    case RINGL_VIEWPORT:
+    case RINGL_SCISSOR_BOX: {
+        if (!get_integer())
+            return JS::js_null();
+        auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+        if (bytes_or_error.is_error()) {
+            set_error(RINGL_OUT_OF_MEMORY);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+        return JS::Int32Array::create(realm(), values.size(), array_buffer);
+    }
+    case RINGL_BLEND:
+    case RINGL_CULL_FACE:
+    case RINGL_DEPTH_TEST:
+    case RINGL_SCISSOR_TEST:
+    case RINGL_STENCIL_TEST:
+        return JS::Value(ringl_is_enabled(pname) != 0);
+    case RINGL_DEPTH_WRITEMASK:
+        if (!get_integer())
+            return JS::js_null();
+        return JS::Value(values[0] != 0);
+    case RINGL_ACTIVE_TEXTURE:
+    case RINGL_UNPACK_ALIGNMENT:
+    case RINGL_MAX_TEXTURE_SIZE_QUERY:
+    case RINGL_MAX_TEXTURE_IMAGE_UNITS:
+    case RINGL_MAX_COMBINED_TEXTURE_IMAGE_UNITS:
+    case RINGL_MAX_VERTEX_ATTRIBS_QUERY:
+    case RINGL_CULL_FACE_MODE:
+    case RINGL_FRONT_FACE:
+    case RINGL_DEPTH_FUNC:
+    case RINGL_STENCIL_FUNC:
+    case RINGL_STENCIL_REF:
+    case RINGL_STENCIL_VALUE_MASK:
+    case RINGL_STENCIL_FAIL:
+    case RINGL_STENCIL_PASS_DEPTH_FAIL:
+    case RINGL_STENCIL_PASS_DEPTH_PASS:
+    case RINGL_STENCIL_WRITEMASK:
+    case RINGL_STENCIL_BACK_FUNC:
+    case RINGL_STENCIL_BACK_FAIL:
+    case RINGL_STENCIL_BACK_PASS_DEPTH_FAIL:
+    case RINGL_STENCIL_BACK_PASS_DEPTH_PASS:
+    case RINGL_STENCIL_BACK_REF:
+    case RINGL_STENCIL_BACK_VALUE_MASK:
+    case RINGL_STENCIL_BACK_WRITEMASK:
+    case RINGL_BLEND_SRC_RGB:
+    case RINGL_BLEND_DST_RGB:
+    case RINGL_BLEND_SRC_ALPHA:
+    case RINGL_BLEND_DST_ALPHA:
+    case RINGL_BLEND_EQUATION_RGB:
+    case RINGL_BLEND_EQUATION_ALPHA:
+        if (!get_integer())
+            return JS::js_null();
+        return JS::Value(values[0]);
     default:
         set_error(RINGL_INVALID_ENUM);
         return JS::js_null();
