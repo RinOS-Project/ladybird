@@ -618,6 +618,58 @@ JS::Value WebGLRenderingContextImpl::get_shader_parameter(GC::Root<WebGLShader> 
     return JS::Value(ringl_get_shader_compile_status(handle) == RINGL_TRUE);
 }
 
+JS::Value WebGLRenderingContextImpl::get_renderbuffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname)
+{
+    if (!make_rin_gl_current())
+        return JS::js_null();
+
+    switch (pname) {
+    case RINGL_RENDERBUFFER_WIDTH:
+    case RINGL_RENDERBUFFER_HEIGHT:
+    case RINGL_RENDERBUFFER_INTERNAL_FORMAT:
+    case RINGL_RENDERBUFFER_RED_SIZE:
+    case RINGL_RENDERBUFFER_GREEN_SIZE:
+    case RINGL_RENDERBUFFER_BLUE_SIZE:
+    case RINGL_RENDERBUFFER_ALPHA_SIZE:
+    case RINGL_RENDERBUFFER_DEPTH_SIZE:
+    case RINGL_RENDERBUFFER_STENCIL_SIZE:
+        break;
+    default:
+        set_error(RINGL_INVALID_ENUM);
+        return JS::js_null();
+    }
+
+    RinGLRenderbufferInfoV1 info {
+        .struct_size = sizeof(info),
+        .api_version = RINGL_API_VERSION,
+    };
+    if (ringl_get_renderbuffer_info(target, &info) != 0)
+        return JS::js_null();
+
+    switch (pname) {
+    case RINGL_RENDERBUFFER_WIDTH:
+        return JS::Value(info.width);
+    case RINGL_RENDERBUFFER_HEIGHT:
+        return JS::Value(info.height);
+    case RINGL_RENDERBUFFER_INTERNAL_FORMAT:
+        return JS::Value(info.internal_format);
+    case RINGL_RENDERBUFFER_RED_SIZE:
+        return JS::Value(info.red_size);
+    case RINGL_RENDERBUFFER_GREEN_SIZE:
+        return JS::Value(info.green_size);
+    case RINGL_RENDERBUFFER_BLUE_SIZE:
+        return JS::Value(info.blue_size);
+    case RINGL_RENDERBUFFER_ALPHA_SIZE:
+        return JS::Value(info.alpha_size);
+    case RINGL_RENDERBUFFER_DEPTH_SIZE:
+        return JS::Value(info.depth_size);
+    case RINGL_RENDERBUFFER_STENCIL_SIZE:
+        return JS::Value(info.stencil_size);
+    default:
+        return JS::js_null();
+    }
+}
+
 Optional<String> WebGLRenderingContextImpl::get_program_info_log(GC::Root<WebGLProgram> program)
 {
     if (!make_rin_gl_current())
