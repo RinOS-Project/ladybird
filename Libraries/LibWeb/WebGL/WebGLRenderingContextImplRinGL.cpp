@@ -519,6 +519,33 @@ WebIDL::Long WebGLRenderingContextImpl::get_attrib_location(GC::Root<WebGLProgra
     return ringl_get_attrib_location(handle, name_null_terminated.data());
 }
 
+Optional<Vector<GC::Root<WebGLShader>>> WebGLRenderingContextImpl::get_attached_shaders(GC::Root<WebGLProgram> program)
+{
+    if (!make_rin_gl_current())
+        return OptionalNone {};
+    if (!program) {
+        set_error(RINGL_INVALID_OPERATION);
+        return OptionalNone {};
+    }
+
+    auto handle_or_error = program->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return OptionalNone {};
+    }
+    if (ringl_is_program(handle_or_error.release_value()) == 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return OptionalNone {};
+    }
+
+    Vector<GC::Root<WebGLShader>> result;
+    if (program->attached_vertex_shader())
+        result.append(GC::make_root(*program->attached_vertex_shader()));
+    if (program->attached_fragment_shader())
+        result.append(GC::make_root(*program->attached_fragment_shader()));
+    return result;
+}
+
 JS::Value WebGLRenderingContextImpl::get_buffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname)
 {
     if (!make_rin_gl_current())
@@ -771,6 +798,12 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         set_error(RINGL_INVALID_ENUM);
         return JS::js_null();
     }
+}
+
+WebIDL::UnsignedLong WebGLRenderingContextImpl::get_error()
+{
+    (void)make_rin_gl_current();
+    return get_error_value();
 }
 
 JS::Value WebGLRenderingContextImpl::get_program_parameter(GC::Root<WebGLProgram> program, WebIDL::UnsignedLong pname)
@@ -1709,6 +1742,74 @@ void WebGLRenderingContextImpl::vertex_attrib4f(WebIDL::UnsignedLong index, floa
     if (!make_rin_gl_current())
         return;
     ringl_vertex_attrib4f(index, x, y, z, w);
+}
+
+void WebGLRenderingContextImpl::vertex_attrib1fv(WebIDL::UnsignedLong index, Float32List values)
+{
+    if (!make_rin_gl_current())
+        return;
+    auto values_or_error = span_from_float32_list(values, 0);
+    if (values_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto view = values_or_error.release_value();
+    if (view.size() < 1) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    ringl_vertex_attrib1f(index, view[0]);
+}
+
+void WebGLRenderingContextImpl::vertex_attrib2fv(WebIDL::UnsignedLong index, Float32List values)
+{
+    if (!make_rin_gl_current())
+        return;
+    auto values_or_error = span_from_float32_list(values, 0);
+    if (values_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto view = values_or_error.release_value();
+    if (view.size() < 2) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    ringl_vertex_attrib2f(index, view[0], view[1]);
+}
+
+void WebGLRenderingContextImpl::vertex_attrib3fv(WebIDL::UnsignedLong index, Float32List values)
+{
+    if (!make_rin_gl_current())
+        return;
+    auto values_or_error = span_from_float32_list(values, 0);
+    if (values_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto view = values_or_error.release_value();
+    if (view.size() < 3) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    ringl_vertex_attrib3f(index, view[0], view[1], view[2]);
+}
+
+void WebGLRenderingContextImpl::vertex_attrib4fv(WebIDL::UnsignedLong index, Float32List values)
+{
+    if (!make_rin_gl_current())
+        return;
+    auto values_or_error = span_from_float32_list(values, 0);
+    if (values_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto view = values_or_error.release_value();
+    if (view.size() < 4) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    ringl_vertex_attrib4f(index, view[0], view[1], view[2], view[3]);
 }
 
 void WebGLRenderingContextImpl::vertex_attrib_pointer(WebIDL::UnsignedLong index, WebIDL::Long size, WebIDL::UnsignedLong type, bool normalized, WebIDL::Long stride, WebIDL::LongLong offset)

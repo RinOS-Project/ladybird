@@ -2329,7 +2329,12 @@ void WebGLRenderingContextImpl::vertex_attrib1fv(WebIDL::UnsignedLong index, Flo
 {
     m_context->make_current();
 
-    auto span = MUST(span_from_float32_list(values, /* src_offset= */ 0));
+    auto span_or_error = span_from_float32_list(values, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(GL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
     if (span.size() < 1) {
         set_error(GL_INVALID_VALUE);
         return;
@@ -2341,7 +2346,12 @@ void WebGLRenderingContextImpl::vertex_attrib2fv(WebIDL::UnsignedLong index, Flo
 {
     m_context->make_current();
 
-    auto span = MUST(span_from_float32_list(values, /* src_offset= */ 0));
+    auto span_or_error = span_from_float32_list(values, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(GL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
     if (span.size() < 2) {
         set_error(GL_INVALID_VALUE);
         return;
@@ -2353,7 +2363,12 @@ void WebGLRenderingContextImpl::vertex_attrib3fv(WebIDL::UnsignedLong index, Flo
 {
     m_context->make_current();
 
-    auto span = MUST(span_from_float32_list(values, /* src_offset= */ 0));
+    auto span_or_error = span_from_float32_list(values, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(GL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
     if (span.size() < 3) {
         set_error(GL_INVALID_VALUE);
         return;
@@ -2365,7 +2380,12 @@ void WebGLRenderingContextImpl::vertex_attrib4fv(WebIDL::UnsignedLong index, Flo
 {
     m_context->make_current();
 
-    auto span = MUST(span_from_float32_list(values, /* src_offset= */ 0));
+    auto span_or_error = span_from_float32_list(values, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(GL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
     if (span.size() < 4) {
         set_error(GL_INVALID_VALUE);
         return;
