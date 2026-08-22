@@ -839,6 +839,40 @@ WebIDL::LongLong WebGLRenderingContextImpl::get_vertex_attrib_offset(WebIDL::Uns
     return static_cast<WebIDL::LongLong>(info.offset);
 }
 
+JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program, GC::Root<WebGLUniformLocation> location)
+{
+    if (!make_rin_gl_current())
+        return JS::js_null();
+    if (!program || !location) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    auto program_handle_or_error = program->handle(this);
+    if (program_handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+    auto program_handle = program_handle_or_error.release_value();
+    if (ringl_is_program(program_handle) == 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    auto location_handle_or_error = location->handle(program.ptr());
+    if (location_handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    int32_t value = 0;
+    if (ringl_get_uniform_1i(program_handle,
+                             static_cast<int32_t>(location_handle_or_error.release_value()),
+                             &value) != 0)
+        return JS::js_null();
+    return JS::Value(value);
+}
+
 GC::Root<WebGLUniformLocation> WebGLRenderingContextImpl::get_uniform_location(GC::Root<WebGLProgram> program, String name)
 {
     if (!make_rin_gl_current())
