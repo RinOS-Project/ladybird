@@ -366,7 +366,10 @@ void WebGLRenderingContextImpl::delete_program(GC::Root<WebGLProgram> program)
         handle = handle_or_error.release_value();
     }
 
-    ringl_delete_program(handle);
+    if (program && !program->is_deleted()) {
+        ringl_delete_program(handle);
+        program->mark_deleted();
+    }
     if (m_current_program == program)
         m_current_program = nullptr;
 }
@@ -405,7 +408,10 @@ void WebGLRenderingContextImpl::delete_shader(GC::Root<WebGLShader> shader)
         }
         handle = handle_or_error.release_value();
     }
-    ringl_delete_shader(handle);
+    if (shader && !shader->is_deleted()) {
+        ringl_delete_shader(handle);
+        shader->mark_deleted();
+    }
 }
 
 void WebGLRenderingContextImpl::delete_texture(GC::Root<WebGLTexture> texture)
@@ -890,6 +896,7 @@ JS::Value WebGLRenderingContextImpl::get_program_parameter(GC::Root<WebGLProgram
         return JS::js_null();
 
     switch (pname) {
+    case RINGL_DELETE_STATUS:
     case RINGL_LINK_STATUS:
     case RINGL_VALIDATE_STATUS:
     case RINGL_ATTACHED_SHADERS:
@@ -910,6 +917,8 @@ JS::Value WebGLRenderingContextImpl::get_program_parameter(GC::Root<WebGLProgram
         set_error(RINGL_INVALID_OPERATION);
         return JS::js_null();
     }
+    if (pname == RINGL_DELETE_STATUS)
+        return JS::Value(program->is_deleted());
     auto handle = handle_or_error.release_value();
     if (ringl_is_program(handle) == 0) {
         set_error(RINGL_INVALID_OPERATION);
@@ -943,7 +952,8 @@ JS::Value WebGLRenderingContextImpl::get_shader_parameter(GC::Root<WebGLShader> 
     if (!make_rin_gl_current())
         return JS::js_null();
 
-    if (pname != RINGL_SHADER_TYPE && pname != RINGL_COMPILE_STATUS) {
+    if (pname != RINGL_DELETE_STATUS && pname != RINGL_SHADER_TYPE &&
+        pname != RINGL_COMPILE_STATUS) {
         set_error(RINGL_INVALID_ENUM);
         return JS::js_null();
     }
@@ -956,6 +966,8 @@ JS::Value WebGLRenderingContextImpl::get_shader_parameter(GC::Root<WebGLShader> 
         set_error(RINGL_INVALID_OPERATION);
         return JS::js_null();
     }
+    if (pname == RINGL_DELETE_STATUS)
+        return JS::Value(shader->is_deleted());
     auto handle = handle_or_error.release_value();
     if (ringl_is_shader(handle) == 0) {
         set_error(RINGL_INVALID_OPERATION);
