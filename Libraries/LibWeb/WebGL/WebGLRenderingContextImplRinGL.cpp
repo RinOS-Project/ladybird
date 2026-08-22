@@ -12,6 +12,7 @@
 #include <LibWeb/WebGL/WebGLRenderingContextImpl.h>
 #include <LibWeb/WebGL/WebGLShader.h>
 #include <LibWeb/WebGL/WebGLTexture.h>
+#include <LibWeb/WebGL/WebGLUniformLocation.h>
 
 extern "C" {
 #include <ringl/ringl.h>
@@ -478,6 +479,33 @@ Optional<String> WebGLRenderingContextImpl::get_shader_source(GC::Root<WebGLShad
     return String::from_utf8_without_validation(ReadonlyBytes { storage.data(), static_cast<size_t>(length) });
 }
 
+GC::Root<WebGLUniformLocation> WebGLRenderingContextImpl::get_uniform_location(GC::Root<WebGLProgram> program, String name)
+{
+    if (!make_rin_gl_current())
+        return {};
+    if (!program) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+
+    auto handle_or_error = program->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+    auto handle = handle_or_error.release_value();
+    if (ringl_is_program(handle) == 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+
+    auto name_null_terminated = null_terminated_string(name);
+    auto location = ringl_get_uniform_location(handle, name_null_terminated.data());
+    if (location < 0)
+        return {};
+    return WebGLUniformLocation::create(realm(), static_cast<GLuint>(location), program.ptr());
+}
+
 bool WebGLRenderingContextImpl::is_program(GC::Root<WebGLProgram> program)
 {
     if (!make_rin_gl_current() || !program)
@@ -606,6 +634,23 @@ void WebGLRenderingContextImpl::tex_parameteri(WebIDL::UnsignedLong target, WebI
     if (!make_rin_gl_current())
         return;
     ringl_tex_parameteri(target, pname, param);
+}
+
+void WebGLRenderingContextImpl::uniform1i(GC::Root<WebGLUniformLocation> location, WebIDL::Long x)
+{
+    if (!make_rin_gl_current())
+        return;
+    // WebGL permits a null uniform location as a no-op. A non-null location
+    // must belong to the program currently bound through useProgram().
+    if (!location)
+        return;
+
+    auto location_handle_or_error = location->handle(m_current_program);
+    if (location_handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return;
+    }
+    ringl_uniform_1i(static_cast<WebIDL::Long>(location_handle_or_error.release_value()), x);
 }
 
 void WebGLRenderingContextImpl::blend_color(float red, float green, float blue, float alpha)

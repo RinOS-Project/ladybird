@@ -1242,6 +1242,7 @@ if (AK_OS_RINOS)
         WebGL/WebGLRenderingContextOverloadsRinGL.cpp
         WebGL/WebGLShader.cpp
         WebGL/WebGLTexture.cpp
+        WebGL/WebGLUniformLocation.cpp
     )
     list(REMOVE_ITEM SOURCES
         Gamepad/Gamepad.cpp
