@@ -94,29 +94,16 @@ void OpenGLContext::notify_content_will_change()
 
 void OpenGLContext::clear_buffer_to_default_values()
 {
-    RinGLClearValuesV1 saved_clear_values {};
-
     make_current();
     if (!m_impl->bridge.context)
         return;
 
-    saved_clear_values.struct_size = sizeof(saved_clear_values);
-    saved_clear_values.api_version = RINGL_API_VERSION;
-    if (ringl_get_clear_values(&saved_clear_values) != 0) {
-        m_impl->device_lost = true;
-        free_surface_resources();
-        return;
-    }
-
-    ringl_clear_color(0.0f, 0.0f, 0.0f, 0.0f);
-    ringl_clear_depth(1.0f);
-    ringl_clear_stencil(0);
-    ringl_clear(RINGL_COLOR_BUFFER_BIT | RINGL_DEPTH_BUFFER_BIT | RINGL_STENCIL_BUFFER_BIT);
-    ringl_clear_color(saved_clear_values.red, saved_clear_values.green, saved_clear_values.blue, saved_clear_values.alpha);
-    ringl_clear_depth(saved_clear_values.depth);
-    ringl_clear_stencil(saved_clear_values.stencil);
-
-    if (ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE) {
+    // This is a browser maintenance clear, not an author glClear(): the bridge
+    // always targets the default buffer, bypasses author FBO/scissor/write-mask
+    // state, and preserves the application's pending GL error. It first uses
+    // RinGL's normal submission and, only for a non-loss failure, performs the
+    // same complete reset through the exclusive RinGPU surface owner.
+    if (rin_webgl_ringl_bridge_clear_default_framebuffer(&m_impl->bridge) != RIN_WEBGL_RINGPU_SURFACE_OK) {
         m_impl->device_lost = true;
         free_surface_resources();
     }
