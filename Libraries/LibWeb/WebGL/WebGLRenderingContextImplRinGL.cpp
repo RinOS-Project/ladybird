@@ -458,6 +458,22 @@ void WebGLRenderingContextImpl::compile_shader(GC::Root<WebGLShader> shader)
     ringl_compile_shader(handle_or_error.release_value());
 }
 
+void WebGLRenderingContextImpl::copy_tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::UnsignedLong internalformat, WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border)
+{
+    if (!make_rin_gl_current())
+        return;
+    ringl_copy_tex_image_2d(target, level, internalformat, x, y, width,
+                            height, border);
+}
+
+void WebGLRenderingContextImpl::copy_tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height)
+{
+    if (!make_rin_gl_current())
+        return;
+    ringl_copy_tex_sub_image_2d(target, level, xoffset, yoffset, x, y,
+                                width, height);
+}
+
 WebIDL::Long WebGLRenderingContextImpl::get_attrib_location(GC::Root<WebGLProgram> program, String name)
 {
     if (!make_rin_gl_current())
