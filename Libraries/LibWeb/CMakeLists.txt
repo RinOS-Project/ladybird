@@ -1230,9 +1230,14 @@ list(APPEND SOURCES ${SKIA_SOURCES})
 
 if (AK_OS_RINOS)
     list(FILTER SOURCES EXCLUDE REGEX "^WebGL/")
-    # Keep the private context owner in the LibWeb archive. JS WebGL bindings
-    # remain disabled until object/state calls are mapped directly to RinGL.
-    list(APPEND SOURCES WebGL/OpenGLContext.cpp)
+    # Build the context owner and GLES-free object/error substrate. JS WebGL
+    # bindings remain disabled until object/state calls are mapped to RinGL.
+    list(APPEND SOURCES
+        WebGL/OpenGLContext.cpp
+        WebGL/WebGLBuffer.cpp
+        WebGL/WebGLObject.cpp
+        WebGL/WebGLRenderingContextBase.cpp
+    )
     list(REMOVE_ITEM SOURCES
         Gamepad/Gamepad.cpp
         Gamepad/GamepadHapticActuator.cpp

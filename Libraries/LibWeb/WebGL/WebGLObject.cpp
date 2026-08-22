@@ -10,7 +10,13 @@
 #include <LibWeb/Bindings/WebGLObjectPrototype.h>
 #include <LibWeb/WebGL/WebGLObject.h>
 
+#ifdef AK_OS_RINOS
+extern "C" {
+#include <ringl/ringl.h>
+}
+#else
 #include <GLES2/gl2.h>
+#endif
 
 namespace Web::WebGL {
 
@@ -39,7 +45,11 @@ ErrorOr<GLuint> WebGLObject::handle(WebGLRenderingContextBase const* context) co
 {
     if (context == m_context)
         return m_handle;
+#ifdef AK_OS_RINOS
+    return Error::from_errno(RINGL_INVALID_OPERATION);
+#else
     return Error::from_errno(GL_INVALID_OPERATION);
+#endif
 }
 
 }

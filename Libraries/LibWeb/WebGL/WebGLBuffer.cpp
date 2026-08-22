@@ -7,7 +7,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#ifdef AK_OS_RINOS
+extern "C" {
+#include <ringl/ringl.h>
+}
+#else
 #include <GLES2/gl2.h>
+#endif
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/WebGLBufferPrototype.h>
@@ -43,8 +49,13 @@ bool WebGLBuffer::is_compatible_with(GLenum target)
         return true;
     }
 
+#ifdef AK_OS_RINOS
+    if (target == RINGL_ELEMENT_ARRAY_BUFFER)
+        return m_target.value() == RINGL_ELEMENT_ARRAY_BUFFER;
+#else
     if (target == GL_ELEMENT_ARRAY_BUFFER)
         return m_target.value() == GL_ELEMENT_ARRAY_BUFFER;
+#endif
 
     return m_target.value() != GL_ELEMENT_ARRAY_BUFFER;
 }
