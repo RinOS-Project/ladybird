@@ -10,6 +10,7 @@
 
 extern "C" {
 #include <ringl/ringl.h>
+#include <ringl/ringl_sync.h>
 }
 
 namespace Web::WebGL {
@@ -77,6 +78,28 @@ void WebGLRenderingContextOverloads::buffer_sub_data(WebIDL::UnsignedLong target
         return;
     }
     ringl_buffer_sub_data(target, offset, static_cast<WebIDL::LongLong>(span.size()), span.data());
+}
+
+void WebGLRenderingContextOverloads::read_pixels(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels)
+{
+    if (!make_rin_gl_current())
+        return;
+    if (!pixels) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+
+    // The browser-owned view must remain bounded all the way through the
+    // readback API. In particular, do not reintroduce the raw-pointer
+    // ringl_read_pixels() path here: it cannot reject a short destination.
+    auto span_or_error = get_offset_span<u8>(*pixels, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
+    ringl_read_pixels_to_bytes(x, y, width, height, format, type,
+                               span.data(), span.size());
 }
 
 void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels)
