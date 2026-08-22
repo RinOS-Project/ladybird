@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteBuffer.h>
 #include <AK/NumericLimits.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLBuffer.h>
@@ -280,6 +281,141 @@ void WebGLRenderingContextImpl::compile_shader(GC::Root<WebGLShader> shader)
         return;
     }
     ringl_compile_shader(handle_or_error.release_value());
+}
+
+WebIDL::Long WebGLRenderingContextImpl::get_attrib_location(GC::Root<WebGLProgram> program, String name)
+{
+    if (!make_rin_gl_current())
+        return -1;
+    if (!program) {
+        set_error(RINGL_INVALID_OPERATION);
+        return -1;
+    }
+
+    auto handle_or_error = program->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return -1;
+    }
+    auto handle = handle_or_error.release_value();
+    if (ringl_is_program(handle) == 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return -1;
+    }
+
+    auto name_null_terminated = null_terminated_string(name);
+    return ringl_get_attrib_location(handle, name_null_terminated.data());
+}
+
+Optional<String> WebGLRenderingContextImpl::get_program_info_log(GC::Root<WebGLProgram> program)
+{
+    if (!make_rin_gl_current())
+        return {};
+    if (!program) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+
+    auto handle_or_error = program->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+    auto handle = handle_or_error.release_value();
+    if (ringl_is_program(handle) == 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+
+    auto length = ringl_get_program_info_log(handle, nullptr, 0);
+    if (length == 0)
+        return String {};
+    if (length >= NumericLimits<size_t>::max()) {
+        set_error(RINGL_OUT_OF_MEMORY);
+        return {};
+    }
+    auto storage_or_error = ByteBuffer::create_uninitialized(static_cast<size_t>(length + 1));
+    if (storage_or_error.is_error()) {
+        set_error(RINGL_OUT_OF_MEMORY);
+        return {};
+    }
+    auto storage = storage_or_error.release_value();
+    ringl_get_program_info_log(handle, reinterpret_cast<char*>(storage.data()), storage.size());
+    return String::from_utf8_without_validation(ReadonlyBytes { storage.data(), static_cast<size_t>(length) });
+}
+
+Optional<String> WebGLRenderingContextImpl::get_shader_info_log(GC::Root<WebGLShader> shader)
+{
+    if (!make_rin_gl_current())
+        return {};
+    if (!shader) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+
+    auto handle_or_error = shader->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+    auto handle = handle_or_error.release_value();
+    if (ringl_is_shader(handle) == 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+
+    auto length = ringl_get_shader_info_log(handle, nullptr, 0);
+    if (length == 0)
+        return String {};
+    if (length >= NumericLimits<size_t>::max()) {
+        set_error(RINGL_OUT_OF_MEMORY);
+        return {};
+    }
+    auto storage_or_error = ByteBuffer::create_uninitialized(static_cast<size_t>(length + 1));
+    if (storage_or_error.is_error()) {
+        set_error(RINGL_OUT_OF_MEMORY);
+        return {};
+    }
+    auto storage = storage_or_error.release_value();
+    ringl_get_shader_info_log(handle, reinterpret_cast<char*>(storage.data()), storage.size());
+    return String::from_utf8_without_validation(ReadonlyBytes { storage.data(), static_cast<size_t>(length) });
+}
+
+Optional<String> WebGLRenderingContextImpl::get_shader_source(GC::Root<WebGLShader> shader)
+{
+    if (!make_rin_gl_current())
+        return {};
+    if (!shader) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+
+    auto handle_or_error = shader->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+    auto handle = handle_or_error.release_value();
+    if (ringl_is_shader(handle) == 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return {};
+    }
+
+    auto length = ringl_get_shader_source_length(handle);
+    if (length == 0)
+        return String {};
+    if (length >= NumericLimits<size_t>::max()) {
+        set_error(RINGL_OUT_OF_MEMORY);
+        return {};
+    }
+    auto storage_or_error = ByteBuffer::create_uninitialized(static_cast<size_t>(length + 1));
+    if (storage_or_error.is_error()) {
+        set_error(RINGL_OUT_OF_MEMORY);
+        return {};
+    }
+    auto storage = storage_or_error.release_value();
+    ringl_copy_shader_source(handle, reinterpret_cast<char*>(storage.data()), storage.size());
+    return String::from_utf8_without_validation(ReadonlyBytes { storage.data(), static_cast<size_t>(length) });
 }
 
 bool WebGLRenderingContextImpl::is_program(GC::Root<WebGLProgram> program)
