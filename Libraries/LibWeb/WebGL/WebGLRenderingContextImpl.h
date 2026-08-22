@@ -146,6 +146,13 @@ public:
     void viewport(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height);
 
 protected:
+#ifdef AK_OS_RINOS
+    // Makes the RinGL context current and reports a WebGL-visible error if the
+    // private drawing surface could not be realized. Native command methods
+    // must use this instead of calling RinGL without a current context.
+    bool make_rin_gl_current();
+#endif
+
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
     GC::Ptr<WebGLBuffer> m_array_buffer_binding;
