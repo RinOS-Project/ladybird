@@ -11,7 +11,9 @@
 #include <AK/Vector.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/PaintingSurface.h>
+#ifndef AK_OS_RINOS
 #include <LibGfx/SkiaBackendContext.h>
+#endif
 #include <LibWeb/WebGL/OpenGLContext.h>
 
 #ifdef AK_OS_RINOS
@@ -53,9 +55,8 @@ struct OpenGLContext::Impl {
     bool device_lost { false };
 };
 
-OpenGLContext::OpenGLContext(NonnullRefPtr<Gfx::SkiaBackendContext> skia_backend_context, Impl impl, WebGLVersion webgl_version, DrawingBufferOptions drawing_buffer_options)
-    : m_skia_backend_context(move(skia_backend_context))
-    , m_impl(make<Impl>(move(impl)))
+OpenGLContext::OpenGLContext(Impl impl, WebGLVersion webgl_version, DrawingBufferOptions drawing_buffer_options)
+    : m_impl(make<Impl>(move(impl)))
     , m_webgl_version(webgl_version)
     , m_drawing_buffer_options(drawing_buffer_options)
 {
@@ -66,12 +67,12 @@ OpenGLContext::~OpenGLContext()
     free_surface_resources();
 }
 
-OwnPtr<OpenGLContext> OpenGLContext::create(NonnullRefPtr<Gfx::SkiaBackendContext> skia_backend_context, WebGLVersion webgl_version, DrawingBufferOptions drawing_buffer_options)
+OwnPtr<OpenGLContext> OpenGLContext::create(WebGLVersion webgl_version, DrawingBufferOptions drawing_buffer_options)
 {
     // The drawing surface is deliberately allocated after set_size(). Canvas
     // creation has no dimensions yet, and set_size() is the only point at
     // which script-controlled dimensions enter this private bridge.
-    return make<OpenGLContext>(move(skia_backend_context), Impl {}, webgl_version, drawing_buffer_options);
+    return make<OpenGLContext>(Impl {}, webgl_version, drawing_buffer_options);
 }
 
 void OpenGLContext::free_surface_resources()
@@ -212,6 +213,12 @@ void OpenGLContext::make_current()
         m_impl->device_lost = true;
         free_surface_resources();
     }
+}
+
+bool OpenGLContext::is_context_lost() const
+{
+    return m_impl->device_lost
+        || (m_impl->bridge.context && ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE);
 }
 
 void OpenGLContext::present(bool preserve_drawing_buffer)
