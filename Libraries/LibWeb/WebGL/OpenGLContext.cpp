@@ -211,6 +211,30 @@ void OpenGLContext::make_current()
     }
 }
 
+u32 OpenGLContext::rin_gl_get_error()
+{
+    make_current();
+    if (!m_impl->bridge.context)
+        return RINGL_NO_ERROR;
+    return ringl_get_error();
+}
+
+u64 OpenGLContext::rin_gl_get_shader_source_length(u32 shader)
+{
+    make_current();
+    if (!m_impl->bridge.context)
+        return 0;
+    return ringl_get_shader_source_length(shader);
+}
+
+u64 OpenGLContext::rin_gl_copy_shader_source(u32 shader, char* buffer, u64 buffer_size)
+{
+    make_current();
+    if (!m_impl->bridge.context)
+        return 0;
+    return ringl_copy_shader_source(shader, buffer, buffer_size);
+}
+
 bool OpenGLContext::is_context_lost() const
 {
     return m_impl->device_lost

@@ -344,7 +344,7 @@ GLenum WebGLRenderingContextBase::get_error_value()
 {
     if (m_error == GL_NO_ERROR)
 #ifdef AK_OS_RINOS
-        return ringl_get_error();
+        return context().rin_gl_get_error();
 #else
         return glGetError();
 #endif
@@ -360,7 +360,7 @@ void WebGLRenderingContextBase::set_error(GLenum error)
         return;
 
 #ifdef AK_OS_RINOS
-    auto context_error = ringl_get_error();
+    auto context_error = context().rin_gl_get_error();
 #else
     auto context_error = glGetError();
 #endif
