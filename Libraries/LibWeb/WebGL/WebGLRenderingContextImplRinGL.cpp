@@ -512,6 +512,22 @@ WebIDL::Long WebGLRenderingContextImpl::get_attrib_location(GC::Root<WebGLProgra
     return ringl_get_attrib_location(handle, name_null_terminated.data());
 }
 
+JS::Value WebGLRenderingContextImpl::get_buffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname)
+{
+    if (!make_rin_gl_current())
+        return JS::js_null();
+
+    switch (pname) {
+    case RINGL_BUFFER_SIZE:
+        return JS::Value(static_cast<double>(ringl_get_buffer_size(target)));
+    case RINGL_BUFFER_USAGE:
+        return JS::Value(ringl_get_buffer_usage(target));
+    default:
+        set_error(RINGL_INVALID_ENUM);
+        return JS::js_null();
+    }
+}
+
 Optional<String> WebGLRenderingContextImpl::get_program_info_log(GC::Root<WebGLProgram> program)
 {
     if (!make_rin_gl_current())
@@ -623,6 +639,23 @@ Optional<String> WebGLRenderingContextImpl::get_shader_source(GC::Root<WebGLShad
     return String::from_utf8_without_validation(ReadonlyBytes { storage.data(), static_cast<size_t>(length) });
 }
 
+JS::Value WebGLRenderingContextImpl::get_tex_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname)
+{
+    if (!make_rin_gl_current())
+        return JS::js_null();
+
+    switch (pname) {
+    case RINGL_TEXTURE_MAG_FILTER:
+    case RINGL_TEXTURE_MIN_FILTER:
+    case RINGL_TEXTURE_WRAP_S:
+    case RINGL_TEXTURE_WRAP_T:
+        return JS::Value(ringl_get_tex_parameteri(target, pname));
+    default:
+        set_error(RINGL_INVALID_ENUM);
+        return JS::js_null();
+    }
+}
+
 GC::Root<WebGLUniformLocation> WebGLRenderingContextImpl::get_uniform_location(GC::Root<WebGLProgram> program, String name)
 {
     if (!make_rin_gl_current())
@@ -713,6 +746,13 @@ bool WebGLRenderingContextImpl::is_texture(GC::Root<WebGLTexture> texture)
         return false;
     }
     return ringl_is_texture(handle_or_error.release_value()) != 0;
+}
+
+bool WebGLRenderingContextImpl::is_enabled(WebIDL::UnsignedLong cap)
+{
+    if (!make_rin_gl_current())
+        return false;
+    return ringl_is_enabled(cap) != 0;
 }
 
 void WebGLRenderingContextImpl::link_program(GC::Root<WebGLProgram> program)
