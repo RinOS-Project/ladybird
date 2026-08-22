@@ -157,6 +157,12 @@ protected:
     // the Ladybird object cache in the same shape, rather than treating the
     // most recently bound unit as a process-wide TEXTURE_BINDING_2D value.
     Array<GC::Ptr<WebGLTexture>, 8> m_rin_texture_bindings_2d;
+
+    // A vertex attribute retains its buffer object independently of the
+    // current ARRAY_BUFFER binding. Keep the same ownership edge here so
+    // getVertexAttrib(..., VERTEX_ATTRIB_ARRAY_BUFFER_BINDING) can return
+    // the original WebGL object, not a duplicate wrapper for its handle.
+    Array<GC::Ptr<WebGLBuffer>, 16> m_rin_vertex_attrib_buffers;
 #endif
 
     virtual void visit_edges(JS::Cell::Visitor&) override;

@@ -6,6 +6,8 @@
 
 #include <AK/ByteBuffer.h>
 #include <AK/NumericLimits.h>
+#include <LibJS/Runtime/ArrayBuffer.h>
+#include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLBuffer.h>
 #include <LibWeb/WebGL/WebGLFramebuffer.h>
@@ -139,12 +141,12 @@ void WebGLRenderingContextImpl::bind_buffer(WebIDL::UnsignedLong target, GC::Roo
     }
 
     ringl_bind_buffer(target, handle);
-    if (target == RINGL_ARRAY_BUFFER) {
-        m_array_buffer_binding = buffer;
+    if (ringl_get_bound_buffer(target) != handle)
         return;
-    }
-
-    m_element_array_buffer_binding = buffer;
+    if (target == RINGL_ARRAY_BUFFER)
+        m_array_buffer_binding = buffer;
+    else
+        m_element_array_buffer_binding = buffer;
 }
 
 void WebGLRenderingContextImpl::bind_framebuffer(WebIDL::UnsignedLong target, GC::Root<WebGLFramebuffer> framebuffer)
@@ -321,6 +323,10 @@ void WebGLRenderingContextImpl::delete_buffer(GC::Root<WebGLBuffer> buffer)
         m_array_buffer_binding = nullptr;
     if (m_element_array_buffer_binding == buffer)
         m_element_array_buffer_binding = nullptr;
+    for (auto& vertex_attrib_buffer : m_rin_vertex_attrib_buffers) {
+        if (vertex_attrib_buffer == buffer)
+            vertex_attrib_buffer = nullptr;
+    }
 }
 
 void WebGLRenderingContextImpl::delete_framebuffer(GC::Root<WebGLFramebuffer> framebuffer)
@@ -654,6 +660,99 @@ JS::Value WebGLRenderingContextImpl::get_tex_parameter(WebIDL::UnsignedLong targ
         set_error(RINGL_INVALID_ENUM);
         return JS::js_null();
     }
+}
+
+JS::Value WebGLRenderingContextImpl::get_vertex_attrib(WebIDL::UnsignedLong index, WebIDL::UnsignedLong pname)
+{
+    if (!make_rin_gl_current())
+        return JS::js_null();
+
+    if (pname == RINGL_CURRENT_VERTEX_ATTRIB) {
+        Array<float, 4> result;
+        if (ringl_get_vertex_attrib_current(index, result.data()) != 0)
+            return JS::js_null();
+
+        auto bytes_or_error = ByteBuffer::copy(result.span().reinterpret<u8>());
+        if (bytes_or_error.is_error()) {
+            set_error(RINGL_OUT_OF_MEMORY);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+        return JS::Float32Array::create(realm(), result.size(), array_buffer);
+    }
+
+    switch (pname) {
+    case RINGL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING:
+    case RINGL_VERTEX_ATTRIB_ARRAY_ENABLED:
+    case RINGL_VERTEX_ATTRIB_ARRAY_NORMALIZED:
+    case RINGL_VERTEX_ATTRIB_ARRAY_SIZE:
+    case RINGL_VERTEX_ATTRIB_ARRAY_STRIDE:
+    case RINGL_VERTEX_ATTRIB_ARRAY_TYPE:
+        break;
+    default:
+        set_error(RINGL_INVALID_ENUM);
+        return JS::js_null();
+    }
+
+    RinGLVertexAttribInfoV1 info {
+        .struct_size = sizeof(info),
+        .api_version = RINGL_API_VERSION,
+    };
+    if (ringl_get_vertex_attrib(index, &info) != 0)
+        return JS::js_null();
+
+    switch (pname) {
+    case RINGL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING: {
+        if (info.buffer == 0)
+            return JS::js_null();
+
+        auto buffer = m_rin_vertex_attrib_buffers[index];
+        if (!buffer) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        auto handle_or_error = buffer->handle(this);
+        if (handle_or_error.is_error() || handle_or_error.release_value() != info.buffer) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(buffer);
+    }
+    case RINGL_VERTEX_ATTRIB_ARRAY_ENABLED:
+        return JS::Value(info.enabled == RINGL_TRUE);
+    case RINGL_VERTEX_ATTRIB_ARRAY_NORMALIZED:
+        return JS::Value(info.normalized == RINGL_TRUE);
+    case RINGL_VERTEX_ATTRIB_ARRAY_SIZE:
+        return JS::Value(info.size);
+    case RINGL_VERTEX_ATTRIB_ARRAY_STRIDE:
+        return JS::Value(info.stride);
+    case RINGL_VERTEX_ATTRIB_ARRAY_TYPE:
+        return JS::Value(info.type);
+    default:
+        return JS::js_null();
+    }
+}
+
+WebIDL::LongLong WebGLRenderingContextImpl::get_vertex_attrib_offset(WebIDL::UnsignedLong index, WebIDL::UnsignedLong pname)
+{
+    if (!make_rin_gl_current())
+        return 0;
+    if (pname != RINGL_VERTEX_ATTRIB_ARRAY_POINTER) {
+        set_error(RINGL_INVALID_ENUM);
+        return 0;
+    }
+
+    RinGLVertexAttribInfoV1 info {
+        .struct_size = sizeof(info),
+        .api_version = RINGL_API_VERSION,
+    };
+    if (ringl_get_vertex_attrib(index, &info) != 0)
+        return 0;
+    if (info.offset > static_cast<uint64_t>(NumericLimits<WebIDL::LongLong>::max())) {
+        set_error(RINGL_INVALID_OPERATION);
+        return 0;
+    }
+    return static_cast<WebIDL::LongLong>(info.offset);
 }
 
 GC::Root<WebGLUniformLocation> WebGLRenderingContextImpl::get_uniform_location(GC::Root<WebGLProgram> program, String name)
@@ -1194,6 +1293,20 @@ void WebGLRenderingContextImpl::vertex_attrib_pointer(WebIDL::UnsignedLong index
     }
 
     ringl_vertex_attrib_pointer(index, size, type, normalized ? RINGL_TRUE : RINGL_FALSE, stride, static_cast<uint64_t>(offset));
+
+    RinGLVertexAttribInfoV1 info {
+        .struct_size = sizeof(info),
+        .api_version = RINGL_API_VERSION,
+    };
+    if (ringl_get_vertex_attrib(index, &info) != 0 || info.buffer == 0)
+        return;
+
+    auto bound_buffer = ringl_get_bound_buffer(RINGL_ARRAY_BUFFER);
+    if (info.buffer != bound_buffer || !m_array_buffer_binding)
+        return;
+    auto handle_or_error = m_array_buffer_binding->handle(this);
+    if (!handle_or_error.is_error() && handle_or_error.release_value() == info.buffer)
+        m_rin_vertex_attrib_buffers[index] = m_array_buffer_binding;
 }
 
 void WebGLRenderingContextImpl::viewport(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height)
@@ -1216,6 +1329,8 @@ void WebGLRenderingContextImpl::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_texture_binding_cube_map);
     for (auto& binding : m_rin_texture_bindings_2d)
         visitor.visit(binding);
+    for (auto& buffer : m_rin_vertex_attrib_buffers)
+        visitor.visit(buffer);
 
     visitor.visit(m_uniform_buffer_binding);
     visitor.visit(m_copy_read_buffer_binding);
