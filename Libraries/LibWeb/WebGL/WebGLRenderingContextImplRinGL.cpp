@@ -5,6 +5,7 @@
  */
 
 #include <LibWeb/WebGL/OpenGLContext.h>
+#include <LibWeb/WebGL/WebGLBuffer.h>
 #include <LibWeb/WebGL/WebGLRenderingContextImpl.h>
 
 extern "C" {
@@ -31,6 +32,88 @@ bool WebGLRenderingContextImpl::make_rin_gl_current()
     // considering the fallback supplied here.
     set_error(m_context->is_context_lost() ? RINGL_CONTEXT_LOST_WEBGL : RINGL_OUT_OF_MEMORY);
     return false;
+}
+
+void WebGLRenderingContextImpl::bind_buffer(WebIDL::UnsignedLong target, GC::Root<WebGLBuffer> buffer)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    if (target != RINGL_ARRAY_BUFFER && target != RINGL_ELEMENT_ARRAY_BUFFER) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+
+    GLuint handle = 0;
+    if (buffer) {
+        auto handle_or_error = buffer->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+        if (!buffer->is_compatible_with(target)) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+    }
+
+    ringl_bind_buffer(target, handle);
+    if (target == RINGL_ARRAY_BUFFER) {
+        m_array_buffer_binding = buffer;
+        return;
+    }
+
+    m_element_array_buffer_binding = buffer;
+}
+
+GC::Root<WebGLBuffer> WebGLRenderingContextImpl::create_buffer()
+{
+    if (!make_rin_gl_current())
+        return {};
+
+    GLuint handle = 0;
+    ringl_gen_buffers(1, &handle);
+    if (handle == 0)
+        return {};
+    return WebGLBuffer::create(realm(), *this, handle);
+}
+
+void WebGLRenderingContextImpl::delete_buffer(GC::Root<WebGLBuffer> buffer)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    GLuint handle = 0;
+    if (buffer) {
+        auto handle_or_error = buffer->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+    }
+
+    ringl_delete_buffers(1, &handle);
+    if (m_array_buffer_binding == buffer)
+        m_array_buffer_binding = nullptr;
+    if (m_element_array_buffer_binding == buffer)
+        m_element_array_buffer_binding = nullptr;
+}
+
+bool WebGLRenderingContextImpl::is_buffer(GC::Root<WebGLBuffer> buffer)
+{
+    if (!make_rin_gl_current())
+        return false;
+    if (!buffer)
+        return false;
+
+    auto handle_or_error = buffer->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return false;
+    }
+    return ringl_is_buffer(handle_or_error.release_value()) != 0;
 }
 
 void WebGLRenderingContextImpl::active_texture(WebIDL::UnsignedLong texture)

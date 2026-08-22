@@ -57,7 +57,11 @@ bool WebGLBuffer::is_compatible_with(GLenum target)
         return m_target.value() == GL_ELEMENT_ARRAY_BUFFER;
 #endif
 
+#ifdef AK_OS_RINOS
+    return m_target.value() != RINGL_ELEMENT_ARRAY_BUFFER;
+#else
     return m_target.value() != GL_ELEMENT_ARRAY_BUFFER;
+#endif
 }
 
 }
