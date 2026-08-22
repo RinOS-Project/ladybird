@@ -387,6 +387,21 @@ void WebGLRenderingContextImpl::vertex_attrib4f(WebIDL::UnsignedLong index, floa
     ringl_vertex_attrib4f(index, x, y, z, w);
 }
 
+void WebGLRenderingContextImpl::vertex_attrib_pointer(WebIDL::UnsignedLong index, WebIDL::Long size, WebIDL::UnsignedLong type, bool normalized, WebIDL::Long stride, WebIDL::LongLong offset)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    // The RinGL ABI takes an unsigned byte offset. Reject before conversion so
+    // a negative WebGL offset cannot become a large, aligned native offset.
+    if (offset < 0) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+
+    ringl_vertex_attrib_pointer(index, size, type, normalized ? RINGL_TRUE : RINGL_FALSE, stride, static_cast<uint64_t>(offset));
+}
+
 void WebGLRenderingContextImpl::viewport(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height)
 {
     if (!make_rin_gl_current())
