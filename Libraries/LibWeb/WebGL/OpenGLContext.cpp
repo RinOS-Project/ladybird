@@ -178,6 +178,15 @@ void OpenGLContext::allocate_painting_surface_if_needed()
         m_impl->device_lost = m_impl->bridge.context && ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE;
         m_impl->allocation_failed = !m_impl->device_lost;
         free_surface_resources();
+        return;
+    }
+
+    // Zeroed backing allocations do not establish WebGL's required initial
+    // depth value of 1. Submit the default-framebuffer clear before any author
+    // command can observe the BGRA, D32, or S8 surface state.
+    if (rin_webgl_ringl_bridge_clear_default_framebuffer(&m_impl->bridge) != RIN_WEBGL_RINGPU_SURFACE_OK) {
+        m_impl->device_lost = true;
+        free_surface_resources();
     }
 }
 
