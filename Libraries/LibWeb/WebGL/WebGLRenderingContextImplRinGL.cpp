@@ -673,10 +673,9 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         return JS::Value(texture);
     }
     case RINGL_COLOR_CLEAR_VALUE: {
-        RinGLClearValuesV1 clear_values {
-            .struct_size = sizeof(clear_values),
-            .api_version = RINGL_API_VERSION,
-        };
+        RinGLClearValuesV1 clear_values {};
+        clear_values.struct_size = sizeof(clear_values);
+        clear_values.api_version = RINGL_API_VERSION;
         if (ringl_get_clear_values(&clear_values) != 0) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
@@ -696,10 +695,9 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         return JS::Float32Array::create(realm(), result.size(), array_buffer);
     }
     case RINGL_BLEND_COLOR: {
-        RinGLBlendColorV1 blend_color {
-            .struct_size = sizeof(blend_color),
-            .api_version = RINGL_API_VERSION,
-        };
+        RinGLBlendColorV1 blend_color {};
+        blend_color.struct_size = sizeof(blend_color);
+        blend_color.api_version = RINGL_API_VERSION;
         if (ringl_get_blend_color(&blend_color) != 0) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
@@ -718,12 +716,31 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
         return JS::Float32Array::create(realm(), result.size(), array_buffer);
     }
+    case RINGL_DEPTH_RANGE: {
+        RinGLDepthRangeV1 depth_range {};
+        depth_range.struct_size = sizeof(depth_range);
+        depth_range.api_version = RINGL_API_VERSION;
+        if (ringl_get_depth_range(&depth_range) != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        Array<float, 2> result {
+            depth_range.z_near,
+            depth_range.z_far,
+        };
+        auto bytes_or_error = ByteBuffer::copy(result.span().reinterpret<u8>());
+        if (bytes_or_error.is_error()) {
+            set_error(RINGL_OUT_OF_MEMORY);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+        return JS::Float32Array::create(realm(), result.size(), array_buffer);
+    }
     case RINGL_DEPTH_CLEAR_VALUE:
     case RINGL_STENCIL_CLEAR_VALUE: {
-        RinGLClearValuesV1 clear_values {
-            .struct_size = sizeof(clear_values),
-            .api_version = RINGL_API_VERSION,
-        };
+        RinGLClearValuesV1 clear_values {};
+        clear_values.struct_size = sizeof(clear_values);
+        clear_values.api_version = RINGL_API_VERSION;
         if (ringl_get_clear_values(&clear_values) != 0) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
@@ -838,10 +855,9 @@ JS::Value WebGLRenderingContextImpl::get_program_parameter(GC::Root<WebGLProgram
         return JS::js_null();
     }
 
-    RinGLProgramInfoV1 info {
-        .struct_size = sizeof(info),
-        .api_version = RINGL_API_VERSION,
-    };
+    RinGLProgramInfoV1 info {};
+    info.struct_size = sizeof(info);
+    info.api_version = RINGL_API_VERSION;
     if (ringl_get_program_info(handle, &info) != 0)
         return JS::js_null();
 
@@ -911,10 +927,9 @@ JS::Value WebGLRenderingContextImpl::get_renderbuffer_parameter(WebIDL::Unsigned
         return JS::js_null();
     }
 
-    RinGLRenderbufferInfoV1 info {
-        .struct_size = sizeof(info),
-        .api_version = RINGL_API_VERSION,
-    };
+    RinGLRenderbufferInfoV1 info {};
+    info.struct_size = sizeof(info);
+    info.api_version = RINGL_API_VERSION;
     if (ringl_get_renderbuffer_info(target, &info) != 0)
         return JS::js_null();
 
@@ -1102,10 +1117,9 @@ JS::Value WebGLRenderingContextImpl::get_vertex_attrib(WebIDL::UnsignedLong inde
         return JS::js_null();
     }
 
-    RinGLVertexAttribInfoV1 info {
-        .struct_size = sizeof(info),
-        .api_version = RINGL_API_VERSION,
-    };
+    RinGLVertexAttribInfoV1 info {};
+    info.struct_size = sizeof(info);
+    info.api_version = RINGL_API_VERSION;
     if (ringl_get_vertex_attrib(index, &info) != 0)
         return JS::js_null();
 
@@ -1150,10 +1164,9 @@ WebIDL::LongLong WebGLRenderingContextImpl::get_vertex_attrib_offset(WebIDL::Uns
         return 0;
     }
 
-    RinGLVertexAttribInfoV1 info {
-        .struct_size = sizeof(info),
-        .api_version = RINGL_API_VERSION,
-    };
+    RinGLVertexAttribInfoV1 info {};
+    info.struct_size = sizeof(info);
+    info.api_version = RINGL_API_VERSION;
     if (ringl_get_vertex_attrib(index, &info) != 0)
         return 0;
     if (info.offset > static_cast<uint64_t>(NumericLimits<WebIDL::LongLong>::max())) {
@@ -1523,6 +1536,13 @@ void WebGLRenderingContextImpl::depth_mask(bool flag)
     ringl_depth_mask(flag ? RINGL_TRUE : RINGL_FALSE);
 }
 
+void WebGLRenderingContextImpl::depth_range(float z_near, float z_far)
+{
+    if (!make_rin_gl_current())
+        return;
+    ringl_depth_range(z_near, z_far);
+}
+
 void WebGLRenderingContextImpl::disable(WebIDL::UnsignedLong cap)
 {
     if (!make_rin_gl_current())
@@ -1826,10 +1846,9 @@ void WebGLRenderingContextImpl::vertex_attrib_pointer(WebIDL::UnsignedLong index
 
     ringl_vertex_attrib_pointer(index, size, type, normalized ? RINGL_TRUE : RINGL_FALSE, stride, static_cast<uint64_t>(offset));
 
-    RinGLVertexAttribInfoV1 info {
-        .struct_size = sizeof(info),
-        .api_version = RINGL_API_VERSION,
-    };
+    RinGLVertexAttribInfoV1 info {};
+    info.struct_size = sizeof(info);
+    info.api_version = RINGL_API_VERSION;
     if (ringl_get_vertex_attrib(index, &info) != 0 || info.buffer == 0)
         return;
 
