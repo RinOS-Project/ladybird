@@ -833,6 +833,16 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
         return JS::Float32Array::create(realm(), result.size(), array_buffer);
     }
+    case RINGL_SAMPLE_COVERAGE_VALUE: {
+        RinGLSampleCoverageV1 sample_coverage {};
+        sample_coverage.struct_size = sizeof(sample_coverage);
+        sample_coverage.api_version = RINGL_API_VERSION;
+        if (ringl_get_sample_coverage(&sample_coverage) != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(sample_coverage.value);
+    }
     case RINGL_DEPTH_CLEAR_VALUE:
     case RINGL_STENCIL_CLEAR_VALUE: {
         RinGLClearValuesV1 clear_values {};
@@ -871,6 +881,7 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
     case RINGL_DEPTH_TEST:
     case RINGL_SCISSOR_TEST:
     case RINGL_STENCIL_TEST:
+    case RINGL_SAMPLE_COVERAGE:
         return JS::Value(ringl_is_enabled(pname) != 0);
     case RINGL_DEPTH_WRITEMASK:
         if (!get_integer())
@@ -905,6 +916,7 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
     case RINGL_BLEND_DST_ALPHA:
     case RINGL_BLEND_EQUATION_RGB:
     case RINGL_BLEND_EQUATION_ALPHA:
+    case RINGL_SAMPLE_COVERAGE_INVERT:
         if (!get_integer())
             return JS::js_null();
         return JS::Value(values[0]);
@@ -1660,6 +1672,13 @@ void WebGLRenderingContextImpl::polygon_offset(float factor, float units)
     ringl_polygon_offset(factor, units);
 }
 
+void WebGLRenderingContextImpl::hint(WebIDL::UnsignedLong target, WebIDL::UnsignedLong mode)
+{
+    if (!make_rin_gl_current())
+        return;
+    ringl_hint(target, mode);
+}
+
 void WebGLRenderingContextImpl::disable(WebIDL::UnsignedLong cap)
 {
     if (!make_rin_gl_current())
@@ -1809,6 +1828,13 @@ void WebGLRenderingContextImpl::scissor(WebIDL::Long x, WebIDL::Long y, WebIDL::
     if (!make_rin_gl_current())
         return;
     ringl_scissor(x, y, width, height);
+}
+
+void WebGLRenderingContextImpl::sample_coverage(float value, bool invert)
+{
+    if (!make_rin_gl_current())
+        return;
+    ringl_sample_coverage(value, invert ? RINGL_TRUE : RINGL_FALSE);
 }
 
 void WebGLRenderingContextImpl::stencil_func(WebIDL::UnsignedLong func, WebIDL::Long ref, WebIDL::UnsignedLong mask)
