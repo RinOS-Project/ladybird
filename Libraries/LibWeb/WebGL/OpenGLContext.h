@@ -29,18 +29,34 @@ public:
         bool antialias;
     };
 
+#ifdef AK_OS_RINOS
+    static OwnPtr<OpenGLContext> create(WebGLVersion, DrawingBufferOptions);
+#else
     static OwnPtr<OpenGLContext> create(NonnullRefPtr<Gfx::SkiaBackendContext>, WebGLVersion, DrawingBufferOptions);
+#endif
 
     void notify_content_will_change();
     void clear_buffer_to_default_values();
     void allocate_painting_surface_if_needed();
 
     struct Impl;
+#ifdef AK_OS_RINOS
+    OpenGLContext(Impl, WebGLVersion, DrawingBufferOptions);
+#else
     OpenGLContext(NonnullRefPtr<Gfx::SkiaBackendContext>, Impl, WebGLVersion, DrawingBufferOptions);
+#endif
 
     ~OpenGLContext();
 
     void make_current();
+
+#ifdef AK_OS_RINOS
+    bool is_context_lost() const;
+    bool rin_gl_is_ready() const;
+    u32 rin_gl_get_error();
+    u64 rin_gl_get_shader_source_length(u32 shader);
+    u64 rin_gl_copy_shader_source(u32 shader, char* buffer, u64 buffer_size);
+#endif
 
     void present(bool preserve_drawing_buffer);
 
@@ -57,7 +73,9 @@ public:
     WebGLVersion webgl_version() const { return m_webgl_version; }
 
 private:
+#ifndef AK_OS_RINOS
     NonnullRefPtr<Gfx::SkiaBackendContext> m_skia_backend_context;
+#endif
     Gfx::IntSize m_size;
     RefPtr<Gfx::PaintingSurface> m_painting_surface;
     NonnullOwnPtr<Impl> m_impl;

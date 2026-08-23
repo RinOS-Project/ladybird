@@ -6,7 +6,11 @@
  */
 
 #define GL_GLEXT_PROTOTYPES 1
-#ifndef AK_OS_RINOS
+#ifdef AK_OS_RINOS
+extern "C" {
+#    include <ringl/ringl.h>
+}
+#else
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 extern "C" {
@@ -14,6 +18,7 @@ extern "C" {
 }
 #endif
 
+#include <LibGfx/Bitmap.h>
 #include <LibGfx/ImmutableBitmap.h>
 #ifndef AK_OS_RINOS
 #include <LibGfx/SkiaUtils.h>
@@ -24,6 +29,7 @@ extern "C" {
 #include <LibWeb/HTML/ImageBitmap.h>
 #include <LibWeb/HTML/ImageData.h>
 #include <LibWeb/HTML/UniversalGlobalScope.h>
+#ifndef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/ANGLEInstancedArrays.h>
 #include <LibWeb/WebGL/Extensions/EXTBlendMinMax.h>
 #include <LibWeb/WebGL/Extensions/EXTColorBufferFloat.h>
@@ -36,6 +42,7 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/WebGLCompressedTextureS3tc.h>
 #include <LibWeb/WebGL/Extensions/WebGLCompressedTextureS3tcSrgb.h>
 #include <LibWeb/WebGL/Extensions/WebGLDrawBuffers.h>
+#endif
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
@@ -50,44 +57,64 @@ extern "C" {
 
 namespace Web::WebGL {
 
+#ifdef AK_OS_RINOS
+static constexpr GLenum webgl_rgb = RINGL_RGB;
+static constexpr GLenum webgl_rgba = RINGL_RGBA;
+static constexpr GLenum webgl_alpha = RINGL_ALPHA;
+static constexpr GLenum webgl_luminance = RINGL_LUMINANCE;
+static constexpr GLenum webgl_unsigned_byte = RINGL_UNSIGNED_BYTE;
+static constexpr GLenum webgl_unsigned_short_5_6_5 = RINGL_UNSIGNED_SHORT_5_6_5;
+static constexpr GLenum webgl_unsigned_short_4_4_4_4 = RINGL_UNSIGNED_SHORT_4_4_4_4;
+static constexpr GLenum webgl_unsigned_short_5_5_5_1 = RINGL_UNSIGNED_SHORT_5_5_5_1;
+#else
+static constexpr GLenum webgl_rgb = GL_RGB;
+static constexpr GLenum webgl_rgba = GL_RGBA;
+static constexpr GLenum webgl_alpha = GL_ALPHA;
+static constexpr GLenum webgl_luminance = GL_LUMINANCE;
+static constexpr GLenum webgl_unsigned_byte = GL_UNSIGNED_BYTE;
+static constexpr GLenum webgl_unsigned_short_5_6_5 = GL_UNSIGNED_SHORT_5_6_5;
+static constexpr GLenum webgl_unsigned_short_4_4_4_4 = GL_UNSIGNED_SHORT_4_4_4_4;
+static constexpr GLenum webgl_unsigned_short_5_5_5_1 = GL_UNSIGNED_SHORT_5_5_5_1;
+#endif
+
 static constexpr Optional<Gfx::ExportFormat> determine_export_format(WebIDL::UnsignedLong format, WebIDL::UnsignedLong type)
 {
     switch (format) {
-    case GL_RGB:
+    case webgl_rgb:
         switch (type) {
-        case GL_UNSIGNED_BYTE:
+        case webgl_unsigned_byte:
             return Gfx::ExportFormat::RGB888;
-        case GL_UNSIGNED_SHORT_5_6_5:
+        case webgl_unsigned_short_5_6_5:
             return Gfx::ExportFormat::RGB565;
         default:
             break;
         }
         break;
-    case GL_RGBA:
+    case webgl_rgba:
         switch (type) {
-        case GL_UNSIGNED_BYTE:
+        case webgl_unsigned_byte:
             return Gfx::ExportFormat::RGBA8888;
-        case GL_UNSIGNED_SHORT_4_4_4_4:
+        case webgl_unsigned_short_4_4_4_4:
             // FIXME: This is not exactly the same as RGBA.
             return Gfx::ExportFormat::RGBA4444;
-        case GL_UNSIGNED_SHORT_5_5_5_1:
+        case webgl_unsigned_short_5_5_5_1:
             return Gfx::ExportFormat::RGBA5551;
             break;
         default:
             break;
         }
         break;
-    case GL_ALPHA:
+    case webgl_alpha:
         switch (type) {
-        case GL_UNSIGNED_BYTE:
+        case webgl_unsigned_byte:
             return Gfx::ExportFormat::Alpha8;
         default:
             break;
         }
         break;
-    case GL_LUMINANCE:
+    case webgl_luminance:
         switch (type) {
-        case GL_UNSIGNED_BYTE:
+        case webgl_unsigned_byte:
             return Gfx::ExportFormat::Gray8;
         default:
             break;
@@ -106,6 +133,7 @@ WebGLRenderingContextBase::WebGLRenderingContextBase(JS::Realm& realm)
 {
 }
 
+#ifndef AK_OS_RINOS
 struct Extension {
     Vector<StringView> required_angle_extensions;
     JS::ThrowCompletionOr<GC::Ref<JS::Object>> (*factory)(JS::Realm&, GC::Ref<WebGLRenderingContextBase>);
@@ -170,9 +198,13 @@ static HashMap<String, Extension, AK::ASCIICaseInsensitiveStringTraits> s_availa
     { "WEBGL_render_shared_exponent"_string, { { "GL_QCOM_render_shared_exponent"sv }, nullptr, OpenGLContext::WebGLVersion::WebGL2 } },
     { "WEBGL_stencil_texturing"_string, { { "GL_ANGLE_stencil_texturing"sv }, nullptr, OpenGLContext::WebGLVersion::WebGL2 } },
 };
+#endif
 
 Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
 {
+#ifdef AK_OS_RINOS
+    return Vector<String> {};
+#else
     auto opengl_extensions = context().get_supported_opengl_extensions();
     Vector<String> webgl_extensions;
 
@@ -198,10 +230,15 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
     }
 
     return webgl_extensions;
+#endif
 }
 
 JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
 {
+#ifdef AK_OS_RINOS
+    (void)name;
+    return nullptr;
+#else
     // Returns an object if, and only if, name is an ASCII case-insensitive match [HTML] for one of the names returned
     // from getSupportedExtensions; otherwise, returns null. The object returned from getExtension contains any constants
     // or functions provided by the extension. A returned object may have no constants or functions if the extension does
@@ -231,6 +268,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     auto extension = MUST(extension_info.factory(realm(), *this));
     m_enabled_extensions.set(name, extension);
     return extension;
+#endif
 }
 
 void WebGLRenderingContextBase::enable_compressed_texture_format(WebIDL::UnsignedLong format)
@@ -317,16 +355,35 @@ Optional<Gfx::BitmapExportResult> WebGLRenderingContextBase::read_and_pixel_conv
 //       this just keeps track of one error which is also fine by the spec
 GLenum WebGLRenderingContextBase::get_error_value()
 {
+#ifdef AK_OS_RINOS
+    if (m_error == RINGL_NO_ERROR)
+        return context().rin_gl_get_error();
+
+    auto error = m_error;
+    m_error = RINGL_NO_ERROR;
+    return error;
+#else
     if (m_error == GL_NO_ERROR)
         return glGetError();
 
     auto error = m_error;
     m_error = GL_NO_ERROR;
     return error;
+#endif
 }
 
 void WebGLRenderingContextBase::set_error(GLenum error)
 {
+#ifdef AK_OS_RINOS
+    if (m_error != RINGL_NO_ERROR)
+        return;
+
+    auto context_error = context().rin_gl_get_error();
+    if (context_error != RINGL_NO_ERROR)
+        m_error = context_error;
+    else
+        m_error = error;
+#else
     if (m_error != GL_NO_ERROR)
         return;
 
@@ -335,6 +392,7 @@ void WebGLRenderingContextBase::set_error(GLenum error)
         m_error = context_error;
     else
         m_error = error;
+#endif
 }
 
 }

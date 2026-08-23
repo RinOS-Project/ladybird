@@ -16,6 +16,15 @@ struct PaintingSurface::Impl {
     RefPtr<Bitmap> bitmap;
 };
 
+#ifdef AK_OS_RINOS
+ErrorOr<NonnullRefPtr<PaintingSurface>> PaintingSurface::try_create_with_size(IntSize size, BitmapFormat color_type, AlphaType alpha_type)
+{
+    auto bitmap = TRY(Bitmap::create(color_type, alpha_type, size));
+    auto impl = TRY(try_make<Impl>(size, move(bitmap)));
+    return adopt_nonnull_ref_or_enomem(new (nothrow) PaintingSurface(move(impl)));
+}
+#endif
+
 NonnullRefPtr<PaintingSurface> PaintingSurface::create_with_size(IntSize size, BitmapFormat color_type, AlphaType alpha_type)
 {
     auto bitmap = Bitmap::create(color_type, alpha_type, size).value();

@@ -25,6 +25,8 @@ public:
     void set_label(String const& label) { m_label = label; }
 
     ErrorOr<GLuint> handle(WebGLRenderingContextBase const* context) const;
+    bool is_deleted() const { return m_deleted; }
+    void mark_deleted() { m_deleted = true; }
 
 protected:
     explicit WebGLObject(JS::Realm&, GC::Ref<WebGLRenderingContextBase>, GLuint handle);
@@ -32,14 +34,12 @@ protected:
     void initialize(JS::Realm&) override;
     void visit_edges(Visitor&) override;
 
-    bool invalidated() const { return m_invalidated; }
-
     GC::Ref<WebGLRenderingContextBase> m_context;
 
 private:
     GLuint m_handle { 0 };
 
-    bool m_invalidated { false };
+    bool m_deleted { false };
     String m_label;
 };
 

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/AtomicRefCounted.h>
+#include <AK/Error.h>
 #include <AK/Function.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/RefPtr.h>
@@ -36,6 +37,12 @@ public:
 
     Function<void(PaintingSurface&)> on_flush;
 
+#ifdef AK_OS_RINOS
+    // The RinOS WebGL drawing buffer is controlled by untrusted canvas sizes.
+    // Keep its allocation fallible instead of routing an allocation failure
+    // through the legacy infallible convenience constructor.
+    [[nodiscard]] static ErrorOr<NonnullRefPtr<PaintingSurface>> try_create_with_size(IntSize size, BitmapFormat color_type, AlphaType alpha_type);
+#endif
     static NonnullRefPtr<PaintingSurface> create_with_size(IntSize size, BitmapFormat color_type, AlphaType alpha_type);
     static NonnullRefPtr<PaintingSurface> wrap_bitmap(Bitmap&);
 

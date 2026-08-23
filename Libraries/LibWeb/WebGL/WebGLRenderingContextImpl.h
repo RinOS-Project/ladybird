@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/Array.h>
 #include <AK/NonnullOwnPtr.h>
 #include <LibGC/Ptr.h>
 #include <LibWeb/Bindings/PlatformObject.h>
@@ -26,7 +27,7 @@ class WebGLRenderingContextImpl : public WebGLRenderingContextBase {
 public:
     WebGLRenderingContextImpl(JS::Realm&, NonnullOwnPtr<OpenGLContext>);
 
-    virtual OpenGLContext& context() override { return *m_context; }
+    virtual OpenGLContext& context() const override { return *m_context; }
 
     virtual void present() = 0;
     virtual void needs_to_present() = 0;
@@ -88,6 +89,9 @@ public:
     JS::Value get_buffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname);
     WebIDL::ExceptionOr<JS::Value> get_parameter(WebIDL::UnsignedLong pname);
     WebIDL::UnsignedLong get_error();
+#ifdef AK_OS_RINOS
+    JS::Value get_framebuffer_attachment_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong pname);
+#endif
     JS::Value get_program_parameter(GC::Root<WebGLProgram> program, WebIDL::UnsignedLong pname);
     Optional<String> get_program_info_log(GC::Root<WebGLProgram> program);
     JS::Value get_renderbuffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname);
@@ -146,6 +150,35 @@ public:
     void viewport(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height);
 
 protected:
+#ifdef AK_OS_RINOS
+    // Makes the RinGL context current and reports a WebGL-visible error if the
+    // private drawing surface could not be realized. Native command methods
+    // must use this instead of calling RinGL without a current context.
+    bool make_rin_gl_current();
+
+    // The current RinGL shader profile exposes linked sampler2D uniforms only.
+    // Keep ownership/range validation in one place before any WebGL uniform
+    // entry point forwards a sampler unit to that profile.
+    bool validate_rin_gl_sampler_uniform_location(GC::Root<WebGLUniformLocation> location, WebIDL::Long& location_out);
+
+    // RinGL intentionally supports native, separate depth/stencil FBO
+    // aspects. WebGL 1 may not expose that profile, so commands which read or
+    // modify a bound framebuffer must gate it at the browser boundary.
+    bool rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments();
+    bool rin_gl_bound_framebuffer_is_webgl1_compatible();
+
+    // RinGL exposes eight independently bound WebGL 1 texture units. Keep
+    // the Ladybird object cache in the same shape, rather than treating the
+    // most recently bound unit as a process-wide TEXTURE_BINDING_2D value.
+    Array<GC::Ptr<WebGLTexture>, 8> m_rin_texture_bindings_2d;
+
+    // A vertex attribute retains its buffer object independently of the
+    // current ARRAY_BUFFER binding. Keep the same ownership edge here so
+    // getVertexAttrib(..., VERTEX_ATTRIB_ARRAY_BUFFER_BINDING) can return
+    // the original WebGL object, not a duplicate wrapper for its handle.
+    Array<GC::Ptr<WebGLBuffer>, 16> m_rin_vertex_attrib_buffers;
+#endif
+
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
     GC::Ptr<WebGLBuffer> m_array_buffer_binding;
