@@ -64,7 +64,6 @@ private:
     static bool append_decomposed_point_callback(
         void*, Gfx::RinOSPathFlatten::Point);
     void append_rectangle(FloatRect const&);
-    Optional<FloatPoint> point_along_first_contour(float distance) const;
 
     Vector<Contour> m_contours;
     FloatPoint m_last_point {};

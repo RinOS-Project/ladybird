@@ -7,11 +7,21 @@
 #include <AK/ByteReader.h>
 #include <AK/Debug.h>
 #include <AK/FlyString.h>
+#include <AK/NumericLimits.h>
 #include <AK/Random.h>
 #include <AK/Span.h>
 #include <AK/Tuple.h>
 #include <LibWasm/AbstractMachine/Configuration.h>
 #include <LibWasm/Wasi.h>
+
+// RinOS provides the POSIX-compatible functions below through its syscall
+// ABI. Keep the ABI declarations explicit here so WASI does not depend on a
+// host libc implementation when it is built for RinOS.
+#if defined(AK_OS_RINOS)
+#    include <sys/random.h>
+#    include <sys/syscall.h>
+#endif
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -222,23 +232,30 @@ IOVec IOVec::read_from(Array<ReadonlyBytes, 1> const& bytes)
 }
 
 template<typename T>
+static bool wasm_memory_range_is_valid(size_t memory_size, size_t address, size_t count)
+{
+    if (address > memory_size)
+        return false;
+    return count <= (memory_size - address) / sizeof(T);
+}
+
+template<typename T>
 ErrorOr<Vector<T>> copy_typed_array(Configuration& configuration, Pointer<T> source, Size count)
 {
-    Vector<T> values;
-    TRY(values.try_ensure_capacity(count));
     auto* memory = configuration.store().get(MemoryAddress { 0 });
     if (!memory)
         return Error::from_errno(ENOMEM);
 
-    UnderlyingPointerType address = source.value();
-    auto size = sizeof(T);
-    if (memory->size() < address || memory->size() <= address + (size * count)) {
+    size_t address = source.value();
+    if (!wasm_memory_range_is_valid<T>(memory->size(), address, count.value())) {
         return Error::from_errno(ENOBUFS);
     }
 
+    Vector<T> values;
+    TRY(values.try_ensure_capacity(count));
     for (Size i = 0; i < count; i += 1) {
-        values.unchecked_append(T::read_from(Array { ReadonlyBytes { memory->data().bytes().slice(address, size) } }));
-        address += size;
+        values.unchecked_append(T::read_from(Array { ReadonlyBytes { memory->data().bytes().slice(address, sizeof(T)) } }));
+        address += sizeof(T);
     }
 
     return values;
@@ -251,13 +268,12 @@ ErrorOr<void> copy_typed_value_to(Configuration& configuration, T const& value, 
     if (!memory)
         return Error::from_errno(ENOMEM);
 
-    UnderlyingPointerType address = destination.value();
-    auto size = sizeof(T);
-    if (memory->size() < address || memory->size() <= address + size) {
+    size_t address = destination.value();
+    if (!wasm_memory_range_is_valid<T>(memory->size(), address, 1)) {
         return Error::from_errno(ENOBUFS);
     }
 
-    ABI::serialize(value, Array { Bytes { memory->data().bytes().slice(address, size) } });
+    ABI::serialize(value, Array { Bytes { memory->data().bytes().slice(address, sizeof(T)) } });
     return {};
 }
 
@@ -268,12 +284,11 @@ ErrorOr<Span<T>> slice_typed_memory(Configuration& configuration, Pointer<T> sou
     if (!memory)
         return Error::from_errno(ENOMEM);
 
-    auto address = source.value();
-    auto size = sizeof(T);
-    if (memory->size() < address || memory->size() <= address + (size * count))
+    size_t address = source.value();
+    if (!wasm_memory_range_is_valid<T>(memory->size(), address, count.value()))
         return Error::from_errno(ENOBUFS);
 
-    auto untyped_slice = memory->data().bytes().slice(address, size * count);
+    auto untyped_slice = memory->data().bytes().slice(address, sizeof(T) * count.value());
     return Span<T>(untyped_slice.data(), count);
 }
 
@@ -284,12 +299,11 @@ ErrorOr<Span<T const>> slice_typed_memory(Configuration& configuration, ConstPoi
     if (!memory)
         return Error::from_errno(ENOMEM);
 
-    auto address = source.value();
-    auto size = sizeof(T);
-    if (memory->size() < address || memory->size() <= address + (size * count))
+    size_t address = source.value();
+    if (!wasm_memory_range_is_valid<T>(memory->size(), address, count.value()))
         return Error::from_errno(ENOBUFS);
 
-    auto untyped_slice = memory->data().bytes().slice(address, size * count);
+    auto untyped_slice = memory->data().bytes().slice(address, sizeof(T) * count.value());
     return Span<T const>(untyped_slice.data(), count);
 }
 
@@ -311,7 +325,6 @@ static ErrorOr<size_t> copy_string_excluding_terminating_null(Configuration& con
 
 static Errno errno_value_from_errno(int value);
 static FileType file_type_of(struct stat const& buf);
-static FDFlags fd_flags_of(struct stat const& buf);
 
 Vector<AK::String> const& Implementation::arguments() const
 {
@@ -347,6 +360,38 @@ Implementation::Descriptor Implementation::map_fd(FD fd)
         return value->downcast<Descriptor>();
 
     return UnmappedDescriptor(fd_value);
+}
+
+int Implementation::resolve_host_fd(FD fd)
+{
+    int resolved_fd = -1;
+    map_fd(fd).visit(
+        [&](PreopenedDirectoryDescriptor descriptor) {
+            auto& entry = preopened_directories()[descriptor.value()];
+            if (entry.opened_fd.has_value()) {
+                resolved_fd = entry.opened_fd.value();
+                return;
+            }
+
+            ByteString path = entry.host_path.string();
+            auto opened_fd = open(path.characters(), O_DIRECTORY, 0);
+            if (opened_fd >= 0)
+                entry.opened_fd = opened_fd;
+            resolved_fd = opened_fd;
+        },
+        [&](u32 host_fd) {
+            if (host_fd > static_cast<u32>(NumericLimits<int>::max())) {
+                errno = EBADF;
+                return;
+            }
+            resolved_fd = static_cast<int>(host_fd);
+        },
+        [](UnmappedDescriptor) {
+            errno = EBADF;
+        });
+    if (resolved_fd < 0 && errno <= 0)
+        errno = EIO;
+    return resolved_fd;
 }
 
 ErrorOr<Result<void>> Implementation::impl$args_get(Configuration& configuration, Pointer<Pointer<u8>> argv, Pointer<u8> argv_buf)
@@ -499,24 +544,8 @@ ErrorOr<Result<void>> Implementation::impl$fd_prestat_dir_name(Configuration& co
 
 ErrorOr<Result<FileStat>> Implementation::impl$path_filestat_get(Configuration& configuration, FD fd, LookupFlags flags, ConstPointer<u8> path, Size path_len)
 {
-    auto dir_fd = AT_FDCWD;
-
-    auto mapped_fd = map_fd(fd);
-    mapped_fd.visit(
-        [&](PreopenedDirectoryDescriptor descriptor) {
-            auto& entry = preopened_directories()[descriptor.value()];
-            dir_fd = entry.opened_fd.value_or_lazy_evaluated([&] {
-                ByteString path = entry.host_path.string();
-                return open(path.characters(), O_DIRECTORY, 0);
-            });
-            entry.opened_fd = dir_fd;
-        },
-        [&](u32 fd) {
-            dir_fd = fd;
-        },
-        [](UnmappedDescriptor) {});
-
-    if (dir_fd < 0 && dir_fd != AT_FDCWD)
+    auto dir_fd = resolve_host_fd(fd);
+    if (dir_fd < 0)
         return errno_value_from_errno(errno);
 
     int options = 0;
@@ -562,24 +591,8 @@ ErrorOr<Result<FileStat>> Implementation::impl$path_filestat_get(Configuration& 
 
 ErrorOr<Result<void>> Implementation::impl$path_create_directory(Configuration& configuration, FD fd, Pointer<u8> path, Size path_len)
 {
-    auto dir_fd = AT_FDCWD;
-
-    auto mapped_fd = map_fd(fd);
-    mapped_fd.visit(
-        [&](PreopenedDirectoryDescriptor descriptor) {
-            auto& entry = preopened_directories()[descriptor.value()];
-            dir_fd = entry.opened_fd.value_or_lazy_evaluated([&] {
-                ByteString path = entry.host_path.string();
-                return open(path.characters(), O_DIRECTORY, 0);
-            });
-            entry.opened_fd = dir_fd;
-        },
-        [&](u32 fd) {
-            dir_fd = fd;
-        },
-        [](UnmappedDescriptor) {});
-
-    if (dir_fd < 0 && dir_fd != AT_FDCWD)
+    auto dir_fd = resolve_host_fd(fd);
+    if (dir_fd < 0)
         return errno_value_from_errno(errno);
 
     auto slice = TRY(slice_typed_memory(configuration, path, path_len));
@@ -591,35 +604,30 @@ ErrorOr<Result<void>> Implementation::impl$path_create_directory(Configuration& 
     return Result<void> {};
 }
 
-ErrorOr<Result<FD>> Implementation::impl$path_open(Configuration& configuration, FD fd, LookupFlags lookup_flags, Pointer<u8> path, Size path_len, OFlags o_flags, Rights, Rights, FDFlags fd_flags)
+ErrorOr<Result<FD>> Implementation::impl$path_open(Configuration& configuration, FD fd, LookupFlags lookup_flags, Pointer<u8> path, Size path_len, OFlags o_flags, Rights fs_rights_base, Rights, FDFlags fd_flags)
 {
-    auto dir_fd = AT_FDCWD;
-
-    auto mapped_fd = map_fd(fd);
-    mapped_fd.visit(
-        [&](PreopenedDirectoryDescriptor descriptor) {
-            auto& entry = preopened_directories()[descriptor.value()];
-            dir_fd = entry.opened_fd.value_or_lazy_evaluated([&] {
-                ByteString path = entry.host_path.string();
-                return open(path.characters(), O_DIRECTORY, 0);
-            });
-            entry.opened_fd = dir_fd;
-        },
-        [&](u32 fd) {
-            dir_fd = fd;
-        },
-        [](UnmappedDescriptor) {});
-
-    if (dir_fd < 0 && dir_fd != AT_FDCWD)
+    auto dir_fd = resolve_host_fd(fd);
+    if (dir_fd < 0)
         return errno_value_from_errno(errno);
 
-    // FIXME: What should we do with dsync/rsync?
+    bool needs_read = fs_rights_base.bits.fd_read;
+    bool needs_write = fs_rights_base.bits.fd_write;
+    if (o_flags.bits.directory && needs_write)
+        return Errno::Invalid;
+    if ((o_flags.bits.creat || o_flags.bits.trunc || fd_flags.bits.append) && !needs_write)
+        return Errno::Invalid;
 
-    int open_flags = 0;
+    int open_flags = needs_write
+        ? (needs_read ? O_RDWR : O_WRONLY)
+        : O_RDONLY;
     if (fd_flags.bits.append)
         open_flags |= O_APPEND;
+    if (fd_flags.bits.dsync)
+        open_flags |= O_DSYNC;
     if (fd_flags.bits.nonblock)
         open_flags |= O_NONBLOCK;
+    if (fd_flags.bits.rsync)
+        open_flags |= O_RSYNC;
     if (fd_flags.bits.sync)
         open_flags |= O_SYNC;
 
@@ -678,29 +686,20 @@ ErrorOr<Result<Timestamp>> Implementation::impl$clock_time_get(Configuration&, C
     struct timespec ts;
     if (clock_gettime(clock_id, &ts) < 0)
         return errno_value_from_errno(errno);
+    if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= static_cast<long>(nanoseconds_in_second))
+        return Errno::IO;
 
-    return Result<Timestamp> { static_cast<u64>(ts.tv_sec) * nanoseconds_in_second + static_cast<u64>(ts.tv_nsec) };
+    auto seconds = static_cast<u64>(ts.tv_sec);
+    auto nanoseconds = static_cast<u64>(ts.tv_nsec);
+    if (seconds > (NumericLimits<u64>::max() - nanoseconds) / nanoseconds_in_second)
+        return Errno::Overflow;
+
+    return Result<Timestamp> { seconds * nanoseconds_in_second + nanoseconds };
 }
 
 ErrorOr<Result<FileStat>> Implementation::impl$fd_filestat_get(Configuration&, FD fd)
 {
-    int resolved_fd = -1;
-
-    auto mapped_fd = map_fd(fd);
-    mapped_fd.visit(
-        [&](PreopenedDirectoryDescriptor descriptor) {
-            auto& entry = preopened_directories()[descriptor.value()];
-            resolved_fd = entry.opened_fd.value_or_lazy_evaluated([&] {
-                ByteString path = entry.host_path.string();
-                return open(path.characters(), O_DIRECTORY, 0);
-            });
-            entry.opened_fd = resolved_fd;
-        },
-        [&](u32 fd) {
-            resolved_fd = fd;
-        },
-        [](UnmappedDescriptor) {});
-
+    auto resolved_fd = resolve_host_fd(fd);
     if (resolved_fd < 0)
         return errno_value_from_errno(errno);
 
@@ -741,7 +740,38 @@ ErrorOr<Result<FileStat>> Implementation::impl$fd_filestat_get(Configuration&, F
 ErrorOr<Result<void>> Implementation::impl$random_get(Configuration& configuration, Pointer<u8> buf, Size buf_len)
 {
     auto buffer_slice = TRY(slice_typed_memory(configuration, buf, buf_len));
+#if defined(AK_OS_RINOS)
+    size_t offset = 0;
+    u32 interruptions = 0;
+    while (offset < buffer_slice.size()) {
+        auto remaining = buffer_slice.size() - offset;
+        auto received = getrandom(buffer_slice.data() + offset, remaining, 0);
+        if (received > 0) {
+            auto count = static_cast<size_t>(received);
+            if (count <= remaining) {
+                offset += count;
+                continue;
+            }
+        }
+
+        int error = EIO;
+        if (received < 0) {
+            error = errno;
+            if (error <= 0)
+                error = EIO;
+            if (error == EINTR && ++interruptions <= 32)
+                continue;
+        }
+
+        // WASI observes this caller-owned memory even after an errno result.
+        // Do not leave a partial CSPRNG result (or stale linear-memory bytes)
+        // visible when the RinOS syscall cannot complete the request.
+        __builtin_memset(buffer_slice.data(), 0, buffer_slice.size());
+        return errno_value_from_errno(error);
+    }
+#else
     fill_with_random(buffer_slice);
+#endif
 
     return Result<void> {};
 }
@@ -766,31 +796,28 @@ ErrorOr<Result<Size>> Implementation::impl$fd_read(Configuration& configuration,
 
 ErrorOr<Result<FDStat>> Implementation::impl$fd_fdstat_get(Configuration&, FD fd)
 {
-    auto mapped_fd = map_fd(fd);
-    auto resolved_fd = -1;
-    mapped_fd.visit(
-        [&](PreopenedDirectoryDescriptor descriptor) {
-            auto& entry = preopened_directories()[descriptor.value()];
-            resolved_fd = entry.opened_fd.value_or_lazy_evaluated([&] {
-                ByteString path = entry.host_path.string();
-                return open(path.characters(), O_DIRECTORY, 0);
-            });
-            entry.opened_fd = resolved_fd;
-        },
-        [&](u32 fd) {
-            resolved_fd = fd;
-        },
-        [](UnmappedDescriptor) {});
+    auto resolved_fd = resolve_host_fd(fd);
     if (resolved_fd < 0)
         return errno_value_from_errno(errno);
 
     struct stat stat_buf;
     if (fstat(resolved_fd, &stat_buf) < 0)
         return errno_value_from_errno(errno);
+    auto native_flags = fcntl(resolved_fd, F_GETFL);
+    if (native_flags < 0)
+        return errno_value_from_errno(errno);
+    FDFlags wasi_flags {};
+    wasi_flags.bits.append = (native_flags & O_APPEND) != 0;
+    // RinOS provides O_DSYNC/O_RSYNC as O_SYNC-strength durability. Expose
+    // all three WASI facets when that stronger status is active.
+    wasi_flags.bits.dsync = (native_flags & O_DSYNC) != 0;
+    wasi_flags.bits.nonblock = (native_flags & O_NONBLOCK) != 0;
+    wasi_flags.bits.rsync = (native_flags & O_RSYNC) != 0;
+    wasi_flags.bits.sync = (native_flags & O_SYNC) != 0;
 
     return FDStat {
         .fs_filetype = file_type_of(stat_buf),
-        .fs_flags = fd_flags_of(stat_buf),
+        .fs_flags = wasi_flags,
         .fs_rights_base = Rights { .data = 0 },
         .fs_rights_inheriting = Rights { .data = 0 },
     };
@@ -814,21 +841,144 @@ ErrorOr<Result<FileSize>> Implementation::impl$fd_seek(Configuration&, FD fd, Fi
 
 ErrorOr<Result<Timestamp>> Implementation::impl$clock_res_get(Configuration&, ClockID id)
 {
+#if defined(AK_OS_RINOS)
+    constexpr u64 nanoseconds_in_second = 1000'000'000ull;
+    clockid_t clock_id;
+    switch (id) {
+    case ClockID::Realtime:
+        clock_id = CLOCK_REALTIME;
+        break;
+    case ClockID::Monotonic:
+        clock_id = CLOCK_MONOTONIC;
+        break;
+    case ClockID::ProcessCPUTimeID:
+    case ClockID::ThreadCPUTimeID:
+        return Errno::NoSys;
+    }
+
+    struct timespec resolution;
+    if (clock_getres(clock_id, &resolution) < 0)
+        return errno_value_from_errno(errno);
+    if (resolution.tv_sec < 0 || resolution.tv_nsec < 0 || resolution.tv_nsec >= static_cast<long>(nanoseconds_in_second))
+        return Errno::IO;
+
+    auto seconds = static_cast<u64>(resolution.tv_sec);
+    auto nanoseconds = static_cast<u64>(resolution.tv_nsec);
+    if (seconds > (NumericLimits<u64>::max() - nanoseconds) / nanoseconds_in_second)
+        return Errno::Overflow;
+    return Result<Timestamp> { seconds * nanoseconds_in_second + nanoseconds };
+#else
+    (void)id;
     return Errno::NoSys;
+#endif
 }
 ErrorOr<Result<void>> Implementation::impl$fd_advise(Configuration&, FD, FileSize offset, FileSize len, Advice) { return Errno::NoSys; }
 ErrorOr<Result<void>> Implementation::impl$fd_allocate(Configuration&, FD, FileSize offset, FileSize len) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$fd_datasync(Configuration&, FD) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$fd_fdstat_set_flags(Configuration&, FD, FDFlags) { return Errno::NoSys; }
+ErrorOr<Result<void>> Implementation::impl$fd_datasync(Configuration&, FD fd)
+{
+#if defined(AK_OS_RINOS)
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    if (fdatasync(host_fd) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+#else
+    (void)fd;
+    return Errno::NoSys;
+#endif
+}
+ErrorOr<Result<void>> Implementation::impl$fd_fdstat_set_flags(Configuration&, FD fd, FDFlags fd_flags)
+{
+#if defined(AK_OS_RINOS)
+    constexpr u16 wasi_append_flag = 1u << 0;
+    constexpr u16 wasi_dsync_flag = 1u << 1;
+    constexpr u16 wasi_nonblock_flag = 1u << 2;
+    constexpr u16 wasi_rsync_flag = 1u << 3;
+    constexpr u16 wasi_sync_flag = 1u << 4;
+    constexpr u16 supported_wasi_flags = wasi_append_flag | wasi_dsync_flag
+        | wasi_nonblock_flag | wasi_rsync_flag | wasi_sync_flag;
+    if ((fd_flags.data.value() & ~supported_wasi_flags) != 0)
+        return Errno::NotSupported;
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    auto native_flags = fcntl(host_fd, F_GETFL);
+    if (native_flags < 0)
+        return errno_value_from_errno(errno);
+    native_flags &= ~(O_APPEND | O_DSYNC | O_NONBLOCK | O_RSYNC | O_SYNC);
+    if (fd_flags.bits.append)
+        native_flags |= O_APPEND;
+    if (fd_flags.bits.dsync)
+        native_flags |= O_DSYNC;
+    if (fd_flags.bits.nonblock)
+        native_flags |= O_NONBLOCK;
+    if (fd_flags.bits.rsync)
+        native_flags |= O_RSYNC;
+    if (fd_flags.bits.sync)
+        native_flags |= O_SYNC;
+    if (fcntl(host_fd, F_SETFL, native_flags) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+#else
+    (void)fd;
+    (void)fd_flags;
+    return Errno::NoSys;
+#endif
+}
 ErrorOr<Result<void>> Implementation::impl$fd_fdstat_set_rights(Configuration&, FD, Rights fs_rights_base, Rights fs_rights_inheriting) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$fd_filestat_set_size(Configuration&, FD, FileSize) { return Errno::NoSys; }
+ErrorOr<Result<void>> Implementation::impl$fd_filestat_set_size(Configuration&, FD fd, FileSize size)
+{
+#if defined(AK_OS_RINOS)
+    auto requested_size = size.value();
+    if (requested_size > static_cast<u64>(NumericLimits<off_t>::max()))
+        return Errno::Overflow;
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    if (ftruncate(host_fd, static_cast<off_t>(requested_size)) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+#else
+    (void)fd;
+    (void)size;
+    return Errno::NoSys;
+#endif
+}
 ErrorOr<Result<void>> Implementation::impl$fd_filestat_set_times(Configuration&, FD, Timestamp atim, Timestamp mtim, FSTFlags) { return Errno::NoSys; }
 ErrorOr<Result<Size>> Implementation::impl$fd_pread(Configuration&, FD, Pointer<IOVec> iovs, Size iovs_len, FileSize offset) { return Errno::NoSys; }
 ErrorOr<Result<Size>> Implementation::impl$fd_pwrite(Configuration&, FD, Pointer<CIOVec> iovs, Size iovs_len, FileSize offset) { return Errno::NoSys; }
 ErrorOr<Result<Size>> Implementation::impl$fd_readdir(Configuration&, FD, Pointer<u8> buf, Size buf_len, DirCookie cookie) { return Errno::NoSys; }
 ErrorOr<Result<void>> Implementation::impl$fd_renumber(Configuration&, FD from, FD to) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$fd_sync(Configuration&, FD) { return Errno::NoSys; }
-ErrorOr<Result<FileSize>> Implementation::impl$fd_tell(Configuration&, FD) { return Errno::NoSys; }
+ErrorOr<Result<void>> Implementation::impl$fd_sync(Configuration&, FD fd)
+{
+#if defined(AK_OS_RINOS)
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    if (fsync(host_fd) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+#else
+    (void)fd;
+    return Errno::NoSys;
+#endif
+}
+ErrorOr<Result<FileSize>> Implementation::impl$fd_tell(Configuration&, FD fd)
+{
+#if defined(AK_OS_RINOS)
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    auto offset = lseek(host_fd, 0, SEEK_CUR);
+    if (offset < 0)
+        return errno_value_from_errno(errno);
+    return Result<FileSize> { static_cast<u64>(offset) };
+#else
+    (void)fd;
+    return Errno::NoSys;
+#endif
+}
 ErrorOr<Result<void>> Implementation::impl$path_filestat_set_times(Configuration&, FD, LookupFlags, Pointer<u8> path, Size path_len, Timestamp atim, Timestamp mtim, FSTFlags) { return Errno::NoSys; }
 ErrorOr<Result<void>> Implementation::impl$path_link(Configuration&, FD, LookupFlags, Pointer<u8> old_path, Size old_path_len, FD, Pointer<u8> new_path, Size new_path_len) { return Errno::NoSys; }
 ErrorOr<Result<Size>> Implementation::impl$path_readlink(Configuration&, FD, LookupFlags, Pointer<u8> path, Size path_len, Pointer<u8> buf, Size buf_len) { return Errno::NoSys; }
@@ -838,7 +988,16 @@ ErrorOr<Result<void>> Implementation::impl$path_symlink(Configuration&, Pointer<
 ErrorOr<Result<void>> Implementation::impl$path_unlink_file(Configuration&, FD, Pointer<u8> path, Size path_len) { return Errno::NoSys; }
 ErrorOr<Result<Size>> Implementation::impl$poll_oneoff(Configuration&, ConstPointer<Subscription> in, Pointer<Event> out, Size nsubscriptions) { return Errno::NoSys; }
 ErrorOr<Result<void>> Implementation::impl$proc_raise(Configuration&, Signal) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$sched_yield(Configuration&) { return Errno::NoSys; }
+ErrorOr<Result<void>> Implementation::impl$sched_yield(Configuration&)
+{
+#if defined(AK_OS_RINOS)
+    if (__rin_syscall_posixize(_syscall0(SYS_SCHED_YIELD)) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+#else
+    return Errno::NoSys;
+#endif
+}
 ErrorOr<Result<FD>> Implementation::impl$sock_accept(Configuration&, FD fd, FDFlags fd_flags) { return Errno::NoSys; }
 ErrorOr<Result<SockRecvResult>> Implementation::impl$sock_recv(Configuration&, FD fd, Pointer<IOVec> ri_data, Size ri_data_len, RIFlags ri_flags) { return Errno::NoSys; }
 ErrorOr<Result<Size>> Implementation::impl$sock_send(Configuration&, FD fd, Pointer<CIOVec> si_data, Size si_data_len, SIFlags si_flags) { return Errno::NoSys; }
@@ -1203,12 +1362,6 @@ FileType file_type_of(struct stat const& buf)
         return FileType::Unknown;
     }
 }
-FDFlags fd_flags_of(struct stat const&)
-{
-    FDFlags::Bits result {};
-    return FDFlags { result };
-}
-
 }
 
 namespace AK {

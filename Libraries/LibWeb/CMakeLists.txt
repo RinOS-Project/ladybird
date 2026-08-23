@@ -29,32 +29,7 @@ if (NOT AK_OS_RINOS)
     endif()
 else()
     set(ANGLE_TARGETS "")
-    message(STATUS "RinOS policy: ANGLE/GLES is disabled; the private WebGL surface uses RinGL/RinGPU directly.")
-
-    # LibWeb lives at <RinOS>/libs/ladybird/Libraries/LibWeb.
-    set(RINOS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." CACHE PATH "RinOS source root used by the direct LibWeb RinGL bridge")
-    set(RINGL_SOURCE_ROOT "${RINOS_SOURCE_ROOT}/libs/RinGL" CACHE PATH "RinGL source root used by the direct LibWeb RinGPU bridge")
-    if (NOT EXISTS "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c" OR
-        NOT EXISTS "${RINGL_SOURCE_ROOT}/CMakeLists.txt")
-        message(FATAL_ERROR "RinOS direct WebGL bridge sources are missing (RINOS_SOURCE_ROOT=${RINOS_SOURCE_ROOT}, RINGL_SOURCE_ROOT=${RINGL_SOURCE_ROOT})")
-    endif()
-    if (NOT TARGET RinGL)
-        add_subdirectory("${RINGL_SOURCE_ROOT}" "${CMAKE_BINARY_DIR}/RinGL")
-    endif()
-    target_sources(RinGL PRIVATE
-        "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/core.c"
-        "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/software_backend.c"
-        "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_software.c"
-        "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringpu_surface.c"
-        "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_adapter.c"
-        "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_sync_adapter.c"
-        "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c"
-    )
-    target_include_directories(RinGL PRIVATE
-        "${RINOS_SOURCE_ROOT}/src/webengine"
-        "${RINOS_SOURCE_ROOT}/libs/aquamarine"
-    )
-    target_link_libraries(RinGL PRIVATE aquamarine)
+    message(STATUS "RinOS policy: ANGLE/WebGL is disabled (no GPU backend).")
 endif()
 
 set(LIBWEB_WASM_SOURCES
@@ -66,11 +41,6 @@ set(LIBWEB_WASM_SOURCES
     WebAssembly/WebAssembly.cpp
 )
 set(LIBWEB_WASM_DEPENDENCY LibWasm)
-if (AK_OS_RINOS)
-    set(LIBWEB_WASM_SOURCES "")
-    set(LIBWEB_WASM_DEPENDENCY "")
-    message(STATUS "RinOS feature profile: LibWeb WebAssembly bindings are disabled.")
-endif()
 
 set(SOURCES
     Animations/Animatable.cpp
@@ -1232,31 +1202,6 @@ list(APPEND SOURCES ${SKIA_SOURCES})
 
 if (AK_OS_RINOS)
     list(FILTER SOURCES EXCLUDE REGEX "^WebGL/")
-    # Build the WebGL 1 context through the GLES-free RinGL/RinGPU dispatcher.
-    # WebGL 2 and every ANGLE-only extension remain excluded.
-    list(APPEND SOURCES
-        WebGL/EventNames.cpp
-        WebGL/OpenGLContext.cpp
-        WebGL/WebGLActiveInfo.cpp
-        WebGL/WebGLBuffer.cpp
-        WebGL/WebGLContextAttributes.cpp
-        WebGL/WebGLContextEvent.cpp
-        WebGL/WebGLFramebuffer.cpp
-        WebGL/WebGLObject.cpp
-        WebGL/WebGLProgram.cpp
-        WebGL/WebGLQuery.cpp
-        WebGL/WebGLRenderbuffer.cpp
-        WebGL/WebGLRenderingContext.cpp
-        WebGL/WebGLRenderingContextBase.cpp
-        WebGL/WebGLRenderingContextImplRinGL.cpp
-        WebGL/WebGLRenderingContextOverloadsRinGL.cpp
-        WebGL/WebGLShader.cpp
-        WebGL/WebGLShaderPrecisionFormat.cpp
-        WebGL/WebGLTexture.cpp
-        WebGL/WebGLTransformFeedback.cpp
-        WebGL/WebGLUniformLocation.cpp
-        WebGL/WebGLVertexArrayObject.cpp
-    )
     list(REMOVE_ITEM SOURCES
         Gamepad/Gamepad.cpp
         Gamepad/GamepadHapticActuator.cpp
@@ -1322,7 +1267,6 @@ if (NOT AK_OS_RINOS)
 else()
     # RinOS: SDL3, LibXml2 external deps excluded; display is aquamarine, XML is built-in
     target_link_libraries(LibWeb PRIVATE LibCore LibCompress LibCrypto LibJS LibHTTP LibGfx LibIPC LibRegex LibSyntax LibTextCodec LibUnicode LibMedia ${LIBWEB_WASM_DEPENDENCY} LibXML LibIDL LibURL LibTLS LibRequests LibGC LibThreading)
-    target_link_libraries(LibWeb PRIVATE RinGL::RinGL)
     message(STATUS "RinOS policy: LibXml2/SDL3 excluded from LibWeb link.")
 endif()
 if (RINOS_USE_SKIA_GRAPHICS)

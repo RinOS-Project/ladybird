@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/NumericLimits.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibJS/Runtime/SharedArrayBufferConstructor.h>
 #include <LibJS/Runtime/VM.h>
@@ -103,7 +104,10 @@ JS::ThrowCompletionOr<u32> Memory::grow(u32 delta)
     VERIFY(memory);
 
     auto previous_size = memory->size() / Wasm::Constants::page_size;
-    if (!memory->grow(delta * Wasm::Constants::page_size, Wasm::MemoryInstance::GrowType::No, Wasm::MemoryInstance::InhibitGrowCallback::Yes))
+    auto delta_size = static_cast<u64>(delta) * static_cast<u64>(Wasm::Constants::page_size);
+    if (delta_size > NumericLimits<size_t>::max())
+        return vm.throw_completion<JS::RangeError>("Memory.grow() exceeds the addressable byte range"sv);
+    if (!memory->grow(static_cast<size_t>(delta_size), Wasm::MemoryInstance::GrowType::No, Wasm::MemoryInstance::InhibitGrowCallback::Yes))
         return vm.throw_completion<JS::RangeError>("Memory.grow() grows past the stated limit of the memory instance"sv);
 
     refresh_the_memory_buffer(vm, realm(), m_address);
@@ -178,7 +182,7 @@ WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> Memory::to_resizable_buffer()
     //        1. Let maxsize be the max value in memtype.
     // 7. Otherwise,
     //        1. Let maxsize be 65536 × 65536.
-    size_t max_size = mem_type.limits().max().value_or(65536) * Wasm::Constants::page_size;
+    u64 max_size = mem_type.limits().max().value_or(65536) * static_cast<u64>(Wasm::Constants::page_size);
 
     // 8. Let resizableBuffer be the result of creating a resizable memory buffer from memaddr and maxsize.
     auto resizable_buffer = TRY(create_a_resizable_memory_buffer(vm, realm(), m_address, m_shared, max_size));
@@ -298,17 +302,23 @@ GC::Ref<JS::ArrayBuffer> Memory::create_a_fixed_length_memory_buffer(JS::VM& vm,
 }
 
 // https://webassembly.github.io/spec/js-api/#create-a-resizable-memory-buffer
-JS::ThrowCompletionOr<GC::Ref<JS::ArrayBuffer>> Memory::create_a_resizable_memory_buffer(JS::VM& vm, JS::Realm& realm, Wasm::MemoryAddress address, Shared shared, size_t max_size)
+JS::ThrowCompletionOr<GC::Ref<JS::ArrayBuffer>> Memory::create_a_resizable_memory_buffer(JS::VM& vm, JS::Realm& realm, Wasm::MemoryAddress address, Shared shared, u64 max_size)
 {
     auto& context = Detail::get_cache(realm);
     auto* memory = context.abstract_machine().store().get(address);
     VERIFY(memory);
 
     // 3. If maxsize > (65536 × 65536),
-    if (max_size > (65536 * Wasm::Constants::page_size)) {
+    constexpr u64 maximum_memory32_size = 65536ull * static_cast<u64>(Wasm::Constants::page_size);
+    if (max_size > maximum_memory32_size) {
         // 1. Throw a RangeError exception.
         return vm.throw_completion<JS::RangeError>("Maximum memory length exceeds 65536 * 65536 bytes"sv);
     }
+    // ArrayBuffer stores byte lengths as size_t. Do not truncate a valid Wasm
+    // limit into a smaller i386 value: the caller must observe a RangeError.
+    if (max_size > NumericLimits<size_t>::max())
+        return vm.throw_completion<JS::RangeError>("Maximum memory length exceeds the addressable byte range"sv);
+    auto max_size_as_size_t = static_cast<size_t>(max_size);
 
     // https://webassembly.github.io/threads/js-api/index.html#create-a-resizable-memory-buffer
     // 5. If share is shared,
@@ -325,7 +335,7 @@ JS::ThrowCompletionOr<GC::Ref<JS::ArrayBuffer>> Memory::create_a_resizable_memor
         VERIFY(buffer->byte_length() == memory->size());
 
         // 5. Set buffer.[[ArrayBufferMaxByteLength]] to maxsize.
-        buffer->set_max_byte_length(max_size);
+        buffer->set_max_byte_length(max_size_as_size_t);
 
         // 6. Perform ! SetIntegrityLevel(buffer, "frozen").
         MUST(buffer->set_integrity_level(IntegrityLevel::Frozen));
@@ -350,7 +360,7 @@ JS::ThrowCompletionOr<GC::Ref<JS::ArrayBuffer>> Memory::create_a_resizable_memor
         VERIFY(buffer->byte_length() == memory->size());
 
         // 7. Set buffer.[[ArrayBufferMaxByteLength]] to maxsize.
-        buffer->set_max_byte_length(max_size);
+        buffer->set_max_byte_length(max_size_as_size_t);
 
         // 8. Set buffer.[[ArrayBufferDetachKey]] to "WebAssembly.Memory".
         buffer->set_detach_key(JS::PrimitiveString::create(vm, "WebAssembly.Memory"_string));

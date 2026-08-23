@@ -157,7 +157,15 @@ public:
         // 4: null exnref
         // 5: exnref
         ref.ref().visit(
-            [&](Reference::Func const& func) { m_value = u128(bit_cast<u64>(func.address), bit_cast<u64>(func.source_module.ptr())); },
+            [&](Reference::Func const& func) {
+                // The store addresses are specified as u64, but the module
+                // owner is a native pointer. Do not bit-cast that pointer to
+                // u64: on a 32-bit WebContent target the source and
+                // destination sizes differ. FlatPtr is deliberately the
+                // target pointer width, and the u128 storage still leaves a
+                // full u64 tag slot for the encoded reference.
+                m_value = u128(bit_cast<u64>(func.address), static_cast<u64>(reinterpret_cast<FlatPtr>(func.source_module.ptr())));
+            },
             [&](Reference::Extern const& func) { m_value = u128(bit_cast<u64>(func.address), 1); },
             [&](Reference::Null const& null) { m_value = u128(0, null.type.kind() == ValueType::Kind::FunctionReference ? 2 : null.type.kind() == ValueType::Kind::ExceptionReference ? 4
                                                                                                                                                                                       : 3); },
@@ -197,9 +205,8 @@ public:
             return bit_cast<f64>(m_value.low());
         }
         if constexpr (IsSame<T, Reference>) {
-            switch (m_value.high() & 3) {
-            case 0:
-                return Reference { Reference::Func { bit_cast<FunctionAddress>(m_value.low()), bit_cast<Wasm::Module*>(m_value.high()) } };
+            auto reference_tag = m_value.high();
+            switch (reference_tag) {
             case 1:
                 return Reference { Reference::Extern { bit_cast<ExternAddress>(m_value.low()) } };
             case 2:
@@ -211,6 +218,12 @@ public:
             case 5:
                 return Reference { Reference::Exception { bit_cast<ExceptionAddress>(m_value.low()) } };
             }
+            // A function reference stores an aligned Module pointer (or zero
+            // for a host function) in the high word. The remaining values
+            // above are explicit, unmasked tags; masking them first would
+            // turn exception references 4 and 5 into other variants.
+            if ((reference_tag & 3) == 0)
+                return Reference { Reference::Func { bit_cast<FunctionAddress>(m_value.low()), reinterpret_cast<Wasm::Module const*>(static_cast<FlatPtr>(reference_tag)) } };
         }
         VERIFY_NOT_REACHED();
     }
@@ -463,7 +476,12 @@ public:
     {
         MemoryInstance instance { type };
 
-        if (!instance.grow(type.limits().min() * Constants::page_size, GrowType::No))
+        auto initial_pages = type.limits().min();
+        constexpr u64 page_size = Constants::page_size;
+        if (initial_pages > NumericLimits<size_t>::max() / page_size)
+            return Error::from_string_literal("Requested Wasm memory exceeds the addressable byte range");
+
+        if (!instance.grow(static_cast<size_t>(initial_pages * page_size), GrowType::No))
             return Error::from_string_literal("Failed to grow to requested size");
 
         return { move(instance) };
@@ -490,7 +508,8 @@ public:
             return true;
         u64 new_size = m_data.size() + size_to_grow;
         // Can't grow past 2^16 pages.
-        if (new_size >= Constants::page_size * 65536)
+        constexpr u64 maximum_memory32_size = 65536ull * static_cast<u64>(Constants::page_size);
+        if (new_size >= maximum_memory32_size)
             return false;
         if (auto max = m_type.limits().max(); max.has_value()) {
             if (max.value() * Constants::page_size < new_size)

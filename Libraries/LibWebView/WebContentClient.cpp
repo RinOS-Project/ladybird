@@ -790,15 +790,37 @@ void WebContentClient::did_allocate_backing_stores(u64 page_id, i32 front_bitmap
 
 Messages::WebContentClient::RequestWorkerAgentResponse WebContentClient::request_worker_agent(u64 page_id, Web::Bindings::AgentType worker_type)
 {
-    if (auto view = view_for_page_id(page_id); view.has_value()) {
-        auto request_server_handle = MUST(connect_new_request_server_client());
-        auto image_decoder_handle = MUST(connect_new_image_decoder_client());
-        auto worker_client = MUST(WebView::launch_web_worker_process(worker_type));
-        auto worker_handle = MUST(worker_client->transport().release_for_transfer());
-        return { move(worker_handle), move(request_server_handle), move(image_decoder_handle) };
+    if (!view_for_page_id(page_id).has_value())
+        return { IPC::TransportHandle {}, IPC::TransportHandle {}, IPC::TransportHandle {} };
+
+    // The consumer profile packages isolated dedicated/shared workers only.
+    // Service workers require a durable registration/cache owner and must not
+    // accidentally reach the generic worker process.
+    if (worker_type != Web::Bindings::AgentType::DedicatedWorker && worker_type != Web::Bindings::AgentType::SharedWorker)
+        return { IPC::TransportHandle {}, IPC::TransportHandle {}, IPC::TransportHandle {} };
+
+    auto request_server_handle = connect_new_request_server_client();
+    if (request_server_handle.is_error()) {
+        dbgln("WebContentClient: unable to connect worker to RequestServer: {}", request_server_handle.error());
+        return { IPC::TransportHandle {}, IPC::TransportHandle {}, IPC::TransportHandle {} };
+    }
+    auto image_decoder_handle = connect_new_image_decoder_client();
+    if (image_decoder_handle.is_error()) {
+        dbgln("WebContentClient: unable to connect worker to ImageDecoder: {}", image_decoder_handle.error());
+        return { IPC::TransportHandle {}, IPC::TransportHandle {}, IPC::TransportHandle {} };
+    }
+    auto worker_client = WebView::launch_web_worker_process(worker_type);
+    if (worker_client.is_error()) {
+        dbgln("WebContentClient: unable to launch worker: {}", worker_client.error());
+        return { IPC::TransportHandle {}, IPC::TransportHandle {}, IPC::TransportHandle {} };
+    }
+    auto worker_handle = worker_client.value()->transport().release_for_transfer();
+    if (worker_handle.is_error()) {
+        dbgln("WebContentClient: unable to transfer worker transport: {}", worker_handle.error());
+        return { IPC::TransportHandle {}, IPC::TransportHandle {}, IPC::TransportHandle {} };
     }
 
-    return { IPC::TransportHandle {}, IPC::TransportHandle {}, IPC::TransportHandle {} };
+    return { worker_handle.release_value(), request_server_handle.release_value(), image_decoder_handle.release_value() };
 }
 
 Optional<ViewImplementation&> WebContentClient::view_for_page_id(u64 page_id, SourceLocation location)

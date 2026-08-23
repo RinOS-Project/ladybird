@@ -199,17 +199,22 @@ void WorkerHost::run(GC::Ref<Web::Page> page, Web::HTML::TransferDataEncoder mes
     };
     auto perform_fetch = Web::HTML::create_perform_the_fetch_hook(inside_settings->heap(), move(perform_fetch_function));
 
+    auto worker_script_failed = [page, inside_settings] {
+        // Keep synchronous fetch setup failures consistent with the asynchronous
+        // onComplete failure path below: notify the owner, discard the worker
+        // environment, and leave the WebWorker process alive for its owner to close.
+        as<WebWorker::PageHost>(page->client()).did_fail_loading_worker_script();
+        inside_settings->discard_environment();
+    };
+
     // In both cases, let onComplete given script be the following steps:
-    auto on_complete_function = [page, inside_settings, worker_global_scope, message_port_data = move(message_port_data), url = m_url, is_shared](GC::Ptr<Web::HTML::Script> script) mutable {
+    auto on_complete_function = [worker_script_failed, inside_settings, worker_global_scope, message_port_data = move(message_port_data), url = m_url, is_shared](GC::Ptr<Web::HTML::Script> script) mutable {
         auto& realm = inside_settings->realm();
 
         // 1. If script is null or if script's error to rethrow is non-null, then:
         if (!script || !script->error_to_rethrow().is_null()) {
             // 1. Queue a global task on the DOM manipulation task source given worker's relevant global object to fire an event named error at worker.
-            as<WebWorker::PageHost>(page->client()).did_fail_loading_worker_script();
-
-            // 2. Run the environment discarding steps for inside settings.
-            inside_settings->discard_environment();
+            worker_script_failed();
 
             // 3. Abort these steps.
             dbgln("DedicatedWorkerHost: Unable to fetch script {} because {}", url, script ? script->error_to_rethrow().to_string_without_side_effects() : "script was null"_string);
@@ -304,8 +309,7 @@ void WorkerHost::run(GC::Ref<Web::Page> page, Web::HTML::TransferDataEncoder mes
         //    onComplete and performFetch as defined below.
         if (auto err = Web::HTML::fetch_classic_worker_script(m_url, outside_settings, destination, inside_settings, perform_fetch, on_complete); err.is_error()) {
             dbgln("Failed to run worker script");
-            // FIXME: Abort the worker properly
-            TODO();
+            worker_script_failed();
         }
     } else {
         // -> "module":
@@ -315,8 +319,7 @@ void WorkerHost::run(GC::Ref<Web::Page> page, Web::HTML::TransferDataEncoder mes
         // FIXME: Pass credentials
         if (auto err = Web::HTML::fetch_module_worker_script_graph(m_url, outside_settings, destination, inside_settings, perform_fetch, on_complete); err.is_error()) {
             dbgln("Failed to run worker script");
-            // FIXME: Abort the worker properly
-            TODO();
+            worker_script_failed();
         }
     }
 }

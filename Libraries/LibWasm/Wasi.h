@@ -912,6 +912,7 @@ private:
     using Descriptor = Variant<u32, PreopenedDirectoryDescriptor, UnmappedDescriptor>;
 
     Descriptor map_fd(FD);
+    int resolve_host_fd(FD);
 
 public:
     Function<Vector<AK::String>()> provide_arguments;

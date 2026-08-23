@@ -48,6 +48,68 @@ static bool valid_path_point(FloatPoint const& point)
     return RinOSPathFlatten::valid_point({ point.x(), point.y() });
 }
 
+struct TextPathPosition {
+    FloatPoint point;
+    FloatPoint tangent;
+};
+
+static Optional<float> first_contour_length(Vector<PathImplAquamarine::Contour> const& contours)
+{
+    for (auto const& contour : contours) {
+        if (contour.points.size() < 2)
+            continue;
+
+        float length = 0;
+        for (size_t index = 0; index + 1 < contour.points.size(); ++index) {
+            auto delta = contour.points[index + 1] - contour.points[index];
+            auto segment_length = sqrtf(delta.x() * delta.x() + delta.y() * delta.y());
+            if (!isfinite(segment_length))
+                return {};
+            if (segment_length > 0.001f)
+                length += segment_length;
+        }
+        if (!isfinite(length) || length <= 0.001f)
+            return {};
+        return length;
+    }
+    return {};
+}
+
+static Optional<TextPathPosition> first_contour_position_and_tangent(Vector<PathImplAquamarine::Contour> const& contours, float distance)
+{
+    if (!isfinite(distance) || distance < 0)
+        return {};
+
+    for (auto const& contour : contours) {
+        if (contour.points.size() < 2)
+            continue;
+
+        float remaining = distance;
+        for (size_t index = 0; index + 1 < contour.points.size(); ++index) {
+            auto const& start = contour.points[index];
+            auto const& end = contour.points[index + 1];
+            auto delta = end - start;
+            auto length = sqrtf(delta.x() * delta.x() + delta.y() * delta.y());
+            if (!isfinite(length))
+                return {};
+            if (length <= 0.001f)
+                continue;
+            if (remaining <= length) {
+                auto inverse_length = 1.0f / length;
+                auto t = remaining * inverse_length;
+                auto point = start + delta * t;
+                auto tangent = delta * inverse_length;
+                if (!valid_path_point(point) || !valid_path_point(tangent))
+                    return {};
+                return TextPathPosition { point, tangent };
+            }
+            remaining -= length;
+        }
+        return {};
+    }
+    return {};
+}
+
 NonnullOwnPtr<PathImplAquamarine> PathImplAquamarine::create()
 {
     return adopt_own(*new PathImplAquamarine());
@@ -471,30 +533,6 @@ NonnullOwnPtr<PathImpl> PathImplAquamarine::copy_transformed(Gfx::AffineTransfor
     return transformed;
 }
 
-Optional<FloatPoint> PathImplAquamarine::point_along_first_contour(float distance) const
-{
-    for (auto const& contour : m_contours) {
-        if (contour.points.size() < 2)
-            continue;
-
-        float remaining = distance;
-        for (size_t index = 0; index + 1 < contour.points.size(); ++index) {
-            auto const& start = contour.points[index];
-            auto const& end = contour.points[index + 1];
-            auto delta = end - start;
-            float length = sqrtf(delta.x() * delta.x() + delta.y() * delta.y());
-            if (length <= 0.001f)
-                continue;
-            if (remaining <= length) {
-                float t = remaining / length;
-                return start + delta * t;
-            }
-            remaining -= length;
-        }
-    }
-    return {};
-}
-
 NonnullOwnPtr<PathImpl> PathImplAquamarine::place_text_along(Utf8View const& text, Font const& font) const
 {
     auto utf16 = Utf16String::from_utf8_without_validation(text.as_string());
@@ -503,16 +541,96 @@ NonnullOwnPtr<PathImpl> PathImplAquamarine::place_text_along(Utf8View const& tex
 
 NonnullOwnPtr<PathImpl> PathImplAquamarine::place_text_along(Utf16View const& text, Font const& font) const
 {
-    auto result = adopt_own(*new PathImplAquamarine(*this));
+    auto result = PathImplAquamarine::create();
+    auto path_length = first_contour_length(m_contours);
+    if (!path_length.has_value())
+        return result;
+
+    auto const* bitmap_font = path_bitmap_font();
+    if (!bitmap_font || bitmap_font->glyph_w <= 0 || bitmap_font->glyph_h <= 0)
+        return result;
+
+    auto target_height = font.pixel_size();
+    if (!isfinite(target_height) || target_height <= 0)
+        return result;
+    auto target_width = target_height * static_cast<float>(bitmap_font->glyph_w) / static_cast<float>(bitmap_font->glyph_h);
+    if (!isfinite(target_width) || target_width <= 0)
+        return result;
+    auto scale_x = target_width / static_cast<float>(bitmap_font->glyph_w);
+    auto scale_y = target_height / static_cast<float>(bitmap_font->glyph_h);
+    if (!isfinite(scale_x) || !isfinite(scale_y) || scale_x <= 0 || scale_y <= 0)
+        return result;
+
     auto glyphs = shape_text({ 0.0f, font.pixel_metrics().ascent }, 0.0f, text, font, GlyphRun::TextType::Common);
+    auto bytes_per_row = (bitmap_font->glyph_w + 7) / 8;
 
     float cursor = 0.0f;
     for (auto const& glyph : glyphs->glyphs()) {
-        auto placement = point_along_first_contour(cursor);
+        auto advance = max(glyph.glyph_width, 1.0f);
+        if (!isfinite(advance) || advance <= 0 || cursor + advance * 0.5f > path_length.value())
+            break;
+
+        auto placement = first_contour_position_and_tangent(m_contours, cursor);
         if (!placement.has_value())
             break;
-        result->append_rectangle({ placement->x(), placement->y(), max(glyph.glyph_width, 1.0f), max(font.pixel_metrics().line_spacing(), 1.0f) });
-        cursor += max(glyph.glyph_width, 1.0f);
+
+        auto glyph_index = aq_font_lookup_glyph(bitmap_font, glyph.glyph_id);
+        auto const* bitmap = aq_font_glyph_data(bitmap_font, glyph_index);
+        if (!bitmap) {
+            glyph_index = aq_font_lookup_glyph(bitmap_font, '?');
+            bitmap = aq_font_glyph_data(bitmap_font, glyph_index);
+        }
+        if (!bitmap) {
+            cursor += advance;
+            continue;
+        }
+
+        auto normal = FloatPoint { placement->tangent.y(), -placement->tangent.x() };
+        auto transform_point = [&](float x, float y) {
+            return placement->point + placement->tangent * x + normal * y;
+        };
+
+        for (int row = 0; row < bitmap_font->glyph_h; ++row) {
+            int column = 0;
+            while (column < bitmap_font->glyph_w) {
+                auto byte_index = row * bytes_per_row + column / 8;
+                auto bit_index = 7 - (column % 8);
+                if ((bitmap[byte_index] & (1 << bit_index)) == 0) {
+                    ++column;
+                    continue;
+                }
+                auto run_start = column;
+                do {
+                    ++column;
+                    if (column >= bitmap_font->glyph_w)
+                        break;
+                    byte_index = row * bytes_per_row + column / 8;
+                    bit_index = 7 - (column % 8);
+                } while ((bitmap[byte_index] & (1 << bit_index)) != 0);
+
+                auto left = static_cast<float>(run_start) * scale_x;
+                auto right = static_cast<float>(column) * scale_x;
+                auto top = target_height - static_cast<float>(row) * scale_y;
+                auto bottom = top - scale_y;
+                auto top_left = transform_point(left, top);
+                auto top_right = transform_point(right, top);
+                auto bottom_right = transform_point(right, bottom);
+                auto bottom_left = transform_point(left, bottom);
+                if (!valid_path_point(top_left) || !valid_path_point(top_right)
+                    || !valid_path_point(bottom_right) || !valid_path_point(bottom_left)) {
+                    result->reject_path();
+                    return result;
+                }
+                result->move_to(top_left);
+                result->line_to(top_right);
+                result->line_to(bottom_right);
+                result->line_to(bottom_left);
+                result->close();
+                if (!result->m_valid)
+                    return result;
+            }
+        }
+        cursor += advance;
     }
 
     return result;

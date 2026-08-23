@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    asyncTest(done => {
+        const worker = new Worker("does-not-exist.js");
+        worker.onerror = () => {
+            println("worker script failure: error");
+            done();
+        };
+    });
+</script>

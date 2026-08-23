@@ -12,10 +12,6 @@
 extern "C" {
 #include <GLES2/gl2ext_angle.h>
 }
-#else
-extern "C" {
-#include <ringl/ringl.h>
-}
 #endif
 
 #include <LibGfx/ImmutableBitmap.h>
@@ -28,7 +24,6 @@ extern "C" {
 #include <LibWeb/HTML/ImageBitmap.h>
 #include <LibWeb/HTML/ImageData.h>
 #include <LibWeb/HTML/UniversalGlobalScope.h>
-#ifndef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/ANGLEInstancedArrays.h>
 #include <LibWeb/WebGL/Extensions/EXTBlendMinMax.h>
 #include <LibWeb/WebGL/Extensions/EXTColorBufferFloat.h>
@@ -41,7 +36,6 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/WebGLCompressedTextureS3tc.h>
 #include <LibWeb/WebGL/Extensions/WebGLCompressedTextureS3tcSrgb.h>
 #include <LibWeb/WebGL/Extensions/WebGLDrawBuffers.h>
-#endif
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
@@ -55,19 +49,6 @@ extern "C" {
 #endif
 
 namespace Web::WebGL {
-
-#ifdef AK_OS_RINOS
-static constexpr GLenum GL_NO_ERROR = RINGL_NO_ERROR;
-static constexpr GLenum GL_INVALID_OPERATION = RINGL_INVALID_OPERATION;
-static constexpr GLenum GL_UNSIGNED_BYTE = RINGL_UNSIGNED_BYTE;
-static constexpr GLenum GL_UNSIGNED_SHORT_4_4_4_4 = 0x8033u;
-static constexpr GLenum GL_UNSIGNED_SHORT_5_5_5_1 = 0x8034u;
-static constexpr GLenum GL_UNSIGNED_SHORT_5_6_5 = 0x8363u;
-static constexpr GLenum GL_ALPHA = RINGL_ALPHA;
-static constexpr GLenum GL_RGB = RINGL_RGB;
-static constexpr GLenum GL_RGBA = RINGL_RGBA;
-static constexpr GLenum GL_LUMINANCE = RINGL_LUMINANCE;
-#endif
 
 static constexpr Optional<Gfx::ExportFormat> determine_export_format(WebIDL::UnsignedLong format, WebIDL::UnsignedLong type)
 {
@@ -131,11 +112,6 @@ struct Extension {
     Optional<OpenGLContext::WebGLVersion> only_for_webgl_version { OptionalNone {} };
 };
 
-#ifdef AK_OS_RINOS
-// RinGL exposes no WebGL extensions until the corresponding direct adapter
-// implementation is compiled into LibWeb. Do not report ANGLE/GLES extensions.
-static HashMap<String, Extension, AK::ASCIICaseInsensitiveStringTraits> s_available_webgl_extensions {};
-#else
 static HashMap<String, Extension, AK::ASCIICaseInsensitiveStringTraits> s_available_webgl_extensions {
     // Khronos ratified WebGL Extensions
     { "ANGLE_instanced_arrays"_string, { { "GL_ANGLE_instanced_arrays"sv }, Extensions::ANGLEInstancedArrays::create, OpenGLContext::WebGLVersion::WebGL1 } },
@@ -194,7 +170,6 @@ static HashMap<String, Extension, AK::ASCIICaseInsensitiveStringTraits> s_availa
     { "WEBGL_render_shared_exponent"_string, { { "GL_QCOM_render_shared_exponent"sv }, nullptr, OpenGLContext::WebGLVersion::WebGL2 } },
     { "WEBGL_stencil_texturing"_string, { { "GL_ANGLE_stencil_texturing"sv }, nullptr, OpenGLContext::WebGLVersion::WebGL2 } },
 };
-#endif
 
 Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
 {
@@ -343,11 +318,7 @@ Optional<Gfx::BitmapExportResult> WebGLRenderingContextBase::read_and_pixel_conv
 GLenum WebGLRenderingContextBase::get_error_value()
 {
     if (m_error == GL_NO_ERROR)
-#ifdef AK_OS_RINOS
-        return context().rin_gl_get_error();
-#else
         return glGetError();
-#endif
 
     auto error = m_error;
     m_error = GL_NO_ERROR;
@@ -359,11 +330,7 @@ void WebGLRenderingContextBase::set_error(GLenum error)
     if (m_error != GL_NO_ERROR)
         return;
 
-#ifdef AK_OS_RINOS
-    auto context_error = context().rin_gl_get_error();
-#else
     auto context_error = glGetError();
-#endif
     if (context_error != GL_NO_ERROR)
         m_error = context_error;
     else

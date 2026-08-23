@@ -51,7 +51,14 @@ void WorkerAgentParent::initialize(JS::Realm& realm)
     //    If spinning the event loop for this can cause other javascript to execute, we're in trouble.
     auto response = Bindings::principal_host_defined_page(realm).client().request_worker_agent(m_agent_type);
 
-    auto transport = MUST(response.worker_handle.create_transport());
+    auto transport_or_error = response.worker_handle.create_transport();
+    if (transport_or_error.is_error()) {
+        // A missing helper or a denied worker type is an observable worker-start
+        // failure, not a reason to abort the WebContent process.
+        queue_worker_error_event();
+        return;
+    }
+    auto transport = transport_or_error.release_value();
     m_worker_ipc = make_ref_counted<WebWorkerClient>(move(transport));
     setup_worker_ipc_callbacks(realm);
 
@@ -61,6 +68,17 @@ void WorkerAgentParent::initialize(JS::Realm& realm)
     auto serialized_outside_settings = m_outside_settings->serialize();
 
     m_worker_ipc->async_start_worker(m_url, m_worker_options.type, m_worker_options.credentials, m_worker_options.name, move(data_holder), serialized_outside_settings, m_agent_type);
+}
+
+void WorkerAgentParent::queue_worker_error_event()
+{
+    auto outside_settings = m_outside_settings;
+    auto worker_event_target = m_worker_event_target;
+    // See: https://html.spec.whatwg.org/multipage/workers.html#worker-processing-model,
+    // onComplete handler for fetching script.
+    queue_global_task(Task::Source::DOMManipulation, outside_settings->global_object(), GC::create_function(outside_settings->heap(), [outside_settings, worker_event_target]() {
+        worker_event_target->dispatch_event(DOM::Event::create(outside_settings->realm(), EventNames::error));
+    }));
 }
 
 void WorkerAgentParent::setup_worker_ipc_callbacks(JS::Realm& realm)
@@ -78,13 +96,7 @@ void WorkerAgentParent::setup_worker_ipc_callbacks(JS::Realm& realm)
     m_worker_ipc->on_worker_script_load_failure = [self = GC::Weak { *this }]() {
         if (!self)
             return;
-        auto& outside_settings = *self->m_outside_settings;
-        auto& event_target = *self->m_worker_event_target;
-        // See: https://html.spec.whatwg.org/multipage/workers.html#worker-processing-model, onComplete handler for fetching script.
-        // 1. Queue a global task on the DOM manipulation task source given worker's relevant global object to fire an event named error at worker.
-        queue_global_task(Task::Source::DOMManipulation, outside_settings.global_object(), GC::create_function(outside_settings.heap(), [&event_target, &outside_settings]() {
-            event_target.dispatch_event(DOM::Event::create(outside_settings.realm(), EventNames::error));
-        }));
+        self->queue_worker_error_event();
     };
 }
 

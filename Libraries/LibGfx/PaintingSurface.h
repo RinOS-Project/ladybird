@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/AtomicRefCounted.h>
-#include <AK/Error.h>
 #include <AK/Function.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/RefPtr.h>
@@ -38,12 +37,6 @@ public:
     Function<void(PaintingSurface&)> on_flush;
 
     static NonnullRefPtr<PaintingSurface> create_with_size(IntSize size, BitmapFormat color_type, AlphaType alpha_type);
-#ifdef AK_OS_RINOS
-    // Canvas sizes are script-controlled. The direct RinGPU/WebGL path must
-    // be able to reject backing-store allocation failure without aborting the
-    // WebContent process.
-    [[nodiscard]] static ErrorOr<NonnullRefPtr<PaintingSurface>> try_create_with_size(IntSize size, BitmapFormat color_type, AlphaType alpha_type);
-#endif
     static NonnullRefPtr<PaintingSurface> wrap_bitmap(Bitmap&);
 
 #ifdef AK_OS_MACOS

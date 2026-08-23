@@ -5,9 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#ifndef AK_OS_RINOS
-#    include <LibGfx/SkiaBackendContext.h>
-#endif
+#include <LibGfx/SkiaBackendContext.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/Intrinsics.h>
@@ -53,39 +51,18 @@ JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::cre
 {
     // We should be coming here from getContext being called on a wrapped <canvas> element.
     auto context_attributes = TRY(convert_value_to_context_attributes_dictionary(canvas_element.vm(), options));
-#ifdef AK_OS_RINOS
-    // RinGPU currently supplies a synchronous software BGRA target. Do not
-    // claim multisampling, an opaque backing store, or desynchronized
-    // presentation until those paths exist. A caller that explicitly rejects
-    // a major performance caveat must not receive this software context.
-    if (context_attributes.fail_if_major_performance_caveat) {
-        fire_webgl_context_creation_error(canvas_element);
-        return GC::Ptr<WebGLRenderingContext> { nullptr };
-    }
-    auto actual_context_attributes = context_attributes;
-    actual_context_attributes.alpha = true;
-    actual_context_attributes.antialias = false;
-    actual_context_attributes.premultiplied_alpha = true;
-    actual_context_attributes.desynchronized = false;
-#else
-    auto actual_context_attributes = context_attributes;
-#endif
 
-    OpenGLContext::DrawingBufferOptions context_options {
-        .depth = actual_context_attributes.depth,
-        .stencil = actual_context_attributes.stencil,
-        .antialias = actual_context_attributes.antialias,
-    };
-#ifdef AK_OS_RINOS
-    auto context = OpenGLContext::create(OpenGLContext::WebGLVersion::WebGL1, context_options);
-#else
     auto skia_backend_context = Gfx::SkiaBackendContext::the();
     if (!skia_backend_context) {
         fire_webgl_context_creation_error(canvas_element);
         return GC::Ptr<WebGLRenderingContext> { nullptr };
     }
+    OpenGLContext::DrawingBufferOptions context_options {
+        .depth = context_attributes.depth,
+        .stencil = context_attributes.stencil,
+        .antialias = context_attributes.antialias,
+    };
     auto context = OpenGLContext::create(*skia_backend_context, OpenGLContext::WebGLVersion::WebGL1, context_options);
-#endif
     if (!context) {
         fire_webgl_context_creation_error(canvas_element);
         return GC::Ptr<WebGLRenderingContext> { nullptr };
@@ -93,7 +70,7 @@ JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::cre
 
     context->set_size(canvas_element.bitmap_size_for_canvas(1, 1));
 
-    return realm.create<WebGLRenderingContext>(realm, canvas_element, context.release_nonnull(), context_attributes, actual_context_attributes);
+    return realm.create<WebGLRenderingContext>(realm, canvas_element, context.release_nonnull(), context_attributes, context_attributes);
 }
 
 WebGLRenderingContext::WebGLRenderingContext(JS::Realm& realm, HTML::HTMLCanvasElement& canvas_element, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters)
@@ -139,11 +116,7 @@ void WebGLRenderingContext::needs_to_present()
 bool WebGLRenderingContext::is_context_lost() const
 {
     dbgln_if(WEBGL_CONTEXT_DEBUG, "WebGLRenderingContext::is_context_lost()");
-#ifdef AK_OS_RINOS
-    return m_context_lost || context().is_context_lost();
-#else
     return m_context_lost;
-#endif
 }
 
 Optional<WebGLContextAttributes> WebGLRenderingContext::get_context_attributes()

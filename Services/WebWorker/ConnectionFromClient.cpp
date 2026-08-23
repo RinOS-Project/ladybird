@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Platform.h>
+#include <errno.h>
 #include <LibCore/EventLoop.h>
 #include <WebWorker/ConnectionFromClient.h>
 #include <WebWorker/PageHost.h>
@@ -42,19 +44,27 @@ void ConnectionFromClient::die()
 
 void ConnectionFromClient::request_file(Web::FileRequest request)
 {
-    // FIXME: Route this to FSAS or browser process as appropriate instead of allowing
-    //        the WebWorker process filesystem access
+#if !defined(AK_OS_RINOS)
     auto path = request.path();
+#endif
     auto request_id = ++last_id;
 
     m_requested_files.set(request_id, move(request));
 
+#if defined(AK_OS_RINOS)
+    // A WebWorker must not inherit ambient filesystem access. File URLs stay
+    // unavailable until this request is mediated by the File Portal/FSAS.
+    handle_file_return(EPERM, {}, request_id);
+#else
+    // FIXME: Route this to FSAS or browser process as appropriate instead of allowing
+    //        the WebWorker process filesystem access
     auto file = Core::File::open(path, Core::File::OpenMode::Read);
 
     if (file.is_error())
         handle_file_return(file.error().code(), {}, request_id);
     else
         handle_file_return(0, IPC::File::adopt_file(file.release_value()), request_id);
+#endif
 }
 
 ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transport)

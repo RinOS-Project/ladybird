@@ -12,11 +12,10 @@ add_subdirectory(LibSyntax)
 add_subdirectory(LibTest)
 add_subdirectory(LibThreading)
 add_subdirectory(LibTLS)
-if (NOT AK_OS_RINOS)
-    add_subdirectory(LibWasm)
-else()
-    message(STATUS "RinOS feature profile: LibWasm is disabled.")
-endif()
+# The browser-facing WebAssembly runtime is available on RinOS. WASI stays
+# excluded in LibWasm itself: a web-origin module must not acquire host file
+# system syscalls merely because it is parsed by the same interpreter.
+add_subdirectory(LibWasm)
 add_subdirectory(LibWebSocket)
 add_subdirectory(LibXML)
 

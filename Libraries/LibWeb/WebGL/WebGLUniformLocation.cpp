@@ -12,13 +12,7 @@
 #include <LibWeb/Bindings/WebGLUniformLocationPrototype.h>
 #include <LibWeb/WebGL/WebGLUniformLocation.h>
 
-#ifdef AK_OS_RINOS
-extern "C" {
-#include <ringl/ringl.h>
-}
-#else
-#    include <GLES2/gl2.h>
-#endif
+#include <GLES2/gl2.h>
 
 namespace Web::WebGL {
 
@@ -54,11 +48,7 @@ ErrorOr<GLuint> WebGLUniformLocation::handle(GC::Ptr<WebGLProgram> current_shade
 {
     if (current_shader == m_parent_shader)
         return m_handle;
-#ifdef AK_OS_RINOS
-    return Error::from_errno(RINGL_INVALID_OPERATION);
-#else
     return Error::from_errno(GL_INVALID_OPERATION);
-#endif
 }
 
 }

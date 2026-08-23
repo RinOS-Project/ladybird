@@ -275,7 +275,13 @@ public:
         web_content_options.paint_viewport_scrollbars = policy.disable_viewport_scrollbars
             ? WebView::PaintViewportScrollbars::No
             : WebView::PaintViewportScrollbars::Yes;
-        web_content_options.disable_site_isolation = WebView::DisableSiteIsolation::Yes;
+        // The bridge is a browser-process owner and each actual WebContent
+        // helper is launched through the native SYS_SPAWN_PROCESS path. Keep
+        // Ladybird's default cross-site swap enabled so a renderer compromise
+        // does not retain the prior site's process.
+        web_content_options.disable_site_isolation = policy.enable_site_isolation
+            ? WebView::DisableSiteIsolation::No
+            : WebView::DisableSiteIsolation::Yes;
 
         static bool did_log_bridge_options = false;
         if (!did_log_bridge_options) {

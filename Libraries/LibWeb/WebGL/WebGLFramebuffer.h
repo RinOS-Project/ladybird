@@ -20,33 +20,10 @@ public:
 
     virtual ~WebGLFramebuffer();
 
-#ifdef AK_OS_RINOS
-    // RinGL is the source of truth for attachment state. These retained WebGL
-    // object edges let its direct embedding return the existing JS wrapper
-    // after the backend confirms an attachment query, rather than fabricating
-    // another wrapper from an opaque native handle.
-    void set_rin_gl_attachment(GLenum attachment, GC::Ptr<WebGLObject> object, GLint level);
-    GC::Ptr<WebGLObject> rin_gl_attachment_object(GLenum attachment) const;
-    GLint rin_gl_attachment_level(GLenum attachment) const;
-#endif
-
 protected:
     explicit WebGLFramebuffer(JS::Realm&, GC::Ref<WebGLRenderingContextBase>, GLuint handle);
 
     virtual void initialize(JS::Realm&) override;
-    virtual void visit_edges(Visitor&) override;
-
-#ifdef AK_OS_RINOS
-private:
-    struct RinGLAttachment {
-        GC::Ptr<WebGLObject> object;
-        GLint level { 0 };
-    };
-
-    RinGLAttachment m_rin_gl_color_attachment;
-    RinGLAttachment m_rin_gl_depth_attachment;
-    RinGLAttachment m_rin_gl_stencil_attachment;
-#endif
 };
 
 }

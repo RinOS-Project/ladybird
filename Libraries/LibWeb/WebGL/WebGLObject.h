@@ -24,9 +24,6 @@ public:
     String label() const { return m_label; }
     void set_label(String const& label) { m_label = label; }
 
-    bool is_deleted() const { return m_deleted; }
-    void mark_deleted() { m_deleted = true; }
-
     ErrorOr<GLuint> handle(WebGLRenderingContextBase const* context) const;
 
 protected:
@@ -43,7 +40,6 @@ private:
     GLuint m_handle { 0 };
 
     bool m_invalidated { false };
-    bool m_deleted { false };
     String m_label;
 };
 

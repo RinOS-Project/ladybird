@@ -45,7 +45,7 @@ public:
     using Int32List = Variant<GC::Root<JS::Int32Array>, Vector<WebIDL::Long>>;
     using Uint32List = Variant<GC::Root<JS::Uint32Array>, Vector<WebIDL::UnsignedLong>>;
 
-    virtual OpenGLContext& context() const = 0;
+    virtual OpenGLContext& context() = 0;
 
     Optional<Vector<String>> get_supported_extensions();
     JS::Object* get_extension(String const& name);

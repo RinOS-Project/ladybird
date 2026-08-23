@@ -31,6 +31,7 @@ protected:
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:
+    void queue_worker_error_event();
     void setup_worker_ipc_callbacks(JS::Realm&);
 
     WorkerOptions m_worker_options;

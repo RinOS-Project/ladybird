@@ -7,8 +7,6 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/PaintingSurface.h>
 
-#include <AK/Try.h>
-
 #ifdef AK_OS_RINOS
 
 namespace Gfx {
@@ -20,12 +18,7 @@ struct PaintingSurface::Impl {
 
 NonnullRefPtr<PaintingSurface> PaintingSurface::create_with_size(IntSize size, BitmapFormat color_type, AlphaType alpha_type)
 {
-    return MUST(try_create_with_size(size, color_type, alpha_type));
-}
-
-ErrorOr<NonnullRefPtr<PaintingSurface>> PaintingSurface::try_create_with_size(IntSize size, BitmapFormat color_type, AlphaType alpha_type)
-{
-    auto bitmap = TRY(Bitmap::create(color_type, alpha_type, size));
+    auto bitmap = Bitmap::create(color_type, alpha_type, size).value();
     return adopt_ref(*new PaintingSurface(make<Impl>(size, bitmap)));
 }
 

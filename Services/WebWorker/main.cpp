@@ -8,7 +8,6 @@
 #include <LibCore/EventLoop.h>
 #include <LibCore/Process.h>
 #include <LibCore/System.h>
-#include <LibCrypto/OpenSSLForward.h>
 #include <LibFileSystem/FileSystem.h>
 #include <LibIPC/SingleServer.h>
 #include <LibIPC/Transport.h>
@@ -27,7 +26,10 @@
 #include <LibWebView/Utilities.h>
 #include <WebWorker/ConnectionFromClient.h>
 
-#include <openssl/thread.h>
+#if !defined(AK_OS_RINOS)
+#    include <LibCrypto/OpenSSLForward.h>
+#    include <openssl/thread.h>
+#endif
 
 static ErrorOr<void> connect_to_resource_loader(GC::Heap& heap, IPC::TransportHandle const& handle);
 static ErrorOr<void> connect_to_image_decoder(IPC::TransportHandle const& handle);
@@ -84,7 +86,9 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     if (enable_http_memory_cache)
         Web::Fetch::Fetching::set_http_memory_cache_enabled(true);
 
+#if !defined(AK_OS_RINOS)
     OPENSSL_TRY(OSSL_set_max_threads(nullptr, Core::System::hardware_concurrency()));
+#endif
 
     Web::HTML::UniversalGlobalScopeMixin::set_experimental_interfaces_exposed(expose_experimental_interfaces);
 
