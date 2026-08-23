@@ -28,9 +28,13 @@ forwards `uniform1f`/`uniform1fv`, `uniform2f`/`uniform2fv`,
 `uniformMatrix4fv` to per-program RinGL state, and returns numbers or
 `Float32Array` values from `getUniform` as required by the uniform type. The
 matrix profile accepts WebGL column-major values with `transpose == false` for
-`mat4 * vec4 attribute` vertex position transforms. Uniform arrays, other
-matrix expressions, and other uniform types remain unavailable until their
-native RinGL representation exists; they are not emulated by the browser layer.
+`mat4 * vec4 attribute` vertex position transforms. The direct profile also
+executes no-varying `vec2`/`vec3`/`vec4` locals, same-width `+`/`-`, unary
+`-`, and vector/scalar `*`/`/` as RSH1 instructions, so uniform tinting and a
+matrix-transformed position plus a vector offset do not rely on a browser-side
+fallback. Uniform arrays, other matrix expressions, and other uniform types
+remain unavailable until their native RinGL representation exists; they are
+not emulated by the browser layer.
 
 WebGL 2, ANGLE-specific extensions, complete WebGL conformance, and
 product/QEMU browser evidence remain outside this enabled WebGL 1 slice. They
