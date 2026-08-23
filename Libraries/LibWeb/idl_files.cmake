@@ -517,20 +517,19 @@ libweb_js_bindings(WebAudio/PeriodicWave)
 libweb_js_bindings(WebAudio/ScriptProcessorNode)
 libweb_js_bindings(WebAudio/StereoPannerNode)
 if (AK_OS_RINOS)
-    # The private RinGL dispatcher owns WebGL objects and buffers before the
-    # public WebGLRenderingContext binding is enabled. These generated
-    # object bindings provide the InterfaceName/prototype definitions required
-    # by the compiled lifecycle code, including active-info results and the
-    # WebGL2-only owners retained by its GC edge visitor. They do not expose a
-    # canvas context or any command entry point to JavaScript.
+    # The public WebGL 1 binding uses the direct RinGL/RinGPU dispatcher.
+    # WebGL 2 and ANGLE-only extension bindings remain unavailable.
     libweb_js_bindings(WebGL/WebGLActiveInfo)
     libweb_js_bindings(WebGL/WebGLBuffer)
+    libweb_js_bindings(WebGL/WebGLContextEvent)
     libweb_js_bindings(WebGL/WebGLFramebuffer)
     libweb_js_bindings(WebGL/WebGLObject)
     libweb_js_bindings(WebGL/WebGLProgram)
     libweb_js_bindings(WebGL/WebGLQuery)
     libweb_js_bindings(WebGL/WebGLRenderbuffer)
+    libweb_js_bindings(WebGL/WebGLRenderingContext)
     libweb_js_bindings(WebGL/WebGLShader)
+    libweb_js_bindings(WebGL/WebGLShaderPrecisionFormat)
     libweb_js_bindings(WebGL/WebGLTexture)
     libweb_js_bindings(WebGL/WebGLTransformFeedback)
     libweb_js_bindings(WebGL/WebGLUniformLocation)

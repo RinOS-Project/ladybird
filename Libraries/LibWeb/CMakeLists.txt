@@ -31,13 +31,15 @@ else()
     set(ANGLE_TARGETS "")
     message(STATUS "RinOS policy: ANGLE/GLES is disabled; the private WebGL surface uses RinGL/RinGPU directly.")
 
-    set(RINOS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." CACHE PATH "RinOS source root used by the direct LibWeb RinGL bridge")
+    # LibWeb lives at <RinOS>/libs/ladybird/Libraries/LibWeb.
+    set(RINOS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." CACHE PATH "RinOS source root used by the direct LibWeb RinGL bridge")
+    set(RINGL_SOURCE_ROOT "${RINOS_SOURCE_ROOT}/libs/RinGL" CACHE PATH "RinGL source root used by the direct LibWeb RinGPU bridge")
     if (NOT EXISTS "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c" OR
-        NOT EXISTS "${RINOS_SOURCE_ROOT}/libs/RinGL/CMakeLists.txt")
-        message(FATAL_ERROR "RinOS direct WebGL bridge sources are missing below RINOS_SOURCE_ROOT=${RINOS_SOURCE_ROOT}")
+        NOT EXISTS "${RINGL_SOURCE_ROOT}/CMakeLists.txt")
+        message(FATAL_ERROR "RinOS direct WebGL bridge sources are missing (RINOS_SOURCE_ROOT=${RINOS_SOURCE_ROOT}, RINGL_SOURCE_ROOT=${RINGL_SOURCE_ROOT})")
     endif()
     if (NOT TARGET RinGL)
-        add_subdirectory("${RINOS_SOURCE_ROOT}/libs/RinGL" "${CMAKE_BINARY_DIR}/RinGL")
+        add_subdirectory("${RINGL_SOURCE_ROOT}" "${CMAKE_BINARY_DIR}/RinGL")
     endif()
     target_sources(RinGL PRIVATE
         "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/core.c"
@@ -1230,21 +1232,26 @@ list(APPEND SOURCES ${SKIA_SOURCES})
 
 if (AK_OS_RINOS)
     list(FILTER SOURCES EXCLUDE REGEX "^WebGL/")
-    # Build the context owner and GLES-free object/error substrate. JS WebGL
-    # bindings remain disabled until object/state calls are mapped to RinGL.
+    # Build the WebGL 1 context through the GLES-free RinGL/RinGPU dispatcher.
+    # WebGL 2 and every ANGLE-only extension remain excluded.
     list(APPEND SOURCES
+        WebGL/EventNames.cpp
         WebGL/OpenGLContext.cpp
         WebGL/WebGLActiveInfo.cpp
         WebGL/WebGLBuffer.cpp
+        WebGL/WebGLContextAttributes.cpp
+        WebGL/WebGLContextEvent.cpp
         WebGL/WebGLFramebuffer.cpp
         WebGL/WebGLObject.cpp
         WebGL/WebGLProgram.cpp
         WebGL/WebGLQuery.cpp
         WebGL/WebGLRenderbuffer.cpp
+        WebGL/WebGLRenderingContext.cpp
         WebGL/WebGLRenderingContextBase.cpp
         WebGL/WebGLRenderingContextImplRinGL.cpp
         WebGL/WebGLRenderingContextOverloadsRinGL.cpp
         WebGL/WebGLShader.cpp
+        WebGL/WebGLShaderPrecisionFormat.cpp
         WebGL/WebGLTexture.cpp
         WebGL/WebGLTransformFeedback.cpp
         WebGL/WebGLUniformLocation.cpp

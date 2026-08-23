@@ -27,7 +27,7 @@ class WebGLRenderingContextImpl : public WebGLRenderingContextBase {
 public:
     WebGLRenderingContextImpl(JS::Realm&, NonnullOwnPtr<OpenGLContext>);
 
-    virtual OpenGLContext& context() override { return *m_context; }
+    virtual OpenGLContext& context() const override { return *m_context; }
 
     virtual void present() = 0;
     virtual void needs_to_present() = 0;
@@ -155,6 +155,16 @@ protected:
     // private drawing surface could not be realized. Native command methods
     // must use this instead of calling RinGL without a current context.
     bool make_rin_gl_current();
+
+    // The current RinGL shader profile exposes linked sampler2D uniforms only.
+    // Keep ownership/range validation in one place before any WebGL uniform
+    // entry point forwards a sampler unit to that profile.
+    bool validate_rin_gl_sampler_uniform_location(GC::Root<WebGLUniformLocation> location, WebIDL::Long& location_out);
+
+    // RinGL intentionally supports native, separate depth/stencil FBO
+    // aspects. WebGL 1 may not expose that profile, so commands which read or
+    // modify a bound framebuffer must gate it at the browser boundary.
+    bool rin_gl_bound_framebuffer_is_webgl1_compatible();
 
     // RinGL exposes eight independently bound WebGL 1 texture units. Keep
     // the Ladybird object cache in the same shape, rather than treating the

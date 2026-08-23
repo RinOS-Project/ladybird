@@ -22,7 +22,7 @@ public:
     static constexpr bool OVERRIDES_FINALIZE = true;
 
 #if defined(AK_OS_RINOS)
-    using RenderingContext = GC::Ptr<CanvasRenderingContext2D>;
+    using RenderingContext = Variant<GC::Root<CanvasRenderingContext2D>, GC::Root<WebGL::WebGLRenderingContext>, Empty>;
 #else
     using RenderingContext = Variant<GC::Root<CanvasRenderingContext2D>, GC::Root<WebGL::WebGLRenderingContext>, GC::Root<WebGL::WebGL2RenderingContext>, Empty>;
 #endif
@@ -71,15 +71,13 @@ private:
     virtual GC::Ptr<Layout::Node> create_layout_node(GC::Ref<CSS::ComputedProperties>) override;
     virtual void adjust_computed_style(CSS::ComputedProperties&) override;
 
-#if !defined(AK_OS_RINOS)
     template<typename ContextType>
     JS::ThrowCompletionOr<HasOrCreatedContext> create_webgl_context(JS::Value options);
-#endif
     void reset_context_to_default_state();
     void notify_context_about_canvas_size_change();
 
 #if defined(AK_OS_RINOS)
-    Variant<GC::Ref<HTML::CanvasRenderingContext2D>, Empty> m_context;
+    Variant<GC::Ref<HTML::CanvasRenderingContext2D>, GC::Ref<WebGL::WebGLRenderingContext>, Empty> m_context;
 #else
     Variant<GC::Ref<HTML::CanvasRenderingContext2D>, GC::Ref<WebGL::WebGLRenderingContext>, GC::Ref<WebGL::WebGL2RenderingContext>, Empty> m_context;
 #endif

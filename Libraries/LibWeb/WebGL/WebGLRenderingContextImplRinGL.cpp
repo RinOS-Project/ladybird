@@ -18,6 +18,7 @@
 #include <LibWeb/WebGL/WebGLRenderbuffer.h>
 #include <LibWeb/WebGL/WebGLRenderingContextImpl.h>
 #include <LibWeb/WebGL/WebGLShader.h>
+#include <LibWeb/WebGL/WebGLShaderPrecisionFormat.h>
 #include <LibWeb/WebGL/WebGLTexture.h>
 #include <LibWeb/WebGL/WebGLTransformFeedback.h>
 #include <LibWeb/WebGL/WebGLUniformLocation.h>
@@ -29,6 +30,15 @@ extern "C" {
 }
 
 namespace Web::WebGL {
+
+static constexpr GLenum webgl_invalid_framebuffer_operation = 0x0506;
+static constexpr GLenum webgl_framebuffer_unsupported = 0x8cdd;
+static constexpr GLenum webgl_low_float = 0x8df0;
+static constexpr GLenum webgl_medium_float = 0x8df1;
+static constexpr GLenum webgl_high_float = 0x8df2;
+static constexpr GLenum webgl_low_int = 0x8df3;
+static constexpr GLenum webgl_medium_int = 0x8df4;
+static constexpr GLenum webgl_high_int = 0x8df5;
 
 static bool rin_gl_framebuffer_attachment_valid(GLenum attachment)
 {
@@ -54,6 +64,35 @@ bool WebGLRenderingContextImpl::make_rin_gl_current()
     // backend surface is absent. `set_error()` consumes that reason before
     // considering the fallback supplied here.
     set_error(m_context->is_context_lost() ? RINGL_CONTEXT_LOST_WEBGL : RINGL_OUT_OF_MEMORY);
+    return false;
+}
+
+bool WebGLRenderingContextImpl::validate_rin_gl_sampler_uniform_location(GC::Root<WebGLUniformLocation> location, WebIDL::Long& location_out)
+{
+    auto location_handle_or_error = location->handle(m_current_program);
+    if (location_handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return false;
+    }
+
+    auto location_handle = location_handle_or_error.release_value();
+    if (location_handle > static_cast<GLuint>(NumericLimits<WebIDL::Long>::max())) {
+        set_error(RINGL_INVALID_OPERATION);
+        return false;
+    }
+    location_out = static_cast<WebIDL::Long>(location_handle);
+    return true;
+}
+
+bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_is_webgl1_compatible()
+{
+    if (!m_framebuffer_binding || !m_framebuffer_binding->rin_gl_uses_separate_depth_stencil_attachments())
+        return true;
+
+    // The raw RinGL profile can render to distinct native depth/stencil
+    // aspects. WebGL 1 deliberately does not expose that combination: it is
+    // incomplete at the browser boundary and must not submit a native pass.
+    set_error(webgl_invalid_framebuffer_operation);
     return false;
 }
 
@@ -498,6 +537,8 @@ void WebGLRenderingContextImpl::copy_tex_image2d(WebIDL::UnsignedLong target, We
 {
     if (!make_rin_gl_current())
         return;
+    if (!rin_gl_bound_framebuffer_is_webgl1_compatible())
+        return;
     ringl_copy_tex_image_2d(target, level, internalformat, x, y, width,
                             height, border);
 }
@@ -505,6 +546,8 @@ void WebGLRenderingContextImpl::copy_tex_image2d(WebIDL::UnsignedLong target, We
 void WebGLRenderingContextImpl::copy_tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height)
 {
     if (!make_rin_gl_current())
+        return;
+    if (!rin_gl_bound_framebuffer_is_webgl1_compatible())
         return;
     ringl_copy_tex_sub_image_2d(target, level, xoffset, yoffset, x, y,
                                 width, height);
@@ -1027,6 +1070,32 @@ JS::Value WebGLRenderingContextImpl::get_shader_parameter(GC::Root<WebGLShader> 
     if (pname == RINGL_SHADER_TYPE)
         return JS::Value(ringl_get_shader_type(handle));
     return JS::Value(ringl_get_shader_compile_status(handle) == RINGL_TRUE);
+}
+
+GC::Root<WebGLShaderPrecisionFormat> WebGLRenderingContextImpl::get_shader_precision_format(WebIDL::UnsignedLong shadertype, WebIDL::UnsignedLong precisiontype)
+{
+    if (!make_rin_gl_current())
+        return {};
+    if (shadertype != RINGL_VERTEX_SHADER && shadertype != RINGL_FRAGMENT_SHADER) {
+        set_error(RINGL_INVALID_ENUM);
+        return {};
+    }
+
+    switch (precisiontype) {
+    case webgl_low_float:
+    case webgl_medium_float:
+    case webgl_high_float:
+        // RSH1 arithmetic is implemented with IEEE-754 binary32 values.
+        return WebGLShaderPrecisionFormat::create(realm(), -126, 127, 23);
+    case webgl_low_int:
+    case webgl_medium_int:
+    case webgl_high_int:
+        // The published RSH1 profile has no shader-visible integer values.
+        return WebGLShaderPrecisionFormat::create(realm(), 0, 0, 0);
+    default:
+        set_error(RINGL_INVALID_ENUM);
+        return {};
+    }
 }
 
 JS::Value WebGLRenderingContextImpl::get_renderbuffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname)
@@ -1582,17 +1651,83 @@ void WebGLRenderingContextImpl::uniform1i(GC::Root<WebGLUniformLocation> locatio
 {
     if (!make_rin_gl_current())
         return;
-    // WebGL permits a null uniform location as a no-op. A non-null location
-    // must belong to the program currently bound through useProgram().
     if (!location)
         return;
 
-    auto location_handle_or_error = location->handle(m_current_program);
-    if (location_handle_or_error.is_error()) {
-        set_error(RINGL_INVALID_OPERATION);
+    WebIDL::Long location_handle;
+    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
         return;
-    }
-    ringl_uniform_1i(static_cast<WebIDL::Long>(location_handle_or_error.release_value()), x);
+    ringl_uniform_1i(location_handle, x);
+}
+
+void WebGLRenderingContextImpl::uniform1f(GC::Root<WebGLUniformLocation> location, float)
+{
+    if (!make_rin_gl_current() || !location)
+        return;
+    WebIDL::Long location_handle;
+    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+        return;
+    set_error(RINGL_INVALID_OPERATION);
+}
+
+void WebGLRenderingContextImpl::uniform2f(GC::Root<WebGLUniformLocation> location, float, float)
+{
+    if (!make_rin_gl_current() || !location)
+        return;
+    WebIDL::Long location_handle;
+    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+        return;
+    set_error(RINGL_INVALID_OPERATION);
+}
+
+void WebGLRenderingContextImpl::uniform3f(GC::Root<WebGLUniformLocation> location, float, float, float)
+{
+    if (!make_rin_gl_current() || !location)
+        return;
+    WebIDL::Long location_handle;
+    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+        return;
+    set_error(RINGL_INVALID_OPERATION);
+}
+
+void WebGLRenderingContextImpl::uniform4f(GC::Root<WebGLUniformLocation> location, float, float, float, float)
+{
+    if (!make_rin_gl_current() || !location)
+        return;
+    WebIDL::Long location_handle;
+    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+        return;
+    set_error(RINGL_INVALID_OPERATION);
+}
+
+void WebGLRenderingContextImpl::uniform2i(GC::Root<WebGLUniformLocation> location, WebIDL::Long, WebIDL::Long)
+{
+    if (!make_rin_gl_current() || !location)
+        return;
+    WebIDL::Long location_handle;
+    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+        return;
+    set_error(RINGL_INVALID_OPERATION);
+}
+
+void WebGLRenderingContextImpl::uniform3i(GC::Root<WebGLUniformLocation> location, WebIDL::Long, WebIDL::Long, WebIDL::Long)
+{
+    if (!make_rin_gl_current() || !location)
+        return;
+    WebIDL::Long location_handle;
+    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+        return;
+    set_error(RINGL_INVALID_OPERATION);
+}
+
+void WebGLRenderingContextImpl::uniform4i(GC::Root<WebGLUniformLocation> location, WebIDL::Long, WebIDL::Long, WebIDL::Long, WebIDL::Long)
+{
+    if (!make_rin_gl_current() || !location)
+        return;
+    WebIDL::Long location_handle;
+    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+        return;
+    set_error(RINGL_INVALID_OPERATION);
 }
 
 void WebGLRenderingContextImpl::blend_color(float red, float green, float blue, float alpha)
@@ -1633,6 +1768,8 @@ void WebGLRenderingContextImpl::blend_func_separate(WebIDL::UnsignedLong src_rgb
 void WebGLRenderingContextImpl::clear(WebIDL::UnsignedLong mask)
 {
     if (!make_rin_gl_current())
+        return;
+    if (!rin_gl_bound_framebuffer_is_webgl1_compatible())
         return;
     m_context->notify_content_will_change();
     needs_to_present();
@@ -1727,6 +1864,8 @@ void WebGLRenderingContextImpl::draw_arrays(WebIDL::UnsignedLong mode, WebIDL::L
 {
     if (!make_rin_gl_current())
         return;
+    if (!rin_gl_bound_framebuffer_is_webgl1_compatible())
+        return;
     m_context->notify_content_will_change();
     ringl_draw_arrays(mode, first, count);
     needs_to_present();
@@ -1735,6 +1874,8 @@ void WebGLRenderingContextImpl::draw_arrays(WebIDL::UnsignedLong mode, WebIDL::L
 void WebGLRenderingContextImpl::draw_elements(WebIDL::UnsignedLong mode, WebIDL::Long count, WebIDL::UnsignedLong type, WebIDL::LongLong offset)
 {
     if (!make_rin_gl_current())
+        return;
+    if (!rin_gl_bound_framebuffer_is_webgl1_compatible())
         return;
     if (offset < 0) {
         // RinGL takes a byte offset as u64. Do not let a negative WebGL offset
@@ -1942,6 +2083,9 @@ WebIDL::UnsignedLong WebGLRenderingContextImpl::check_framebuffer_status(WebIDL:
 {
     if (!make_rin_gl_current())
         return 0;
+    if (target == RINGL_FRAMEBUFFER && m_framebuffer_binding
+        && m_framebuffer_binding->rin_gl_uses_separate_depth_stencil_attachments())
+        return webgl_framebuffer_unsupported;
     return ringl_check_framebuffer_status(target);
 }
 

@@ -59,15 +59,16 @@ void WebGLFramebuffer::set_rin_gl_attachment(GLenum attachment, GC::Ptr<WebGLObj
         return;
     case RINGL_DEPTH_ATTACHMENT:
         m_rin_gl_depth_attachment = value;
-        m_rin_gl_stencil_attachment = {};
+        m_rin_gl_uses_separate_depth_stencil_attachments = true;
         return;
     case RINGL_STENCIL_ATTACHMENT:
-        m_rin_gl_depth_attachment = {};
         m_rin_gl_stencil_attachment = value;
+        m_rin_gl_uses_separate_depth_stencil_attachments = true;
         return;
     case RINGL_DEPTH_STENCIL_ATTACHMENT:
         m_rin_gl_depth_attachment = value;
         m_rin_gl_stencil_attachment = value;
+        m_rin_gl_uses_separate_depth_stencil_attachments = false;
         return;
     default:
         return;
@@ -110,6 +111,13 @@ GLint WebGLFramebuffer::rin_gl_attachment_level(GLenum attachment) const
     default:
         return 0;
     }
+}
+
+bool WebGLFramebuffer::rin_gl_uses_separate_depth_stencil_attachments() const
+{
+    return m_rin_gl_uses_separate_depth_stencil_attachments
+        && m_rin_gl_depth_attachment.object
+        && m_rin_gl_stencil_attachment.object;
 }
 #endif
 

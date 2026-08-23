@@ -28,6 +28,7 @@ public:
     void set_rin_gl_attachment(GLenum attachment, GC::Ptr<WebGLObject> object, GLint level);
     GC::Ptr<WebGLObject> rin_gl_attachment_object(GLenum attachment) const;
     GLint rin_gl_attachment_level(GLenum attachment) const;
+    bool rin_gl_uses_separate_depth_stencil_attachments() const;
 #endif
 
 protected:
@@ -46,6 +47,7 @@ private:
     RinGLAttachment m_rin_gl_color_attachment;
     RinGLAttachment m_rin_gl_depth_attachment;
     RinGLAttachment m_rin_gl_stencil_attachment;
+    bool m_rin_gl_uses_separate_depth_stencil_attachments { false };
 #endif
 };
 
