@@ -1616,6 +1616,13 @@ void WebGLRenderingContextImpl::depth_range(float z_near, float z_far)
     ringl_depth_range(z_near, z_far);
 }
 
+void WebGLRenderingContextImpl::polygon_offset(float factor, float units)
+{
+    if (!make_rin_gl_current())
+        return;
+    ringl_polygon_offset(factor, units);
+}
+
 void WebGLRenderingContextImpl::disable(WebIDL::UnsignedLong cap)
 {
     if (!make_rin_gl_current())
