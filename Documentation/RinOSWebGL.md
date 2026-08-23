@@ -32,9 +32,12 @@ matrix profile accepts WebGL column-major values with `transpose == false` for
 executes no-varying `vec2`/`vec3`/`vec4` locals, same-width `+`/`-`, unary
 `-`, and vector/scalar `*`/`/` as RSH1 instructions, so uniform tinting and a
 matrix-transformed position plus a vector offset do not rely on a browser-side
-fallback. Uniform arrays, other matrix expressions, and other uniform types
-remain unavailable until their native RinGL representation exists; they are
-not emulated by the browser layer.
+fallback. Common global `precision lowp`/`mediump`/`highp` declarations for
+`float`, `int`, and `sampler2D` are grammar-validated and execute in RSH1
+binary32; malformed declarations still fail shader compilation. Uniform arrays,
+other matrix expressions, and other uniform types remain unavailable until
+their native RinGL representation exists; they are not emulated by the browser
+layer.
 
 WebGL 2, ANGLE-specific extensions, complete WebGL conformance, and
 product/QEMU browser evidence remain outside this enabled WebGL 1 slice. They
