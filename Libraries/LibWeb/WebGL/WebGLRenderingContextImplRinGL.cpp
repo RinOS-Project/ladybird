@@ -1556,6 +1556,28 @@ void WebGLRenderingContextImpl::tex_parameteri(WebIDL::UnsignedLong target, WebI
     ringl_tex_parameteri(target, pname, param);
 }
 
+void WebGLRenderingContextImpl::tex_parameterf(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname, float param)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    // RinGL currently exposes only WebGL 1's enumerated texture parameters.
+    // Do not cast NaN, infinity, fractional values, or out-of-range values to
+    // an integer ABI value: each would either be undefined at the C++ boundary
+    // or could accidentally select a different native enum.
+    if (!(param >= static_cast<float>(NumericLimits<WebIDL::Long>::min())
+            && param <= static_cast<float>(NumericLimits<WebIDL::Long>::max()))) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+    auto integer_param = static_cast<WebIDL::Long>(param);
+    if (static_cast<float>(integer_param) != param) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+    ringl_tex_parameteri(target, pname, integer_param);
+}
+
 void WebGLRenderingContextImpl::uniform1i(GC::Root<WebGLUniformLocation> location, WebIDL::Long x)
 {
     if (!make_rin_gl_current())
