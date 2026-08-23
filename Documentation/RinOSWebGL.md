@@ -59,3 +59,7 @@ For a focused target verification, build `RinGL` and the LibGfx/LibWeb WebGL
 objects from the RinOS Ladybird build directory. The relevant CMake target
 includes the OS-Core RinGPU surface, adapter, synchronization adapter, and
 bridge sources exactly once through `RinGL::RinGL`.
+
+The independent RinGL `textured-draw` test exercises the matching native
+pipeline route with the public matrix setter, position/UV vertex attributes,
+the varying texture shader, and typed image/sampler binding creation.
