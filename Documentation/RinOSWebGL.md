@@ -44,12 +44,16 @@ update preserves the independently validated fragment `sampler2D` module and
 its typed RinGPU resources instead of re-lowering texture source through a
 scalar-only path. The direct profile therefore executes a transformed textured
 quad: `mat4 * attribute vec4` (or `mat4 * vec4(attribute vec2, 0, 1)`) writes
-clip position, one `attribute vec2` is copied to one `varying vec2`, and the
-fragment's `texture2D` reads that varying through its typed RinGPU image and
-sampler resources. The matrix product and interpolation inputs are RSH1 work,
-not an embedding-side pre-transform or a CPU texture fallback. Coordinate
-arithmetic, multiple transformed varyings, and other matrix expressions remain
-outside this bounded GLSL profile.
+clip position, then one through four declared `attribute vec2` values are
+copied to matching `varying vec2` pairs. The fragment profile can consume those
+pairs in declared order for its bounded texture-call chain, retaining each
+typed RinGPU image/sampler binding. The matrix product and interpolation
+inputs are RSH1 work, not an embedding-side pre-transform or a CPU texture
+fallback. The native RinGL integration test exercises the two-UV/two-sampler
+case; the lowering test verifies all one-to-four-pair ABI shapes. Coordinate
+arithmetic and other matrix expressions remain outside this bounded GLSL
+profile. A fifth UV pair fails native lowering rather than being silently
+truncated.
 
 The same fragment profile accepts one linked `uniform vec4` multiplied with
 the sampled RGBA. A `uniform4f`/`uniform4fv` update rebuilds that fragment's
@@ -69,5 +73,6 @@ includes the OS-Core RinGPU surface, adapter, synchronization adapter, and
 bridge sources exactly once through `RinGL::RinGL`.
 
 The independent RinGL `textured-draw` test exercises the matching native
-pipeline route with the public matrix setter, position/UV vertex attributes,
-the varying texture shader, and typed image/sampler binding creation.
+pipeline route with the public matrix setter, position/two-UV vertex
+attributes, a two-sampler varying texture shader, and typed image/sampler
+binding creation.
