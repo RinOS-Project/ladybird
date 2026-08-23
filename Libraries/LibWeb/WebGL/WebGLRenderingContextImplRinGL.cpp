@@ -1526,6 +1526,14 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             }
             return JS::Value(value);
         }
+        case RINGL_FLOAT: {
+            float value = 0.0f;
+            if (ringl_get_uniform_1f(program_handle, location_handle, &value) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            return JS::Value(value);
+        }
         case RINGL_FLOAT_VEC4: {
             Array<float, 4> values {};
             if (ringl_get_uniform_4f(program_handle, location_handle, values.data()) != 0) {
@@ -1808,14 +1816,14 @@ void WebGLRenderingContextImpl::uniform1i(GC::Root<WebGLUniformLocation> locatio
     ringl_uniform_1i(location_handle, x);
 }
 
-void WebGLRenderingContextImpl::uniform1f(GC::Root<WebGLUniformLocation> location, float)
+void WebGLRenderingContextImpl::uniform1f(GC::Root<WebGLUniformLocation> location, float x)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_FLOAT, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+    ringl_uniform_1f(location_handle, x);
 }
 
 void WebGLRenderingContextImpl::uniform2f(GC::Root<WebGLUniformLocation> location, float, float)
