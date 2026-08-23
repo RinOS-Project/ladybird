@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    asyncTest(async done => {
+        try {
+            let key_pair = await crypto.subtle.generateKey(
+                { name: "ML-DSA-44" },
+                true,
+                ["sign", "verify"]);
+            let jwk = await crypto.subtle.exportKey("jwk", key_pair.privateKey);
+            jwk.use = "sig";
+            let key = await crypto.subtle.importKey(
+                "jwk",
+                jwk,
+                { name: "ML-DSA-44" },
+                true,
+                ["sign"]);
+            println(`ML-DSA JWK sig use: ${key.type}`);
+        } catch (error) {
+            println(`ML-DSA JWK sig use: ${error.name}`);
+        }
+        done();
+    });
+</script>

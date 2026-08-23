@@ -156,11 +156,18 @@ struct SECPxxxr1Signature {
 class SECPxxxr1 {
 public:
     ErrorOr<UnsignedBigInteger> generate_private_key();
-    ErrorOr<SECPxxxr1Point> generate_public_key(UnsignedBigInteger scalar);
-    ErrorOr<SECPxxxr1Point> compute_coordinate(UnsignedBigInteger scalar, SECPxxxr1Point point);
+    ErrorOr<SECPxxxr1Point> generate_public_key(UnsignedBigInteger const& scalar);
+    ErrorOr<SECPxxxr1Point> compute_coordinate(UnsignedBigInteger const& scalar, SECPxxxr1Point point);
     ErrorOr<bool> verify(ReadonlyBytes hash, SECPxxxr1Point pubkey, SECPxxxr1Signature signature);
-    ErrorOr<SECPxxxr1Signature> sign(ReadonlyBytes hash, UnsignedBigInteger private_key);
-    ErrorOr<bool> is_valid_point(SECPxxxr1Point pubkey, Optional<UnsignedBigInteger> private_key = {});
+    ErrorOr<SECPxxxr1Signature> sign(ReadonlyBytes hash, UnsignedBigInteger const& private_key);
+    ErrorOr<bool> is_valid_point(SECPxxxr1Point pubkey, Optional<UnsignedBigInteger> const& private_key = {});
+
+#ifdef AK_OS_RINOS
+    /* rintls hashes the original WebCrypto message exactly once.  These avoid
+     * treating the WebCrypto digest M as a new message and hashing it again. */
+    ErrorOr<SECPxxxr1Signature> sign_webcrypto(ReadonlyBytes message, u32 hash_algorithm, UnsignedBigInteger const& private_key);
+    ErrorOr<bool> verify_webcrypto(ReadonlyBytes message, u32 hash_algorithm, SECPxxxr1Point pubkey, ReadonlyBytes raw_signature);
+#endif
 
 protected:
     SECPxxxr1(char const* curve_name, size_t scalar_size)
@@ -170,7 +177,7 @@ protected:
     }
 
 private:
-    char const* m_curve_name;
+    [[maybe_unused]] char const* m_curve_name;
     size_t m_scalar_size;
 };
 

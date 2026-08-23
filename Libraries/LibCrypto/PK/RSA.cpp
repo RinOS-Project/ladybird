@@ -6,14 +6,124 @@
  */
 
 #include <AK/ByteBuffer.h>
+#include <AK/ScopeGuard.h>
 #include <LibCrypto/ASN1/DER.h>
 #include <LibCrypto/ASN1/PEM.h>
 #include <LibCrypto/Certificate/Certificate.h>
 #include <LibCrypto/PK/RSA.h>
 
 #ifdef AK_OS_RINOS
+#    include "../../../../rintls/crypto/rsa_webcrypto.h"
+#endif
+
+#ifdef AK_OS_RINOS
 
 namespace Crypto::PK {
+
+static void rintls_secure_zeroize(void* pointer, size_t size)
+{
+    auto* bytes = static_cast<volatile u8*>(pointer);
+    while (size-- != 0)
+        *bytes++ = 0;
+}
+
+static ErrorOr<void> rintls_export_integer(UnsignedBigInteger const& value, u8* output, size_t maximum_size, u16& output_size)
+{
+    if (!output || value.is_zero() || value.byte_length() > maximum_size)
+        return Error::from_string_literal("RSA integer is outside the rintls provider bounds");
+    auto bytes = TRY(ByteBuffer::create_uninitialized(value.byte_length()));
+    ScopeGuard zeroize_bytes = [&] { rintls_secure_zeroize(bytes.data(), bytes.size()); };
+    auto exported = value.export_data(bytes.span());
+    if (exported.size() != bytes.size() || exported.is_empty() || exported[0] == 0)
+        return Error::from_string_literal("RSA integer has a non-canonical encoding");
+    memcpy(output, exported.data(), exported.size());
+    output_size = static_cast<u16>(exported.size());
+    return {};
+}
+
+static ErrorOr<rintls_rsa_public_key> rintls_make_public_key(RSAPublicKey const& key)
+{
+    rintls_rsa_public_key provider_key {};
+    auto modulus_bits = key.modulus().one_based_index_of_highest_set_bit();
+    if (modulus_bits < RINTLS_RSA_MIN_MODULUS_BITS ||
+        modulus_bits > RINTLS_RSA_MAX_MODULUS_BITS ||
+        modulus_bits % 8 != 0)
+        return Error::from_string_literal("RSA modulus is outside the rintls provider policy");
+
+    TRY(rintls_export_integer(key.modulus(), provider_key.modulus,
+                              RINTLS_RSA_MAX_MODULUS_BYTES,
+                              provider_key.modulus_len));
+    if (provider_key.modulus_len != modulus_bits / 8 ||
+        (provider_key.modulus[0] & 0x80) == 0)
+        return Error::from_string_literal("RSA modulus does not have an exact byte-aligned bit length");
+
+    u16 exponent_size = 0;
+    TRY(rintls_export_integer(key.public_exponent(), provider_key.public_exponent,
+                              RINTLS_RSA_MAX_PUBLIC_EXPONENT_BYTES,
+                              exponent_size));
+    provider_key.public_exponent_len = static_cast<u8>(exponent_size);
+    provider_key.modulus_bits = static_cast<u16>(modulus_bits);
+    return provider_key;
+}
+
+static ErrorOr<rintls_rsa_private_key> rintls_make_private_key(RSAPrivateKey const& key)
+{
+    rintls_rsa_private_key provider_key {};
+    provider_key.public_key = TRY(rintls_make_public_key(
+        RSAPublicKey { key.modulus(), key.public_exponent() }));
+    TRY(rintls_export_integer(key.private_exponent(), provider_key.private_exponent,
+                              RINTLS_RSA_MAX_MODULUS_BYTES,
+                              provider_key.private_exponent_len));
+    TRY(rintls_export_integer(key.prime1(), provider_key.prime1,
+                              RINTLS_RSA_MAX_FACTOR_BYTES,
+                              provider_key.prime1_len));
+    TRY(rintls_export_integer(key.prime2(), provider_key.prime2,
+                              RINTLS_RSA_MAX_FACTOR_BYTES,
+                              provider_key.prime2_len));
+    TRY(rintls_export_integer(key.exponent1(), provider_key.exponent1,
+                              RINTLS_RSA_MAX_FACTOR_BYTES,
+                              provider_key.exponent1_len));
+    TRY(rintls_export_integer(key.exponent2(), provider_key.exponent2,
+                              RINTLS_RSA_MAX_FACTOR_BYTES,
+                              provider_key.exponent2_len));
+    TRY(rintls_export_integer(key.coefficient(), provider_key.coefficient,
+                              RINTLS_RSA_MAX_FACTOR_BYTES,
+                              provider_key.coefficient_len));
+    return provider_key;
+}
+
+static ErrorOr<u32> rintls_rsa_hash_kind(Hash::HashKind hash_kind)
+{
+    switch (hash_kind) {
+    case Hash::HashKind::SHA1:
+        return RINTLS_RSA_HASH_SHA1;
+    case Hash::HashKind::SHA256:
+        return RINTLS_RSA_HASH_SHA256;
+    case Hash::HashKind::SHA384:
+        return RINTLS_RSA_HASH_SHA384;
+    case Hash::HashKind::SHA512:
+        return RINTLS_RSA_HASH_SHA512;
+    default:
+        return Error::from_string_literal("Hash is not supported by the rintls RSA provider");
+    }
+}
+
+static RSA::KeyPairType rintls_keypair_from_provider(rintls_rsa_private_key const& provider_key)
+{
+    auto modulus = UnsignedBigInteger::import_data({ provider_key.public_key.modulus, provider_key.public_key.modulus_len });
+    auto public_exponent = UnsignedBigInteger::import_data({ provider_key.public_key.public_exponent, provider_key.public_key.public_exponent_len });
+    auto private_exponent = UnsignedBigInteger::import_data({ provider_key.private_exponent, provider_key.private_exponent_len });
+    auto prime1 = UnsignedBigInteger::import_data({ provider_key.prime1, provider_key.prime1_len });
+    auto prime2 = UnsignedBigInteger::import_data({ provider_key.prime2, provider_key.prime2_len });
+    auto exponent1 = UnsignedBigInteger::import_data({ provider_key.exponent1, provider_key.exponent1_len });
+    auto exponent2 = UnsignedBigInteger::import_data({ provider_key.exponent2, provider_key.exponent2_len });
+    auto coefficient = UnsignedBigInteger::import_data({ provider_key.coefficient, provider_key.coefficient_len });
+
+    return {
+        { modulus, public_exponent },
+        { move(modulus), move(private_exponent), move(public_exponent), move(prime1), move(prime2), move(exponent1), move(exponent2), move(coefficient) },
+    };
+}
 
 ErrorOr<RSA::KeyPairType> RSA::parse_rsa_key(ReadonlyBytes der, bool is_private, Vector<StringView> current_scope)
 {
@@ -73,9 +183,19 @@ ErrorOr<RSA::KeyPairType> RSA::parse_rsa_key(ReadonlyBytes der, bool is_private,
     }
 }
 
-ErrorOr<RSA::KeyPairType> RSA::generate_key_pair(size_t, UnsignedBigInteger)
+ErrorOr<RSA::KeyPairType> RSA::generate_key_pair(size_t bits, UnsignedBigInteger public_exponent)
 {
-    return Error::from_string_literal("RSA key generation is not supported on RinOS");
+    if (public_exponent.is_zero() || public_exponent.byte_length() > RINTLS_RSA_MAX_PUBLIC_EXPONENT_BYTES)
+        return Error::from_string_literal("RSA public exponent is outside the rintls provider bounds");
+    auto exponent = public_exponent.to_u64();
+    if (exponent > NumericLimits<u32>::max())
+        return Error::from_string_literal("RSA public exponent is outside the rintls provider bounds");
+
+    rintls_rsa_private_key provider_key {};
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    if (rintls_rsa_generate_keypair(bits, static_cast<u32>(exponent), &provider_key) != 0)
+        return Error::from_string_literal("rintls RSA key generation failed");
+    return rintls_keypair_from_provider(provider_key);
 }
 
 ErrorOr<bool> RSAPublicKey::is_valid() const
@@ -111,96 +231,40 @@ ErrorOr<bool> RSAPrivateKey::is_valid() const
     return false;
 }
 
-// Raw RSA encrypt: c = m^e mod n
 ErrorOr<ByteBuffer> RSA::encrypt(ReadonlyBytes in)
 {
-    auto m = UnsignedBigInteger::import_data(in);
-    auto const& n = m_public_key.modulus();
-    auto const& e = m_public_key.public_exponent();
-
-    if (m >= n)
-        return Error::from_string_literal("Message is too large for RSA modulus");
-
-    auto c = m.mod_pow(e, n);
-    auto out = TRY(ByteBuffer::create_uninitialized(m_public_key.length()));
-    auto exported = c.export_data(out.span());
-    // Pad with leading zeros if needed
-    if (exported.size() < out.size()) {
-        auto padded = TRY(ByteBuffer::create_zeroed(out.size()));
-        padded.overwrite(out.size() - exported.size(), exported.data(), exported.size());
-        return padded;
-    }
-    return out;
+    (void)in;
+    return Error::from_string_literal("Raw RSA is unavailable; use a padded rintls RSA algorithm");
 }
 
-// Raw RSA decrypt: m = c^d mod n (with CRT optimization if available)
 ErrorOr<ByteBuffer> RSA::decrypt(ReadonlyBytes in)
 {
-    auto c = UnsignedBigInteger::import_data(in);
-    auto const& n = m_private_key.modulus();
-    auto const& d = m_private_key.private_exponent();
-
-    if (c >= n)
-        return Error::from_string_literal("Ciphertext is too large for RSA modulus");
-
-    UnsignedBigInteger m;
-    if (!m_private_key.prime1().is_zero() && !m_private_key.prime2().is_zero()) {
-        // CRT optimization
-        auto const& p = m_private_key.prime1();
-        auto const& q = m_private_key.prime2();
-        auto const& dp = m_private_key.exponent1();
-        auto const& dq = m_private_key.exponent2();
-        auto const& qinv = m_private_key.coefficient();
-
-        auto m1 = c.mod_pow(dp, p);
-        auto m2 = c.mod_pow(dq, q);
-
-        // h = qinv * (m1 - m2) mod p
-        UnsignedBigInteger diff;
-        if (m1 >= m2) {
-            diff = TRY(m1.minus(m2));
-        } else {
-            // m1 < m2: diff = m1 + p - m2
-            diff = TRY(m1.plus(p).minus(m2));
-        }
-        auto h = qinv.multiplied_by(diff).divided_by(p).remainder;
-        m = m2.plus(h.multiplied_by(q));
-    } else {
-        m = c.mod_pow(d, n);
-    }
-
-    auto out = TRY(ByteBuffer::create_uninitialized(m_private_key.length()));
-    auto exported = m.export_data(out.span());
-    if (exported.size() < out.size()) {
-        auto padded = TRY(ByteBuffer::create_zeroed(out.size()));
-        padded.overwrite(out.size() - exported.size(), exported.data(), exported.size());
-        return padded;
-    }
-    return out;
+    (void)in;
+    return Error::from_string_literal("Raw RSA is unavailable; use a padded rintls RSA algorithm");
 }
 
 ErrorOr<ByteBuffer> RSA::sign(ReadonlyBytes message)
 {
-    // Raw RSA sign = decrypt operation (private key)
-    return decrypt(message);
+    (void)message;
+    return Error::from_string_literal("Raw RSA is unavailable; use a padded rintls RSA algorithm");
 }
 
 ErrorOr<bool> RSA::verify(ReadonlyBytes message, ReadonlyBytes signature)
 {
-    // Raw RSA verify = encrypt operation (public key) then compare
-    auto decrypted = TRY(encrypt(signature));
-    if (decrypted.size() != message.size())
-        return false;
-    return memcmp(decrypted.data(), message.data(), message.size()) == 0;
+    (void)message;
+    (void)signature;
+    return Error::from_string_literal("Raw RSA is unavailable; use a padded rintls RSA algorithm");
 }
 
 void RSA::import_private_key(ReadonlyBytes bytes, bool pem)
 {
     ByteBuffer decoded_bytes;
+    ReadonlyBytes der = bytes;
     if (pem) {
         auto decoded = decode_pem(bytes);
         if (decoded.type == PEMType::RSAPrivateKey) {
             decoded_bytes = decoded.data;
+            der = decoded_bytes.bytes();
         } else if (decoded.type == PEMType::PrivateKey) {
             ASN1::Decoder decoder(decoded.data);
             auto maybe_key = Certificate::parse_private_key_info(decoder, {});
@@ -215,7 +279,7 @@ void RSA::import_private_key(ReadonlyBytes bytes, bool pem)
             VERIFY_NOT_REACHED();
         }
     }
-    auto maybe_key = parse_rsa_key(decoded_bytes, true, {});
+    auto maybe_key = parse_rsa_key(der, true, {});
     if (maybe_key.is_error()) {
         dbgln("Failed to parse RSA private key: {}", maybe_key.error());
         VERIFY_NOT_REACHED();
@@ -226,10 +290,12 @@ void RSA::import_private_key(ReadonlyBytes bytes, bool pem)
 void RSA::import_public_key(ReadonlyBytes bytes, bool pem)
 {
     ByteBuffer decoded_bytes;
+    ReadonlyBytes der = bytes;
     if (pem) {
         auto decoded = decode_pem(bytes);
         if (decoded.type == PEMType::RSAPublicKey) {
             decoded_bytes = decoded.data;
+            der = decoded_bytes.bytes();
         } else if (decoded.type == PEMType::PublicKey) {
             ASN1::Decoder decoder(decoded.data);
             auto maybe_key = Certificate::parse_subject_public_key_info(decoder, {});
@@ -244,7 +310,7 @@ void RSA::import_public_key(ReadonlyBytes bytes, bool pem)
             VERIFY_NOT_REACHED();
         }
     }
-    auto maybe_key = parse_rsa_key(decoded_bytes, false, {});
+    auto maybe_key = parse_rsa_key(der, false, {});
     if (maybe_key.is_error()) {
         dbgln("Failed to parse RSA public key: {}", maybe_key.error());
         VERIFY_NOT_REACHED();
@@ -252,51 +318,110 @@ void RSA::import_public_key(ReadonlyBytes bytes, bool pem)
     m_public_key = maybe_key.release_value().public_key;
 }
 
-// EMSA (signature) operations using BigInt-based RSA + software hash
 ErrorOr<bool> RSA_EMSA::verify(ReadonlyBytes message, ReadonlyBytes signature)
 {
-    // PKCS#1 v1.5 / PSS verification: hash message, then RSA verify with padding
-    auto hash = Hash::Manager(m_hash_kind);
-    hash.update(message);
-    auto digest = hash.digest();
-    auto hash_buf = TRY(ByteBuffer::copy(digest.immutable_data(), hash.digest_size()));
-
-    // Raw RSA public key operation on signature
-    auto decrypted_sig = TRY(encrypt(signature));
-
-    // For PKCS#1 v1.5: verify DigestInfo encoding
-    // Simplified: just check that the hash is embedded in the decrypted signature
-    // A full implementation would parse the DigestInfo ASN1 structure
-    if (decrypted_sig.size() < hash_buf.size())
-        return false;
-
-    // Check last digest_size bytes match the hash
-    auto offset = decrypted_sig.size() - hash_buf.size();
-    return memcmp(decrypted_sig.data() + offset, hash_buf.data(), hash_buf.size()) == 0;
+    (void)message;
+    (void)signature;
+    return Error::from_string_literal("Generic RSA EMSA is unavailable; select PKCS#1 v1.5 or a reviewed PSS provider");
 }
 
 ErrorOr<ByteBuffer> RSA_EMSA::sign(ReadonlyBytes message)
 {
-    auto hash = Hash::Manager(m_hash_kind);
-    hash.update(message);
-    auto digest = hash.digest();
-    auto hash_buf = TRY(ByteBuffer::copy(digest.immutable_data(), hash.digest_size()));
+    (void)message;
+    return Error::from_string_literal("Generic RSA EMSA is unavailable; select PKCS#1 v1.5 or a reviewed PSS provider");
+}
 
-    // Build DigestInfo for PKCS#1 v1.5
-    // For simplicity, build the padded message manually
-    auto mod_len = m_private_key.length();
-    auto em = TRY(ByteBuffer::create_zeroed(mod_len));
+ErrorOr<ByteBuffer> RSA_PKCS1_EMSA::sign(ReadonlyBytes message)
+{
+    auto provider_key = TRY(rintls_make_private_key(m_private_key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    auto signature = TRY(ByteBuffer::create_zeroed(RINTLS_RSA_MAX_MODULUS_BYTES));
+    rin_size_t signature_length = 0;
+    if (rintls_rsa_pkcs1_sign(TRY(rintls_rsa_hash_kind(m_hash_kind)), &provider_key,
+                              message.data(), message.size(), signature.data(),
+                              signature.size(), &signature_length) != 0)
+        return Error::from_string_literal("rintls PKCS#1 v1.5 signing failed");
+    return signature.slice(0, signature_length);
+}
 
-    // PKCS#1 v1.5: 0x00 0x01 [0xFF padding] 0x00 [DigestInfo]
-    em[0] = 0x00;
-    em[1] = 0x01;
-    auto digest_info_len = hash_buf.size(); // simplified, should include ASN1 wrapper
-    auto pad_len = mod_len - 3 - digest_info_len;
-    memset(em.data() + 2, 0xFF, pad_len);
-    em[2 + pad_len] = 0x00;
-    em.overwrite(3 + pad_len, hash_buf.data(), hash_buf.size());
+ErrorOr<bool> RSA_PKCS1_EMSA::verify(ReadonlyBytes message, ReadonlyBytes signature)
+{
+    auto provider_key = TRY(rintls_make_public_key(m_public_key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    auto result = rintls_rsa_pkcs1_verify(TRY(rintls_rsa_hash_kind(m_hash_kind)),
+                                          &provider_key, message.data(), message.size(),
+                                          signature.data(), signature.size());
+    if (result < 0)
+        return Error::from_string_literal("rintls PKCS#1 v1.5 verification failed");
+    return result == RINTLS_RSA_VERIFY_VALID;
+}
 
-    return decrypt(em);
+ErrorOr<ByteBuffer> RSA_OAEP_EME::encrypt(ReadonlyBytes plaintext)
+{
+    auto provider_key = TRY(rintls_make_public_key(m_public_key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    auto ciphertext = TRY(ByteBuffer::create_zeroed(RINTLS_RSA_MAX_MODULUS_BYTES));
+    rin_size_t ciphertext_length = 0;
+    auto label = m_label.value_or(ReadonlyBytes {});
+    if (rintls_rsa_oaep_encrypt(TRY(rintls_rsa_hash_kind(m_hash_kind)), &provider_key,
+                                label.data(), label.size(), plaintext.data(), plaintext.size(),
+                                ciphertext.data(), ciphertext.size(),
+                                &ciphertext_length) != 0)
+        return Error::from_string_literal("rintls RSA-OAEP encryption failed");
+    return ciphertext.slice(0, ciphertext_length);
+}
+
+ErrorOr<ByteBuffer> RSA_OAEP_EME::decrypt(ReadonlyBytes ciphertext)
+{
+    auto provider_key = TRY(rintls_make_private_key(m_private_key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    auto plaintext = TRY(ByteBuffer::create_zeroed(RINTLS_RSA_MAX_MODULUS_BYTES));
+    rin_size_t plaintext_length = 0;
+    auto label = m_label.value_or(ReadonlyBytes {});
+    if (rintls_rsa_oaep_decrypt(TRY(rintls_rsa_hash_kind(m_hash_kind)), &provider_key,
+                                ciphertext.data(), ciphertext.size(), label.data(), label.size(),
+                                plaintext.data(), plaintext.size(),
+                                &plaintext_length) != 0)
+        return Error::from_string_literal("rintls RSA-OAEP decryption failed");
+    return plaintext.slice(0, plaintext_length);
+}
+
+ErrorOr<ByteBuffer> RSA_PSS_EMSA::sign(ReadonlyBytes message)
+{
+    auto provider_key = TRY(rintls_make_private_key(m_private_key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    u32 salt_length = RINTLS_RSA_PSS_SALT_LENGTH_MAX;
+    if (m_salt_length.has_value()) {
+        if (*m_salt_length < 0)
+            return Error::from_string_literal("RSA-PSS salt length must not be negative");
+        salt_length = static_cast<u32>(*m_salt_length);
+    }
+    auto signature = TRY(ByteBuffer::create_zeroed(RINTLS_RSA_MAX_MODULUS_BYTES));
+    rin_size_t signature_length = 0;
+    if (rintls_rsa_pss_sign(TRY(rintls_rsa_hash_kind(m_hash_kind)), &provider_key,
+                            message.data(), message.size(), salt_length,
+                            signature.data(), signature.size(),
+                            &signature_length) != 0)
+        return Error::from_string_literal("rintls RSA-PSS signing failed");
+    return signature.slice(0, signature_length);
+}
+
+ErrorOr<bool> RSA_PSS_EMSA::verify(ReadonlyBytes message, ReadonlyBytes signature)
+{
+    auto provider_key = TRY(rintls_make_public_key(m_public_key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    u32 salt_length = RINTLS_RSA_PSS_SALT_LENGTH_MAX;
+    if (m_salt_length.has_value()) {
+        if (*m_salt_length < 0)
+            return Error::from_string_literal("RSA-PSS salt length must not be negative");
+        salt_length = static_cast<u32>(*m_salt_length);
+    }
+    auto result = rintls_rsa_pss_verify(TRY(rintls_rsa_hash_kind(m_hash_kind)),
+                                        &provider_key, message.data(), message.size(),
+                                        salt_length, signature.data(), signature.size());
+    if (result < 0)
+        return Error::from_string_literal("rintls RSA-PSS verification failed");
+    return result == RINTLS_RSA_VERIFY_VALID;
 }
 
 }
@@ -709,10 +834,12 @@ ErrorOr<bool> RSA::verify(ReadonlyBytes message, ReadonlyBytes signature)
 void RSA::import_private_key(ReadonlyBytes bytes, bool pem)
 {
     ByteBuffer decoded_bytes;
+    ReadonlyBytes der = bytes;
     if (pem) {
         auto decoded = decode_pem(bytes);
         if (decoded.type == PEMType::RSAPrivateKey) {
             decoded_bytes = decoded.data;
+            der = decoded_bytes.bytes();
         } else if (decoded.type == PEMType::PrivateKey) {
             ASN1::Decoder decoder(decoded.data);
             auto maybe_key = Certificate::parse_private_key_info(decoder, {});
@@ -729,7 +856,7 @@ void RSA::import_private_key(ReadonlyBytes bytes, bool pem)
         }
     }
 
-    auto maybe_key = parse_rsa_key(decoded_bytes, true, {});
+    auto maybe_key = parse_rsa_key(der, true, {});
     if (maybe_key.is_error()) {
         dbgln("Failed to parse RSA private key: {}", maybe_key.error());
         VERIFY_NOT_REACHED();
@@ -740,10 +867,12 @@ void RSA::import_private_key(ReadonlyBytes bytes, bool pem)
 void RSA::import_public_key(ReadonlyBytes bytes, bool pem)
 {
     ByteBuffer decoded_bytes;
+    ReadonlyBytes der = bytes;
     if (pem) {
         auto decoded = decode_pem(bytes);
         if (decoded.type == PEMType::RSAPublicKey) {
             decoded_bytes = decoded.data;
+            der = decoded_bytes.bytes();
         } else if (decoded.type == PEMType::PublicKey) {
             ASN1::Decoder decoder(decoded.data);
             auto maybe_key = Certificate::parse_subject_public_key_info(decoder, {});
@@ -760,7 +889,7 @@ void RSA::import_public_key(ReadonlyBytes bytes, bool pem)
         }
     }
 
-    auto maybe_key = parse_rsa_key(decoded_bytes, false, {});
+    auto maybe_key = parse_rsa_key(der, false, {});
     if (maybe_key.is_error()) {
         dbgln("Failed to parse RSA public key: {}", maybe_key.error());
         VERIFY_NOT_REACHED();

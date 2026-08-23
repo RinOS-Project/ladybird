@@ -292,6 +292,9 @@ public:
         return "RSA_PKCS1-EMSA";
     }
 
+    virtual ErrorOr<ByteBuffer> sign(ReadonlyBytes message) override;
+    virtual ErrorOr<bool> verify(ReadonlyBytes message, ReadonlyBytes signature) override;
+
 protected:
 #ifndef AK_OS_RINOS
     ErrorOr<void> configure(OpenSSL_PKEY_CTX& ctx) override;
@@ -312,6 +315,9 @@ public:
     {
         return "RSA_OAEP-EME";
     }
+
+    virtual ErrorOr<ByteBuffer> encrypt(ReadonlyBytes plaintext) override;
+    virtual ErrorOr<ByteBuffer> decrypt(ReadonlyBytes ciphertext) override;
 
     void set_label(ReadonlyBytes label) { m_label = label; }
 
@@ -338,6 +344,9 @@ public:
     {
         return "RSA_PSS-EMSA";
     }
+
+    virtual ErrorOr<ByteBuffer> sign(ReadonlyBytes message) override;
+    virtual ErrorOr<bool> verify(ReadonlyBytes message, ReadonlyBytes signature) override;
 
     void set_salt_length(int value) { m_salt_length = value; }
 

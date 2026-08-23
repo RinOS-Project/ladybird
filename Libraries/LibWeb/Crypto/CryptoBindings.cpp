@@ -8,8 +8,10 @@
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
 #include <LibJS/Runtime/Array.h>
+#include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibJS/Runtime/Realm.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Crypto/CryptoBindings.h>
 #include <LibWeb/WebIDL/DOMException.h>
 
@@ -28,7 +30,13 @@ JS::ThrowCompletionOr<JsonWebKey> JsonWebKey::parse(JS::Realm& realm, ReadonlyBy
 
     // 2. Let json be the Unicode string that results from interpreting data according to UTF-8.
     // 3. Convert json to UTF-16.
-    auto json = MUST(String::from_utf8(data));
+    auto json_or_error = String::from_utf8(data);
+    if (json_or_error.is_error()) {
+        if (json_or_error.error().code() == ENOMEM)
+            return vm.throw_completion<JS::InternalError>(vm.error_message(JS::VM::ErrorMessage::OutOfMemory));
+        return vm.throw_completion<WebIDL::DataError>("JWK is not valid UTF-8"_utf16);
+    }
+    auto json = json_or_error.release_value();
 
     // 4. Let result be the object literal that results from executing the JSON.parse internal function
     //    in the context of a new global object, with text argument set to a JavaScript String containing json.
@@ -65,17 +73,23 @@ JS::ThrowCompletionOr<JsonWebKey> JsonWebKey::parse(JS::Realm& realm, ReadonlyBy
 
     key.ext = json_object.get_bool("ext"sv);
 
-    if (auto key_ops = json_object.get_array("key_ops"sv); key_ops.has_value()) {
-        key.key_ops = Vector<String> {};
-        key.key_ops->ensure_capacity(key_ops->size());
+    if (auto key_ops_value = json_object.get("key_ops"sv); key_ops_value.has_value()) {
+        if (!key_ops_value->is_array())
+            return vm.throw_completion<WebIDL::DataError>("key_ops field is not an array"_utf16);
 
-        key_ops->for_each([&](auto const& value) {
-            key.key_ops->append(value.as_string());
-        });
+        auto const& key_ops = key_ops_value->as_array();
+        key.key_ops = Vector<String> {};
+        TRY_OR_THROW_OOM(vm, key.key_ops->try_ensure_capacity(key_ops.size()));
+
+        for (auto const& value : key_ops.values()) {
+            if (!value.is_string())
+                return vm.throw_completion<WebIDL::DataError>("key_ops field contains a non-string value"_utf16);
+            TRY_OR_THROW_OOM(vm, key.key_ops->try_append(value.as_string()));
+        }
     }
 
     if (json_object.has("oth"sv))
-        TODO();
+        return vm.throw_completion<WebIDL::DataError>("Multi-prime RSA JWK keys are not supported"_utf16);
 
     // 6. If the kty field of key is not defined, then throw a DataError.
     if (!key.kty.has_value())
@@ -144,9 +158,8 @@ JS::ThrowCompletionOr<GC::Ref<JS::Object>> JsonWebKey::to_object(JS::Realm& real
     if (qi.has_value())
         TRY(object->create_data_property("qi"_utf16_fly_string, JS::PrimitiveString::create(vm, qi.value())));
 
-    if (oth.has_value()) {
-        TODO();
-    }
+    if (oth.has_value())
+        return vm.throw_completion<WebIDL::DataError>("Multi-prime RSA JWK keys are not supported"_utf16);
 
     if (k.has_value())
         TRY(object->create_data_property("k"_utf16_fly_string, JS::PrimitiveString::create(vm, k.value())));

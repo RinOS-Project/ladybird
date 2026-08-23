@@ -6,37 +6,172 @@
 
 #include <LibCrypto/PK/MLDSA.h>
 
+#include <AK/ScopeGuard.h>
+#include <AK/Tuple.h>
 #include <LibCrypto/Curves/SECPxxxr1.h>
 
 #ifdef AK_OS_RINOS
 
+extern "C" {
+#include "../../../../rintls/crypto/pqc.h"
+}
+
 namespace Crypto::PK {
+
+static void zeroize_rintls_key_material(ByteBuffer& buffer)
+{
+    rintls_secure_zero(buffer.data(), buffer.size());
+}
+
+static ErrorOr<u32> rintls_mldsa_level(MLDSASize size)
+{
+    switch (size) {
+    case MLDSA44:
+        return RINTLS_MLDSA_44;
+    case MLDSA65:
+        return RINTLS_MLDSA_65;
+    case MLDSA87:
+        return RINTLS_MLDSA_87;
+    }
+    VERIFY_NOT_REACHED();
+}
+
+static ErrorOr<Tuple<rin_size_t, rin_size_t, rin_size_t>> rintls_mldsa_sizes_for(MLDSASize size)
+{
+    rin_size_t public_key_size;
+    rin_size_t private_key_size;
+    rin_size_t signature_size;
+    if (rintls_mldsa_sizes(TRY(rintls_mldsa_level(size)), &public_key_size, &private_key_size, &signature_size) != 0)
+        return Error::from_string_literal("Unsupported ML-DSA parameter set");
+    return Tuple { public_key_size, private_key_size, signature_size };
+}
+
+static ErrorOr<ByteBuffer> read_mldsa_seed(ASN1::Decoder& decoder, Vector<StringView>& current_scope)
+{
+    READ_OBJECT(OctetString, StringView, seed_bits);
+    if (seed_bits.bytes().size() != RINTLS_MLDSA_SEED_SIZE)
+        ERROR_WITH_SCOPE("Invalid seed length");
+    POP_SCOPE();
+    return ByteBuffer::copy(seed_bits.bytes());
+}
+
+static ErrorOr<ByteBuffer> read_mldsa_private_key(MLDSASize size, ASN1::Decoder& decoder, Vector<StringView>& current_scope)
+{
+    ENTER_TYPED_SCOPE(OctetString, "expandedKey");
+    READ_OBJECT(OctetString, StringView, private_key_bits);
+    auto sizes = TRY(rintls_mldsa_sizes_for(size));
+    auto private_key_size = sizes.get<1>();
+    if (private_key_bits.bytes().size() != private_key_size)
+        ERROR_WITH_SCOPE("Invalid expandedKey size");
+    POP_SCOPE();
+    return ByteBuffer::copy(private_key_bits.bytes());
+}
 
 ErrorOr<ByteBuffer> MLDSAPrivateKey::export_as_der() const
 {
     ASN1::Encoder encoder;
-    TRY(encoder.write<ReadonlyBytes>(m_seed, ASN1::Class::Context, static_cast<ASN1::Kind>(0)));
+    if (m_seed.is_empty())
+        TRY(encoder.write<ReadonlyBytes>(m_private_key));
+    else
+        TRY(encoder.write<ReadonlyBytes>(m_seed, ASN1::Class::Context, static_cast<ASN1::Kind>(0)));
     return encoder.finish();
 }
 
-ErrorOr<MLDSA::KeyPairType> MLDSA::parse_mldsa_key(MLDSASize, ReadonlyBytes, Vector<StringView>)
+ErrorOr<MLDSA::KeyPairType> MLDSA::parse_mldsa_key(MLDSASize size, ReadonlyBytes der, Vector<StringView> current_scope)
 {
-    return Error::from_string_literal("MLDSA key parsing is not supported on RinOS");
+    ASN1::Decoder decoder(der);
+    if (decoder.eof())
+        return Error::from_string_literal("Input key is empty");
+
+    auto const tag = TRY(decoder.peek());
+    if (static_cast<u8>(tag.kind) == 0) {
+        REWRITE_TAG(OctetString);
+        return generate_key_pair(size, TRY(read_mldsa_seed(decoder, current_scope)));
+    }
+    if (tag.kind == ASN1::Kind::OctetString) {
+        auto private_key = TRY(read_mldsa_private_key(size, decoder, current_scope));
+        ArmedScopeGuard clear_private_key = [&] { zeroize_rintls_key_material(private_key); };
+        auto sizes = TRY(rintls_mldsa_sizes_for(size));
+        auto public_key_size = sizes.get<0>();
+        auto public_key = TRY(ByteBuffer::create_uninitialized(public_key_size));
+        ArmedScopeGuard clear_public_key = [&] { zeroize_rintls_key_material(public_key); };
+        if (rintls_mldsa_public_from_private(TRY(rintls_mldsa_level(size)), public_key.data(), private_key.data()) != 0)
+            return Error::from_string_literal("Invalid ML-DSA expanded key");
+        clear_private_key.disarm();
+        clear_public_key.disarm();
+        return KeyPairType { { public_key }, { {}, move(public_key), move(private_key) } };
+    }
+    if (tag.kind == ASN1::Kind::Sequence) {
+        ENTER_TYPED_SCOPE(Sequence, "both");
+        ENTER_TYPED_SCOPE(OctetString, "seed");
+        auto key_pair = TRY(generate_key_pair(size, TRY(read_mldsa_seed(decoder, current_scope))));
+        POP_SCOPE();
+        ENTER_TYPED_SCOPE(OctetString, "expandedKey");
+        if (auto const expanded_key = TRY(read_mldsa_private_key(size, decoder, current_scope));
+            key_pair.private_key.private_key() != expanded_key)
+            ERROR_WITH_SCOPE("Invalid expanded_key");
+        POP_SCOPE();
+        POP_SCOPE();
+        return key_pair;
+    }
+    return Error::from_string_literal("Invalid key format");
 }
 
-ErrorOr<MLDSA::KeyPairType> MLDSA::generate_key_pair(MLDSASize, ByteBuffer)
+ErrorOr<MLDSA::KeyPairType> MLDSA::generate_key_pair(MLDSASize size, ByteBuffer seed)
 {
-    return Error::from_string_literal("MLDSA is not supported on RinOS");
+    auto level = TRY(rintls_mldsa_level(size));
+    auto sizes = TRY(rintls_mldsa_sizes_for(size));
+    auto public_key_size = sizes.get<0>();
+    auto private_key_size = sizes.get<1>();
+    if (!seed.is_empty() && seed.size() != RINTLS_MLDSA_SEED_SIZE)
+        return Error::from_string_literal("Invalid ML-DSA seed length");
+    bool generate_seed = seed.is_empty();
+    if (generate_seed)
+        seed = TRY(ByteBuffer::create_uninitialized(RINTLS_MLDSA_SEED_SIZE));
+    ArmedScopeGuard clear_seed = [&] { zeroize_rintls_key_material(seed); };
+    auto public_key = TRY(ByteBuffer::create_uninitialized(public_key_size));
+    ArmedScopeGuard clear_public_key = [&] { zeroize_rintls_key_material(public_key); };
+    auto private_key = TRY(ByteBuffer::create_uninitialized(private_key_size));
+    ArmedScopeGuard clear_private_key = [&] { zeroize_rintls_key_material(private_key); };
+    auto result = generate_seed
+        ? rintls_mldsa_keygen(level, seed.data(), public_key.data(), private_key.data())
+        : rintls_mldsa_keygen_from_seed(level, seed.data(), public_key.data(), private_key.data());
+    if (result != 0)
+        return Error::from_string_literal("ML-DSA key generation failed");
+    clear_seed.disarm();
+    clear_public_key.disarm();
+    clear_private_key.disarm();
+    return KeyPairType { { public_key }, { move(seed), move(public_key), move(private_key) } };
 }
 
-ErrorOr<ByteBuffer> MLDSA::sign(ReadonlyBytes)
+ErrorOr<ByteBuffer> MLDSA::sign(ReadonlyBytes message)
 {
-    return Error::from_string_literal("MLDSA is not supported on RinOS");
+    auto level = TRY(rintls_mldsa_level(m_size));
+    auto sizes = TRY(rintls_mldsa_sizes_for(m_size));
+    auto private_key_size = sizes.get<1>();
+    auto signature_size = sizes.get<2>();
+    if (m_private_key.private_key().size() != private_key_size || m_context.size() > 255)
+        return Error::from_string_literal("Invalid ML-DSA private key or context");
+    auto signature = TRY(ByteBuffer::create_uninitialized(signature_size));
+    if (rintls_mldsa_sign(level, signature.data(), message.data(), message.size(), m_context.data(), m_context.size(), m_private_key.private_key().data()) != 0)
+        return Error::from_string_literal("ML-DSA signing failed");
+    return signature;
 }
 
-ErrorOr<bool> MLDSA::verify(ReadonlyBytes, ReadonlyBytes)
+ErrorOr<bool> MLDSA::verify(ReadonlyBytes message, ReadonlyBytes signature)
 {
-    return Error::from_string_literal("MLDSA is not supported on RinOS");
+    auto level = TRY(rintls_mldsa_level(m_size));
+    auto sizes = TRY(rintls_mldsa_sizes_for(m_size));
+    auto public_key_size = sizes.get<0>();
+    auto signature_size = sizes.get<2>();
+    if (m_public_key.public_key().size() != public_key_size || signature.size() != signature_size || m_context.size() > 255)
+        return false;
+    auto result = rintls_mldsa_verify(level, signature.data(), message.data(), message.size(), m_context.data(), m_context.size(), m_public_key.public_key().data());
+    if (result == RINTLS_PQC_VERIFY_VALID)
+        return true;
+    if (result == RINTLS_PQC_VERIFY_INVALID)
+        return false;
+    return Error::from_string_literal("ML-DSA verification failed");
 }
 
 }

@@ -64,6 +64,32 @@ nrDlBQpuxz7bwSyQO7UCIHrYMnDohgNbwtA5ZpW3H1cKKQQvueWm6sxW9P5sUrZ3
     }
 }
 
+TEST_CASE(test_RSA_ASN1_PKCS1_raw_DER_import)
+{
+    auto private_key_pem = R"(-----BEGIN RSA PRIVATE KEY-----
+MIIBOgIBAAJBAJsrIYHxs1YL9tpfodaWs1lJoMdF4kgFisUFSj6nvBhJUlmBh607AlgTaX0E
+DGPYycXYGZ2n6rqmms5lpDXBpUcCAwEAAQJAUNpPkmtEHDENxsoQBUXvXDYeXdePSiIBJhpU
+joNOYoR5R9z5oX2cpcyykQ58FC2vKKg+x8N6xczG7qO95tw5UQIhAN354CP/FA+uTeJ6KJ+i
+zCBCl58CjNCzO0s5HTc56el5AiEAsvPKXo5/9gS/S4UzDRP6abq7GreixTfjR8LXidk3FL8C
+IQCTjYI861Y+hjMnlORkGSdvWlTHUj6gjEOh4TlWeJzQoQIgAxMZOQKtxCZUuxFwzRq4xLRG
+nrDlBQpuxz7bwSyQO7UCIHrYMnDohgNbwtA5ZpW3H1cKKQQvueWm6sxW9P5sUrZ3
+-----END RSA PRIVATE KEY-----)"sv;
+
+    auto decoded = Crypto::decode_pem(private_key_pem.bytes());
+    EXPECT_EQ(decoded.type, Crypto::PEMType::RSAPrivateKey);
+    auto keypair = TRY_OR_FAIL(Crypto::PK::RSA::parse_rsa_key(decoded.data.bytes(), true, {}));
+    auto public_der = TRY_OR_FAIL(keypair.public_key.export_as_der());
+
+    Crypto::PK::RSA private_rsa { keypair.private_key };
+    private_rsa.import_private_key(decoded.data.bytes(), false);
+    EXPECT(private_rsa.private_key().private_exponent() == keypair.private_key.private_exponent());
+
+    Crypto::PK::RSA public_rsa { keypair.public_key };
+    public_rsa.import_public_key(public_der.bytes(), false);
+    EXPECT(public_rsa.public_key().modulus() == keypair.public_key.modulus());
+    EXPECT(public_rsa.public_key().public_exponent() == keypair.public_key.public_exponent());
+}
+
 // RSA | ASN1 PKCS8 DER / PEM encoded Key import
 TEST_CASE(test_RSA_ASN1_PKCS8_DER_PEM_parse)
 {

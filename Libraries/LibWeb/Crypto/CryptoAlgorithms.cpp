@@ -46,6 +46,7 @@
 
 #if defined(AK_OS_RINOS)
 extern "C" int rin_webcrypto_get_random_values(void*, size_t);
+#include "../../../../rintls/crypto/modern.h"
 #endif
 
 namespace Web::Crypto {
@@ -138,6 +139,17 @@ WebIDL::ExceptionOr<::Crypto::UnsignedBigInteger> base64_url_uint_decode(JS::Rea
     return ::Crypto::UnsignedBigInteger::import_data(base64_bytes_be);
 }
 
+static ErrorOr<::Crypto::PK::MLDSA::KeyPairType> generate_mldsa_key_pair(StringView algorithm_name, ByteBuffer seed = {})
+{
+    if (algorithm_name == "ML-DSA-44"sv)
+        return ::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA44, move(seed));
+    if (algorithm_name == "ML-DSA-65"sv)
+        return ::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA65, move(seed));
+    if (algorithm_name == "ML-DSA-87"sv)
+        return ::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA87, move(seed));
+    return Error::from_string_literal("Invalid ML-DSA algorithm");
+}
+
 // https://w3c.github.io/webcrypto/#concept-parse-an-asn1-structure
 template<typename Structure>
 static WebIDL::ExceptionOr<Structure> parse_an_ASN1_structure(JS::Realm& realm, ReadonlyBytes data, bool exact_data = true)
@@ -200,9 +212,12 @@ static WebIDL::ExceptionOr<::Crypto::PK::RSAPrivateKey> parse_jwk_rsa_private_ke
     auto d = TRY(base64_url_uint_decode(realm, *jwk.d));
     auto e = TRY(base64_url_uint_decode(realm, *jwk.e));
 
-    // We know that if any of the extra parameters are provided, all of them must be
-    if (!jwk.p.has_value())
+    auto has_any_crt_parameter = jwk.p.has_value() || jwk.q.has_value() || jwk.dp.has_value() || jwk.dq.has_value() || jwk.qi.has_value();
+    if (!has_any_crt_parameter)
         return ::Crypto::PK::RSAPrivateKey(move(n), move(d), move(e));
+
+    if (!jwk.p.has_value() || !jwk.q.has_value() || !jwk.dp.has_value() || !jwk.dq.has_value() || !jwk.qi.has_value())
+        return WebIDL::DataError::create(realm, "RSA JWK CRT parameters must be specified together"_utf16);
 
     auto p = TRY(base64_url_uint_decode(realm, *jwk.p));
     auto q = TRY(base64_url_uint_decode(realm, *jwk.q));
@@ -294,48 +309,10 @@ static WebIDL::ExceptionOr<ByteBuffer> generate_random_key(JS::VM& vm, WebIDL::U
     return key_buffer;
 }
 
-#if defined(AK_OS_RINOS)
-static void secure_zeroize(ByteBuffer& buffer)
-{
-    volatile u8* bytes = buffer.data();
-    for (size_t index = 0; index < buffer.size(); ++index)
-        bytes[index] = 0;
-}
-#endif
-
 using EcGeneratedKeyPair = Tuple<::Crypto::UnsignedBigInteger, ::Crypto::Curves::SECPxxxr1Point>;
 
 static WebIDL::ExceptionOr<EcGeneratedKeyPair> generate_ec_key_pair(JS::Realm& realm, StringView named_curve)
 {
-#if defined(AK_OS_RINOS)
-    // RinOS supports P-256 here. Keep the private scalar in a local scratch
-    // buffer until the shared WebCrypto entropy owner has completed its bounded
-    // full read, then derive the public point from that exact scalar.
-    if (named_curve == "P-256"sv) {
-        constexpr size_t private_key_size = 32;
-        constexpr size_t maximum_attempts = 128;
-        ::Crypto::Curves::SECP256r1 curve;
-        auto private_key_bytes = TRY_OR_THROW_OOM(realm.vm(), ByteBuffer::create_uninitialized(private_key_size));
-
-        for (size_t attempt = 0; attempt < maximum_attempts; ++attempt) {
-            if (rin_webcrypto_get_random_values(private_key_bytes.data(), private_key_bytes.size()) != 0) {
-                secure_zeroize(private_key_bytes);
-                return WebIDL::OperationError::create(realm, "Secure randomness is unavailable"_utf16);
-            }
-
-            auto private_key = ::Crypto::UnsignedBigInteger::import_data(private_key_bytes);
-            auto public_key = curve.generate_public_key(private_key);
-            if (!public_key.is_error()) {
-                secure_zeroize(private_key_bytes);
-                return EcGeneratedKeyPair { move(private_key), public_key.release_value() };
-            }
-        }
-
-        secure_zeroize(private_key_bytes);
-        return WebIDL::OperationError::create(realm, "Failed to generate a valid P-256 private key"_utf16);
-    }
-#endif
-
     Variant<Empty, ::Crypto::Curves::SECP256r1, ::Crypto::Curves::SECP384r1, ::Crypto::Curves::SECP521r1> curve;
     if (named_curve.is_one_of("P-256"sv, "P-384"sv, "P-521"sv)) {
         if (named_curve == "P-256")
@@ -368,28 +345,11 @@ static WebIDL::ExceptionOr<EcGeneratedKeyPair> generate_ec_key_pair(JS::Realm& r
 
 static WebIDL::ExceptionOr<ByteBuffer> generate_x25519_private_key(JS::Realm& realm)
 {
-#if defined(AK_OS_RINOS)
-    auto private_key = TRY_OR_THROW_OOM(realm.vm(), ByteBuffer::create_uninitialized(32));
-    if (rin_webcrypto_get_random_values(private_key.data(), private_key.size()) != 0) {
-        secure_zeroize(private_key);
-        return WebIDL::OperationError::create(realm, "Secure randomness is unavailable"_utf16);
-    }
-
-    u8 nonzero = 0;
-    for (auto byte : private_key.bytes())
-        nonzero |= byte;
-    if (nonzero == 0) {
-        secure_zeroize(private_key);
-        return WebIDL::OperationError::create(realm, "Secure randomness produced an invalid X25519 private key"_utf16);
-    }
-    return private_key;
-#else
     ::Crypto::Curves::X25519 curve;
     auto private_key = curve.generate_private_key();
     if (private_key.is_error())
         return WebIDL::OperationError::create(realm, "Failed to generate private key"_utf16);
     return private_key.release_value();
-#endif
 }
 
 JS::ThrowCompletionOr<GC::Ref<JS::Object>> EncapsulatedKey::to_object(JS::Realm& realm)
@@ -1227,7 +1187,7 @@ WebIDL::ExceptionOr<GC::Ref<CryptoKey>> RSAOAEP::import_key(Web::Crypto::Algorit
             // 1. If jwk does not meet the requirements of Section 6.3.2 of JSON Web Algorithms [JWA], then throw a DataError.
             bool meets_requirements = jwk.e.has_value() && jwk.n.has_value() && jwk.d.has_value();
             if (jwk.p.has_value() || jwk.q.has_value() || jwk.dp.has_value() || jwk.dq.has_value() || jwk.qi.has_value())
-                meets_requirements |= jwk.p.has_value() && jwk.q.has_value() && jwk.dp.has_value() && jwk.dq.has_value() && jwk.qi.has_value();
+                meets_requirements &= jwk.p.has_value() && jwk.q.has_value() && jwk.dp.has_value() && jwk.dq.has_value() && jwk.qi.has_value();
 
             if (jwk.oth.has_value()) {
                 // FIXME: We don't support > 2 primes in RSA keys
@@ -1809,7 +1769,7 @@ WebIDL::ExceptionOr<GC::Ref<CryptoKey>> RSAPSS::import_key(AlgorithmParams const
             // 1. If jwk does not meet the requirements of Section 6.3.2 of JSON Web Algorithms [JWA], then throw a DataError.
             bool meets_requirements = jwk.e.has_value() && jwk.n.has_value() && jwk.d.has_value();
             if (jwk.p.has_value() || jwk.q.has_value() || jwk.dp.has_value() || jwk.dq.has_value() || jwk.qi.has_value())
-                meets_requirements |= jwk.p.has_value() && jwk.q.has_value() && jwk.dp.has_value() && jwk.dq.has_value() && jwk.qi.has_value();
+                meets_requirements &= jwk.p.has_value() && jwk.q.has_value() && jwk.dp.has_value() && jwk.dq.has_value() && jwk.qi.has_value();
 
             if (jwk.oth.has_value()) {
                 // FIXME: We don't support > 2 primes in RSA keys
@@ -2386,7 +2346,7 @@ WebIDL::ExceptionOr<GC::Ref<CryptoKey>> RSASSAPKCS1::import_key(AlgorithmParams 
             // 1. If jwk does not meet the requirements of Section 6.3.2 of JSON Web Algorithms [JWA], then throw a DataError.
             bool meets_requirements = jwk.e.has_value() && jwk.n.has_value() && jwk.d.has_value();
             if (jwk.p.has_value() || jwk.q.has_value() || jwk.dp.has_value() || jwk.dq.has_value() || jwk.qi.has_value())
-                meets_requirements |= jwk.p.has_value() && jwk.q.has_value() && jwk.dp.has_value() && jwk.dq.has_value() && jwk.qi.has_value();
+                meets_requirements &= jwk.p.has_value() && jwk.q.has_value() && jwk.dp.has_value() && jwk.dq.has_value() && jwk.qi.has_value();
 
             if (jwk.oth.has_value()) {
                 // FIXME: We don't support > 2 primes in RSA keys
@@ -4037,6 +3997,20 @@ WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> ECDSA::sign(AlgorithmParams const&
     // 2. Let hashAlgorithm be the hash member of normalizedAlgorithm.
     auto const& hash_algorithm = TRY(normalized_algorithm.hash.name(vm));
 
+#if defined(AK_OS_RINOS)
+    // rintls is responsible for hashing the original message once.  Do not
+    // pre-hash M here and make the provider hash it a second time.
+    u32 rintls_hash_algorithm;
+    if (hash_algorithm == "SHA-256") {
+        rintls_hash_algorithm = RINTLS_HASH_SHA256;
+    } else if (hash_algorithm == "SHA-384") {
+        rintls_hash_algorithm = RINTLS_HASH_SHA384;
+    } else if (hash_algorithm == "SHA-512") {
+        rintls_hash_algorithm = RINTLS_HASH_SHA512;
+    } else {
+        return WebIDL::NotSupportedError::create(m_realm, Utf16String::formatted("Invalid hash function '{}'", hash_algorithm));
+    }
+#else
     // 3. Let M be the result of performing the digest operation specified by hashAlgorithm using message.
     ::Crypto::Hash::HashKind hash_kind;
     if (hash_algorithm == "SHA-1") {
@@ -4055,9 +4029,10 @@ WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> ECDSA::sign(AlgorithmParams const&
     auto digest = hash.digest();
 
     auto M = TRY_OR_THROW_OOM(vm, ByteBuffer::copy(digest.immutable_data(), hash.digest_size()));
+#endif
 
     // 4. Let d be the ECDSA private key associated with key.
-    auto d = key->handle().get<::Crypto::PK::ECPrivateKey>();
+    auto const& d = key->handle().get<::Crypto::PK::ECPrivateKey>();
 
     // FIXME: 5. Let params be the EC domain parameters associated with key.
 
@@ -4088,7 +4063,11 @@ WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> ECDSA::sign(AlgorithmParams const&
         // 2. Let r and s be the pair of integers resulting from performing the ECDSA signing process.
         auto maybe_signature = curve.visit(
             [](Empty const&) -> ErrorOr<::Crypto::Curves::SECPxxxr1Signature> { VERIFY_NOT_REACHED(); },
+#if defined(AK_OS_RINOS)
+            [&](auto instance) { return instance.sign_webcrypto(message, rintls_hash_algorithm, d.d()); });
+#else
             [&](auto instance) { return instance.sign(M, d.d()); });
+#endif
 
         if (maybe_signature.is_error())
             return WebIDL::OperationError::create(m_realm, Utf16String::from_utf8(maybe_signature.error().string_literal()));
@@ -4132,6 +4111,18 @@ WebIDL::ExceptionOr<JS::Value> ECDSA::verify(AlgorithmParams const& params, GC::
     // 2. Let hashAlgorithm be the hash member of normalizedAlgorithm.
     [[maybe_unused]] auto const& hash_algorithm = TRY(normalized_algorithm.hash.name(realm.vm()));
 
+#if defined(AK_OS_RINOS)
+    u32 rintls_hash_algorithm;
+    if (hash_algorithm == "SHA-256") {
+        rintls_hash_algorithm = RINTLS_HASH_SHA256;
+    } else if (hash_algorithm == "SHA-384") {
+        rintls_hash_algorithm = RINTLS_HASH_SHA384;
+    } else if (hash_algorithm == "SHA-512") {
+        rintls_hash_algorithm = RINTLS_HASH_SHA512;
+    } else {
+        return WebIDL::NotSupportedError::create(m_realm, Utf16String::formatted("Invalid hash function '{}'", hash_algorithm));
+    }
+#else
     // 3. Let M be the result of performing the digest operation specified by hashAlgorithm using message.
     ::Crypto::Hash::HashKind hash_kind;
     if (hash_algorithm == "SHA-1") {
@@ -4150,6 +4141,7 @@ WebIDL::ExceptionOr<JS::Value> ECDSA::verify(AlgorithmParams const& params, GC::
     auto digest = hash.digest();
 
     auto M = TRY_OR_THROW_OOM(realm.vm(), ByteBuffer::copy(digest.immutable_data(), hash.digest_size()));
+#endif
 
     // 4. Let Q be the ECDSA public key associated with key.
     auto Q = key->handle().get<::Crypto::PK::ECPublicKey>();
@@ -4177,13 +4169,20 @@ WebIDL::ExceptionOr<JS::Value> ECDSA::verify(AlgorithmParams const& params, GC::
         // with M as the received message, signature as the received signature
         // and using params as the EC domain parameters, and Q as the public key.
 
+#if defined(AK_OS_RINOS)
+        auto maybe_result = curve.visit(
+            [](Empty const&) -> ErrorOr<bool> { VERIFY_NOT_REACHED(); },
+            [&](auto instance) { return instance.verify_webcrypto(message, rintls_hash_algorithm, Q.to_secpxxxr1_point(), signature); });
+#else
+        if (signature.size() % 2 != 0)
+            return JS::Value(false);
         auto half_size = signature.size() / 2;
         auto r = ::Crypto::UnsignedBigInteger::import_data(signature.bytes().slice(0, half_size));
         auto s = ::Crypto::UnsignedBigInteger::import_data(signature.bytes().slice(half_size, half_size));
-
         auto maybe_result = curve.visit(
             [](Empty const&) -> ErrorOr<bool> { VERIFY_NOT_REACHED(); },
             [&](auto instance) { return instance.verify(M, Q.to_secpxxxr1_point(), ::Crypto::Curves::SECPxxxr1Signature { r, s, half_size }); });
+#endif
 
         if (maybe_result.is_error())
             return WebIDL::OperationError::create(m_realm, Utf16String::from_utf8(maybe_result.error().string_literal()));
@@ -5092,8 +5091,8 @@ WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> ECDH::derive_bits(AlgorithmParams 
         //    by the [[handle]] internal slot of publicKey as the EC public key.
         // 2. Let secret be the result of applying the field element to octet string conversion
         //    defined in Section 6.2 of [RFC6090] to the output of the ECDH primitive.
-        auto private_key_data = key->handle().get<::Crypto::PK::ECPrivateKey>();
-        auto public_key_data = public_key->handle().get<::Crypto::PK::ECPublicKey>();
+        auto const& private_key_data = key->handle().get<::Crypto::PK::ECPrivateKey>();
+        auto const& public_key_data = public_key->handle().get<::Crypto::PK::ECPublicKey>();
 
         Variant<Empty, ::Crypto::Curves::SECP256r1, ::Crypto::Curves::SECP384r1, ::Crypto::Curves::SECP521r1> curve;
         if (internal_algorithm.named_curve() == "P-256"sv)
@@ -6350,7 +6349,7 @@ WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> ED25519::sign([[maybe_unused]] Alg
 
     // 2. Perform the Ed25519 signing process, as specified in [RFC8032], Section 5.1.6,
     // with message as M, using the Ed25519 private key associated with key.
-    auto private_key = key->handle().get<ByteBuffer>();
+    auto const& private_key = key->handle().get<ByteBuffer>();
 
     ::Crypto::Curves::Ed25519 curve;
     auto maybe_public_key = curve.generate_public_key(private_key);
@@ -7096,8 +7095,8 @@ WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> X25519::derive_bits(AlgorithmParam
     // 5. Let secret be the result of performing the X25519 function specified in [RFC7748] Section 5 with
     //    key as the X25519 private key k and
     //    the X25519 public key represented by the [[handle]] internal slot of publicKey as the X25519 public key u.
-    auto private_key = key->handle().get<ByteBuffer>();
-    auto public_key_data = public_key->handle().get<ByteBuffer>();
+    auto const& private_key = key->handle().get<ByteBuffer>();
+    auto const& public_key_data = public_key->handle().get<ByteBuffer>();
 
     ::Crypto::Curves::X25519 curve;
     auto maybe_secret = curve.compute_coordinate(private_key, public_key_data);
@@ -7602,8 +7601,8 @@ WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> X448::derive_bits(
     // 5. Let secret be the result of performing the X448 function specified in [RFC7748] Section 5
     //    with key as the X448 private key k and the X448 public key represented by the [[handle]]
     //    internal slot of publicKey as the X448 public key u.
-    auto private_key = key->handle().get<ByteBuffer>();
-    auto public_key_data = public_key->handle().get<ByteBuffer>();
+    auto const& private_key = key->handle().get<ByteBuffer>();
+    auto const& public_key_data = public_key->handle().get<ByteBuffer>();
 
     ::Crypto::Curves::X448 curve;
     auto maybe_secret = curve.compute_coordinate(private_key, public_key_data);
@@ -8572,15 +8571,7 @@ WebIDL::ExceptionOr<Variant<GC::Ref<CryptoKey>, GC::Ref<CryptoKeyPair>>> MLDSA::
     }
 
     // 2. Generate an ML-DSA key pair, as described in Section 5.1 of [FIPS-204], with the parameter set indicated by the name member of normalizedAlgorithm.
-    auto const maybe_key_pair = [&] {
-        if (params.name == "ML-DSA-44")
-            return ::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA44);
-        if (params.name == "ML-DSA-65")
-            return ::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA65);
-        if (params.name == "ML-DSA-87")
-            return ::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA87);
-        VERIFY_NOT_REACHED();
-    }();
+    auto maybe_key_pair = generate_mldsa_key_pair(params.name);
 
     // 3. If the key generation step fails, then throw an OperationError.
     if (maybe_key_pair.is_error())
@@ -8822,18 +8813,13 @@ WebIDL::ExceptionOr<GC::Ref<CryptoKey>> MLDSA::import_key(AlgorithmParams const&
 
         // 4. Let privateKey be the result of performing the ML-DSA.KeyGen_internal function described in Section 6.1
         //    of [FIPS-204] with the parameter set indicated by the name member of normalizedAlgorithm, using data as ξ.
-        auto const [_, private_key] = [&] {
-            if (params.name == "ML-DSA-44")
-                return MUST(::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA44, data));
-            if (params.name == "ML-DSA-65")
-                return MUST(::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA65, data));
-            if (params.name == "ML-DSA-87")
-                return MUST(::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA87, data));
-            VERIFY_NOT_REACHED();
-        }();
+        auto maybe_key_pair = generate_mldsa_key_pair(params.name, data);
+        if (maybe_key_pair.is_error())
+            return WebIDL::OperationError::create(m_realm, "ML-DSA key generation failed"_utf16);
+        auto key_pair = maybe_key_pair.release_value();
 
         // 5. Let key be a new CryptoKey that represents the ML-DSA private key identified by privateKey.
-        key = CryptoKey::create(m_realm, private_key);
+        key = CryptoKey::create(m_realm, move(key_pair.private_key));
 
         // 6. Set the [[type]] internal slot of key to "private"
         key->set_type(Bindings::KeyType::Private);
@@ -8874,7 +8860,7 @@ WebIDL::ExceptionOr<GC::Ref<CryptoKey>> MLDSA::import_key(AlgorithmParams const&
             return WebIDL::DataError::create(m_realm, "Invalid algorithm"_utf16);
 
         // 5. If usages is non-empty and the use field of jwk is present and is not equal to "sig", then throw a DataError.
-        if (!usages.is_empty() && jwk->use.has_value() && jwk->use == "sig"_string)
+        if (!usages.is_empty() && jwk->use.has_value() && jwk->use != "sig"_string)
             return WebIDL::DataError::create(m_realm, "Invalid usage type"_utf16);
 
         // 6. If the key_ops field of jwk is present, and is invalid according to the requirements of JSON Web
@@ -8890,19 +8876,16 @@ WebIDL::ExceptionOr<GC::Ref<CryptoKey>> MLDSA::import_key(AlgorithmParams const&
             // 1. If the priv attribute of jwk does not contain a valid base64url encoded seed
             //    representing an ML-DSA private key, then throw a DataError.
             auto const seed = TRY(base64_url_bytes_decode(m_realm, jwk->priv.value()));
+            if (seed.size() != 32)
+                return WebIDL::DataError::create(m_realm, "ML-DSA JWK seed must be 256 bits long"_utf16);
 
             // 2. Let key be a new CryptoKey object that represents the ML-DSA private key
             //    identified by interpreting the priv attribute of jwk as a base64url encoded seed.
-            auto const [public_key, private_key] = [&] {
-                if (params.name == "ML-DSA-44")
-                    return MUST(::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA44, seed));
-                if (params.name == "ML-DSA-65")
-                    return MUST(::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA65, seed));
-                if (params.name == "ML-DSA-87")
-                    return MUST(::Crypto::PK::MLDSA::generate_key_pair(::Crypto::PK::MLDSA87, seed));
-                VERIFY_NOT_REACHED();
-            }();
-            key = CryptoKey::create(m_realm, private_key);
+            auto maybe_key_pair = generate_mldsa_key_pair(params.name, seed);
+            if (maybe_key_pair.is_error())
+                return WebIDL::OperationError::create(m_realm, "ML-DSA key generation failed"_utf16);
+            auto key_pair = maybe_key_pair.release_value();
+            key = CryptoKey::create(m_realm, move(key_pair.private_key));
 
             // 3. Set the [[type]] internal slot of Key to "private".
             key->set_type(Bindings::KeyType::Private);
@@ -8913,7 +8896,7 @@ WebIDL::ExceptionOr<GC::Ref<CryptoKey>> MLDSA::import_key(AlgorithmParams const&
                 return WebIDL::DataError::create(m_realm, "JsonWebKey does not contain public key"_utf16);
 
             if (auto pub_decoded = base64_url_bytes_decode(m_realm, jwk->pub.value());
-                pub_decoded.is_error() || pub_decoded.value() != public_key.public_key())
+                pub_decoded.is_error() || pub_decoded.value() != key_pair.public_key.public_key())
                 return WebIDL::DataError::create(m_realm, "JsonWebKey public key does not match"_utf16);
         }
         //    => Otherwise:

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    asyncTest(async done => {
+        try {
+            await crypto.subtle.importKey(
+                "jwk",
+                { kty: "AKP", alg: "ML-DSA-44", priv: "AA", pub: "AA" },
+                { name: "ML-DSA-44" },
+                false,
+                ["sign"]);
+            println("ML-DSA short JWK seed: accepted");
+        } catch (error) {
+            println(`ML-DSA short JWK seed: ${error.name}`);
+        }
+        done();
+    });
+</script>

@@ -4,96 +4,157 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ScopeGuard.h>
 #include <LibCrypto/Curves/SECPxxxr1.h>
 
 #ifdef AK_OS_RINOS
 
 extern "C" {
-#include "../../../../rintls/crypto/ecdh.h"
+#include "../../../../rintls/crypto/modern.h"
 }
 
 namespace Crypto::Curves {
 
-ErrorOr<UnsignedBigInteger> SECPxxxr1::generate_private_key()
+static ErrorOr<u32> rintls_curve_for_scalar_size(size_t scalar_size)
 {
-    if (m_scalar_size != 32)
-        return Error::from_string_literal("Only P-256 is supported on RinOS");
-
-    p256_keypair_t kp;
-    if (p256_keygen(&kp) != ECDH_OK)
-        return Error::from_string_literal("P-256 key generation failed");
-
-    return UnsignedBigInteger::import_data(ReadonlyBytes { kp.private_key, P256_KEY_SIZE });
+    switch (scalar_size) {
+    case RINTLS_P256_PRIVATE_KEY_SIZE:
+        return RINTLS_EC_P256;
+    case RINTLS_P384_PRIVATE_KEY_SIZE:
+        return RINTLS_EC_P384;
+    case RINTLS_P521_PRIVATE_KEY_SIZE:
+        return RINTLS_EC_P521;
+    default:
+        return Error::from_string_literal("Unsupported NIST curve size");
+    }
 }
 
-ErrorOr<SECPxxxr1Point> SECPxxxr1::generate_public_key(UnsignedBigInteger scalar)
+ErrorOr<UnsignedBigInteger> SECPxxxr1::generate_private_key()
 {
-    if (m_scalar_size != 32)
-        return Error::from_string_literal("Only P-256 is supported on RinOS");
+    auto curve = TRY(rintls_curve_for_scalar_size(m_scalar_size));
+    u8 private_key[RINTLS_P521_PRIVATE_KEY_SIZE] {};
+    u8 public_key[RINTLS_P521_PUBLIC_KEY_SIZE] {};
+    ScopeGuard clear_key_material = [&] {
+        rintls_secure_zero(private_key, sizeof(private_key));
+        rintls_secure_zero(public_key, sizeof(public_key));
+    };
+    if (rintls_nist_keygen(curve, private_key, public_key) != 0)
+        return Error::from_string_literal("NIST key generation failed");
+    return UnsignedBigInteger::import_data(ReadonlyBytes { private_key, m_scalar_size });
+}
 
-    auto scalar_bytes = TRY(SECPxxxr1Point::scalar_to_bytes(scalar, 32));
-
-    u8 pubkey[P256_POINT_SIZE];
-    if (p256_compute_public(pubkey, scalar_bytes.data()) != ECDH_OK)
-        return Error::from_string_literal("P-256 public key computation failed");
-
-    // pubkey is uncompressed: 04 || x(32) || y(32)
+ErrorOr<SECPxxxr1Point> SECPxxxr1::generate_public_key(UnsignedBigInteger const& scalar)
+{
+    auto curve = TRY(rintls_curve_for_scalar_size(m_scalar_size));
+    auto scalar_bytes = TRY(SECPxxxr1Point::scalar_to_bytes(scalar, m_scalar_size));
+    u8 pubkey[RINTLS_P521_PUBLIC_KEY_SIZE] {};
+    ScopeGuard clear_key_material = [&] {
+        rintls_secure_zero(scalar_bytes.data(), scalar_bytes.size());
+        rintls_secure_zero(pubkey, sizeof(pubkey));
+    };
+    if (rintls_nist_public_from_private(curve, scalar_bytes.data(), pubkey) != 0)
+        return Error::from_string_literal("NIST public key computation failed");
     return SECPxxxr1Point {
-        UnsignedBigInteger::import_data(ReadonlyBytes { pubkey + 1, 32 }),
-        UnsignedBigInteger::import_data(ReadonlyBytes { pubkey + 33, 32 }),
-        32,
+        UnsignedBigInteger::import_data(ReadonlyBytes { pubkey + 1, m_scalar_size }),
+        UnsignedBigInteger::import_data(ReadonlyBytes { pubkey + 1 + m_scalar_size, m_scalar_size }),
+        m_scalar_size,
     };
 }
 
-ErrorOr<SECPxxxr1Point> SECPxxxr1::compute_coordinate(UnsignedBigInteger scalar, SECPxxxr1Point point)
+ErrorOr<SECPxxxr1Point> SECPxxxr1::compute_coordinate(UnsignedBigInteger const& scalar, SECPxxxr1Point point)
 {
-    if (m_scalar_size != 32)
-        return Error::from_string_literal("Only P-256 ECDH is supported on RinOS");
-
-    auto scalar_bytes = TRY(SECPxxxr1Point::scalar_to_bytes(scalar, 32));
+    auto curve = TRY(rintls_curve_for_scalar_size(m_scalar_size));
+    auto scalar_bytes = TRY(SECPxxxr1Point::scalar_to_bytes(scalar, m_scalar_size));
     auto peer_uncompressed = TRY(point.to_uncompressed());
-
-    u8 shared[P256_KEY_SIZE];
-    if (p256_ecdh(shared, scalar_bytes.data(), peer_uncompressed.data(), (rin_size_t)peer_uncompressed.size()) != ECDH_OK)
-        return Error::from_string_literal("P-256 ECDH failed");
-
-    // shared secret is the x-coordinate
+    u8 shared[RINTLS_P521_PRIVATE_KEY_SIZE] {};
+    ScopeGuard clear_key_material = [&] {
+        rintls_secure_zero(scalar_bytes.data(), scalar_bytes.size());
+        rintls_secure_zero(shared, sizeof(shared));
+    };
+    if (rintls_nist_ecdh(curve, shared, scalar_bytes.data(), peer_uncompressed.data(), peer_uncompressed.size()) != 0)
+        return Error::from_string_literal("NIST ECDH failed");
     return SECPxxxr1Point {
-        UnsignedBigInteger::import_data(ReadonlyBytes { shared, 32 }),
+        UnsignedBigInteger::import_data(ReadonlyBytes { shared, m_scalar_size }),
         UnsignedBigInteger(0),
-        32,
+        m_scalar_size,
     };
 }
 
 ErrorOr<bool> SECPxxxr1::verify(ReadonlyBytes hash, SECPxxxr1Point pubkey, SECPxxxr1Signature signature)
 {
-    if (m_scalar_size != 32)
-        return Error::from_string_literal("Only P-256 ECDSA verify is supported on RinOS");
-
+    auto curve = TRY(rintls_curve_for_scalar_size(m_scalar_size));
     auto pubkey_bytes = TRY(pubkey.to_uncompressed());
-
-    // Convert signature to DER format for rintls
-    auto sig_der = TRY(signature.to_asn());
-
-    int ret = ecdsa_p256_verify(sig_der.data(), (rin_size_t)sig_der.size(),
-        hash.data(), (rin_size_t)hash.size(),
-        pubkey_bytes.data(), (rin_size_t)pubkey_bytes.size());
-
-    return ret == ECDH_OK;
+    auto r_bytes = TRY(signature.r_bytes());
+    auto s_bytes = TRY(signature.s_bytes());
+    u8 raw_signature[RINTLS_P521_PRIVATE_KEY_SIZE * 2] {};
+    ScopeGuard clear_signature = [&] {
+        rintls_secure_zero(raw_signature, sizeof(raw_signature));
+    };
+    rintls_memcpy(raw_signature, r_bytes.data(), m_scalar_size);
+    rintls_memcpy(raw_signature + m_scalar_size, s_bytes.data(), m_scalar_size);
+    return rintls_nist_ecdsa_verify_digest(curve, hash.data(), hash.size(),
+                                            pubkey_bytes.data(), pubkey_bytes.size(),
+                                            raw_signature, m_scalar_size * 2) == 0;
 }
 
-ErrorOr<SECPxxxr1Signature> SECPxxxr1::sign(ReadonlyBytes, UnsignedBigInteger)
+ErrorOr<SECPxxxr1Signature> SECPxxxr1::sign(ReadonlyBytes hash, UnsignedBigInteger const& private_key)
 {
-    return Error::from_string_literal("ECDSA signing is not supported on RinOS");
+    auto curve = TRY(rintls_curve_for_scalar_size(m_scalar_size));
+    auto private_key_bytes = TRY(SECPxxxr1Point::scalar_to_bytes(private_key, m_scalar_size));
+    u8 signature[RINTLS_P521_PRIVATE_KEY_SIZE * 2] {};
+    ScopeGuard clear_key_material = [&] {
+        rintls_secure_zero(private_key_bytes.data(), private_key_bytes.size());
+        rintls_secure_zero(signature, sizeof(signature));
+    };
+    if (rintls_nist_ecdsa_sign_digest(curve, hash.data(), hash.size(), private_key_bytes.data(), signature) != 0)
+        return Error::from_string_literal("NIST ECDSA digest signing failed");
+    return SECPxxxr1Signature {
+        UnsignedBigInteger::import_data(ReadonlyBytes { signature, m_scalar_size }),
+        UnsignedBigInteger::import_data(ReadonlyBytes { signature + m_scalar_size, m_scalar_size }),
+        m_scalar_size,
+    };
 }
 
-ErrorOr<bool> SECPxxxr1::is_valid_point(SECPxxxr1Point pubkey, Optional<UnsignedBigInteger>)
+ErrorOr<bool> SECPxxxr1::is_valid_point(SECPxxxr1Point pubkey, Optional<UnsignedBigInteger> const& private_key)
 {
-    if (m_scalar_size != 32)
-        return Error::from_string_literal("Only P-256 point validation is supported on RinOS");
-
+    auto curve = TRY(rintls_curve_for_scalar_size(m_scalar_size));
     auto pubkey_bytes = TRY(pubkey.to_uncompressed());
-    return p256_validate_public(pubkey_bytes.data(), (rin_size_t)pubkey_bytes.size()) == ECDH_OK;
+    if (rintls_nist_validate_public(curve, pubkey_bytes.data(), pubkey_bytes.size()) != 0)
+        return false;
+    if (!private_key.has_value())
+        return true;
+    auto expected = TRY(generate_public_key(*private_key));
+    auto expected_bytes = TRY(expected.to_uncompressed());
+    return expected_bytes == pubkey_bytes;
+}
+
+ErrorOr<SECPxxxr1Signature> SECPxxxr1::sign_webcrypto(ReadonlyBytes message, u32 hash_algorithm, UnsignedBigInteger const& private_key)
+{
+    auto curve = TRY(rintls_curve_for_scalar_size(m_scalar_size));
+    auto private_key_bytes = TRY(SECPxxxr1Point::scalar_to_bytes(private_key, m_scalar_size));
+    u8 signature[RINTLS_P521_PRIVATE_KEY_SIZE * 2] {};
+    ScopeGuard clear_key_material = [&] {
+        rintls_secure_zero(private_key_bytes.data(), private_key_bytes.size());
+        rintls_secure_zero(signature, sizeof(signature));
+    };
+    if (rintls_nist_ecdsa_sign(curve, hash_algorithm, message.data(), message.size(), private_key_bytes.data(), signature) != 0)
+        return Error::from_string_literal("NIST ECDSA signing failed");
+    return SECPxxxr1Signature {
+        UnsignedBigInteger::import_data(ReadonlyBytes { signature, m_scalar_size }),
+        UnsignedBigInteger::import_data(ReadonlyBytes { signature + m_scalar_size, m_scalar_size }),
+        m_scalar_size,
+    };
+}
+
+ErrorOr<bool> SECPxxxr1::verify_webcrypto(ReadonlyBytes message, u32 hash_algorithm, SECPxxxr1Point pubkey, ReadonlyBytes raw_signature)
+{
+    auto curve = TRY(rintls_curve_for_scalar_size(m_scalar_size));
+    auto pubkey_bytes = TRY(pubkey.to_uncompressed());
+    if (raw_signature.size() != m_scalar_size * 2)
+        return false;
+    return rintls_nist_ecdsa_verify(curve, hash_algorithm, message.data(), message.size(),
+                                    pubkey_bytes.data(), pubkey_bytes.size(),
+                                    raw_signature.data(), raw_signature.size()) == 0;
 }
 
 }
@@ -120,7 +181,7 @@ ErrorOr<UnsignedBigInteger> SECPxxxr1::generate_private_key()
     return TRY(openssl_bignum_to_unsigned_big_integer(priv_bn));
 }
 
-ErrorOr<SECPxxxr1Point> SECPxxxr1::generate_public_key(UnsignedBigInteger scalar)
+ErrorOr<SECPxxxr1Point> SECPxxxr1::generate_public_key(UnsignedBigInteger const& scalar)
 {
     auto* group = EC_GROUP_new_by_curve_name(EC_curve_nist2nid(m_curve_name));
     ScopeGuard const free_group = [&] { EC_GROUP_free(group); };
@@ -144,7 +205,7 @@ ErrorOr<SECPxxxr1Point> SECPxxxr1::generate_public_key(UnsignedBigInteger scalar
     };
 }
 
-ErrorOr<SECPxxxr1Point> SECPxxxr1::compute_coordinate(UnsignedBigInteger scalar, SECPxxxr1Point point)
+ErrorOr<SECPxxxr1Point> SECPxxxr1::compute_coordinate(UnsignedBigInteger const& scalar, SECPxxxr1Point point)
 {
     auto* group = EC_GROUP_new_by_curve_name(EC_curve_nist2nid(m_curve_name));
     ScopeGuard const free_group = [&] { EC_GROUP_free(group); };
@@ -231,7 +292,7 @@ ErrorOr<bool> SECPxxxr1::verify(ReadonlyBytes hash, SECPxxxr1Point pubkey, SECPx
     VERIFY_NOT_REACHED();
 }
 
-ErrorOr<SECPxxxr1Signature> SECPxxxr1::sign(ReadonlyBytes hash, UnsignedBigInteger private_key)
+ErrorOr<SECPxxxr1Signature> SECPxxxr1::sign(ReadonlyBytes hash, UnsignedBigInteger const& private_key)
 {
     auto ctx_import = TRY(OpenSSL_PKEY_CTX::wrap(EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr)));
 
@@ -277,7 +338,7 @@ ErrorOr<SECPxxxr1Signature> SECPxxxr1::sign(ReadonlyBytes hash, UnsignedBigInteg
     };
 }
 
-ErrorOr<bool> SECPxxxr1::is_valid_point(SECPxxxr1Point pubkey, Optional<UnsignedBigInteger> private_key)
+ErrorOr<bool> SECPxxxr1::is_valid_point(SECPxxxr1Point pubkey, Optional<UnsignedBigInteger> const& private_key)
 {
     auto* group = OPENSSL_TRY_PTR(EC_GROUP_new_by_curve_name(EC_curve_nist2nid(m_curve_name)));
     ScopeGuard const free_group = [&] { EC_GROUP_free(group); };

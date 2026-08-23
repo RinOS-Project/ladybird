@@ -5,12 +5,14 @@
  */
 
 #include <AK/Array.h>
+#include <AK/ScopeGuard.h>
 #include <LibCrypto/Curves/EdwardsCurve.h>
 
 #ifdef AK_OS_RINOS
 
 extern "C" {
 #include "../../../../rintls/crypto/ecdh.h"
+#include "../../../../rintls/crypto/modern.h"
 }
 
 namespace Crypto::Curves {
@@ -18,20 +20,69 @@ namespace Crypto::Curves {
 ErrorOr<ByteBuffer> EdwardsCurve::generate_private_key()
 {
     switch (m_curve_type) {
+    case EdwardsCurveType::Ed25519: {
+        u8 private_key[RINTLS_ED25519_PRIVATE_KEY_SIZE] {};
+        u8 public_key[RINTLS_ED25519_PUBLIC_KEY_SIZE] {};
+        ScopeGuard clear_key_material = [&] {
+            rintls_secure_zero(private_key, sizeof(private_key));
+            rintls_secure_zero(public_key, sizeof(public_key));
+        };
+        if (rintls_ed25519_keygen(private_key, public_key) != 0)
+            return Error::from_string_literal("Ed25519 key generation failed");
+        return ByteBuffer::copy(private_key, sizeof(private_key));
+    }
+    case EdwardsCurveType::Ed448: {
+        u8 private_key[RINTLS_ED448_PRIVATE_KEY_SIZE] {};
+        u8 public_key[RINTLS_ED448_PUBLIC_KEY_SIZE] {};
+        ScopeGuard clear_key_material = [&] {
+            rintls_secure_zero(private_key, sizeof(private_key));
+            rintls_secure_zero(public_key, sizeof(public_key));
+        };
+        if (rintls_ed448_keygen(private_key, public_key) != 0)
+            return Error::from_string_literal("Ed448 key generation failed");
+        return ByteBuffer::copy(private_key, sizeof(private_key));
+    }
     case EdwardsCurveType::X25519: {
-        x25519_keypair_t kp;
+        x25519_keypair_t kp {};
+        ScopeGuard clear_key_material = [&] { rintls_secure_zero(&kp, sizeof(kp)); };
         if (x25519_keygen(&kp) != ECDH_OK)
             return Error::from_string_literal("X25519 key generation failed");
         return ByteBuffer::copy(kp.private_key, X25519_KEY_SIZE);
     }
-    default:
-        return Error::from_string_literal("Only X25519 key generation is supported on RinOS");
+    case EdwardsCurveType::X448: {
+        u8 private_key[RINTLS_X448_KEY_SIZE] {};
+        u8 public_key[RINTLS_X448_KEY_SIZE] {};
+        ScopeGuard clear_key_material = [&] {
+            rintls_secure_zero(private_key, sizeof(private_key));
+            rintls_secure_zero(public_key, sizeof(public_key));
+        };
+        if (rintls_x448_keygen(private_key, public_key) != 0)
+            return Error::from_string_literal("X448 key generation failed");
+        return ByteBuffer::copy(private_key, sizeof(private_key));
     }
+    }
+    VERIFY_NOT_REACHED();
 }
 
 ErrorOr<ByteBuffer> EdwardsCurve::generate_public_key(ReadonlyBytes private_key)
 {
     switch (m_curve_type) {
+    case EdwardsCurveType::Ed25519: {
+        if (private_key.size() != RINTLS_ED25519_PRIVATE_KEY_SIZE)
+            return Error::from_string_literal("Invalid Ed25519 private key size");
+        auto public_key = TRY(ByteBuffer::create_uninitialized(RINTLS_ED25519_PUBLIC_KEY_SIZE));
+        if (rintls_ed25519_public_from_private(private_key.data(), public_key.data()) != 0)
+            return Error::from_string_literal("Ed25519 public key computation failed");
+        return public_key;
+    }
+    case EdwardsCurveType::Ed448: {
+        if (private_key.size() != RINTLS_ED448_PRIVATE_KEY_SIZE)
+            return Error::from_string_literal("Invalid Ed448 private key size");
+        auto public_key = TRY(ByteBuffer::create_uninitialized(RINTLS_ED448_PUBLIC_KEY_SIZE));
+        if (rintls_ed448_public_from_private(private_key.data(), public_key.data()) != 0)
+            return Error::from_string_literal("Ed448 public key computation failed");
+        return public_key;
+    }
     case EdwardsCurveType::X25519: {
         if (private_key.size() != X25519_KEY_SIZE)
             return Error::from_string_literal("Invalid X25519 private key size");
@@ -40,14 +91,40 @@ ErrorOr<ByteBuffer> EdwardsCurve::generate_public_key(ReadonlyBytes private_key)
             return Error::from_string_literal("X25519 public key computation failed");
         return pub;
     }
-    default:
-        return Error::from_string_literal("Only X25519 public key derivation is supported on RinOS");
+    case EdwardsCurveType::X448: {
+        if (private_key.size() != RINTLS_X448_KEY_SIZE)
+            return Error::from_string_literal("Invalid X448 private key size");
+        auto public_key = TRY(ByteBuffer::create_uninitialized(RINTLS_X448_KEY_SIZE));
+        if (rintls_x448_public_from_private(private_key.data(), public_key.data()) != 0)
+            return Error::from_string_literal("X448 public key computation failed");
+        return public_key;
     }
+    }
+    VERIFY_NOT_REACHED();
 }
 
-ErrorOr<ByteBuffer> SignatureEdwardsCurve::sign(ReadonlyBytes, ReadonlyBytes, ReadonlyBytes)
+ErrorOr<ByteBuffer> SignatureEdwardsCurve::sign(ReadonlyBytes private_key, ReadonlyBytes message, ReadonlyBytes context)
 {
-    return Error::from_string_literal("Edwards curve signing is not supported on RinOS");
+    switch (m_curve_type) {
+    case EdwardsCurveType::Ed25519: {
+        if (private_key.size() != RINTLS_ED25519_PRIVATE_KEY_SIZE || !context.is_empty())
+            return Error::from_string_literal("Invalid Ed25519 private key or context");
+        auto signature = TRY(ByteBuffer::create_uninitialized(RINTLS_ED25519_SIGNATURE_SIZE));
+        if (rintls_ed25519_sign(signature.data(), private_key.data(), message.data(), message.size()) != 0)
+            return Error::from_string_literal("Ed25519 signing failed");
+        return signature;
+    }
+    case EdwardsCurveType::Ed448: {
+        if (private_key.size() != RINTLS_ED448_PRIVATE_KEY_SIZE || context.size() > 255)
+            return Error::from_string_literal("Invalid Ed448 private key or context");
+        auto signature = TRY(ByteBuffer::create_uninitialized(RINTLS_ED448_SIGNATURE_SIZE));
+        if (rintls_ed448_sign(signature.data(), private_key.data(), message.data(), message.size(), context.data(), context.size()) != 0)
+            return Error::from_string_literal("Ed448 signing failed");
+        return signature;
+    }
+    default:
+        return Error::from_string_literal("This Edwards curve does not sign messages");
+    }
 }
 
 static bool is_small_order_ed25519_point(ReadonlyBytes public_key)
@@ -88,7 +165,7 @@ static bool is_small_order_ed25519_point(ReadonlyBytes public_key)
     return false;
 }
 
-ErrorOr<bool> SignatureEdwardsCurve::verify(ReadonlyBytes public_key, ReadonlyBytes signature, ReadonlyBytes message, ReadonlyBytes)
+ErrorOr<bool> SignatureEdwardsCurve::verify(ReadonlyBytes public_key, ReadonlyBytes signature, ReadonlyBytes message, ReadonlyBytes context)
 {
     if (m_curve_type == EdwardsCurveType::Ed25519) {
         if (is_small_order_ed25519_point(public_key))
@@ -96,30 +173,41 @@ ErrorOr<bool> SignatureEdwardsCurve::verify(ReadonlyBytes public_key, ReadonlyBy
         if (signature.size() >= 32 && is_small_order_ed25519_point(signature.slice(0, 32)))
             return false;
 
-#ifdef RINTLS_ENABLE_ED25519
-        if (public_key.size() != ED25519_PUBKEY_SIZE || signature.size() != ED25519_SIG_SIZE)
+        if (public_key.size() != RINTLS_ED25519_PUBLIC_KEY_SIZE || signature.size() != RINTLS_ED25519_SIGNATURE_SIZE || !context.is_empty())
             return false;
-        return ed25519_verify(signature.data(), message.data(), (rin_size_t)message.size(), public_key.data()) == ECDH_OK;
-#else
-        return Error::from_string_literal("Ed25519 is not enabled in rintls");
-#endif
+        return rintls_ed25519_verify(signature.data(), public_key.data(), message.data(), message.size()) == 0;
     }
-    return Error::from_string_literal("Only Ed25519 verify is supported on RinOS");
+    if (m_curve_type == EdwardsCurveType::Ed448) {
+        if (public_key.size() != RINTLS_ED448_PUBLIC_KEY_SIZE || signature.size() != RINTLS_ED448_SIGNATURE_SIZE || context.size() > 255)
+            return false;
+        return rintls_ed448_verify(signature.data(), public_key.data(), message.data(), message.size(), context.data(), context.size()) == 0;
+    }
+    return Error::from_string_literal("This Edwards curve does not verify signatures");
 }
 
 ErrorOr<ByteBuffer> ExchangeEdwardsCurve::compute_coordinate(ReadonlyBytes private_key, ReadonlyBytes public_key)
 {
-    if (m_curve_type != EdwardsCurveType::X25519)
-        return Error::from_string_literal("Only X25519 ECDH is supported on RinOS");
-
-    if (private_key.size() != X25519_KEY_SIZE || public_key.size() != X25519_KEY_SIZE)
-        return Error::from_string_literal("Invalid X25519 key size");
-
-    auto shared = TRY(ByteBuffer::create_uninitialized(X25519_KEY_SIZE));
-    if (x25519_ecdh(shared.data(), private_key.data(), public_key.data()) != ECDH_OK)
-        return Error::from_string_literal("X25519 ECDH failed");
-
-    return shared;
+    if (m_curve_type == EdwardsCurveType::X25519) {
+        if (private_key.size() != X25519_KEY_SIZE || public_key.size() != X25519_KEY_SIZE)
+            return Error::from_string_literal("Invalid X25519 key size");
+        auto shared = TRY(ByteBuffer::create_uninitialized(X25519_KEY_SIZE));
+        ArmedScopeGuard clear_shared = [&] { rintls_secure_zero(shared.data(), shared.size()); };
+        if (x25519_ecdh(shared.data(), private_key.data(), public_key.data()) != ECDH_OK)
+            return Error::from_string_literal("X25519 ECDH failed");
+        clear_shared.disarm();
+        return shared;
+    }
+    if (m_curve_type == EdwardsCurveType::X448) {
+        if (private_key.size() != RINTLS_X448_KEY_SIZE || public_key.size() != RINTLS_X448_KEY_SIZE)
+            return Error::from_string_literal("Invalid X448 key size");
+        auto shared = TRY(ByteBuffer::create_uninitialized(RINTLS_X448_KEY_SIZE));
+        ArmedScopeGuard clear_shared = [&] { rintls_secure_zero(shared.data(), shared.size()); };
+        if (rintls_x448_ecdh(shared.data(), private_key.data(), public_key.data()) != 0)
+            return Error::from_string_literal("X448 ECDH failed");
+        clear_shared.disarm();
+        return shared;
+    }
+    return Error::from_string_literal("This Edwards curve does not support key exchange");
 }
 
 }
