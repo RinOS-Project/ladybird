@@ -57,18 +57,18 @@ truncated.
 
 The same route supports the common vertex-colored texture expression. With one
 or two UV pairs, a following `attribute vec4` may be copied to a matching
-`varying vec4`; the exact fragment form `texture2D(texture, uv) * vertexColor`
-loads all six interpolation scalars, samples the typed RinGPU image/sampler,
-and multiplies RGBA in RSH1. The focused native pipeline test covers the one
-UV/RGBA case with a matrix update and independent attribute buffer. Its
-bounded material form adds one fragment `uniform vec4` in the exact expression
-`texture2D(texture, uv) * vertexColor * tint`; updating it replaces only the
-fragment RSH1 module. The same exact bounded material may append `uniform
-float opacity` (`texture2D(texture, uv) * vertexColor * tint * opacity`). Its
-finite scalar is broadcast across RGBA by RSH1 after the tint product, and a
-`uniform1f` update still replaces only the fragment module while retaining the
-native image/sampler binding. This is not a browser-side pre-multiplied-color
-fallback.
+`varying vec4`; the one-pair fragment form `texture2D(texture, uv) *
+vertexColor` loads six interpolation scalars, samples the typed RinGPU
+image/sampler, and multiplies RGBA in RSH1. The two-pair material form adds the
+two native samples before modulation:
+`(texture2D(firstTexture, firstUv) + texture2D(secondTexture, secondUv)) *
+vertexColor`. The focused native pipeline test covers the one- and two-UV/RGBA
+cases with matrix updates, independent attribute buffers, and both typed
+image/sampler bindings. Either bounded material may append `uniform vec4 tint`
+and `uniform float opacity`; RSH1 broadcasts the finite opacity across RGBA
+after tinting. A `uniform4f` or `uniform1f` update replaces only the fragment
+module while retaining native image/sampler binding. This is not a browser-side
+pre-multiplied-color fallback.
 
 The same fragment profile accepts one linked `uniform vec4` multiplied with
 the sampled RGBA. A `uniform4f`/`uniform4fv` update rebuilds that fragment's
