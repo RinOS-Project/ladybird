@@ -148,15 +148,17 @@ libtommath, HarfBuzz/FreeType, Vulkan, Metal 等）を除去し、RinOS純正ラ
 - `aq_canvas.h/.c` — キャンバス状態スタック（save/restore, 変換, クリッピング）
 - `aq_gradient.h/.c` 拡張 — N-stopグラデーション（線形/放射/円錐）
 - `aq_effects.h/.c` — ボックスシャドウ、ガウシアンブラー、CSSコンポジットモード
-- `aq_truetype.h/.c` — TrueType/OpenTypeフォント（stb_truetypeベース）
+- `aq_text.h/.c` — 組み込み PSF bitmap font の lookup と raster support。TrueType/OpenType parser ではない
 
 #### 5B: LibGfx ブリッジ
 - `PainterAquamarine.cpp/.h` — `Gfx::Painter` インターフェース実装
 - `PathAquamarine.cpp/.h` — `Gfx::PathImpl` 実装
 - `PaintingSurface.cpp` — `SkSurface` → `AqSurface` ラッパー
 - `ImmutableBitmap.cpp` — `SkImage` → `AqSurface` (read-only) ラッパー
-- `Font/TypefaceAquamarine.cpp/.h` — TrueTypeフォント連携
+- `Font/TypefaceRinOS.cpp/.h` — RinOS UI 用 PSF fallback。外部 TrueType/OpenType typeface と complex shaping は未実装
 - Skia ファイル全削除
+
+`PathAquamarine.cpp` は PSF glyph の連続した set-bit run を矩形 contour に変換する。`aq_font_load_psf()` は入力 bytes を借用するため、Path と display-list player は成功した load の `Core::Resource` を static lifetime で保持する。resource を局所変数のまま破棄してから `AqFont` を再利用してはならない。
 
 #### 5C: LibWeb 描画プレイヤー
 - `DisplayListPlayerAquamarine.cpp/.h` — 全30+仮想メソッド実装
@@ -328,10 +330,11 @@ grep -r '#include.*<openssl/' libs/ladybird/Libraries/ && echo "FAIL" || echo "P
 - **理由**: RinOS に自前デコーダがなく、優先度が低い
 - **将来**: 必要に応じて段階的に追加
 
-### ADR-004: Post-quantum 暗号の stub 化
-- **日付**: 2026-03-31
-- **決定**: ML-KEM / ML-DSA は `ENOSYS` を返す stub とする
-- **理由**: rintls に実装がなく、Web Crypto API での要求頻度が極めて低い
+### ADR-004: rintls の post-quantum provider を使用する
+- **日付**: 2026-08-24
+- **決定**: ML-KEM / ML-DSA は `ENOSYS` stub にせず、rintls provider を経由して実 key generation、encapsulation/decapsulation、signature/verification を実行する
+- **理由**: `LibCrypto` は ML-DSA-44/65/87 と ML-KEM-512/768/1024、Ed448/X448 を rintls API に接続済みであり、Unavailable 表示や synthetic result は安全な代替にならない
+- **残件**: WebCrypto 全 API の entropy failure injection、WebContent isolation、consumer ISO/QEMU JavaScript evidence が未完了であり、P1.4 は完了扱いにしない
 
 ### ADR-005: RequestServer を RinOS transport に載せる
 - **日付**: 2026-03-31

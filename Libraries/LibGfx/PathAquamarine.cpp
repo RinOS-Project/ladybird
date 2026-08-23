@@ -5,12 +5,12 @@
  */
 
 #include <AK/StringBuilder.h>
+#include <AK/RefPtr.h>
 #include <AK/Utf16String.h>
 #include <LibCore/Resource.h>
 #include <LibGfx/PathAquamarine.h>
 #include <LibGfx/TextLayout.h>
 #include <math.h>
-#include <stdlib.h>
 
 extern "C" {
 #include <aquamarine.h>
@@ -25,20 +25,23 @@ static constexpr RinOSPathFlatten::Config s_flatten_config { 0.25f, 12 };
 static AqFont const* path_bitmap_font()
 {
     static AqFont const* s_font = nullptr;
+    static RefPtr<Core::Resource> s_font_resource;
     static bool s_attempted_load = false;
     if (s_attempted_load)
         return s_font ? s_font : aq_font_builtin_8x16();
 
     s_attempted_load = true;
-    aq_set_allocator(
-        [](unsigned size) -> void* { return malloc(size); },
-        [](void* pointer) { free(pointer); });
     auto resource_or_error = Core::Resource::load_from_uri(
         "resource://fonts/browser-ui.psf"sv);
     if (!resource_or_error.is_error()) {
         auto resource = resource_or_error.release_value();
         auto data = resource->data();
-        s_font = aq_font_load_psf(data.data(), data.size());
+        if (auto* loaded_font = aq_font_load_psf(data.data(), data.size()); loaded_font) {
+            // Aquamarine retains a view of PSF bytes. Keep the resource alive
+            // for exactly as long as the cached AqFont can be queried.
+            s_font_resource = resource;
+            s_font = loaded_font;
+        }
     }
     return s_font ? s_font : aq_font_builtin_8x16();
 }

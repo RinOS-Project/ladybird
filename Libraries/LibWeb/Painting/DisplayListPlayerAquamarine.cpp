@@ -3,6 +3,7 @@
  */
 
 #include <AK/Math.h>
+#include <AK/RefPtr.h>
 #include <LibCore/Resource.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImmutableBitmap.h>
@@ -46,6 +47,7 @@ static AqFont const* text_font()
     ensure_aquamarine_allocator();
 
     static AqFont const* s_font = nullptr;
+    static RefPtr<Core::Resource> s_font_resource;
     static bool attempted_load = false;
 
     if (attempted_load)
@@ -56,8 +58,11 @@ static AqFont const* text_font()
     if (!resource_or_error.is_error()) {
         auto resource = resource_or_error.release_value();
         auto const data = resource->data();
-        if (auto* loaded_font = aq_font_load_psf(data.data(), data.size()); loaded_font)
+        if (auto* loaded_font = aq_font_load_psf(data.data(), data.size()); loaded_font) {
+            // aq_font_load_psf() borrows its source bytes.
+            s_font_resource = resource;
             s_font = loaded_font;
+        }
     }
 
     return s_font ? s_font : aq_font_builtin_8x16();
