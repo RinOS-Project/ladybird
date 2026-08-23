@@ -55,6 +55,14 @@ arithmetic and other matrix expressions remain outside this bounded GLSL
 profile. A fifth UV pair fails native lowering rather than being silently
 truncated.
 
+The same route supports the common vertex-colored texture expression. With one
+or two UV pairs, a following `attribute vec4` may be copied to a matching
+`varying vec4`; the exact fragment form `texture2D(texture, uv) * vertexColor`
+loads all six interpolation scalars, samples the typed RinGPU image/sampler,
+and multiplies RGBA in RSH1. The focused native pipeline test covers the one
+UV/RGBA case with a matrix update and independent attribute buffer. This is
+not a browser-side pre-multiplied-color fallback.
+
 The same fragment profile accepts one linked `uniform vec4` multiplied with
 the sampled RGBA. A `uniform4f`/`uniform4fv` update rebuilds that fragment's
 RSH1 constants while preserving the source-validated sampler resource layout,
