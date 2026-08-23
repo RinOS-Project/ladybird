@@ -39,6 +39,13 @@ other matrix expressions, and other uniform types remain unavailable until
 their native RinGL representation exists; they are not emulated by the browser
 layer.
 
+RinGL owns mutable numeric uniforms per stage. Consequently a vertex matrix
+update preserves the independently validated fragment `sampler2D` module and
+its typed RinGPU resources instead of re-lowering texture source through a
+scalar-only path. This makes the direct profile usable for a transformed,
+constant-coordinate textured draw; transformed varying-texture expressions
+remain outside the current bounded GLSL profile.
+
 WebGL 2, ANGLE-specific extensions, complete WebGL conformance, and
 product/QEMU browser evidence remain outside this enabled WebGL 1 slice. They
 must not be advertised merely because the backend sources are linked.
