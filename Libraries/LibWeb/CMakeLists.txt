@@ -1239,13 +1239,16 @@ if (AK_OS_RINOS)
         WebGL/WebGLFramebuffer.cpp
         WebGL/WebGLObject.cpp
         WebGL/WebGLProgram.cpp
+        WebGL/WebGLQuery.cpp
         WebGL/WebGLRenderbuffer.cpp
         WebGL/WebGLRenderingContextBase.cpp
         WebGL/WebGLRenderingContextImplRinGL.cpp
         WebGL/WebGLRenderingContextOverloadsRinGL.cpp
         WebGL/WebGLShader.cpp
         WebGL/WebGLTexture.cpp
+        WebGL/WebGLTransformFeedback.cpp
         WebGL/WebGLUniformLocation.cpp
+        WebGL/WebGLVertexArrayObject.cpp
     )
     list(REMOVE_ITEM SOURCES
         Gamepad/Gamepad.cpp
