@@ -42,9 +42,14 @@ layer.
 RinGL owns mutable numeric uniforms per stage. Consequently a vertex matrix
 update preserves the independently validated fragment `sampler2D` module and
 its typed RinGPU resources instead of re-lowering texture source through a
-scalar-only path. This makes the direct profile usable for a transformed,
-constant-coordinate textured draw; transformed varying-texture expressions
-remain outside the current bounded GLSL profile.
+scalar-only path. The direct profile therefore executes a transformed textured
+quad: `mat4 * attribute vec4` (or `mat4 * vec4(attribute vec2, 0, 1)`) writes
+clip position, one `attribute vec2` is copied to one `varying vec2`, and the
+fragment's `texture2D` reads that varying through its typed RinGPU image and
+sampler resources. The matrix product and interpolation inputs are RSH1 work,
+not an embedding-side pre-transform or a CPU texture fallback. Coordinate
+arithmetic, multiple transformed varyings, and other matrix expressions remain
+outside this bounded GLSL profile.
 
 WebGL 2, ANGLE-specific extensions, complete WebGL conformance, and
 product/QEMU browser evidence remain outside this enabled WebGL 1 slice. They
