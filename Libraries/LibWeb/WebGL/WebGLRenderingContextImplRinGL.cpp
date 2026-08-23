@@ -1534,6 +1534,34 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             }
             return JS::Value(value);
         }
+        case RINGL_FLOAT_VEC2: {
+            Array<float, 2> values {};
+            if (ringl_get_uniform_2f(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+            if (bytes_or_error.is_error()) {
+                set_error(RINGL_OUT_OF_MEMORY);
+                return JS::js_null();
+            }
+            auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+            return JS::Float32Array::create(realm(), values.size(), array_buffer);
+        }
+        case RINGL_FLOAT_VEC3: {
+            Array<float, 3> values {};
+            if (ringl_get_uniform_3f(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+            if (bytes_or_error.is_error()) {
+                set_error(RINGL_OUT_OF_MEMORY);
+                return JS::js_null();
+            }
+            auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+            return JS::Float32Array::create(realm(), values.size(), array_buffer);
+        }
         case RINGL_FLOAT_VEC4: {
             Array<float, 4> values {};
             if (ringl_get_uniform_4f(program_handle, location_handle, values.data()) != 0) {
@@ -1826,24 +1854,24 @@ void WebGLRenderingContextImpl::uniform1f(GC::Root<WebGLUniformLocation> locatio
     ringl_uniform_1f(location_handle, x);
 }
 
-void WebGLRenderingContextImpl::uniform2f(GC::Root<WebGLUniformLocation> location, float, float)
+void WebGLRenderingContextImpl::uniform2f(GC::Root<WebGLUniformLocation> location, float x, float y)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_FLOAT_VEC2, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+    ringl_uniform_2f(location_handle, x, y);
 }
 
-void WebGLRenderingContextImpl::uniform3f(GC::Root<WebGLUniformLocation> location, float, float, float)
+void WebGLRenderingContextImpl::uniform3f(GC::Root<WebGLUniformLocation> location, float x, float y, float z)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_FLOAT_VEC3, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+    ringl_uniform_3f(location_handle, x, y, z);
 }
 
 void WebGLRenderingContextImpl::uniform4f(GC::Root<WebGLUniformLocation> location, float x, float y, float z, float w)
