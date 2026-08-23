@@ -89,6 +89,9 @@ public:
     JS::Value get_buffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname);
     WebIDL::ExceptionOr<JS::Value> get_parameter(WebIDL::UnsignedLong pname);
     WebIDL::UnsignedLong get_error();
+#ifdef AK_OS_RINOS
+    JS::Value get_framebuffer_attachment_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong pname);
+#endif
     JS::Value get_program_parameter(GC::Root<WebGLProgram> program, WebIDL::UnsignedLong pname);
     Optional<String> get_program_info_log(GC::Root<WebGLProgram> program);
     JS::Value get_renderbuffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname);

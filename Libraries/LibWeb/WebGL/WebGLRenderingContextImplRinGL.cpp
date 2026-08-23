@@ -30,6 +30,14 @@ extern "C" {
 
 namespace Web::WebGL {
 
+static bool rin_gl_framebuffer_attachment_valid(GLenum attachment)
+{
+    return attachment == RINGL_COLOR_ATTACHMENT0
+        || attachment == RINGL_DEPTH_ATTACHMENT
+        || attachment == RINGL_STENCIL_ATTACHMENT
+        || attachment == RINGL_DEPTH_STENCIL_ATTACHMENT;
+}
+
 WebGLRenderingContextImpl::WebGLRenderingContextImpl(JS::Realm& realm, NonnullOwnPtr<OpenGLContext> context)
     : WebGLRenderingContextBase(realm)
     , m_context(move(context))
@@ -1788,6 +1796,22 @@ void WebGLRenderingContextImpl::framebuffer_renderbuffer(WebIDL::UnsignedLong ta
         handle = handle_or_error.release_value();
     }
     ringl_framebuffer_renderbuffer(target, attachment, renderbuffertarget, handle);
+
+    if (target != RINGL_FRAMEBUFFER || renderbuffertarget != RINGL_RENDERBUFFER
+        || !rin_gl_framebuffer_attachment_valid(attachment) || !m_framebuffer_binding)
+        return;
+
+    RinGLFramebufferAttachmentInfoV1 info {};
+    info.struct_size = sizeof(info);
+    info.api_version = RINGL_API_VERSION;
+    if (ringl_get_framebuffer_attachment(attachment, &info) != 0
+        || info.kind != (renderbuffer ? RINGL_FRAMEBUFFER_ATTACHMENT_RENDERBUFFER : RINGL_FRAMEBUFFER_ATTACHMENT_NONE)
+        || info.object != handle || info.level != 0)
+        return;
+    auto attached_object = renderbuffer
+        ? GC::Ptr<WebGLObject> { static_cast<WebGLObject*>(renderbuffer.ptr()) }
+        : GC::Ptr<WebGLObject> {};
+    m_framebuffer_binding->set_rin_gl_attachment(attachment, attached_object, 0);
 }
 
 void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong textarget, GC::Root<WebGLTexture> texture, WebIDL::Long level)
@@ -1805,6 +1829,84 @@ void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong targe
         handle = handle_or_error.release_value();
     }
     ringl_framebuffer_texture_2d(target, attachment, textarget, handle, level);
+
+    if (target != RINGL_FRAMEBUFFER || textarget != RINGL_TEXTURE_2D
+        || !rin_gl_framebuffer_attachment_valid(attachment) || !m_framebuffer_binding)
+        return;
+
+    RinGLFramebufferAttachmentInfoV1 info {};
+    info.struct_size = sizeof(info);
+    info.api_version = RINGL_API_VERSION;
+    if (ringl_get_framebuffer_attachment(attachment, &info) != 0
+        || info.kind != (texture ? RINGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_2D : RINGL_FRAMEBUFFER_ATTACHMENT_NONE)
+        || info.object != handle || info.level != level)
+        return;
+    auto attached_object = texture
+        ? GC::Ptr<WebGLObject> { static_cast<WebGLObject*>(texture.ptr()) }
+        : GC::Ptr<WebGLObject> {};
+    m_framebuffer_binding->set_rin_gl_attachment(attachment, attached_object, level);
+}
+
+JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong pname)
+{
+    if (!make_rin_gl_current())
+        return JS::js_null();
+    if (target != RINGL_FRAMEBUFFER || !rin_gl_framebuffer_attachment_valid(attachment)) {
+        set_error(RINGL_INVALID_ENUM);
+        return JS::js_null();
+    }
+    if (!m_framebuffer_binding) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    RinGLFramebufferAttachmentInfoV1 info {};
+    info.struct_size = sizeof(info);
+    info.api_version = RINGL_API_VERSION;
+    if (ringl_get_framebuffer_attachment(attachment, &info) != 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    switch (pname) {
+    case RINGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE:
+        switch (info.kind) {
+        case RINGL_FRAMEBUFFER_ATTACHMENT_NONE:
+            return JS::Value(RINGL_NONE);
+        case RINGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_2D:
+            return JS::Value(RINGL_TEXTURE);
+        case RINGL_FRAMEBUFFER_ATTACHMENT_RENDERBUFFER:
+            return JS::Value(RINGL_RENDERBUFFER);
+        default:
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+    case RINGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME: {
+        if (info.kind == RINGL_FRAMEBUFFER_ATTACHMENT_NONE) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        auto object = m_framebuffer_binding->rin_gl_attachment_object(attachment);
+        if (!object || m_framebuffer_binding->rin_gl_attachment_level(attachment) != info.level) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        auto handle_or_error = object->handle(this);
+        if (handle_or_error.is_error() || handle_or_error.release_value() != info.object) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(object);
+    }
+    case RINGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL:
+        return JS::Value(info.kind == RINGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_2D ? info.level : 0);
+    case RINGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE:
+        // RinGL's current FBO texture profile is TEXTURE_2D only.
+        return JS::Value(0);
+    default:
+        set_error(RINGL_INVALID_ENUM);
+        return JS::js_null();
+    }
 }
 
 WebIDL::UnsignedLong WebGLRenderingContextImpl::check_framebuffer_status(WebIDL::UnsignedLong target)
