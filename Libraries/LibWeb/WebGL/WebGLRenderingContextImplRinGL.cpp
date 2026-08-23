@@ -803,6 +803,36 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
         return JS::Float32Array::create(realm(), result.size(), array_buffer);
     }
+    case RINGL_LINE_WIDTH: {
+        RinGLLineWidthV1 line_width {};
+        line_width.struct_size = sizeof(line_width);
+        line_width.api_version = RINGL_API_VERSION;
+        if (ringl_get_line_width(&line_width) != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(line_width.width);
+    }
+    case RINGL_ALIASED_LINE_WIDTH_RANGE: {
+        RinGLLineWidthV1 line_width {};
+        line_width.struct_size = sizeof(line_width);
+        line_width.api_version = RINGL_API_VERSION;
+        if (ringl_get_line_width(&line_width) != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        Array<float, 2> result {
+            line_width.minimum,
+            line_width.maximum,
+        };
+        auto bytes_or_error = ByteBuffer::copy(result.span().reinterpret<u8>());
+        if (bytes_or_error.is_error()) {
+            set_error(RINGL_OUT_OF_MEMORY);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+        return JS::Float32Array::create(realm(), result.size(), array_buffer);
+    }
     case RINGL_DEPTH_CLEAR_VALUE:
     case RINGL_STENCIL_CLEAR_VALUE: {
         RinGLClearValuesV1 clear_values {};
