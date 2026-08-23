@@ -84,9 +84,36 @@ bool WebGLRenderingContextImpl::validate_rin_gl_sampler_uniform_location(GC::Roo
     return true;
 }
 
+bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments()
+{
+    RinGLFramebufferAttachmentInfoV1 depth_attachment {};
+    RinGLFramebufferAttachmentInfoV1 stencil_attachment {};
+
+    if (!m_framebuffer_binding)
+        return false;
+
+    depth_attachment.struct_size = sizeof(depth_attachment);
+    depth_attachment.api_version = RINGL_API_VERSION;
+    stencil_attachment.struct_size = sizeof(stencil_attachment);
+    stencil_attachment.api_version = RINGL_API_VERSION;
+    // The backend owns the attachment state. Treat an unexpected query failure
+    // as incompatible rather than trusting a wrapper cache or submitting a
+    // potentially non-WebGL framebuffer.
+    if (ringl_get_framebuffer_attachment(RINGL_DEPTH_ATTACHMENT, &depth_attachment) != 0
+        || ringl_get_framebuffer_attachment(RINGL_STENCIL_ATTACHMENT, &stencil_attachment) != 0)
+        return true;
+    if (depth_attachment.kind == RINGL_FRAMEBUFFER_ATTACHMENT_NONE
+        || stencil_attachment.kind == RINGL_FRAMEBUFFER_ATTACHMENT_NONE)
+        return false;
+
+    return depth_attachment.kind != stencil_attachment.kind
+        || depth_attachment.object != stencil_attachment.object
+        || depth_attachment.level != stencil_attachment.level;
+}
+
 bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_is_webgl1_compatible()
 {
-    if (!m_framebuffer_binding || !m_framebuffer_binding->rin_gl_uses_separate_depth_stencil_attachments())
+    if (!rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments())
         return true;
 
     // The raw RinGL profile can render to distinct native depth/stencil
@@ -2083,8 +2110,8 @@ WebIDL::UnsignedLong WebGLRenderingContextImpl::check_framebuffer_status(WebIDL:
 {
     if (!make_rin_gl_current())
         return 0;
-    if (target == RINGL_FRAMEBUFFER && m_framebuffer_binding
-        && m_framebuffer_binding->rin_gl_uses_separate_depth_stencil_attachments())
+    if (target == RINGL_FRAMEBUFFER
+        && rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments())
         return webgl_framebuffer_unsupported;
     return ringl_check_framebuffer_status(target);
 }

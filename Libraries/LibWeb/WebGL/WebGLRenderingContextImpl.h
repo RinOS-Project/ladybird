@@ -164,6 +164,7 @@ protected:
     // RinGL intentionally supports native, separate depth/stencil FBO
     // aspects. WebGL 1 may not expose that profile, so commands which read or
     // modify a bound framebuffer must gate it at the browser boundary.
+    bool rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments();
     bool rin_gl_bound_framebuffer_is_webgl1_compatible();
 
     // RinGL exposes eight independently bound WebGL 1 texture units. Keep
