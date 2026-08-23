@@ -60,8 +60,10 @@ or two UV pairs, a following `attribute vec4` may be copied to a matching
 `varying vec4`; the exact fragment form `texture2D(texture, uv) * vertexColor`
 loads all six interpolation scalars, samples the typed RinGPU image/sampler,
 and multiplies RGBA in RSH1. The focused native pipeline test covers the one
-UV/RGBA case with a matrix update and independent attribute buffer. This is
-not a browser-side pre-multiplied-color fallback.
+UV/RGBA case with a matrix update and independent attribute buffer. Its
+bounded material form adds one fragment `uniform vec4` in the exact expression
+`texture2D(texture, uv) * vertexColor * tint`; updating it replaces only the
+fragment RSH1 module. This is not a browser-side pre-multiplied-color fallback.
 
 The same fragment profile accepts one linked `uniform vec4` multiplied with
 the sampled RGBA. A `uniform4f`/`uniform4fv` update rebuilds that fragment's
