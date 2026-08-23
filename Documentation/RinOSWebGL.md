@@ -20,6 +20,14 @@ D24S8 attachment is accepted. `getSupportedExtensions()` is empty on this
 path, so an ANGLE/GLES extension is not exposed until RinGL implements it
 natively. The integration does not introduce a GLES implementation.
 
+The current RSH1 shader profile exposes linked `sampler2D` and scalar
+`vec4` uniforms. The WebGL bridge validates a uniform location against RinGL
+reflection before updating it, forwards `uniform4f` and `uniform4fv` to the
+per-program RinGL state, and returns scalar `Float32Array` values from
+`getUniform`. Uniform arrays and other uniform types remain unavailable until
+their native RinGL representation exists; they are not emulated by the
+browser layer.
+
 WebGL 2, ANGLE-specific extensions, complete WebGL conformance, and
 product/QEMU browser evidence remain outside this enabled WebGL 1 slice. They
 must not be advertised merely because the backend sources are linked.

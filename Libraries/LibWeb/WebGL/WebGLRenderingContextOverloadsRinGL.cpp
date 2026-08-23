@@ -226,14 +226,33 @@ void WebGLRenderingContextOverloads::uniform3fv(GC::Root<WebGLUniformLocation> l
     set_error(RINGL_INVALID_OPERATION);
 }
 
-void WebGLRenderingContextOverloads::uniform4fv(GC::Root<WebGLUniformLocation> location, Float32List)
+void WebGLRenderingContextOverloads::uniform4fv(GC::Root<WebGLUniformLocation> location, Float32List values)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_FLOAT_VEC4, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+
+    auto values_or_error = span_from_float32_list(values, /* src_offset= */ 0);
+    if (values_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto view = values_or_error.release_value();
+    if (view.size() % 4 != 0) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    if (view.is_empty())
+        return;
+    // RSH1 exposes a single vec4 declaration, never a uniform array. Reject
+    // surplus values before the backend mutates the linked executable.
+    if (view.size() != 4) {
+        set_error(RINGL_INVALID_OPERATION);
+        return;
+    }
+    ringl_uniform_4f(location_handle, view[0], view[1], view[2], view[3]);
 }
 
 void WebGLRenderingContextOverloads::uniform1iv(GC::Root<WebGLUniformLocation> location, Int32List v)

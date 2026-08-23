@@ -67,8 +67,13 @@ bool WebGLRenderingContextImpl::make_rin_gl_current()
     return false;
 }
 
-bool WebGLRenderingContextImpl::validate_rin_gl_sampler_uniform_location(GC::Root<WebGLUniformLocation> location, WebIDL::Long& location_out)
+bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out)
 {
+    if (!m_current_program) {
+        set_error(RINGL_INVALID_OPERATION);
+        return false;
+    }
+
     auto location_handle_or_error = location->handle(m_current_program);
     if (location_handle_or_error.is_error()) {
         set_error(RINGL_INVALID_OPERATION);
@@ -80,8 +85,55 @@ bool WebGLRenderingContextImpl::validate_rin_gl_sampler_uniform_location(GC::Roo
         set_error(RINGL_INVALID_OPERATION);
         return false;
     }
-    location_out = static_cast<WebIDL::Long>(location_handle);
-    return true;
+    auto program_handle_or_error = m_current_program->handle(this);
+    if (program_handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return false;
+    }
+    auto program_handle = program_handle_or_error.release_value();
+
+    RinGLProgramInfoV1 program_info {};
+    program_info.struct_size = sizeof(program_info);
+    program_info.api_version = RINGL_API_VERSION;
+    if (ringl_get_program_info(program_handle, &program_info) != 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return false;
+    }
+
+    auto requested_location = static_cast<WebIDL::Long>(location_handle);
+    for (uint32_t index = 0; index < program_info.active_uniform_count; ++index) {
+        RinGLActiveInfoV1 active_uniform {};
+        active_uniform.struct_size = sizeof(active_uniform);
+        active_uniform.api_version = RINGL_API_VERSION;
+        if (ringl_get_active_uniform(program_handle, index, &active_uniform) != 0
+            || active_uniform.name_length >= sizeof(active_uniform.name)) {
+            set_error(RINGL_INVALID_OPERATION);
+            return false;
+        }
+
+        auto active_location = ringl_get_uniform_location(program_handle, active_uniform.name);
+        if (active_location < 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return false;
+        }
+        if (active_location != requested_location)
+            continue;
+
+        if (active_uniform.type != expected_type) {
+            set_error(RINGL_INVALID_OPERATION);
+            return false;
+        }
+        location_out = requested_location;
+        return true;
+    }
+
+    set_error(RINGL_INVALID_OPERATION);
+    return false;
+}
+
+bool WebGLRenderingContextImpl::validate_rin_gl_sampler_uniform_location(GC::Root<WebGLUniformLocation> location, WebIDL::Long& location_out)
+{
+    return validate_rin_gl_uniform_location(location, RINGL_SAMPLER_2D, location_out);
 }
 
 bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments()
@@ -1432,13 +1484,70 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
         set_error(RINGL_INVALID_OPERATION);
         return JS::js_null();
     }
-
-    int32_t value = 0;
-    if (ringl_get_uniform_1i(program_handle,
-                             static_cast<int32_t>(location_handle_or_error.release_value()),
-                             &value) != 0)
+    auto location_handle_raw = location_handle_or_error.release_value();
+    if (location_handle_raw > static_cast<GLuint>(NumericLimits<WebIDL::Long>::max())) {
+        set_error(RINGL_INVALID_OPERATION);
         return JS::js_null();
-    return JS::Value(value);
+    }
+    auto location_handle = static_cast<WebIDL::Long>(location_handle_raw);
+
+    RinGLProgramInfoV1 program_info {};
+    program_info.struct_size = sizeof(program_info);
+    program_info.api_version = RINGL_API_VERSION;
+    if (ringl_get_program_info(program_handle, &program_info) != 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    for (uint32_t index = 0; index < program_info.active_uniform_count; ++index) {
+        RinGLActiveInfoV1 active_uniform {};
+        active_uniform.struct_size = sizeof(active_uniform);
+        active_uniform.api_version = RINGL_API_VERSION;
+        if (ringl_get_active_uniform(program_handle, index, &active_uniform) != 0
+            || active_uniform.name_length >= sizeof(active_uniform.name)) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+
+        auto active_location = ringl_get_uniform_location(program_handle, active_uniform.name);
+        if (active_location < 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        if (active_location != location_handle)
+            continue;
+
+        switch (active_uniform.type) {
+        case RINGL_SAMPLER_2D: {
+            int32_t value = 0;
+            if (ringl_get_uniform_1i(program_handle, location_handle, &value) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            return JS::Value(value);
+        }
+        case RINGL_FLOAT_VEC4: {
+            Array<float, 4> values {};
+            if (ringl_get_uniform_4f(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+            if (bytes_or_error.is_error()) {
+                set_error(RINGL_OUT_OF_MEMORY);
+                return JS::js_null();
+            }
+            auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+            return JS::Float32Array::create(realm(), values.size(), array_buffer);
+        }
+        default:
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+    }
+
+    set_error(RINGL_INVALID_OPERATION);
+    return JS::js_null();
 }
 
 GC::Root<WebGLUniformLocation> WebGLRenderingContextImpl::get_uniform_location(GC::Root<WebGLProgram> program, String name)
@@ -1729,14 +1838,14 @@ void WebGLRenderingContextImpl::uniform3f(GC::Root<WebGLUniformLocation> locatio
     set_error(RINGL_INVALID_OPERATION);
 }
 
-void WebGLRenderingContextImpl::uniform4f(GC::Root<WebGLUniformLocation> location, float, float, float, float)
+void WebGLRenderingContextImpl::uniform4f(GC::Root<WebGLUniformLocation> location, float x, float y, float z, float w)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_FLOAT_VEC4, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+    ringl_uniform_4f(location_handle, x, y, z, w);
 }
 
 void WebGLRenderingContextImpl::uniform2i(GC::Root<WebGLUniformLocation> location, WebIDL::Long, WebIDL::Long)

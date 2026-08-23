@@ -156,9 +156,10 @@ protected:
     // must use this instead of calling RinGL without a current context.
     bool make_rin_gl_current();
 
-    // The current RinGL shader profile exposes linked sampler2D uniforms only.
-    // Keep ownership/range validation in one place before any WebGL uniform
-    // entry point forwards a sampler unit to that profile.
+    // Resolve a WebGL uniform location against the currently linked RinGL
+    // program. This checks ownership, range, and reflection type before an
+    // entry point mutates native per-program uniform state.
+    bool validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out);
     bool validate_rin_gl_sampler_uniform_location(GC::Root<WebGLUniformLocation> location, WebIDL::Long& location_out);
 
     // RinGL intentionally supports native, separate depth/stencil FBO
