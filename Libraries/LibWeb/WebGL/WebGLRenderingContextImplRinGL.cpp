@@ -1783,6 +1783,13 @@ void WebGLRenderingContextImpl::front_face(WebIDL::UnsignedLong mode)
     ringl_front_face(mode);
 }
 
+void WebGLRenderingContextImpl::generate_mipmap(WebIDL::UnsignedLong target)
+{
+    if (!make_rin_gl_current())
+        return;
+    ringl_generate_mipmap(target);
+}
+
 void WebGLRenderingContextImpl::pixel_storei(WebIDL::UnsignedLong pname, WebIDL::Long param)
 {
     switch (pname) {
