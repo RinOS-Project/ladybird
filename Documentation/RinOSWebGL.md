@@ -55,6 +55,9 @@ The same fragment profile accepts one linked `uniform vec4` multiplied with
 the sampled RGBA. A `uniform4f`/`uniform4fv` update rebuilds that fragment's
 RSH1 constants while preserving the source-validated sampler resource layout,
 so the RinGPU image/sampler binding remains live for the native draw.
+Distinct transform and tint updates replace only the stage that declares the
+changed uniform name; a failed replacement leaves the prior stage module and
+its bindings published.
 
 WebGL 2, ANGLE-specific extensions, complete WebGL conformance, and
 product/QEMU browser evidence remain outside this enabled WebGL 1 slice. They
