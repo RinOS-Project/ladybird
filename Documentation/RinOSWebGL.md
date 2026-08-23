@@ -51,6 +51,11 @@ not an embedding-side pre-transform or a CPU texture fallback. Coordinate
 arithmetic, multiple transformed varyings, and other matrix expressions remain
 outside this bounded GLSL profile.
 
+The same fragment profile accepts one linked `uniform vec4` multiplied with
+the sampled RGBA. A `uniform4f`/`uniform4fv` update rebuilds that fragment's
+RSH1 constants while preserving the source-validated sampler resource layout,
+so the RinGPU image/sampler binding remains live for the native draw.
+
 WebGL 2, ANGLE-specific extensions, complete WebGL conformance, and
 product/QEMU browser evidence remain outside this enabled WebGL 1 slice. They
 must not be advertised merely because the backend sources are linked.
