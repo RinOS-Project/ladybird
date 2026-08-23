@@ -1382,6 +1382,13 @@ bool WebGLRenderingContextImpl::is_enabled(WebIDL::UnsignedLong cap)
     return ringl_is_enabled(cap) != 0;
 }
 
+void WebGLRenderingContextImpl::line_width(float width)
+{
+    if (!make_rin_gl_current())
+        return;
+    ringl_line_width(width);
+}
+
 void WebGLRenderingContextImpl::link_program(GC::Root<WebGLProgram> program)
 {
     if (!make_rin_gl_current())
