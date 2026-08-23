@@ -21,13 +21,16 @@ path, so an ANGLE/GLES extension is not exposed until RinGL implements it
 natively. The integration does not introduce a GLES implementation.
 
 The current RSH1 shader profile exposes linked `sampler2D`, scalar `float`,
-and `vec2`, `vec3`, and `vec4` uniforms. The WebGL bridge validates a uniform
-location against RinGL reflection before updating it, forwards `uniform1f`/
-`uniform1fv`, `uniform2f`/`uniform2fv`, `uniform3f`/`uniform3fv`, and
-`uniform4f`/`uniform4fv` to per-program RinGL state, and returns numbers or
-`Float32Array` values from `getUniform` as required by the uniform type.
-Uniform arrays and other uniform types remain unavailable until their native
-RinGL representation exists; they are not emulated by the browser layer.
+and `vec2`, `vec3`, `vec4`, and vertex-stage `mat4` uniforms. The WebGL bridge
+validates a uniform location against RinGL reflection before updating it,
+forwards `uniform1f`/`uniform1fv`, `uniform2f`/`uniform2fv`,
+`uniform3f`/`uniform3fv`, `uniform4f`/`uniform4fv`, and
+`uniformMatrix4fv` to per-program RinGL state, and returns numbers or
+`Float32Array` values from `getUniform` as required by the uniform type. The
+matrix profile accepts WebGL column-major values with `transpose == false` for
+`mat4 * vec4 attribute` vertex position transforms. Uniform arrays, other
+matrix expressions, and other uniform types remain unavailable until their
+native RinGL representation exists; they are not emulated by the browser layer.
 
 WebGL 2, ANGLE-specific extensions, complete WebGL conformance, and
 product/QEMU browser evidence remain outside this enabled WebGL 1 slice. They

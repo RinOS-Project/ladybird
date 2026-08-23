@@ -389,18 +389,36 @@ void WebGLRenderingContextOverloads::uniform_matrix3fv(GC::Root<WebGLUniformLoca
     set_error(RINGL_INVALID_OPERATION);
 }
 
-void WebGLRenderingContextOverloads::uniform_matrix4fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List)
+void WebGLRenderingContextOverloads::uniform_matrix4fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List values)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
-        return;
     if (transpose) {
         set_error(RINGL_INVALID_VALUE);
         return;
     }
-    set_error(RINGL_INVALID_OPERATION);
+    if (!validate_rin_gl_uniform_location(location, RINGL_FLOAT_MAT4, location_handle))
+        return;
+
+    auto values_or_error = span_from_float32_list(values, /* src_offset= */ 0);
+    if (values_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto view = values_or_error.release_value();
+    if (view.size() % 16 != 0) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    if (view.is_empty())
+        return;
+    // RinGL exposes one mat4 declaration per location and no uniform arrays.
+    if (view.size() != 16) {
+        set_error(RINGL_INVALID_OPERATION);
+        return;
+    }
+    ringl_uniform_matrix4fv(location_handle, 0u, view.data());
 }
 
 }
