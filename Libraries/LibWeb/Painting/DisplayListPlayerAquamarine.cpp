@@ -196,9 +196,38 @@ void DisplayListPlayerAquamarine::fill_rect(FillRect const& cmd)
     AQ_SURFACE_END(s)
 }
 
-void DisplayListPlayerAquamarine::draw_external_content(DrawExternalContent const&)
+void DisplayListPlayerAquamarine::draw_external_content(DrawExternalContent const& cmd)
 {
-    // External content (e.g. video frames) — not yet supported
+    // External content is an immutable handoff from a producer such as a
+    // WebGL canvas. It is already detached from the caller-owned RinGL
+    // surface, so this is compositor blitting rather than a WebGL command
+    // path and cannot bypass the RinGL/RinGPU backend.
+    auto bitmap = cmd.source->current_bitmap();
+    if (!bitmap)
+        return;
+    auto bmp = bitmap->bitmap();
+    if (!bmp)
+        return;
+
+    AQ_SURFACE_SCOPE(dst)
+    auto* src = aq_surface_create_from(
+        const_cast<uint8_t*>(bmp->scanline_u8(0)),
+        bmp->width(), bmp->height(),
+        static_cast<int32_t>(bmp->pitch()), AQ_FORMAT_BGRA32);
+    if (!src) {
+        AQ_SURFACE_END(dst)
+        return;
+    }
+
+    auto dst_rect = translated_rect(cmd.dst_rect, m_translation);
+    auto src_rect = AQ_RECT(0, 0, bmp->width(), bmp->height());
+    if (cmd.scaling_mode == Gfx::ScalingMode::Bilinear || cmd.scaling_mode == Gfx::ScalingMode::BilinearMipmap)
+        aq_blit_scaled_bilinear(dst, AQ_RECT(dst_rect.x(), dst_rect.y(), dst_rect.width(), dst_rect.height()), src, src_rect);
+    else
+        aq_blit_scaled(dst, AQ_RECT(dst_rect.x(), dst_rect.y(), dst_rect.width(), dst_rect.height()), src, src_rect);
+
+    aq_surface_destroy(src);
+    AQ_SURFACE_END(dst)
 }
 
 void DisplayListPlayerAquamarine::draw_scaled_immutable_bitmap(DrawScaledImmutableBitmap const& cmd)

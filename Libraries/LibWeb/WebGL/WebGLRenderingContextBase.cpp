@@ -340,6 +340,13 @@ Optional<Gfx::BitmapExportResult> WebGLRenderingContextBase::read_and_pixel_conv
             return source->immutable_bitmap();
         },
         [](GC::Root<HTML::HTMLCanvasElement> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
+            // Presentation creates an immutable copy before the RinGL-backed
+            // `preserveDrawingBuffer: false` cleanup. Sampling the mutable
+            // surface after it has been presented would otherwise upload a
+            // cleared texture.
+            source->present();
+            if (auto bitmap = source->ensure_external_content_source().current_bitmap())
+                return bitmap;
             auto surface = source->surface();
             if (!surface)
                 return Gfx::ImmutableBitmap::create(*source->get_bitmap_from_surface());

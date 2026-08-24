@@ -59,6 +59,12 @@ RefPtr<Gfx::ImmutableBitmap> canvas_image_source_bitmap(CanvasImageSource const&
         },
         [](GC::Root<HTMLCanvasElement> const& canvas) -> RefPtr<Gfx::ImmutableBitmap> {
             canvas->present();
+            // WebGL's non-preserved drawing buffer may be cleared after this
+            // presentation. The external-content image is the immutable copy
+            // made before that clear and is therefore the only valid source
+            // for a subsequent canvas drawImage()/pattern operation.
+            if (auto bitmap = canvas->ensure_external_content_source().current_bitmap())
+                return bitmap;
             auto surface = canvas->surface();
             if (!surface)
                 return Gfx::ImmutableBitmap::create(*canvas->get_bitmap_from_surface());
