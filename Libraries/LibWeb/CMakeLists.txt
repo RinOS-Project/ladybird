@@ -46,6 +46,7 @@ else()
     endif()
     target_sources(RinGL PRIVATE
         "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/core.c"
+        "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/shader.c"
         "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/software_backend.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_software.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_adapter.c"
