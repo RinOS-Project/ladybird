@@ -1,8 +1,9 @@
 #import <FileAPI/Blob.idl>
 #import <HTML/CanvasRenderingContext2D.idl>
 #import <HTML/HTMLElement.idl>
+#import <WebGL/WebGLRenderingContext.idl>
 
-typedef CanvasRenderingContext2D RenderingContext;
+typedef (CanvasRenderingContext2D or WebGLRenderingContext) RenderingContext;
 
 // https://html.spec.whatwg.org/multipage/semantics.html#htmlcanvaselement
 [Exposed=Window]
