@@ -47,7 +47,10 @@ else()
     target_sources(RinGL PRIVATE
         "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/core.c"
         "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/shader.c"
-        "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/software_backend.c"
+        # The generic RinGPU software backend is independently tested and is
+        # not this browser surface's backend.  The product path must retain
+        # the RinGL-owned Aquamarine embedding selected above, so do not link
+        # an unused second backend into LibWeb's RinGL archive.
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_software.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_sync_adapter.c"
