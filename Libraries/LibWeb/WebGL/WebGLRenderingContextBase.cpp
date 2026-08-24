@@ -45,6 +45,7 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/OESElementIndexUint.h>
 #ifdef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/OESVertexArrayObject.h>
+#include <LibWeb/WebGL/Extensions/WebGLDepthTexture.h>
 #include <LibWeb/WebGL/Extensions/WebGLLoseContext.h>
 #endif
 #include <LibWeb/WebGL/OpenGLContext.h>
@@ -212,6 +213,7 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
         webgl_extensions.append("ANGLE_instanced_arrays"_string);
         webgl_extensions.append("OES_element_index_uint"_string);
         webgl_extensions.append("OES_vertex_array_object"_string);
+        webgl_extensions.append("WEBGL_depth_texture"_string);
         webgl_extensions.append("WEBGL_lose_context"_string);
     }
     return webgl_extensions;
@@ -274,6 +276,11 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     }
     if (name.equals_ignoring_ascii_case("OES_vertex_array_object"sv)) {
         auto extension = MUST(Extensions::OESVertexArrayObject::create(realm(), *this));
+        m_enabled_extensions.set(name, extension);
+        return extension;
+    }
+    if (name.equals_ignoring_ascii_case("WEBGL_depth_texture"sv)) {
+        auto extension = MUST(Extensions::WebGLDepthTexture::create(realm(), *this));
         m_enabled_extensions.set(name, extension);
         return extension;
     }

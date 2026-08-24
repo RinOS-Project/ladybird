@@ -16,6 +16,21 @@ extern "C" {
 
 namespace Web::WebGL {
 
+static bool uses_webgl_depth_texture_format(WebIDL::UnsignedLong internalformat, WebIDL::UnsignedLong format)
+{
+    return internalformat == RINGL_DEPTH_COMPONENT
+        || internalformat == RINGL_DEPTH_COMPONENT32F
+        || internalformat == RINGL_DEPTH_STENCIL
+        || internalformat == RINGL_DEPTH24_STENCIL8
+        || format == RINGL_DEPTH_COMPONENT
+        || format == RINGL_DEPTH_STENCIL;
+}
+
+static bool uses_webgl_depth_texture_format(WebIDL::UnsignedLong format)
+{
+    return format == RINGL_DEPTH_COMPONENT || format == RINGL_DEPTH_STENCIL;
+}
+
 WebGLRenderingContextOverloads::WebGLRenderingContextOverloads(JS::Realm& realm, NonnullOwnPtr<OpenGLContext> context)
     : WebGLRenderingContextImpl(realm, move(context))
 {
@@ -111,6 +126,14 @@ void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, We
 {
     if (!make_rin_gl_current())
         return;
+    // Depth tokens are WebGL 1 extension-only even though RinGL's native
+    // texture profile can store them. Do not let a caller observe that native
+    // capability before WEBGL_depth_texture has been enabled.
+    if (uses_webgl_depth_texture_format(internalformat, format)
+        && !extension_enabled("WEBGL_depth_texture"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
 
     if (!pixels) {
         ringl_tex_image_2d_from_bytes(target, level, internalformat, width, height, border, format, type, nullptr, 0);
@@ -130,6 +153,11 @@ void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target
 {
     if (!make_rin_gl_current())
         return;
+    if (uses_webgl_depth_texture_format(format)
+        && !extension_enabled("WEBGL_depth_texture"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
     if (!pixels) {
         set_error(RINGL_INVALID_VALUE);
         return;
@@ -174,6 +202,11 @@ void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, We
 {
     if (!make_rin_gl_current())
         return;
+    if (uses_webgl_depth_texture_format(internalformat, format)
+        && !extension_enabled("WEBGL_depth_texture"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
 
     auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type);
     if (!maybe_converted_texture.has_value())
@@ -188,6 +221,11 @@ void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target
 {
     if (!make_rin_gl_current())
         return;
+    if (uses_webgl_depth_texture_format(format)
+        && !extension_enabled("WEBGL_depth_texture"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
 
     auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type);
     if (!maybe_converted_texture.has_value())
