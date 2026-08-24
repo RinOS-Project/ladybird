@@ -68,6 +68,7 @@ public:
     u16 weight() const { return m_typeface->weight(); }
     bool contains_glyph(u32 code_point) const { return m_typeface->glyph_id_for_code_point(code_point) > 0; }
     float glyph_width(u32 code_point) const;
+    float glyph_advance(u32 glyph_id) const;
     u32 glyph_id_for_code_point(u32 code_point) const { return m_typeface->glyph_id_for_code_point(code_point); }
     float preferred_line_height() const { return metrics().height() + metrics().line_gap; }
     int x_height() const { return m_point_height; } // FIXME: Read from font

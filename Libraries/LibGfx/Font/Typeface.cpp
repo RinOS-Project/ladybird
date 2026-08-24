@@ -7,7 +7,9 @@
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/Font/FontVariationSettings.h>
 #include <LibGfx/Font/Typeface.h>
-#ifndef AK_OS_RINOS
+#ifdef AK_OS_RINOS
+#    include <LibGfx/Font/TypefaceTrueTypeRinOS.h>
+#else
 #include <harfbuzz/hb.h>
 #include <LibGfx/Font/TypefaceSkia.h>
 #endif
@@ -37,9 +39,7 @@ ErrorOr<NonnullRefPtr<Typeface>> Typeface::try_load_from_temporary_memory(Readon
 ErrorOr<NonnullRefPtr<Typeface>> Typeface::try_load_from_externally_owned_memory(ReadonlyBytes bytes, u32 ttc_index)
 {
 #ifdef AK_OS_RINOS
-    (void)bytes;
-    (void)ttc_index;
-    return Error::from_string_literal("Typeface loading is unavailable on this RinOS build");
+    return TypefaceTrueTypeRinOS::try_load(bytes, ttc_index);
 #else
     return TypefaceSkia::load_from_buffer(bytes, ttc_index);
 #endif

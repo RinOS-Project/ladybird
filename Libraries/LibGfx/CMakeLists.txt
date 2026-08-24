@@ -70,6 +70,7 @@ if (AK_OS_RINOS)
     )
     list(APPEND SOURCES
         Font/TypefaceRinOS.cpp
+        Font/TypefaceTrueTypeRinOS.cpp
         ImageFormats/JPEGLoaderRinOS.cpp
         PathAquamarine.cpp
         ImageFormats/PNGLoaderRinOS.cpp

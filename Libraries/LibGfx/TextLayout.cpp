@@ -248,8 +248,6 @@ NonnullRefPtr<GlyphRun> shape_text(FloatPoint baseline_start, float letter_spaci
 #ifdef AK_OS_RINOS
     (void)text_type;
     auto const& metrics = font.pixel_metrics();
-    auto fallback_advance = metrics.advance_of_ascii_zero > 0 ? metrics.advance_of_ascii_zero : max(font.pixel_size() * 0.6f, 1.0f);
-
     Vector<DrawGlyph> glyph_run;
     glyph_run.ensure_capacity(string.length_in_code_points());
     FloatPoint point = baseline_start;
@@ -267,11 +265,9 @@ NonnullRefPtr<GlyphRun> shape_text(FloatPoint baseline_start, float letter_spaci
         if (glyph_id == 0)
             glyph_id = font.glyph_id_for_code_point('?');
 
-        auto advance = fallback_advance;
-        if (code_point == ' ')
-            advance *= 0.6f;
-        else if (code_point == '\t')
-            advance *= 2.4f;
+        auto advance = font.glyph_advance(glyph_id);
+        if (code_point == '\t')
+            advance *= 4.0f;
 
         auto position = point - FloatPoint { 0, metrics.ascent };
         glyph_run.unchecked_append({

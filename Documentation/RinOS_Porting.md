@@ -155,10 +155,13 @@ libtommath, HarfBuzz/FreeType, Vulkan, Metal 等）を除去し、RinOS純正ラ
 - `PathAquamarine.cpp/.h` — `Gfx::PathImpl` 実装
 - `PaintingSurface.cpp` — `SkSurface` → `AqSurface` ラッパー
 - `ImmutableBitmap.cpp` — `SkImage` → `AqSurface` (read-only) ラッパー
-- `Font/TypefaceRinOS.cpp/.h` — RinOS UI 用 PSF fallback。外部 TrueType/OpenType typeface と complex shaping は未実装
+- `Font/TypefaceRinOS.cpp/.h` — RinOS UI 用 PSF fallback
+- `Font/TypefaceTrueTypeRinOS.cpp/.h` — SFNT TrueType `glyf` outlines の bounded native reader
 - Skia ファイル全削除
 
 `PathAquamarine.cpp` は PSF glyph の連続した set-bit run を矩形 contour に変換する。`aq_font_load_psf()` は入力 bytes を借用するため、Path と display-list player は成功した load の `Core::Resource` を static lifetime で保持する。resource を局所変数のまま破棄してから `AqFont` を再利用してはならない。
+
+`TypefaceTrueTypeRinOS` は外部 `FontFace` 向けに最大64 MiBのfont bytesを自身で保持し、SFNT/TTC の `cmap` format 4/12、`hmtx`、単純・composite `glyf` contour を有界に読み取る。glyph advance とdesign metricsを文字組みに、quadratic outlineを `PathAquamarine` と `DisplayListPlayerAquamarine` のfill pathへ渡すため、対応fontをPSFの別glyphへ置換しない。CFF/`OTTO`、WOFF/WOFF2、variable/color/bitmap font、complex-script shaping、subpixel AA は未実装であり、該当fontまたは破損したoutlineはload/drawを成功扱いにしない。
 
 #### 5C: LibWeb 描画プレイヤー
 - `DisplayListPlayerAquamarine.cpp/.h` — 全30+仮想メソッド実装

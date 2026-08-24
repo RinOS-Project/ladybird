@@ -10,6 +10,7 @@
 #include <AK/OwnPtr.h>
 #include <AK/QuickSort.h>
 #include <AK/RefCounted.h>
+#include <AK/Vector.h>
 #include <LibGfx/Font/FontData.h>
 #include <LibGfx/Font/FontVariationSettings.h>
 #include <LibGfx/Forward.h>
@@ -36,6 +37,33 @@ struct ScaledFontMetrics {
     {
         return ascender + descender;
     }
+};
+
+// A platform-independent outline representation used by the RinOS software
+// painter. Coordinates are expressed in the typeface's design units, with a
+// positive Y axis pointing up as specified by TrueType. Backends which do not
+// expose outlines simply return an empty Optional from glyph_outline().
+struct GlyphOutlineCommand {
+    enum class Type : u8 {
+        MoveTo,
+        LineTo,
+        QuadraticCurveTo,
+        Close,
+    };
+
+    Type type { Type::Close };
+    float x { 0 };
+    float y { 0 };
+    float control_x { 0 };
+    float control_y { 0 };
+};
+
+struct TypefaceDesignMetrics {
+    i16 ascender { 0 };
+    i16 descender { 0 };
+    i16 line_gap { 0 };
+    i16 x_height { 0 };
+    u16 advance_of_ascii_zero { 0 };
 };
 
 struct FontCacheKey {
@@ -74,6 +102,15 @@ public:
     virtual u16 weight() const = 0;
     virtual u16 width() const = 0;
     virtual u8 slope() const = 0;
+
+    // Return design-unit metrics and an advance only when the platform
+    // typeface has authoritative data. Callers retain their conservative
+    // fallback metrics for the built-in PSF face and other outline-less
+    // typefaces.
+    virtual TypefaceDesignMetrics design_metrics() const { return {}; }
+    virtual Optional<u16> glyph_advance(u32) const { return {}; }
+    virtual Optional<Vector<GlyphOutlineCommand>> glyph_outline(u32) const { return {}; }
+    virtual bool has_glyph_outlines() const { return false; }
 
     [[nodiscard]] NonnullRefPtr<Font> font(float point_size, FontVariationSettings const& variations = {}, Gfx::ShapeFeatures const& shape_features = {}) const;
 

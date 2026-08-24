@@ -320,6 +320,62 @@ void PathImplAquamarine::glyph_run(GlyphRun const& glyph_run)
 {
     if (!m_valid)
         return;
+    auto const& typeface = glyph_run.font().typeface();
+    if (typeface.has_glyph_outlines()) {
+        auto units_per_em = typeface.units_per_em();
+        auto scale = glyph_run.font().pixel_size() / static_cast<float>(units_per_em);
+        if (!isfinite(scale) || scale <= 0) {
+            reject_path();
+            return;
+        }
+        auto baseline_offset = glyph_run.font().pixel_metrics().ascent;
+        for (auto const& glyph : glyph_run.glyphs()) {
+            auto outline = typeface.glyph_outline(glyph.glyph_id);
+            // A parsed outline typeface must never silently fall back to PSF:
+            // doing so would substitute an unrelated Unicode glyph for a
+            // verified glyph id after an allocation or decoding failure.
+            if (!outline.has_value()) {
+                reject_path();
+                return;
+            }
+            for (auto const& command : outline.value()) {
+                auto point = FloatPoint {
+                    glyph.position.x() + command.x * scale,
+                    glyph.position.y() + baseline_offset - command.y * scale,
+                };
+                if (!valid_path_point(point)) {
+                    reject_path();
+                    return;
+                }
+                switch (command.type) {
+                case GlyphOutlineCommand::Type::MoveTo:
+                    move_to(point);
+                    break;
+                case GlyphOutlineCommand::Type::LineTo:
+                    line_to(point);
+                    break;
+                case GlyphOutlineCommand::Type::QuadraticCurveTo: {
+                    auto control = FloatPoint {
+                        glyph.position.x() + command.control_x * scale,
+                        glyph.position.y() + baseline_offset - command.control_y * scale,
+                    };
+                    if (!valid_path_point(control)) {
+                        reject_path();
+                        return;
+                    }
+                    quadratic_bezier_curve_to(control, point);
+                    break;
+                }
+                case GlyphOutlineCommand::Type::Close:
+                    close();
+                    break;
+                }
+                if (!m_valid)
+                    return;
+            }
+        }
+        return;
+    }
     auto const* bitmap_font = path_bitmap_font();
     if (!bitmap_font || bitmap_font->glyph_w <= 0 || bitmap_font->glyph_h <= 0) {
         reject_path();

@@ -8,6 +8,7 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/PainterAquamarine.h>
+#include <LibGfx/Path.h>
 #include <LibGfx/PaintingSurface.h>
 #include <LibWeb/Painting/DisplayListPlayerAquamarine.h>
 #include <stdlib.h>
@@ -131,6 +132,37 @@ void DisplayListPlayerAquamarine::flush() { }
 
 void DisplayListPlayerAquamarine::draw_glyph_run(DrawGlyphRun const& command)
 {
+    auto const& typeface = command.glyph_run->font().typeface();
+    if (typeface.has_glyph_outlines()) {
+        auto* bitmap = surface().bitmap();
+        if (!bitmap)
+            return;
+
+        Gfx::Path path;
+        path.glyph_run(*command.glyph_run);
+        // glyph_run() rejects an undecodable outline rather than replacing it
+        // with a glyph from the PSF fallback font.
+        if (path.is_empty())
+            return;
+
+        path.offset(command.translation + Gfx::FloatPoint {
+            static_cast<float>(m_translation.x()),
+            static_cast<float>(m_translation.y()),
+        });
+        if (command.orientation == Gfx::Orientation::Vertical) {
+            auto const& rect = command.rect;
+            path.transform(Gfx::AffineTransform {
+                0.0f, 1.0f, -1.0f, 0.0f,
+                static_cast<float>(rect.x() + rect.y() + rect.width()),
+                static_cast<float>(rect.y() - rect.x()),
+            });
+        }
+        NonnullRefPtr<Gfx::Bitmap> bitmap_ref = *bitmap;
+        Gfx::PainterAquamarine painter(bitmap_ref);
+        painter.fill_path(path, command.color, Gfx::WindingRule::Nonzero);
+        return;
+    }
+
     AQ_SURFACE_SCOPE(s)
 
     auto const* font = text_font();

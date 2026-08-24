@@ -40,12 +40,14 @@ Font::Font(NonnullRefPtr<Typeface const> typeface, float point_width, float poin
 
 #ifdef AK_OS_RINOS
     FontPixelMetrics metrics;
+    auto design_metrics = m_typeface->design_metrics();
+    auto design_scale = m_pixel_size / units_per_em;
     metrics.size = m_pixel_size;
-    metrics.ascent = m_pixel_size * 0.8f;
-    metrics.descent = m_pixel_size * 0.2f;
-    metrics.line_gap = m_pixel_size * 0.15f;
-    metrics.x_height = m_pixel_size * 0.5f;
-    metrics.advance_of_ascii_zero = m_pixel_size * 0.6f;
+    metrics.ascent = design_metrics.ascender > 0 ? static_cast<float>(design_metrics.ascender) * design_scale : m_pixel_size * 0.8f;
+    metrics.descent = design_metrics.descender < 0 ? static_cast<float>(-design_metrics.descender) * design_scale : m_pixel_size * 0.2f;
+    metrics.line_gap = design_metrics.line_gap > 0 ? static_cast<float>(design_metrics.line_gap) * design_scale : m_pixel_size * 0.15f;
+    metrics.x_height = design_metrics.x_height > 0 ? static_cast<float>(design_metrics.x_height) * design_scale : m_pixel_size * 0.5f;
+    metrics.advance_of_ascii_zero = design_metrics.advance_of_ascii_zero > 0 ? static_cast<float>(design_metrics.advance_of_ascii_zero) * design_scale : m_pixel_size * 0.6f;
     m_pixel_metrics = metrics;
 #else
     auto const* sk_typeface = as<TypefaceSkia>(*m_typeface).sk_typeface();
@@ -92,8 +94,24 @@ float Font::width(Utf16View const& view) const { return measure_text_width(view,
 
 float Font::glyph_width(u32 code_point) const
 {
+#ifdef AK_OS_RINOS
+    return glyph_advance(glyph_id_for_code_point(code_point));
+#else
     auto string = Utf16String::from_code_point(code_point);
     return measure_text_width(string.utf16_view(), *this);
+#endif
+}
+
+float Font::glyph_advance(u32 glyph_id) const
+{
+#ifdef AK_OS_RINOS
+    if (auto advance = m_typeface->glyph_advance(glyph_id); advance.has_value())
+        return static_cast<float>(advance.value()) * m_pixel_size / m_typeface->units_per_em();
+    return m_pixel_metrics.advance_of_ascii_zero > 0 ? m_pixel_metrics.advance_of_ascii_zero : max(m_pixel_size * 0.6f, 1.0f);
+#else
+    (void)glyph_id;
+    return m_pixel_metrics.advance_of_ascii_zero;
+#endif
 }
 
 NonnullRefPtr<Font> Font::scaled_with_size(float point_size) const
