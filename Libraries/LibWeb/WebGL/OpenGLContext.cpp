@@ -70,6 +70,13 @@ OpenGLContext::~OpenGLContext()
 
 OwnPtr<OpenGLContext> OpenGLContext::create(WebGLVersion webgl_version, DrawingBufferOptions drawing_buffer_options)
 {
+    // The RinGL embedding implements the selected WebGL 1 command/object
+    // profile only. Keep this check at the native context boundary as well as
+    // in the RinOS LibWeb source list: a future source-list change must not
+    // make a WebGL 2 object appear to have a compatible backend.
+    if (webgl_version != WebGLVersion::WebGL1)
+        return {};
+
     // The drawing surface is deliberately allocated after set_size(). Canvas
     // creation has no dimensions yet, and set_size() is the only point at
     // which script-controlled dimensions enter this private bridge.
