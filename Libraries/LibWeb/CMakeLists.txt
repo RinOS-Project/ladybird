@@ -35,7 +35,7 @@ else()
     set(RINOS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." CACHE PATH "RinOS source root used by the direct LibWeb RinGL bridge")
     set(RINGL_SOURCE_ROOT "${RINOS_SOURCE_ROOT}/libs/RinGL" CACHE PATH "RinGL source root used by the direct LibWeb RinGPU bridge")
     if (NOT EXISTS "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c" OR
-        NOT EXISTS "${RINGL_SOURCE_ROOT}/src/platform/aquamarine_surface.c" OR
+        NOT EXISTS "${RINGL_SOURCE_ROOT}/src/platform/aquamarine_ringpu_software_surface.c" OR
         NOT EXISTS "${RINGL_SOURCE_ROOT}/CMakeLists.txt")
         message(FATAL_ERROR "RinOS RinGL WebGL embedding sources are missing (RINOS_SOURCE_ROOT=${RINOS_SOURCE_ROOT}, RINGL_SOURCE_ROOT=${RINGL_SOURCE_ROOT})")
     endif()
@@ -47,11 +47,9 @@ else()
     target_sources(RinGL PRIVATE
         "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/core.c"
         "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/shader.c"
-        # The generic RinGPU software backend is independently tested and is
-        # not this browser surface's backend.  The product path must retain
-        # the RinGL-owned Aquamarine embedding selected above, so do not link
-        # an unused second backend into LibWeb's RinGL archive.
-        "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_software.c"
+        # The RinGL-owned Aquamarine surface supplies caller-owned storage to
+        # this generic RinGPU backend. It never draws through Aquamarine.
+        "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/software_backend.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_sync_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c"
