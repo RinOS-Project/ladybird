@@ -296,6 +296,18 @@ bool OpenGLContext::is_context_lost() const
         || (m_impl->bridge.context && ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE);
 }
 
+void OpenGLContext::lose_context()
+{
+    // WEBGL_lose_context must discard the native graphics context and every
+    // resource it owns. In the RinOS embedding they are owned by the RinGL
+    // bridge and its private Aquamarine target, so do not bypass RinGL or
+    // retain native object IDs that could be reused after restoration.
+    m_impl->device_lost = true;
+    m_impl->allocation_failed = false;
+    m_impl->pending_error = RINGL_CONTEXT_LOST_WEBGL;
+    free_surface_resources();
+}
+
 void OpenGLContext::present(bool preserve_drawing_buffer)
 {
     make_current();

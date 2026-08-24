@@ -52,6 +52,9 @@ public:
 
 #ifdef AK_OS_RINOS
     bool is_context_lost() const;
+    // Deliberately retire the RinGL context and its private drawing surface.
+    // WEBGL_lose_context recovery always creates a fresh native context.
+    void lose_context();
     bool rin_gl_is_ready() const;
     u32 rin_gl_get_error();
     u64 rin_gl_get_shader_source_length(u32 shader);

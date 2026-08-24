@@ -53,6 +53,12 @@ public:
     // monotonically increasing generation to reject a stale handle before an
     // allocator can reuse its numeric value in the replacement context.
     virtual u64 object_generation() const { return 1; }
+#ifdef AK_OS_RINOS
+    // The browser context owns event ordering and restoration eligibility;
+    // extensions never receive a raw RinGL context handle.
+    virtual void lose_context_from_extension() = 0;
+    virtual void restore_context_from_extension() = 0;
+#endif
 
     Optional<Vector<String>> get_supported_extensions();
     JS::Object* get_extension(String const& name);
@@ -154,6 +160,9 @@ protected:
 
     GLenum get_error_value();
     void set_error(GLenum error);
+    // WEBGL_lose_context can produce INVALID_OPERATION while the context is
+    // lost. Do not let a backend CONTEXT_LOST_WEBGL hide that API error.
+    void set_error_without_backend_check(GLenum error);
 
     // Context restoration resets WebGL state, extension admission, and the
     // pending error.  Keep this at the common context boundary so an enabled

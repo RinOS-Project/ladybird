@@ -43,6 +43,9 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/WebGLDrawBuffers.h>
 #endif
 #include <LibWeb/WebGL/Extensions/OESElementIndexUint.h>
+#ifdef AK_OS_RINOS
+#include <LibWeb/WebGL/Extensions/WebGLLoseContext.h>
+#endif
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
@@ -204,8 +207,10 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
 {
 #ifdef AK_OS_RINOS
     Vector<String> webgl_extensions;
-    if (context().webgl_version() == OpenGLContext::WebGLVersion::WebGL1)
+    if (context().webgl_version() == OpenGLContext::WebGLVersion::WebGL1) {
         webgl_extensions.append("OES_element_index_uint"_string);
+        webgl_extensions.append("WEBGL_lose_context"_string);
+    }
     return webgl_extensions;
 #else
     auto opengl_extensions = context().get_supported_opengl_extensions();
@@ -239,17 +244,24 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
 JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
 {
 #ifdef AK_OS_RINOS
-    // RinGL executes a bounded uint32_t element stream, but WebGL 1 exposes
-    // that type only after this extension has been enabled. Keep its single
-    // script-visible object in the common case-insensitive cache.
-    if (context().webgl_version() != OpenGLContext::WebGLVersion::WebGL1
-        || !name.equals_ignoring_ascii_case("OES_element_index_uint"sv))
+    if (context().webgl_version() != OpenGLContext::WebGLVersion::WebGL1)
         return nullptr;
     if (auto extension = m_enabled_extensions.get(name); extension.has_value())
         return extension.release_value();
-    auto extension = MUST(Extensions::OESElementIndexUint::create(realm(), *this));
-    m_enabled_extensions.set(name, extension);
-    return extension;
+
+    if (name.equals_ignoring_ascii_case("OES_element_index_uint"sv)) {
+        // RinGL executes a bounded uint32_t element stream, but WebGL 1
+        // exposes that type only after this extension has been enabled.
+        auto extension = MUST(Extensions::OESElementIndexUint::create(realm(), *this));
+        m_enabled_extensions.set(name, extension);
+        return extension;
+    }
+    if (name.equals_ignoring_ascii_case("WEBGL_lose_context"sv)) {
+        auto extension = MUST(Extensions::WebGLLoseContext::create(realm(), *this));
+        m_enabled_extensions.set(name, extension);
+        return extension;
+    }
+    return nullptr;
 #else
     // Returns an object if, and only if, name is an ASCII case-insensitive match [HTML] for one of the names returned
     // from getSupportedExtensions; otherwise, returns null. The object returned from getExtension contains any constants
@@ -405,6 +417,18 @@ void WebGLRenderingContextBase::set_error(GLenum error)
     else
         m_error = error;
 #endif
+}
+
+void WebGLRenderingContextBase::set_error_without_backend_check(GLenum error)
+{
+#ifdef AK_OS_RINOS
+    if (m_error != RINGL_NO_ERROR)
+        return;
+#else
+    if (m_error != GL_NO_ERROR)
+        return;
+#endif
+    m_error = error;
 }
 
 void WebGLRenderingContextBase::reset_webgl_base_state_after_context_restore()

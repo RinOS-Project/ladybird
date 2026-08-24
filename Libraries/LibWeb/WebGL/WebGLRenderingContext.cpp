@@ -23,7 +23,11 @@
 #include <LibWeb/WebGL/WebGLShader.h>
 #include <LibWeb/WebIDL/Buffers.h>
 
-#ifndef AK_OS_RINOS
+#ifdef AK_OS_RINOS
+extern "C" {
+#    include <ringl/ringl.h>
+}
+#else
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #endif
@@ -152,11 +156,50 @@ void WebGLRenderingContext::report_context_loss() const
     // flag before script observes the event. That makes re-entrant event
     // handlers safe: every subsequent command sees the same lost context.
     m_context_lost = true;
-    // As required by WebGL, a user agent may restore only when the lost event
-    // is cancelled. Queue it after the handler returns so re-entrant calls
-    // remain lost for the complete event dispatch.
-    if (!fire_webgl_context_event(*m_canvas_element, EventNames::webglcontextlost, true))
+    // A cancelled event is the sole condition that makes this context
+    // restorable. WEBGL_lose_context additionally requires an explicit
+    // restoreContext() after event dispatch has completed.
+    m_context_restore_eligible = !fire_webgl_context_event(*m_canvas_element, EventNames::webglcontextlost, true);
+    if (m_context_restore_eligible && !m_context_lost_by_extension)
         queue_context_restore();
+}
+
+void WebGLRenderingContext::lose_context_from_extension()
+{
+    if (m_context_lost) {
+        set_error_without_backend_check(RINGL_INVALID_OPERATION);
+        return;
+    }
+
+    // A native loss might have been discovered between WebGL calls. Publish
+    // it before rejecting the duplicate extension request, so the canvas lost
+    // event cannot be skipped by this call.
+    if (context().is_context_lost()) {
+        report_context_loss();
+        set_error_without_backend_check(RINGL_INVALID_OPERATION);
+        return;
+    }
+
+    m_context_lost_by_extension = true;
+    m_context_restore_eligible = false;
+    m_context_restore_requested = false;
+    context().lose_context();
+    report_context_loss();
+}
+
+void WebGLRenderingContext::restore_context_from_extension()
+{
+    // A restore request is valid only for this extension's cancelled loss and
+    // only after the lost-event dispatch. It remains lost until the queued
+    // task has installed a fully initialized replacement RinGL context.
+    if (!m_context_lost || !m_context_lost_by_extension || !m_context_restore_eligible
+        || m_context_restore_requested || m_context_restore_pending) {
+        set_error_without_backend_check(RINGL_INVALID_OPERATION);
+        return;
+    }
+
+    m_context_restore_requested = true;
+    queue_context_restore();
 }
 
 void WebGLRenderingContext::queue_context_restore() const
@@ -179,17 +222,26 @@ void WebGLRenderingContext::restore_context_after_loss()
     auto replacement = OpenGLContext::create(OpenGLContext::WebGLVersion::WebGL1, context_options);
 
     m_context_restore_pending = false;
-    if (!m_context_lost || !replacement)
+    if (!m_context_lost || !replacement) {
+        m_context_restore_requested = false;
         return;
+    }
 
     replacement->set_size(m_canvas_element->bitmap_size_for_canvas(1, 1));
     replacement->make_current();
-    if (!replacement->rin_gl_is_ready())
+    if (!replacement->rin_gl_is_ready()) {
+        m_context_restore_requested = false;
         return;
-    if (!restore_rin_gl_context(replacement.release_nonnull()))
+    }
+    if (!restore_rin_gl_context(replacement.release_nonnull())) {
+        m_context_restore_requested = false;
         return;
+    }
 
     m_context_lost = false;
+    m_context_lost_by_extension = false;
+    m_context_restore_eligible = false;
+    m_context_restore_requested = false;
     m_canvas_element->set_canvas_content_dirty();
     m_canvas_element->set_needs_repaint();
     fire_webgl_context_event(*m_canvas_element, EventNames::webglcontextrestored);

@@ -29,6 +29,8 @@ public:
     void needs_to_present() override;
 #ifdef AK_OS_RINOS
     void report_context_loss() const override;
+    void lose_context_from_extension() override;
+    void restore_context_from_extension() override;
 #endif
 
     GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const;
@@ -72,6 +74,12 @@ private:
     mutable bool m_context_lost { false };
 #ifdef AK_OS_RINOS
     mutable bool m_context_restore_pending { false };
+    // A WEBGL_lose_context loss becomes restorable only when its lost event
+    // was cancelled and script subsequently requests restoration. Native loss
+    // keeps the browser's automatic recovery policy.
+    mutable bool m_context_lost_by_extension { false };
+    mutable bool m_context_restore_eligible { false };
+    mutable bool m_context_restore_requested { false };
 #endif
 };
 
