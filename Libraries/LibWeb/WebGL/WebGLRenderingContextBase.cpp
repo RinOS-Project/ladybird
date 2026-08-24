@@ -413,6 +413,15 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     if (is_texture_float_extension) {
         auto extension = MUST(Extensions::OESTextureFloat::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
+        // This RinGL implementation supports Float color attachments, so
+        // OES_texture_float also makes WEBGL_color_buffer_float available.
+        // Cache its extension object here so FBO completeness does not depend
+        // on the order in which the two extension names are requested.
+        if (!m_enabled_extensions.contains("WEBGL_color_buffer_float"_string)) {
+            auto color_buffer_extension = MUST(Extensions::WebGLColorBufferFloat::create(realm(), *this));
+            m_enabled_extensions.set("WEBGL_color_buffer_float"_string,
+                                     color_buffer_extension);
+        }
         return extension;
     }
     if (is_texture_float_linear_extension) {
