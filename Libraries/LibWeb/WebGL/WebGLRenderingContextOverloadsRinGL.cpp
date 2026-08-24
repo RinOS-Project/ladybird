@@ -5,6 +5,7 @@
  */
 
 #include <AK/NumericLimits.h>
+#include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContextOverloads.h>
 #include <LibWeb/WebGL/WebGLUniformLocation.h>
@@ -29,6 +30,23 @@ static bool uses_webgl_depth_texture_format(WebIDL::UnsignedLong internalformat,
 static bool uses_webgl_depth_texture_format(WebIDL::UnsignedLong format)
 {
     return format == RINGL_DEPTH_COMPONENT || format == RINGL_DEPTH_STENCIL;
+}
+
+static bool is_webgl1_color_texture_format(WebIDL::UnsignedLong format)
+{
+    return format == RINGL_RGBA || format == RINGL_RGB || format == RINGL_ALPHA
+        || format == RINGL_LUMINANCE || format == RINGL_LUMINANCE_ALPHA;
+}
+
+static bool uses_oes_texture_float_format(WebIDL::UnsignedLong internalformat, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type)
+{
+    return type == RINGL_FLOAT && internalformat == format
+        && is_webgl1_color_texture_format(format);
+}
+
+static bool uses_oes_texture_float_format(WebIDL::UnsignedLong format, WebIDL::UnsignedLong type)
+{
+    return type == RINGL_FLOAT && is_webgl1_color_texture_format(format);
 }
 
 WebGLRenderingContextOverloads::WebGLRenderingContextOverloads(JS::Realm& realm, NonnullOwnPtr<OpenGLContext> context)
@@ -134,9 +152,19 @@ void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, We
         set_error(RINGL_INVALID_ENUM);
         return;
     }
+    if (uses_oes_texture_float_format(internalformat, format, type)
+        && !extension_enabled("OES_texture_float"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
 
     if (!pixels) {
         ringl_tex_image_2d_from_bytes(target, level, internalformat, width, height, border, format, type, nullptr, 0);
+        return;
+    }
+    if (uses_oes_texture_float_format(internalformat, format, type)
+        && !is<JS::Float32Array>(*pixels->raw_object())) {
+        set_error(RINGL_INVALID_OPERATION);
         return;
     }
 
@@ -158,8 +186,18 @@ void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target
         set_error(RINGL_INVALID_ENUM);
         return;
     }
+    if (uses_oes_texture_float_format(format, type)
+        && !extension_enabled("OES_texture_float"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
     if (!pixels) {
         set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    if (uses_oes_texture_float_format(format, type)
+        && !is<JS::Float32Array>(*pixels->raw_object())) {
+        set_error(RINGL_INVALID_OPERATION);
         return;
     }
 
@@ -207,6 +245,11 @@ void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, We
         set_error(RINGL_INVALID_ENUM);
         return;
     }
+    if (uses_oes_texture_float_format(internalformat, format, type)
+        && !extension_enabled("OES_texture_float"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
 
     auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type);
     if (!maybe_converted_texture.has_value())
@@ -223,6 +266,11 @@ void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target
         return;
     if (uses_webgl_depth_texture_format(format)
         && !extension_enabled("WEBGL_depth_texture"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+    if (uses_oes_texture_float_format(format, type)
+        && !extension_enabled("OES_texture_float"sv)) {
         set_error(RINGL_INVALID_ENUM);
         return;
     }

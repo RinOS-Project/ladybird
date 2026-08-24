@@ -1240,6 +1240,7 @@ if (AK_OS_RINOS)
         WebGL/EventNames.cpp
         WebGL/Extensions/ANGLEInstancedArrays.cpp
         WebGL/Extensions/OESElementIndexUint.cpp
+        WebGL/Extensions/OESTextureFloat.cpp
         WebGL/Extensions/OESVertexArrayObject.cpp
         WebGL/Extensions/WebGLDepthTexture.cpp
         WebGL/Extensions/WebGLVertexArrayObjectOES.cpp
