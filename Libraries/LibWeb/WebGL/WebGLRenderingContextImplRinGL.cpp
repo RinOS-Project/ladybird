@@ -1200,6 +1200,7 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
     }
     case RINGL_BLEND:
     case RINGL_CULL_FACE:
+    case RINGL_DITHER:
     case RINGL_DEPTH_TEST:
     case RINGL_SCISSOR_TEST:
     case RINGL_STENCIL_TEST:
