@@ -246,7 +246,15 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
 #ifdef AK_OS_RINOS
     if (context().webgl_version() != OpenGLContext::WebGLVersion::WebGL1)
         return nullptr;
-    if (auto extension = m_enabled_extensions.get(name); extension.has_value())
+
+    // WEBGL_lose_context defines two draft-era aliases. Keep all three names
+    // in one canonical cache entry, so switching spelling cannot create an
+    // additional object that could issue an independent loss/restore request.
+    bool const is_lose_context_extension = name.equals_ignoring_ascii_case("WEBGL_lose_context"sv)
+        || name.equals_ignoring_ascii_case("WEBKIT_WEBGL_lose_context"sv)
+        || name.equals_ignoring_ascii_case("MOZ_WEBGL_lose_context"sv);
+    auto cache_key = is_lose_context_extension ? "WEBGL_lose_context"_string : name;
+    if (auto extension = m_enabled_extensions.get(cache_key); extension.has_value())
         return extension.release_value();
 
     if (name.equals_ignoring_ascii_case("OES_element_index_uint"sv)) {
@@ -256,9 +264,9 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         m_enabled_extensions.set(name, extension);
         return extension;
     }
-    if (name.equals_ignoring_ascii_case("WEBGL_lose_context"sv)) {
+    if (is_lose_context_extension) {
         auto extension = MUST(Extensions::WebGLLoseContext::create(realm(), *this));
-        m_enabled_extensions.set(name, extension);
+        m_enabled_extensions.set(cache_key, extension);
         return extension;
     }
     return nullptr;
