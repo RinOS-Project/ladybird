@@ -1950,6 +1950,34 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
             return JS::Int32Array::create(realm(), values.size(), array_buffer);
         }
+        case RINGL_FLOAT_MAT2: {
+            Array<float, 4> values {};
+            if (ringl_get_uniform_matrix2f(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+            if (bytes_or_error.is_error()) {
+                set_error(RINGL_OUT_OF_MEMORY);
+                return JS::js_null();
+            }
+            auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+            return JS::Float32Array::create(realm(), values.size(), array_buffer);
+        }
+        case RINGL_FLOAT_MAT3: {
+            Array<float, 9> values {};
+            if (ringl_get_uniform_matrix3f(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+            if (bytes_or_error.is_error()) {
+                set_error(RINGL_OUT_OF_MEMORY);
+                return JS::js_null();
+            }
+            auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+            return JS::Float32Array::create(realm(), values.size(), array_buffer);
+        }
         case RINGL_FLOAT_MAT4: {
             Array<float, 16> values {};
             if (ringl_get_uniform_matrix4f(program_handle, location_handle, values.data()) != 0) {
