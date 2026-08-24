@@ -84,6 +84,12 @@ private:
     [[maybe_unused]] DrawingBufferOptions m_drawing_buffer_options;
 
     void free_surface_resources();
+#ifdef AK_OS_RINOS
+    // Preserve the WebGL distinction between a native device loss and a
+    // failed drawing-surface realization. Both stop rendering safely, but
+    // only the former may publish CONTEXT_LOST_WEBGL to script.
+    void fail_rin_gl_surface(int result);
+#endif
 #if defined(AK_OS_MACOS)
     void allocate_iosurface_painting_surface();
 #elif defined(USE_VULKAN_IMAGES)

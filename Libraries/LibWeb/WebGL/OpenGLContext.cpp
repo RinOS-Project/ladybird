@@ -87,6 +87,22 @@ void OpenGLContext::free_surface_resources()
     m_painting_surface = nullptr;
 }
 
+void OpenGLContext::fail_rin_gl_surface(int result)
+{
+    bool const device_lost = result == RIN_WEBGL_RINGPU_SURFACE_DEVICE_LOST
+        || (m_impl->bridge.context
+            && ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE);
+
+    // A malformed/failed surface or bridge is not evidence that the native
+    // device disappeared. Do not synthesize a WebGL context loss for that
+    // case; keep the context unavailable and report the normal realization
+    // failure through the existing allocation-failure path instead.
+    m_impl->device_lost = device_lost;
+    m_impl->allocation_failed = !device_lost;
+    m_impl->pending_error = device_lost ? RINGL_CONTEXT_LOST_WEBGL : RINGL_OUT_OF_MEMORY;
+    free_surface_resources();
+}
+
 void OpenGLContext::notify_content_will_change()
 {
     if (m_painting_surface)
@@ -104,11 +120,9 @@ void OpenGLContext::clear_buffer_to_default_values()
     // state, and preserves the application's pending GL error. It first uses
     // RinGL's normal submission and, only for a non-loss failure, performs the
     // same complete reset through the exclusive RinGPU surface owner.
-    if (rin_webgl_ringl_bridge_clear_default_framebuffer(&m_impl->bridge) != RIN_WEBGL_RINGPU_SURFACE_OK) {
-        m_impl->device_lost = true;
-        m_impl->pending_error = RINGL_CONTEXT_LOST_WEBGL;
-        free_surface_resources();
-    }
+    auto result = rin_webgl_ringl_bridge_clear_default_framebuffer(&m_impl->bridge);
+    if (result != RIN_WEBGL_RINGPU_SURFACE_OK)
+        fail_rin_gl_surface(result);
 }
 
 void OpenGLContext::allocate_painting_surface_if_needed()
@@ -116,6 +130,7 @@ void OpenGLContext::allocate_painting_surface_if_needed()
     auto const width = m_size.width();
     auto const height = m_size.height();
     size_t pixel_count;
+    int result;
     RinWebGLRingPUSurfaceTargetV1 target {};
     auto* bitmap = static_cast<Gfx::Bitmap*>(nullptr);
 
@@ -179,24 +194,27 @@ void OpenGLContext::allocate_painting_surface_if_needed()
         target.stencil_pitch_bytes = static_cast<u32>(width);
     }
 
-    if (rin_webgl_ringpu_surface_create(&target, &m_impl->surface_context) != RIN_WEBGL_RINGPU_SURFACE_OK
-        || rin_webgl_ringl_bridge_create(m_impl->surface_context, &m_impl->bridge) != RIN_WEBGL_RINGPU_SURFACE_OK
-        || ringl_make_current(m_impl->bridge.context) != 0) {
-        m_impl->device_lost = m_impl->bridge.context && ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE;
-        m_impl->allocation_failed = !m_impl->device_lost;
-        m_impl->pending_error = m_impl->device_lost ? RINGL_CONTEXT_LOST_WEBGL : RINGL_OUT_OF_MEMORY;
-        free_surface_resources();
+    result = rin_webgl_ringpu_surface_create(&target, &m_impl->surface_context);
+    if (result == RIN_WEBGL_RINGPU_SURFACE_OK)
+        result = rin_webgl_ringl_bridge_create(m_impl->surface_context, &m_impl->bridge);
+    if (result == RIN_WEBGL_RINGPU_SURFACE_OK
+        && ringl_make_current(m_impl->bridge.context) != 0) {
+        result = m_impl->bridge.context
+                && ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE
+            ? RIN_WEBGL_RINGPU_SURFACE_DEVICE_LOST
+            : RIN_WEBGL_RINGPU_SURFACE_STATE;
+    }
+    if (result != RIN_WEBGL_RINGPU_SURFACE_OK) {
+        fail_rin_gl_surface(result);
         return;
     }
 
     // Zeroed backing allocations do not establish WebGL's required initial
     // depth value of 1. Submit the default-framebuffer clear before any author
     // command can observe the BGRA, D32, or S8 surface state.
-    if (rin_webgl_ringl_bridge_clear_default_framebuffer(&m_impl->bridge) != RIN_WEBGL_RINGPU_SURFACE_OK) {
-        m_impl->device_lost = true;
-        m_impl->pending_error = RINGL_CONTEXT_LOST_WEBGL;
-        free_surface_resources();
-    }
+    result = rin_webgl_ringl_bridge_clear_default_framebuffer(&m_impl->bridge);
+    if (result != RIN_WEBGL_RINGPU_SURFACE_OK)
+        fail_rin_gl_surface(result);
 }
 
 void OpenGLContext::set_size(Gfx::IntSize const& size)
@@ -214,10 +232,12 @@ void OpenGLContext::make_current()
     allocate_painting_surface_if_needed();
     if (!m_impl->bridge.context)
         return;
-    if (ringl_make_current(m_impl->bridge.context) != 0 || ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE) {
-        m_impl->device_lost = true;
-        m_impl->pending_error = RINGL_CONTEXT_LOST_WEBGL;
-        free_surface_resources();
+    if (ringl_make_current(m_impl->bridge.context) != 0
+        || ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE) {
+        auto const result = ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE
+            ? RIN_WEBGL_RINGPU_SURFACE_DEVICE_LOST
+            : RIN_WEBGL_RINGPU_SURFACE_STATE;
+        fail_rin_gl_surface(result);
     }
 }
 
@@ -268,10 +288,12 @@ void OpenGLContext::present(bool preserve_drawing_buffer)
     if (!m_impl->bridge.context)
         return;
 
-    if (rin_webgl_ringl_bridge_present(&m_impl->bridge) != RIN_WEBGL_RINGPU_SURFACE_OK || ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE) {
-        m_impl->device_lost = true;
-        m_impl->pending_error = RINGL_CONTEXT_LOST_WEBGL;
-        free_surface_resources();
+    auto result = rin_webgl_ringl_bridge_present(&m_impl->bridge);
+    if (result != RIN_WEBGL_RINGPU_SURFACE_OK
+        || ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE) {
+        if (ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE)
+            result = RIN_WEBGL_RINGPU_SURFACE_DEVICE_LOST;
+        fail_rin_gl_surface(result);
         return;
     }
     m_painting_surface->flush();
