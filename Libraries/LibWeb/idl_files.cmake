@@ -517,6 +517,7 @@ libweb_js_bindings(WebAudio/StereoPannerNode)
 if (AK_OS_RINOS)
     # The public WebGL 1 binding uses the direct RinGL/RinGPU dispatcher.
     # WebGL 2 and ANGLE-only extension bindings remain unavailable.
+    libweb_js_bindings(WebGL/Extensions/OESElementIndexUint)
     libweb_js_bindings(WebGL/WebGLActiveInfo)
     libweb_js_bindings(WebGL/WebGLBuffer)
     libweb_js_bindings(WebGL/WebGLContextEvent)
