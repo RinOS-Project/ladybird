@@ -1,0 +1,9 @@
+#import <WebGL/Types.idl>
+
+// https://registry.khronos.org/webgl/extensions/OES_texture_half_float/
+// The title-cased interface name stays private because LegacyNoInterfaceObject
+// keeps the standard extension string out of the global object namespace.
+[Exposed=(Window,Worker), LegacyNoInterfaceObject]
+interface OESTextureHalfFloat {
+    const GLenum HALF_FLOAT_OES = 0x8D61;
+};

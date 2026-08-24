@@ -47,6 +47,8 @@ extern "C" {
 #ifdef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/OESTextureFloat.h>
 #include <LibWeb/WebGL/Extensions/OESTextureFloatLinear.h>
+#include <LibWeb/WebGL/Extensions/OESTextureHalfFloat.h>
+#include <LibWeb/WebGL/Extensions/OESTextureHalfFloatLinear.h>
 #include <LibWeb/WebGL/Extensions/OESVertexArrayObject.h>
 #include <LibWeb/WebGL/Extensions/WebGLColorBufferFloat.h>
 #include <LibWeb/WebGL/Extensions/WebGLDepthTexture.h>
@@ -74,6 +76,7 @@ static constexpr GLenum webgl_luminance = RINGL_LUMINANCE;
 static constexpr GLenum webgl_luminance_alpha = RINGL_LUMINANCE_ALPHA;
 static constexpr GLenum webgl_unsigned_byte = RINGL_UNSIGNED_BYTE;
 static constexpr GLenum webgl_float = RINGL_FLOAT;
+static constexpr GLenum webgl_half_float_oes = RINGL_HALF_FLOAT_OES;
 static constexpr GLenum webgl_unsigned_short_5_6_5 = RINGL_UNSIGNED_SHORT_5_6_5;
 static constexpr GLenum webgl_unsigned_short_4_4_4_4 = RINGL_UNSIGNED_SHORT_4_4_4_4;
 static constexpr GLenum webgl_unsigned_short_5_5_5_1 = RINGL_UNSIGNED_SHORT_5_5_5_1;
@@ -141,11 +144,31 @@ static constexpr Optional<Gfx::ExportFormat> determine_export_format(WebIDL::Uns
 }
 
 #ifdef AK_OS_RINOS
-/* Gfx stores DOM image sources as 8-bit bitmaps. OES_texture_float requires
- * the same pixel-transfer expansion to Float32, so export through the existing
- * color-managed/flip/premultiply path first, then widen its canonical source
- * components without clamping the Float32 destination. */
-static Optional<Gfx::BitmapExportResult> export_float_texture_image(Gfx::ImmutableBitmap const& bitmap, WebIDL::UnsignedLong format, int export_flags, Optional<int> destination_width, Optional<int> destination_height)
+/* DOM image sources are 8-bit bitmaps. Keep their existing color-managed,
+ * flip, and premultiply path, then widen to Float32 or encode the resulting
+ * normalized components as IEEE binary16 for the corresponding WebGL upload. */
+static u16 unorm8_to_half_float_bits(u8 component)
+{
+    float normalized = static_cast<float>(component) / 255.0f;
+    u32 bits {};
+    u32 mantissa;
+    u32 result;
+
+    if (component == 0)
+        return 0;
+    memcpy(&bits, &normalized, sizeof(bits));
+    mantissa = bits & 0x007fffffu;
+    result = (((bits >> 23u) - 112u) << 10u) | (mantissa >> 13u);
+    // Round to nearest-even at the binary16 mantissa boundary. Every nonzero
+    // UNORM8 value is a normal binary16 value, so no subnormal branch is
+    // required here.
+    if ((mantissa & 0x1fffu) > 0x1000u
+        || ((mantissa & 0x1fffu) == 0x1000u && (result & 1u) != 0u))
+        ++result;
+    return static_cast<u16>(result);
+}
+
+static Optional<Gfx::BitmapExportResult> export_floating_texture_image(Gfx::ImmutableBitmap const& bitmap, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, int export_flags, Optional<int> destination_width, Optional<int> destination_height)
 {
     Gfx::ExportFormat primary_format;
     size_t component_count;
@@ -179,7 +202,7 @@ static Optional<Gfx::BitmapExportResult> export_float_texture_image(Gfx::Immutab
 
     auto primary_or_error = bitmap.export_to_byte_buffer(primary_format, export_flags, destination_width, destination_height);
     if (primary_or_error.is_error()) {
-        dbgln("WebGL: Could not export Float32 texture source: {}", primary_or_error.release_error());
+        dbgln("WebGL: Could not export floating texture source: {}", primary_or_error.release_error());
         return {};
     }
     auto primary = primary_or_error.release_value();
@@ -190,7 +213,7 @@ static Optional<Gfx::BitmapExportResult> export_float_texture_image(Gfx::Immutab
     if (needs_alpha_plane) {
         auto alpha_or_error = bitmap.export_to_byte_buffer(Gfx::ExportFormat::Alpha8, export_flags, destination_width, destination_height);
         if (alpha_or_error.is_error()) {
-            dbgln("WebGL: Could not export Float32 texture alpha: {}", alpha_or_error.release_error());
+            dbgln("WebGL: Could not export floating texture alpha: {}", alpha_or_error.release_error());
             return {};
         }
         alpha = alpha_or_error.release_value();
@@ -200,17 +223,25 @@ static Optional<Gfx::BitmapExportResult> export_float_texture_image(Gfx::Immutab
 
     Checked<size_t> pixel_count = static_cast<size_t>(primary.width);
     pixel_count *= static_cast<size_t>(primary.height);
+    size_t component_bytes;
     Checked<size_t> output_bytes = pixel_count;
+
+    if (type == webgl_float)
+        component_bytes = sizeof(float);
+    else if (type == webgl_half_float_oes)
+        component_bytes = sizeof(u16);
+    else
+        return {};
     output_bytes *= component_count;
-    output_bytes *= sizeof(float);
+    output_bytes *= component_bytes;
     if (pixel_count.has_overflow() || output_bytes.has_overflow())
         return {};
     auto pixel_count_value = pixel_count.value_unchecked();
     auto output_bytes_value = output_bytes.value_unchecked();
-    auto float_buffer_or_error = ByteBuffer::create_zeroed(output_bytes_value);
-    if (float_buffer_or_error.is_error())
+    auto converted_buffer_or_error = ByteBuffer::create_zeroed(output_bytes_value);
+    if (converted_buffer_or_error.is_error())
         return {};
-    auto float_buffer = float_buffer_or_error.release_value();
+    auto converted_buffer = converted_buffer_or_error.release_value();
     if (primary.buffer.size() < pixel_count_value *
             (primary_format == Gfx::ExportFormat::RGBA8888 ? 4u
              : primary_format == Gfx::ExportFormat::RGB888 ? 3u : 1u) ||
@@ -219,7 +250,6 @@ static Optional<Gfx::BitmapExportResult> export_float_texture_image(Gfx::Immutab
     }
 
     for (size_t pixel = 0u; pixel < pixel_count_value; ++pixel) {
-        float components[4] {};
         size_t source_offset = pixel * (primary_format == Gfx::ExportFormat::RGBA8888 ? 4u
                                       : primary_format == Gfx::ExportFormat::RGB888 ? 3u : 1u);
 
@@ -227,13 +257,20 @@ static Optional<Gfx::BitmapExportResult> export_float_texture_image(Gfx::Immutab
             u8 source_component = needs_alpha_plane && component == 1u
                 ? alpha->buffer.data()[pixel]
                 : primary.buffer.data()[source_offset + component];
-            components[component] = static_cast<float>(source_component) / 255.0f;
+            auto destination = converted_buffer.data()
+                + (pixel * component_count + component) * component_bytes;
+
+            if (type == webgl_float) {
+                float value = static_cast<float>(source_component) / 255.0f;
+                memcpy(destination, &value, sizeof(value));
+            } else {
+                auto value = unorm8_to_half_float_bits(source_component);
+                memcpy(destination, &value, sizeof(value));
+            }
         }
-        memcpy(float_buffer.data() + pixel * component_count * sizeof(float),
-               components, component_count * sizeof(float));
     }
     return Gfx::BitmapExportResult {
-        .buffer = move(float_buffer),
+        .buffer = move(converted_buffer),
         .width = primary.width,
         .height = primary.height,
     };
@@ -322,6 +359,8 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
         webgl_extensions.append("OES_element_index_uint"_string);
         webgl_extensions.append("OES_texture_float"_string);
         webgl_extensions.append("OES_texture_float_linear"_string);
+        webgl_extensions.append("OES_texture_half_float"_string);
+        webgl_extensions.append("OES_texture_half_float_linear"_string);
         webgl_extensions.append("OES_vertex_array_object"_string);
         webgl_extensions.append("WEBGL_color_buffer_float"_string);
         webgl_extensions.append("WEBGL_depth_texture"_string);
@@ -368,6 +407,8 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     bool const is_blend_minmax_extension = name.equals_ignoring_ascii_case("EXT_blend_minmax"sv);
     bool const is_texture_float_extension = name.equals_ignoring_ascii_case("OES_texture_float"sv);
     bool const is_texture_float_linear_extension = name.equals_ignoring_ascii_case("OES_texture_float_linear"sv);
+    bool const is_texture_half_float_extension = name.equals_ignoring_ascii_case("OES_texture_half_float"sv);
+    bool const is_texture_half_float_linear_extension = name.equals_ignoring_ascii_case("OES_texture_half_float_linear"sv);
     bool const is_vertex_array_object_extension = name.equals_ignoring_ascii_case("OES_vertex_array_object"sv);
     bool const is_color_buffer_float_extension = name.equals_ignoring_ascii_case("WEBGL_color_buffer_float"sv);
     bool const is_depth_texture_extension = name.equals_ignoring_ascii_case("WEBGL_depth_texture"sv);
@@ -391,6 +432,10 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         cache_key = "OES_texture_float"_string;
     else if (is_texture_float_linear_extension)
         cache_key = "OES_texture_float_linear"_string;
+    else if (is_texture_half_float_extension)
+        cache_key = "OES_texture_half_float"_string;
+    else if (is_texture_half_float_linear_extension)
+        cache_key = "OES_texture_half_float_linear"_string;
     else if (is_vertex_array_object_extension)
         cache_key = "OES_vertex_array_object"_string;
     else if (is_color_buffer_float_extension)
@@ -440,6 +485,19 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         // incomplete until this exact extension has been requested.
         context().enable_rin_gl_float_texture_linear();
         auto extension = MUST(Extensions::OESTextureFloatLinear::create(realm(), *this));
+        m_enabled_extensions.set(cache_key, extension);
+        return extension;
+    }
+    if (is_texture_half_float_extension) {
+        auto extension = MUST(Extensions::OESTextureHalfFloat::create(realm(), *this));
+        m_enabled_extensions.set(cache_key, extension);
+        return extension;
+    }
+    if (is_texture_half_float_linear_extension) {
+        // The shared RinGPU sampler has linear support, but WebGL exposes it
+        // for binary16 inputs only after this extension object is acquired.
+        context().enable_rin_gl_half_float_texture_linear();
+        auto extension = MUST(Extensions::OESTextureHalfFloatLinear::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
         return extension;
     }
@@ -573,9 +631,9 @@ Optional<Gfx::BitmapExportResult> WebGLRenderingContextBase::read_and_pixel_conv
         export_flags |= Gfx::ExportFlags::PremultiplyAlpha;
 
 #ifdef AK_OS_RINOS
-    if (type == webgl_float)
-        return export_float_texture_image(*bitmap, format, export_flags,
-                                          destination_width, destination_height);
+    if (type == webgl_float || type == webgl_half_float_oes)
+        return export_floating_texture_image(*bitmap, format, type, export_flags,
+                                             destination_width, destination_height);
 #endif
 
     auto export_format = determine_export_format(format, type);

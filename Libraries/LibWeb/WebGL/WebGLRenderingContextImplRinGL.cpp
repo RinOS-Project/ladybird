@@ -213,16 +213,17 @@ bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_has_distinct_depth_sten
         || depth_attachment.level != stencil_attachment.level;
 }
 
-int WebGLRenderingContextImpl::rin_gl_bound_framebuffer_float_color_attachment_state()
+int WebGLRenderingContextImpl::rin_gl_bound_framebuffer_color_attachment_component_type()
 {
-    uint32_t is_float = RINGL_FALSE;
+    uint32_t component_type = RINGL_UNSIGNED_BYTE;
 
-    // Use the RinGL-owned attachment state instead of duplicating a format
-    // cache in Ladybird. Preserve a query failure separately so enabling the
-    // extension cannot turn a stale/invalid native attachment renderable.
-    if (ringl_framebuffer_color_attachment_is_float(&is_float) != 0)
+    // Use RinGL-owned attachment state instead of duplicating a texture cache
+    // in Ladybird. Preserve a query failure separately so enabling an
+    // unrelated extension cannot turn a stale/invalid native attachment
+    // renderable.
+    if (ringl_framebuffer_color_attachment_component_type(&component_type) != 0)
         return -1;
-    return is_float != RINGL_FALSE ? 1 : 0;
+    return static_cast<int>(component_type);
 }
 
 bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_is_webgl1_compatible()
@@ -235,16 +236,24 @@ bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_is_webgl1_compatible()
         set_error(webgl_invalid_framebuffer_operation);
         return false;
     }
-    auto const float_color_attachment =
-        rin_gl_bound_framebuffer_float_color_attachment_state();
-    if (float_color_attachment < 0) {
+    auto const color_component_type =
+        rin_gl_bound_framebuffer_color_attachment_component_type();
+    if (color_component_type < 0) {
         set_error(webgl_invalid_framebuffer_operation);
         return false;
     }
-    if (float_color_attachment != 0
+    if (color_component_type == static_cast<int>(RINGL_FLOAT)
         && !extension_enabled("WEBGL_color_buffer_float"sv)) {
         // Float texture storage comes from OES_texture_float, but it is not
         // color-renderable in WebGL 1 until the separate FBO extension is on.
+        set_error(webgl_invalid_framebuffer_operation);
+        return false;
+    }
+    if (color_component_type == static_cast<int>(RINGL_HALF_FLOAT_OES)) {
+        // The implemented OES_texture_half_float path is sampled texture
+        // storage only. Do not expose the native Float32 shadow as a
+        // half-float FBO until EXT_color_buffer_half_float's RGBA16F output,
+        // renderbuffer, readback, and precision contracts are implemented.
         set_error(webgl_invalid_framebuffer_operation);
         return false;
     }
@@ -2529,12 +2538,14 @@ WebIDL::UnsignedLong WebGLRenderingContextImpl::check_framebuffer_status(WebIDL:
     if (target == RINGL_FRAMEBUFFER) {
         if (rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments())
             return webgl_framebuffer_unsupported;
-        auto const float_color_attachment =
-            rin_gl_bound_framebuffer_float_color_attachment_state();
-        if (float_color_attachment < 0)
+        auto const color_component_type =
+            rin_gl_bound_framebuffer_color_attachment_component_type();
+        if (color_component_type < 0)
             return webgl_framebuffer_unsupported;
-        if (float_color_attachment != 0
+        if (color_component_type == static_cast<int>(RINGL_FLOAT)
             && !extension_enabled("WEBGL_color_buffer_float"sv))
+            return webgl_framebuffer_unsupported;
+        if (color_component_type == static_cast<int>(RINGL_HALF_FLOAT_OES))
             return webgl_framebuffer_unsupported;
     }
     return ringl_check_framebuffer_status(target);

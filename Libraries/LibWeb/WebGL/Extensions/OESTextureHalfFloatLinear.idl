@@ -1,0 +1,6 @@
+// https://registry.khronos.org/webgl/extensions/OES_texture_half_float_linear/
+// The title-cased interface name stays private because LegacyNoInterfaceObject
+// keeps the standard extension string out of the global object namespace.
+[Exposed=(Window,Worker), LegacyNoInterfaceObject]
+interface OESTextureHalfFloatLinear {
+};

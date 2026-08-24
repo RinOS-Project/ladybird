@@ -60,6 +60,9 @@ public:
     // OES_texture_float_linear enables a context-local RinGL capability only
     // after JavaScript has acquired the extension object.
     void enable_rin_gl_float_texture_linear();
+    // OES_texture_half_float_linear has a separate gate: enabling Float
+    // filtering must not make binary16 texture sampling visible.
+    void enable_rin_gl_half_float_texture_linear();
     // WEBGL_color_buffer_float enables unclamped blendColor state only after
     // its WebGL extension object has been acquired.
     void enable_rin_gl_float_color_buffer();
