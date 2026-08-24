@@ -46,6 +46,7 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/OESElementIndexUint.h>
 #ifdef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/EXTColorBufferHalfFloat.h>
+#include <LibWeb/WebGL/Extensions/OESFboRenderMipmap.h>
 #include <LibWeb/WebGL/Extensions/OESStandardDerivatives.h>
 #include <LibWeb/WebGL/Extensions/OESTextureFloat.h>
 #include <LibWeb/WebGL/Extensions/OESTextureFloatLinear.h>
@@ -358,6 +359,7 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
     if (context().webgl_version() == OpenGLContext::WebGLVersion::WebGL1) {
         webgl_extensions.append("ANGLE_instanced_arrays"_string);
         webgl_extensions.append("EXT_blend_minmax"_string);
+        webgl_extensions.append("OES_fbo_render_mipmap"_string);
         webgl_extensions.append("OES_element_index_uint"_string);
         webgl_extensions.append("OES_standard_derivatives"_string);
         webgl_extensions.append("OES_texture_float"_string);
@@ -409,6 +411,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     bool const is_element_index_uint_extension = name.equals_ignoring_ascii_case("OES_element_index_uint"sv);
     bool const is_instanced_arrays_extension = name.equals_ignoring_ascii_case("ANGLE_instanced_arrays"sv);
     bool const is_blend_minmax_extension = name.equals_ignoring_ascii_case("EXT_blend_minmax"sv);
+    bool const is_fbo_render_mipmap_extension = name.equals_ignoring_ascii_case("OES_fbo_render_mipmap"sv);
     bool const is_standard_derivatives_extension = name.equals_ignoring_ascii_case("OES_standard_derivatives"sv);
     bool const is_texture_float_extension = name.equals_ignoring_ascii_case("OES_texture_float"sv);
     bool const is_texture_float_linear_extension = name.equals_ignoring_ascii_case("OES_texture_float_linear"sv);
@@ -434,6 +437,8 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         cache_key = "ANGLE_instanced_arrays"_string;
     else if (is_blend_minmax_extension)
         cache_key = "EXT_blend_minmax"_string;
+    else if (is_fbo_render_mipmap_extension)
+        cache_key = "OES_fbo_render_mipmap"_string;
     else if (is_standard_derivatives_extension)
         cache_key = "OES_standard_derivatives"_string;
     else if (is_texture_float_extension)
@@ -472,6 +477,14 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     if (is_blend_minmax_extension) {
         context().enable_rin_gl_blend_minmax();
         auto extension = MUST(Extensions::EXTBlendMinMax::create(realm(), *this));
+        m_enabled_extensions.set(cache_key, extension);
+        return extension;
+    }
+    if (is_fbo_render_mipmap_extension) {
+        // RinGL records the selected image subresource through its versioned
+        // RinGPU route. This object is the WebGL 1 opt-in; no direct surface
+        // command path is exposed here.
+        auto extension = MUST(Extensions::OESFboRenderMipmap::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
         return extension;
     }

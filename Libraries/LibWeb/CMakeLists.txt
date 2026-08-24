@@ -1166,6 +1166,7 @@ set(SOURCES
     WebGL/Extensions/EXTTextureFilterAnisotropic.cpp
     WebGL/Extensions/EXTTextureNorm16.cpp
     WebGL/Extensions/OESElementIndexUint.cpp
+    WebGL/Extensions/OESFboRenderMipmap.cpp
     WebGL/Extensions/OESStandardDerivatives.cpp
     WebGL/Extensions/OESVertexArrayObject.cpp
     WebGL/Extensions/WebGLCompressedTextureS3tc.cpp
@@ -1242,6 +1243,7 @@ if (AK_OS_RINOS)
         WebGL/Extensions/EXTBlendMinMax.cpp
         WebGL/Extensions/EXTColorBufferHalfFloat.cpp
         WebGL/Extensions/OESElementIndexUint.cpp
+        WebGL/Extensions/OESFboRenderMipmap.cpp
         WebGL/Extensions/OESStandardDerivatives.cpp
         WebGL/Extensions/OESTextureFloat.cpp
         WebGL/Extensions/OESTextureFloatLinear.cpp

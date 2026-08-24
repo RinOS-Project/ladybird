@@ -1,0 +1,8 @@
+#import <WebGL/Types.idl>
+
+// https://registry.khronos.org/webgl/extensions/OES_fbo_render_mipmap/
+// LegacyNoInterfaceObject keeps the extension name out of the JS global
+// namespace; getExtension() returns the per-context enabling object.
+[Exposed=(Window,Worker), LegacyNoInterfaceObject]
+interface OESFboRenderMipmap {
+};

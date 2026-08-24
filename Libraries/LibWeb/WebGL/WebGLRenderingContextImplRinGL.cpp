@@ -2477,6 +2477,14 @@ void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong targe
     if (!make_rin_gl_current())
         return;
 
+    // WebGL 1 admits only level zero until OES_fbo_render_mipmap is enabled.
+    // Reject before resolving an object handle or touching the RinGL FBO so a
+    // failed call leaves every browser and native attachment unchanged.
+    if (level > 0 && !extension_enabled("OES_fbo_render_mipmap"sv)) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+
     GLuint handle = 0;
     if (texture) {
         auto handle_or_error = texture->handle(this);
