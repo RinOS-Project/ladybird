@@ -71,6 +71,9 @@ public:
     // EXT_blend_minmax enables MIN/MAX equations only after its WebGL
     // extension object has been acquired.
     void enable_rin_gl_blend_minmax();
+    // OES_standard_derivatives exposes derivative builtins and its advisory
+    // hint only after JavaScript has acquired the extension object.
+    void enable_rin_gl_standard_derivatives();
     u64 rin_gl_get_shader_source_length(u32 shader);
     u64 rin_gl_copy_shader_source(u32 shader, char* buffer, u64 buffer_size);
     // HTMLCanvasElement calls this only after it has taken the immutable

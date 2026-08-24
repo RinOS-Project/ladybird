@@ -1250,6 +1250,7 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
     case RINGL_SAMPLE_BUFFERS:
     case RINGL_SAMPLES:
     case RINGL_SAMPLE_COVERAGE_INVERT:
+    case RINGL_FRAGMENT_SHADER_DERIVATIVE_HINT:
         if (!get_integer())
             return JS::js_null();
         return JS::Value(values[0]);
