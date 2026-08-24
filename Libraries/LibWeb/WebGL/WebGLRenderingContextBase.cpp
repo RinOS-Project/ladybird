@@ -252,36 +252,53 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     if (context().webgl_version() != OpenGLContext::WebGLVersion::WebGL1)
         return nullptr;
 
-    // WEBGL_lose_context defines two draft-era aliases. Keep all three names
-    // in one canonical cache entry, so switching spelling cannot create an
-    // additional object that could issue an independent loss/restore request.
+    bool const is_element_index_uint_extension = name.equals_ignoring_ascii_case("OES_element_index_uint"sv);
+    bool const is_instanced_arrays_extension = name.equals_ignoring_ascii_case("ANGLE_instanced_arrays"sv);
+    bool const is_vertex_array_object_extension = name.equals_ignoring_ascii_case("OES_vertex_array_object"sv);
+    bool const is_depth_texture_extension = name.equals_ignoring_ascii_case("WEBGL_depth_texture"sv);
+
+    // The WebGL extension algorithm compares names case-insensitively. Store
+    // every RinOS extension under its standard spelling, otherwise a caller
+    // that enables a lower-case alias would receive an object but leave the
+    // command-side extension gates disabled. WEBGL_lose_context additionally
+    // defines two draft-era aliases.
     bool const is_lose_context_extension = name.equals_ignoring_ascii_case("WEBGL_lose_context"sv)
         || name.equals_ignoring_ascii_case("WEBKIT_WEBGL_lose_context"sv)
         || name.equals_ignoring_ascii_case("MOZ_WEBGL_lose_context"sv);
-    auto cache_key = is_lose_context_extension ? "WEBGL_lose_context"_string : name;
+    auto cache_key = name;
+    if (is_element_index_uint_extension)
+        cache_key = "OES_element_index_uint"_string;
+    else if (is_instanced_arrays_extension)
+        cache_key = "ANGLE_instanced_arrays"_string;
+    else if (is_vertex_array_object_extension)
+        cache_key = "OES_vertex_array_object"_string;
+    else if (is_depth_texture_extension)
+        cache_key = "WEBGL_depth_texture"_string;
+    else if (is_lose_context_extension)
+        cache_key = "WEBGL_lose_context"_string;
     if (auto extension = m_enabled_extensions.get(cache_key); extension.has_value())
         return extension.release_value();
 
-    if (name.equals_ignoring_ascii_case("OES_element_index_uint"sv)) {
+    if (is_element_index_uint_extension) {
         // RinGL executes a bounded uint32_t element stream, but WebGL 1
         // exposes that type only after this extension has been enabled.
         auto extension = MUST(Extensions::OESElementIndexUint::create(realm(), *this));
-        m_enabled_extensions.set(name, extension);
+        m_enabled_extensions.set(cache_key, extension);
         return extension;
     }
-    if (name.equals_ignoring_ascii_case("ANGLE_instanced_arrays"sv)) {
+    if (is_instanced_arrays_extension) {
         auto extension = MUST(Extensions::ANGLEInstancedArrays::create(realm(), *this));
-        m_enabled_extensions.set(name, extension);
+        m_enabled_extensions.set(cache_key, extension);
         return extension;
     }
-    if (name.equals_ignoring_ascii_case("OES_vertex_array_object"sv)) {
+    if (is_vertex_array_object_extension) {
         auto extension = MUST(Extensions::OESVertexArrayObject::create(realm(), *this));
-        m_enabled_extensions.set(name, extension);
+        m_enabled_extensions.set(cache_key, extension);
         return extension;
     }
-    if (name.equals_ignoring_ascii_case("WEBGL_depth_texture"sv)) {
+    if (is_depth_texture_extension) {
         auto extension = MUST(Extensions::WebGLDepthTexture::create(realm(), *this));
-        m_enabled_extensions.set(name, extension);
+        m_enabled_extensions.set(cache_key, extension);
         return extension;
     }
     if (is_lose_context_extension) {
