@@ -93,6 +93,10 @@ public:
     void disable_vertex_attrib_array(WebIDL::UnsignedLong index);
     void draw_arrays(WebIDL::UnsignedLong mode, WebIDL::Long first, WebIDL::Long count);
     void draw_elements(WebIDL::UnsignedLong mode, WebIDL::Long count, WebIDL::UnsignedLong type, WebIDL::LongLong offset);
+#ifdef AK_OS_RINOS
+    void draw_arrays_instanced_angle(WebIDL::UnsignedLong mode, WebIDL::Long first, WebIDL::Long count, WebIDL::Long instance_count);
+    void draw_elements_instanced_angle(WebIDL::UnsignedLong mode, WebIDL::Long count, WebIDL::UnsignedLong type, WebIDL::LongLong offset, WebIDL::Long instance_count);
+#endif
     void enable(WebIDL::UnsignedLong cap);
     void enable_vertex_attrib_array(WebIDL::UnsignedLong index);
     void finish();
@@ -166,6 +170,9 @@ public:
     void vertex_attrib3fv(WebIDL::UnsignedLong index, Float32List values);
     void vertex_attrib4fv(WebIDL::UnsignedLong index, Float32List values);
     void vertex_attrib_pointer(WebIDL::UnsignedLong index, WebIDL::Long size, WebIDL::UnsignedLong type, bool normalized, WebIDL::Long stride, WebIDL::LongLong offset);
+#ifdef AK_OS_RINOS
+    void vertex_attrib_divisor_angle(WebIDL::UnsignedLong index, WebIDL::UnsignedLong divisor);
+#endif
     void viewport(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height);
 
 protected:

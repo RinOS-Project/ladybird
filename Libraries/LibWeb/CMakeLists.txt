@@ -1235,9 +1235,10 @@ list(APPEND SOURCES ${SKIA_SOURCES})
 if (AK_OS_RINOS)
     list(FILTER SOURCES EXCLUDE REGEX "^WebGL/")
     # Build the WebGL 1 context through the GLES-free RinGL/RinGPU dispatcher.
-    # WebGL 2 and every ANGLE-only extension remain excluded.
+    # WebGL 2 and unsupported ANGLE-only extensions remain excluded.
     list(APPEND SOURCES
         WebGL/EventNames.cpp
+        WebGL/Extensions/ANGLEInstancedArrays.cpp
         WebGL/Extensions/OESElementIndexUint.cpp
         WebGL/Extensions/OESVertexArrayObject.cpp
         WebGL/Extensions/WebGLVertexArrayObjectOES.cpp

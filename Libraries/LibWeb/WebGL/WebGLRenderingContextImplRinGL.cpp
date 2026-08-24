@@ -1482,6 +1482,12 @@ JS::Value WebGLRenderingContextImpl::get_vertex_attrib(WebIDL::UnsignedLong inde
     case RINGL_VERTEX_ATTRIB_ARRAY_STRIDE:
     case RINGL_VERTEX_ATTRIB_ARRAY_TYPE:
         break;
+    case RINGL_VERTEX_ATTRIB_ARRAY_DIVISOR:
+        if (!extension_enabled("ANGLE_instanced_arrays"sv)) {
+            set_error(RINGL_INVALID_ENUM);
+            return JS::js_null();
+        }
+        return JS::Value(ringl_get_vertex_attrib_divisor(index));
     default:
         set_error(RINGL_INVALID_ENUM);
         return JS::js_null();
@@ -2232,6 +2238,43 @@ void WebGLRenderingContextImpl::draw_elements(WebIDL::UnsignedLong mode, WebIDL:
     needs_to_present();
 }
 
+void WebGLRenderingContextImpl::draw_arrays_instanced_angle(WebIDL::UnsignedLong mode, WebIDL::Long first, WebIDL::Long count, WebIDL::Long instance_count)
+{
+    if (!make_rin_gl_current())
+        return;
+    if (instance_count < 0) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    if (!rin_gl_bound_framebuffer_is_webgl1_compatible())
+        return;
+    m_context->notify_content_will_change();
+    ringl_draw_arrays_instanced(mode, first, count, instance_count);
+    needs_to_present();
+}
+
+void WebGLRenderingContextImpl::draw_elements_instanced_angle(WebIDL::UnsignedLong mode, WebIDL::Long count, WebIDL::UnsignedLong type, WebIDL::LongLong offset, WebIDL::Long instance_count)
+{
+    if (!make_rin_gl_current())
+        return;
+    if (type == RINGL_UNSIGNED_INT
+        && !extension_enabled("OES_element_index_uint"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+    if (offset < 0 || instance_count < 0) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    if (!rin_gl_bound_framebuffer_is_webgl1_compatible())
+        return;
+    m_context->notify_content_will_change();
+    ringl_draw_elements_instanced(mode, count, type,
+                                  static_cast<uint64_t>(offset),
+                                  instance_count);
+    needs_to_present();
+}
+
 void WebGLRenderingContextImpl::enable(WebIDL::UnsignedLong cap)
 {
     if (!make_rin_gl_current())
@@ -2624,6 +2667,13 @@ void WebGLRenderingContextImpl::vertex_attrib_pointer(WebIDL::UnsignedLong index
             = m_rin_vertex_attrib_buffers[index];
     else
         m_rin_default_vertex_attrib_buffers[index] = m_rin_vertex_attrib_buffers[index];
+}
+
+void WebGLRenderingContextImpl::vertex_attrib_divisor_angle(WebIDL::UnsignedLong index, WebIDL::UnsignedLong divisor)
+{
+    if (!make_rin_gl_current())
+        return;
+    ringl_vertex_attrib_divisor(index, divisor);
 }
 
 GLuint WebGLRenderingContextImpl::create_vertex_array_oes()

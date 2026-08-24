@@ -29,8 +29,8 @@ extern "C" {
 #include <LibWeb/HTML/ImageBitmap.h>
 #include <LibWeb/HTML/ImageData.h>
 #include <LibWeb/HTML/UniversalGlobalScope.h>
-#ifndef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/ANGLEInstancedArrays.h>
+#ifndef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/EXTBlendMinMax.h>
 #include <LibWeb/WebGL/Extensions/EXTColorBufferFloat.h>
 #include <LibWeb/WebGL/Extensions/EXTRenderSnorm.h>
@@ -209,6 +209,7 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
 #ifdef AK_OS_RINOS
     Vector<String> webgl_extensions;
     if (context().webgl_version() == OpenGLContext::WebGLVersion::WebGL1) {
+        webgl_extensions.append("ANGLE_instanced_arrays"_string);
         webgl_extensions.append("OES_element_index_uint"_string);
         webgl_extensions.append("OES_vertex_array_object"_string);
         webgl_extensions.append("WEBGL_lose_context"_string);
@@ -263,6 +264,11 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         // RinGL executes a bounded uint32_t element stream, but WebGL 1
         // exposes that type only after this extension has been enabled.
         auto extension = MUST(Extensions::OESElementIndexUint::create(realm(), *this));
+        m_enabled_extensions.set(name, extension);
+        return extension;
+    }
+    if (name.equals_ignoring_ascii_case("ANGLE_instanced_arrays"sv)) {
+        auto extension = MUST(Extensions::ANGLEInstancedArrays::create(realm(), *this));
         m_enabled_extensions.set(name, extension);
         return extension;
     }
