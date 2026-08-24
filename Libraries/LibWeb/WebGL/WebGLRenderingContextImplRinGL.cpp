@@ -36,12 +36,6 @@ static constexpr GLenum webgl_invalid_framebuffer_operation = 0x0506;
 static constexpr GLenum webgl_framebuffer_unsupported = 0x8cdd;
 static constexpr GLenum webgl_framebuffer_attachment_component_type_ext = 0x8211;
 static constexpr GLenum webgl_unsigned_normalized_ext = 0x8c17;
-static constexpr GLenum webgl_low_float = 0x8df0;
-static constexpr GLenum webgl_medium_float = 0x8df1;
-static constexpr GLenum webgl_high_float = 0x8df2;
-static constexpr GLenum webgl_low_int = 0x8df3;
-static constexpr GLenum webgl_medium_int = 0x8df4;
-static constexpr GLenum webgl_high_int = 0x8df5;
 
 static bool rin_gl_framebuffer_attachment_valid(GLenum attachment)
 {
@@ -1299,21 +1293,18 @@ GC::Root<WebGLShaderPrecisionFormat> WebGLRenderingContextImpl::get_shader_preci
         return {};
     }
 
-    switch (precisiontype) {
-    case webgl_low_float:
-    case webgl_medium_float:
-    case webgl_high_float:
-        // RSH1 arithmetic is implemented with IEEE-754 binary32 values.
-        return WebGLShaderPrecisionFormat::create(realm(), -126, 127, 23);
-    case webgl_low_int:
-    case webgl_medium_int:
-    case webgl_high_int:
-        // The published RSH1 profile has no shader-visible integer values.
-        return WebGLShaderPrecisionFormat::create(realm(), 0, 0, 0);
-    default:
+    RinGLShaderPrecisionFormatV1 format {};
+    format.struct_size = sizeof(format);
+    format.api_version = RINGL_API_VERSION;
+    if (ringl_get_shader_precision_format(shadertype, precisiontype, &format) != 0) {
+        // Keep the browser's invalid-enum distinction for the two query
+        // tokens. A malformed RinGL output header would instead be a native
+        // invalid-value failure and is not reachable from this local record.
         set_error(RINGL_INVALID_ENUM);
         return {};
     }
+    return WebGLShaderPrecisionFormat::create(realm(), format.range_min,
+        format.range_max, format.precision);
 }
 
 JS::Value WebGLRenderingContextImpl::get_renderbuffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname)
