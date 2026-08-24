@@ -1239,6 +1239,8 @@ if (AK_OS_RINOS)
     list(APPEND SOURCES
         WebGL/EventNames.cpp
         WebGL/Extensions/OESElementIndexUint.cpp
+        WebGL/Extensions/OESVertexArrayObject.cpp
+        WebGL/Extensions/WebGLVertexArrayObjectOES.cpp
         WebGL/Extensions/WebGLLoseContext.cpp
         WebGL/OpenGLContext.cpp
         WebGL/WebGLActiveInfo.cpp

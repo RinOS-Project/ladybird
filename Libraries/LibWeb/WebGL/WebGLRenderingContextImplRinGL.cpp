@@ -10,6 +10,7 @@
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
+#include <LibWeb/WebGL/Extensions/WebGLVertexArrayObjectOES.h>
 #include <LibWeb/WebGL/WebGLActiveInfo.h>
 #include <LibWeb/WebGL/WebGLBuffer.h>
 #include <LibWeb/WebGL/WebGLFramebuffer.h>
@@ -82,6 +83,7 @@ bool WebGLRenderingContextImpl::restore_rin_gl_context(NonnullOwnPtr<OpenGLConte
     m_texture_binding_3d = nullptr;
     m_transform_feedback_binding = nullptr;
     m_current_vertex_array = nullptr;
+    m_rin_current_vertex_array_oes = nullptr;
     m_any_samples_passed = nullptr;
     m_any_samples_passed_conservative = nullptr;
     m_transform_feedback_primitives_written = nullptr;
@@ -89,6 +91,9 @@ bool WebGLRenderingContextImpl::restore_rin_gl_context(NonnullOwnPtr<OpenGLConte
         texture = nullptr;
     for (auto& buffer : m_rin_vertex_attrib_buffers)
         buffer = nullptr;
+    for (auto& buffer : m_rin_default_vertex_attrib_buffers)
+        buffer = nullptr;
+    m_rin_default_element_array_buffer_binding = nullptr;
 
     reset_webgl_base_state_after_context_restore();
     return true;
@@ -316,8 +321,13 @@ void WebGLRenderingContextImpl::bind_buffer(WebIDL::UnsignedLong target, GC::Roo
         return;
     if (target == RINGL_ARRAY_BUFFER)
         m_array_buffer_binding = buffer;
-    else
+    else {
         m_element_array_buffer_binding = buffer;
+        if (m_rin_current_vertex_array_oes)
+            m_rin_current_vertex_array_oes->set_rin_gl_element_array_buffer_binding(buffer.ptr());
+        else
+            m_rin_default_element_array_buffer_binding = buffer;
+    }
 }
 
 void WebGLRenderingContextImpl::bind_framebuffer(WebIDL::UnsignedLong target, GC::Root<WebGLFramebuffer> framebuffer)
@@ -497,9 +507,26 @@ void WebGLRenderingContextImpl::delete_buffer(GC::Root<WebGLBuffer> buffer)
         m_array_buffer_binding = nullptr;
     if (m_element_array_buffer_binding == buffer)
         m_element_array_buffer_binding = nullptr;
+    if (m_rin_current_vertex_array_oes
+        && m_rin_current_vertex_array_oes->rin_gl_element_array_buffer_binding() == buffer)
+        m_rin_current_vertex_array_oes->set_rin_gl_element_array_buffer_binding(nullptr);
+    if (!m_rin_current_vertex_array_oes
+        && m_rin_default_element_array_buffer_binding == buffer)
+        m_rin_default_element_array_buffer_binding = nullptr;
     for (auto& vertex_attrib_buffer : m_rin_vertex_attrib_buffers) {
         if (vertex_attrib_buffer == buffer)
             vertex_attrib_buffer = nullptr;
+    }
+    if (m_rin_current_vertex_array_oes) {
+        for (auto& vertex_attrib_buffer : m_rin_current_vertex_array_oes->rin_gl_vertex_attrib_buffers()) {
+            if (vertex_attrib_buffer == buffer)
+                vertex_attrib_buffer = nullptr;
+        }
+    } else {
+        for (auto& vertex_attrib_buffer : m_rin_default_vertex_attrib_buffers) {
+            if (vertex_attrib_buffer == buffer)
+                vertex_attrib_buffer = nullptr;
+        }
     }
 }
 
@@ -828,6 +855,23 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
     };
 
     switch (pname) {
+    case RINGL_VERTEX_ARRAY_BINDING_OES:
+        if (!extension_enabled("OES_vertex_array_object"sv)) {
+            set_error(RINGL_INVALID_ENUM);
+            return JS::js_null();
+        }
+        if (!m_rin_current_vertex_array_oes)
+            return JS::js_null();
+        if (ringl_get_bound_vertex_array() == 0u) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        if (auto handle_or_error = m_rin_current_vertex_array_oes->handle(this); handle_or_error.is_error()
+            || handle_or_error.release_value() != ringl_get_bound_vertex_array()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(m_rin_current_vertex_array_oes);
     case RINGL_ARRAY_BUFFER_BINDING: {
         if (!get_integer() || values[0] == 0)
             return JS::js_null();
@@ -2575,6 +2619,130 @@ void WebGLRenderingContextImpl::vertex_attrib_pointer(WebIDL::UnsignedLong index
     auto handle_or_error = m_array_buffer_binding->handle(this);
     if (!handle_or_error.is_error() && handle_or_error.release_value() == info.buffer)
         m_rin_vertex_attrib_buffers[index] = m_array_buffer_binding;
+    if (m_rin_current_vertex_array_oes)
+        m_rin_current_vertex_array_oes->rin_gl_vertex_attrib_buffers()[index]
+            = m_rin_vertex_attrib_buffers[index];
+    else
+        m_rin_default_vertex_attrib_buffers[index] = m_rin_vertex_attrib_buffers[index];
+}
+
+GLuint WebGLRenderingContextImpl::create_vertex_array_oes()
+{
+    if (!make_rin_gl_current())
+        return 0;
+
+    GLuint handle = 0;
+    ringl_gen_vertex_arrays(1, &handle);
+    return handle;
+}
+
+void WebGLRenderingContextImpl::rin_gl_save_active_vertex_array_bindings()
+{
+    if (m_rin_current_vertex_array_oes) {
+        for (size_t index = 0; index < m_rin_vertex_attrib_buffers.size(); ++index)
+            m_rin_current_vertex_array_oes->rin_gl_vertex_attrib_buffers()[index]
+                = m_rin_vertex_attrib_buffers[index];
+        m_rin_current_vertex_array_oes->set_rin_gl_element_array_buffer_binding(
+            m_element_array_buffer_binding);
+        return;
+    }
+
+    for (size_t index = 0; index < m_rin_vertex_attrib_buffers.size(); ++index)
+        m_rin_default_vertex_attrib_buffers[index] = m_rin_vertex_attrib_buffers[index];
+    m_rin_default_element_array_buffer_binding = m_element_array_buffer_binding;
+}
+
+void WebGLRenderingContextImpl::rin_gl_restore_active_vertex_array_bindings()
+{
+    auto expected_element_buffer = ringl_get_bound_buffer(RINGL_ELEMENT_ARRAY_BUFFER);
+    auto matches_native_buffer = [this](GC::Ptr<WebGLBuffer> buffer, GLuint native_handle) {
+        if (native_handle == 0 || !buffer)
+            return false;
+        auto handle_or_error = buffer->handle(this);
+        return !handle_or_error.is_error()
+            && handle_or_error.release_value() == native_handle;
+    };
+
+    if (m_rin_current_vertex_array_oes) {
+        m_element_array_buffer_binding = m_rin_current_vertex_array_oes->rin_gl_element_array_buffer_binding();
+        for (size_t index = 0; index < m_rin_vertex_attrib_buffers.size(); ++index)
+            m_rin_vertex_attrib_buffers[index]
+                = m_rin_current_vertex_array_oes->rin_gl_vertex_attrib_buffers()[index];
+    } else {
+        m_element_array_buffer_binding = m_rin_default_element_array_buffer_binding;
+        for (size_t index = 0; index < m_rin_vertex_attrib_buffers.size(); ++index)
+            m_rin_vertex_attrib_buffers[index] = m_rin_default_vertex_attrib_buffers[index];
+    }
+    if (!matches_native_buffer(m_element_array_buffer_binding, expected_element_buffer))
+        m_element_array_buffer_binding = nullptr;
+
+    for (uint32_t index = 0; index < m_rin_vertex_attrib_buffers.size(); ++index) {
+        RinGLVertexAttribInfoV1 info {};
+
+        info.struct_size = sizeof(info);
+        info.api_version = RINGL_API_VERSION;
+        if (ringl_get_vertex_attrib(index, &info) != 0
+            || !matches_native_buffer(m_rin_vertex_attrib_buffers[index], info.buffer))
+            m_rin_vertex_attrib_buffers[index] = nullptr;
+    }
+}
+
+void WebGLRenderingContextImpl::bind_vertex_array_oes(GC::Root<Extensions::WebGLVertexArrayObjectOES> array_object)
+{
+    if (!make_rin_gl_current())
+        return;
+
+    GLuint handle = 0;
+    if (array_object) {
+        auto handle_or_error = array_object->handle(this);
+        if (handle_or_error.is_error() || array_object->is_deleted()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        handle = handle_or_error.release_value();
+    }
+
+    rin_gl_save_active_vertex_array_bindings();
+    ringl_bind_vertex_array(handle);
+    if (ringl_get_bound_vertex_array() != handle)
+        return;
+    m_rin_current_vertex_array_oes = array_object.ptr();
+    rin_gl_restore_active_vertex_array_bindings();
+}
+
+bool WebGLRenderingContextImpl::is_vertex_array_oes(GC::Root<Extensions::WebGLVertexArrayObjectOES> array_object)
+{
+    if (!make_rin_gl_current() || !array_object || array_object->is_deleted())
+        return false;
+
+    auto handle_or_error = array_object->handle(this);
+    if (handle_or_error.is_error())
+        return false;
+    return ringl_is_vertex_array(handle_or_error.release_value()) != 0;
+}
+
+void WebGLRenderingContextImpl::delete_vertex_array_oes(GC::Root<Extensions::WebGLVertexArrayObjectOES> array_object)
+{
+    if (!make_rin_gl_current() || !array_object || array_object->is_deleted())
+        return;
+
+    auto handle_or_error = array_object->handle(this);
+    if (handle_or_error.is_error()) {
+        set_error(RINGL_INVALID_OPERATION);
+        return;
+    }
+    auto handle = handle_or_error.release_value();
+    auto was_current = m_rin_current_vertex_array_oes == array_object.ptr();
+    if (was_current)
+        rin_gl_save_active_vertex_array_bindings();
+    ringl_delete_vertex_arrays(1, &handle);
+    if (ringl_is_vertex_array(handle) != 0)
+        return;
+    array_object->mark_deleted();
+    if (was_current) {
+        m_rin_current_vertex_array_oes = nullptr;
+        rin_gl_restore_active_vertex_array_bindings();
+    }
 }
 
 void WebGLRenderingContextImpl::viewport(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height)
@@ -2599,6 +2767,10 @@ void WebGLRenderingContextImpl::visit_edges(JS::Cell::Visitor& visitor)
         visitor.visit(binding);
     for (auto& buffer : m_rin_vertex_attrib_buffers)
         visitor.visit(buffer);
+    for (auto& buffer : m_rin_default_vertex_attrib_buffers)
+        visitor.visit(buffer);
+    visitor.visit(m_rin_default_element_array_buffer_binding);
+    visitor.visit(m_rin_current_vertex_array_oes);
 
     visitor.visit(m_uniform_buffer_binding);
     visitor.visit(m_copy_read_buffer_binding);

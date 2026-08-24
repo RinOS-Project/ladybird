@@ -9,6 +9,9 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/WebGLVertexArrayObjectOESPrototype.h>
 #include <LibWeb/WebGL/Extensions/WebGLVertexArrayObjectOES.h>
+#ifdef AK_OS_RINOS
+#include <LibWeb/WebGL/WebGLBuffer.h>
+#endif
 
 namespace Web::WebGL::Extensions {
 
@@ -31,5 +34,15 @@ void WebGLVertexArrayObjectOES::initialize(JS::Realm& realm)
     WEB_SET_PROTOTYPE_FOR_INTERFACE(WebGLVertexArrayObjectOES);
     Base::initialize(realm);
 }
+
+#ifdef AK_OS_RINOS
+void WebGLVertexArrayObjectOES::visit_edges(Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    for (auto& buffer : m_rin_gl_vertex_attrib_buffers)
+        visitor.visit(buffer);
+    visitor.visit(m_rin_gl_element_array_buffer_binding);
+}
+#endif
 
 }

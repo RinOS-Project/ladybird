@@ -21,6 +21,12 @@ namespace Web::WebGL {
 
 using namespace Web::HTML;
 
+#ifdef AK_OS_RINOS
+namespace Extensions {
+class WebGLVertexArrayObjectOES;
+}
+#endif
+
 class WebGLRenderingContextImpl : public WebGLRenderingContextBase {
     WEB_NON_IDL_PLATFORM_OBJECT(WebGLRenderingContextImpl, WebGLRenderingContextBase);
 
@@ -38,6 +44,11 @@ public:
     // and the canvas event, so report that transition through this embedding
     // hook instead of leaving it as a private OpenGLContext condition.
     virtual void report_context_loss() const = 0;
+
+    GLuint create_vertex_array_oes();
+    void delete_vertex_array_oes(GC::Root<Extensions::WebGLVertexArrayObjectOES>);
+    bool is_vertex_array_oes(GC::Root<Extensions::WebGLVertexArrayObjectOES>);
+    void bind_vertex_array_oes(GC::Root<Extensions::WebGLVertexArrayObjectOES>);
 #endif
 
     void active_texture(WebIDL::UnsignedLong texture);
@@ -192,6 +203,12 @@ protected:
     // getVertexAttrib(..., VERTEX_ATTRIB_ARRAY_BUFFER_BINDING) can return
     // the original WebGL object, not a duplicate wrapper for its handle.
     Array<GC::Ptr<WebGLBuffer>, 16> m_rin_vertex_attrib_buffers;
+    Array<GC::Ptr<WebGLBuffer>, 16> m_rin_default_vertex_attrib_buffers;
+    GC::Ptr<WebGLBuffer> m_rin_default_element_array_buffer_binding;
+    GC::Ptr<Extensions::WebGLVertexArrayObjectOES> m_rin_current_vertex_array_oes;
+
+    void rin_gl_save_active_vertex_array_bindings();
+    void rin_gl_restore_active_vertex_array_bindings();
 #endif
 
     virtual void visit_edges(JS::Cell::Visitor&) override;

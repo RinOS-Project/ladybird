@@ -519,6 +519,8 @@ if (AK_OS_RINOS)
     # expose or call the retired direct Aquamarine surface backend.
     # WebGL 2 and ANGLE-only extension bindings remain unavailable.
     libweb_js_bindings(WebGL/Extensions/OESElementIndexUint)
+    libweb_js_bindings(WebGL/Extensions/OESVertexArrayObject)
+    libweb_js_bindings(WebGL/Extensions/WebGLVertexArrayObjectOES)
     libweb_js_bindings(WebGL/Extensions/WebGLLoseContext)
     libweb_js_bindings(WebGL/WebGLActiveInfo)
     libweb_js_bindings(WebGL/WebGLBuffer)
