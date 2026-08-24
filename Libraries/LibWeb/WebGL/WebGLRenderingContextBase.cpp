@@ -422,6 +422,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
             m_enabled_extensions.set("WEBGL_color_buffer_float"_string,
                                      color_buffer_extension);
         }
+        context().enable_rin_gl_float_color_buffer();
         return extension;
     }
     if (is_texture_float_linear_extension) {
@@ -438,6 +439,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         return extension;
     }
     if (is_color_buffer_float_extension) {
+        context().enable_rin_gl_float_color_buffer();
         auto extension = MUST(Extensions::WebGLColorBufferFloat::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
         return extension;
