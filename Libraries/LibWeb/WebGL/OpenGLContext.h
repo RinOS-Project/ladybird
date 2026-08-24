@@ -57,6 +57,9 @@ public:
     void lose_context();
     bool rin_gl_is_ready() const;
     u32 rin_gl_get_error();
+    // OES_texture_float_linear enables a context-local RinGL capability only
+    // after JavaScript has acquired the extension object.
+    void enable_rin_gl_float_texture_linear();
     u64 rin_gl_get_shader_source_length(u32 shader);
     u64 rin_gl_copy_shader_source(u32 shader, char* buffer, u64 buffer_size);
     // HTMLCanvasElement calls this only after it has taken the immutable

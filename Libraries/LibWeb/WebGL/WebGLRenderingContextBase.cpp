@@ -46,6 +46,7 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/OESElementIndexUint.h>
 #ifdef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/OESTextureFloat.h>
+#include <LibWeb/WebGL/Extensions/OESTextureFloatLinear.h>
 #include <LibWeb/WebGL/Extensions/OESVertexArrayObject.h>
 #include <LibWeb/WebGL/Extensions/WebGLColorBufferFloat.h>
 #include <LibWeb/WebGL/Extensions/WebGLDepthTexture.h>
@@ -319,6 +320,7 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
         webgl_extensions.append("ANGLE_instanced_arrays"_string);
         webgl_extensions.append("OES_element_index_uint"_string);
         webgl_extensions.append("OES_texture_float"_string);
+        webgl_extensions.append("OES_texture_float_linear"_string);
         webgl_extensions.append("OES_vertex_array_object"_string);
         webgl_extensions.append("WEBGL_color_buffer_float"_string);
         webgl_extensions.append("WEBGL_depth_texture"_string);
@@ -363,6 +365,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     bool const is_element_index_uint_extension = name.equals_ignoring_ascii_case("OES_element_index_uint"sv);
     bool const is_instanced_arrays_extension = name.equals_ignoring_ascii_case("ANGLE_instanced_arrays"sv);
     bool const is_texture_float_extension = name.equals_ignoring_ascii_case("OES_texture_float"sv);
+    bool const is_texture_float_linear_extension = name.equals_ignoring_ascii_case("OES_texture_float_linear"sv);
     bool const is_vertex_array_object_extension = name.equals_ignoring_ascii_case("OES_vertex_array_object"sv);
     bool const is_color_buffer_float_extension = name.equals_ignoring_ascii_case("WEBGL_color_buffer_float"sv);
     bool const is_depth_texture_extension = name.equals_ignoring_ascii_case("WEBGL_depth_texture"sv);
@@ -382,6 +385,8 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         cache_key = "ANGLE_instanced_arrays"_string;
     else if (is_texture_float_extension)
         cache_key = "OES_texture_float"_string;
+    else if (is_texture_float_linear_extension)
+        cache_key = "OES_texture_float_linear"_string;
     else if (is_vertex_array_object_extension)
         cache_key = "OES_vertex_array_object"_string;
     else if (is_color_buffer_float_extension)
@@ -407,6 +412,14 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     }
     if (is_texture_float_extension) {
         auto extension = MUST(Extensions::OESTextureFloat::create(realm(), *this));
+        m_enabled_extensions.set(cache_key, extension);
+        return extension;
+    }
+    if (is_texture_float_linear_extension) {
+        // The native sampler supports Float filtering, but keep it WebGL
+        // incomplete until this exact extension has been requested.
+        context().enable_rin_gl_float_texture_linear();
+        auto extension = MUST(Extensions::OESTextureFloatLinear::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
         return extension;
     }

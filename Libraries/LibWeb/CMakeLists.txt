@@ -1241,6 +1241,7 @@ if (AK_OS_RINOS)
         WebGL/Extensions/ANGLEInstancedArrays.cpp
         WebGL/Extensions/OESElementIndexUint.cpp
         WebGL/Extensions/OESTextureFloat.cpp
+        WebGL/Extensions/OESTextureFloatLinear.cpp
         WebGL/Extensions/OESVertexArrayObject.cpp
         WebGL/Extensions/WebGLColorBufferFloat.cpp
         WebGL/Extensions/WebGLDepthTexture.cpp
