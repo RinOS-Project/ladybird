@@ -520,6 +520,7 @@ if (AK_OS_RINOS)
     # WebGL 2 and other ANGLE-only extension bindings remain unavailable.
     libweb_js_bindings(WebGL/Extensions/ANGLEInstancedArrays)
     libweb_js_bindings(WebGL/Extensions/EXTBlendMinMax)
+    libweb_js_bindings(WebGL/Extensions/EXTColorBufferHalfFloat)
     libweb_js_bindings(WebGL/Extensions/OESElementIndexUint)
     libweb_js_bindings(WebGL/Extensions/OESTextureFloat)
     libweb_js_bindings(WebGL/Extensions/OESTextureFloatLinear)

@@ -1240,6 +1240,7 @@ if (AK_OS_RINOS)
         WebGL/EventNames.cpp
         WebGL/Extensions/ANGLEInstancedArrays.cpp
         WebGL/Extensions/EXTBlendMinMax.cpp
+        WebGL/Extensions/EXTColorBufferHalfFloat.cpp
         WebGL/Extensions/OESElementIndexUint.cpp
         WebGL/Extensions/OESTextureFloat.cpp
         WebGL/Extensions/OESTextureFloatLinear.cpp

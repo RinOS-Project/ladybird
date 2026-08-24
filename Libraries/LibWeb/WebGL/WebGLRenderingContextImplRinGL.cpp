@@ -249,11 +249,8 @@ bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_is_webgl1_compatible()
         set_error(webgl_invalid_framebuffer_operation);
         return false;
     }
-    if (color_component_type == static_cast<int>(RINGL_HALF_FLOAT_OES)) {
-        // The implemented OES_texture_half_float path is sampled texture
-        // storage only. Do not expose the native Float32 shadow as a
-        // half-float FBO until EXT_color_buffer_half_float's RGBA16F output,
-        // renderbuffer, readback, and precision contracts are implemented.
+    if (color_component_type == static_cast<int>(RINGL_HALF_FLOAT_OES)
+        && !extension_enabled("EXT_color_buffer_half_float"sv)) {
         set_error(webgl_invalid_framebuffer_operation);
         return false;
     }
@@ -2497,9 +2494,8 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
         // RinGL's current FBO texture profile is TEXTURE_2D only.
         return JS::Value(0);
     case webgl_framebuffer_attachment_component_type_ext: {
-        uint32_t is_float = RINGL_FALSE;
-
-        if (!extension_enabled("WEBGL_color_buffer_float"sv)) {
+        if (!extension_enabled("WEBGL_color_buffer_float"sv)
+            && !extension_enabled("EXT_color_buffer_half_float"sv)) {
             set_error(RINGL_INVALID_ENUM);
             return JS::js_null();
         }
@@ -2517,13 +2513,16 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
             return JS::Value(RINGL_FLOAT);
         if (attachment == RINGL_STENCIL_ATTACHMENT)
             return JS::Value(RINGL_UNSIGNED_INT);
+        uint32_t component_type = RINGL_UNSIGNED_BYTE;
+
         if (attachment != RINGL_COLOR_ATTACHMENT0
-            || ringl_framebuffer_color_attachment_is_float(&is_float) != 0) {
+            || ringl_framebuffer_color_attachment_component_type(&component_type) != 0) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
-        return JS::Value(is_float != RINGL_FALSE ? RINGL_FLOAT
-                                                 : webgl_unsigned_normalized_ext);
+        return JS::Value(component_type == RINGL_FLOAT ? RINGL_FLOAT
+            : component_type == RINGL_HALF_FLOAT_OES ? RINGL_HALF_FLOAT_OES
+                                                     : webgl_unsigned_normalized_ext);
     }
     default:
         set_error(RINGL_INVALID_ENUM);
@@ -2545,7 +2544,8 @@ WebIDL::UnsignedLong WebGLRenderingContextImpl::check_framebuffer_status(WebIDL:
         if (color_component_type == static_cast<int>(RINGL_FLOAT)
             && !extension_enabled("WEBGL_color_buffer_float"sv))
             return webgl_framebuffer_unsupported;
-        if (color_component_type == static_cast<int>(RINGL_HALF_FLOAT_OES))
+        if (color_component_type == static_cast<int>(RINGL_HALF_FLOAT_OES)
+            && !extension_enabled("EXT_color_buffer_half_float"sv))
             return webgl_framebuffer_unsupported;
     }
     return ringl_check_framebuffer_status(target);
@@ -2559,6 +2559,11 @@ void WebGLRenderingContextImpl::renderbuffer_storage(WebIDL::UnsignedLong target
         internalformat = RINGL_DEPTH24_STENCIL8;
     if (internalformat == RINGL_RGBA32F
         && !extension_enabled("WEBGL_color_buffer_float"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+    if ((internalformat == RINGL_RGBA16F || internalformat == RINGL_RGB16F)
+        && !extension_enabled("EXT_color_buffer_half_float"sv)) {
         set_error(RINGL_INVALID_ENUM);
         return;
     }

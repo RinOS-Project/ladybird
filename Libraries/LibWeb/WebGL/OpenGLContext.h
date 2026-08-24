@@ -66,6 +66,8 @@ public:
     // WEBGL_color_buffer_float enables unclamped blendColor state only after
     // its WebGL extension object has been acquired.
     void enable_rin_gl_float_color_buffer();
+    // EXT_color_buffer_half_float has an independent WebGL extension gate.
+    void enable_rin_gl_half_float_color_buffer();
     // EXT_blend_minmax enables MIN/MAX equations only after its WebGL
     // extension object has been acquired.
     void enable_rin_gl_blend_minmax();

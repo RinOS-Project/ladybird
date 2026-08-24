@@ -1,0 +1,12 @@
+#import <WebGL/Types.idl>
+
+// https://registry.khronos.org/webgl/extensions/EXT_color_buffer_half_float/
+// The title-cased interface is private because LegacyNoInterfaceObject keeps
+// the extension name out of the global namespace.
+[Exposed=(Window,Worker), LegacyNoInterfaceObject]
+interface EXTColorBufferHalfFloat {
+    const GLenum RGBA16F_EXT = 0x881A;
+    const GLenum RGB16F_EXT = 0x881B;
+    const GLenum FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE_EXT = 0x8211;
+    const GLenum UNSIGNED_NORMALIZED_EXT = 0x8C17;
+};

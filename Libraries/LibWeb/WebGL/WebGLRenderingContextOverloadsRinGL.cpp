@@ -138,7 +138,8 @@ void WebGLRenderingContextOverloads::read_pixels(WebIDL::Long x, WebIDL::Long y,
         return;
     }
     if (type == RINGL_FLOAT) {
-        if (!extension_enabled("WEBGL_color_buffer_float"sv)) {
+        if (!extension_enabled("WEBGL_color_buffer_float"sv)
+            && !extension_enabled("EXT_color_buffer_half_float"sv)) {
             set_error(RINGL_INVALID_ENUM);
             return;
         }
@@ -149,7 +150,6 @@ void WebGLRenderingContextOverloads::read_pixels(WebIDL::Long x, WebIDL::Long y,
             return;
         }
     }
-
     // The browser-owned view must remain bounded all the way through the
     // readback API. In particular, do not reintroduce the raw-pointer
     // ringl_read_pixels() path here: it cannot reject a short destination.

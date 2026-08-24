@@ -56,6 +56,7 @@ struct OpenGLContext::Impl {
     bool float_texture_linear_enabled { false };
     bool half_float_texture_linear_enabled { false };
     bool float_color_buffer_enabled { false };
+    bool half_float_color_buffer_enabled { false };
     bool blend_minmax_enabled { false };
     // `preserveDrawingBuffer: false` clears only after HTMLCanvasElement has
     // copied the caller-owned BGRA drawing buffer into its compositor image.
@@ -244,6 +245,11 @@ void OpenGLContext::allocate_painting_surface_if_needed()
         result = RINGL_AQUAMARINE_SURFACE_STATE;
     }
     if (result == RINGL_AQUAMARINE_SURFACE_OK
+        && m_impl->half_float_color_buffer_enabled
+        && ringl_enable_webgl_half_float_color_buffer() != 0) {
+        result = RINGL_AQUAMARINE_SURFACE_STATE;
+    }
+    if (result == RINGL_AQUAMARINE_SURFACE_OK
         && m_impl->blend_minmax_enabled
         && ringl_enable_webgl_blend_minmax() != 0) {
         result = RINGL_AQUAMARINE_SURFACE_STATE;
@@ -328,6 +334,15 @@ void OpenGLContext::enable_rin_gl_float_color_buffer()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_float_color_buffer() != 0)
+        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+}
+
+void OpenGLContext::enable_rin_gl_half_float_color_buffer()
+{
+    m_impl->half_float_color_buffer_enabled = true;
+    make_current();
+    if (m_impl->bridge.context
+        && ringl_enable_webgl_half_float_color_buffer() != 0)
         fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
 }
 
