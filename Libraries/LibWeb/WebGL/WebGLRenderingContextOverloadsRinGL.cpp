@@ -32,6 +32,12 @@ static bool uses_webgl_depth_texture_format(WebIDL::UnsignedLong format)
     return format == RINGL_DEPTH_COMPONENT || format == RINGL_DEPTH_STENCIL;
 }
 
+static bool uses_ext_srgb_internal_format(WebIDL::Long internalformat)
+{
+    return internalformat == RINGL_SRGB_EXT
+        || internalformat == RINGL_SRGB_ALPHA_EXT;
+}
+
 static bool is_webgl1_color_texture_format(WebIDL::UnsignedLong format)
 {
     return format == RINGL_RGBA || format == RINGL_RGB || format == RINGL_ALPHA
@@ -175,6 +181,11 @@ void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, We
         set_error(RINGL_INVALID_ENUM);
         return;
     }
+    if (uses_ext_srgb_internal_format(internalformat)
+        && !extension_enabled("EXT_sRGB"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
     if (uses_oes_texture_float_format(internalformat, format, type)
         && !extension_enabled("OES_texture_float"sv)) {
         set_error(RINGL_INVALID_ENUM);
@@ -216,6 +227,11 @@ void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target
         return;
     if (uses_webgl_depth_texture_format(format)
         && !extension_enabled("WEBGL_depth_texture"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+    if ((format == RINGL_SRGB_EXT || format == RINGL_SRGB_ALPHA_EXT)
+        && !extension_enabled("EXT_sRGB"sv)) {
         set_error(RINGL_INVALID_ENUM);
         return;
     }
@@ -302,6 +318,11 @@ void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, We
         set_error(RINGL_INVALID_ENUM);
         return;
     }
+    if (uses_ext_srgb_internal_format(internalformat)
+        && !extension_enabled("EXT_sRGB"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
     if (uses_oes_texture_float_format(internalformat, format, type)
         && !extension_enabled("OES_texture_float"sv)) {
         set_error(RINGL_INVALID_ENUM);
@@ -313,7 +334,12 @@ void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, We
         return;
     }
 
-    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type);
+    // The bitmap exporter understands the physical RGB/RGBA layouts. Keep the
+    // public sRGB token for RinGL, which performs the required linearization.
+    auto source_format = format == RINGL_SRGB_EXT ? RINGL_RGB
+        : format == RINGL_SRGB_ALPHA_EXT ? RINGL_RGBA
+                                         : format;
+    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, source_format, type);
     if (!maybe_converted_texture.has_value())
         return;
     auto converted_texture = maybe_converted_texture.release_value();
@@ -331,6 +357,11 @@ void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target
         set_error(RINGL_INVALID_ENUM);
         return;
     }
+    if ((format == RINGL_SRGB_EXT || format == RINGL_SRGB_ALPHA_EXT)
+        && !extension_enabled("EXT_sRGB"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
     if (uses_oes_texture_float_format(format, type)
         && !extension_enabled("OES_texture_float"sv)) {
         set_error(RINGL_INVALID_ENUM);
@@ -342,7 +373,12 @@ void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target
         return;
     }
 
-    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type);
+    // See tex_image2d(): exporter layout is RGB/RGBA, while RinGL retains the
+    // logical EXT_sRGB format token for the upload conversion.
+    auto source_format = format == RINGL_SRGB_EXT ? RINGL_RGB
+        : format == RINGL_SRGB_ALPHA_EXT ? RINGL_RGBA
+                                         : format;
+    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, source_format, type);
     if (!maybe_converted_texture.has_value())
         return;
     auto converted_texture = maybe_converted_texture.release_value();
