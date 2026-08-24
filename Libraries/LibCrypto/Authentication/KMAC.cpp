@@ -37,11 +37,42 @@ KMAC::KMAC(KMACKind kind)
 
 #ifdef AK_OS_RINOS
 
+#include <AK/Memory.h>
+#include <AK/ScopeGuard.h>
+#include <LibCrypto/RinCryptoImpl.h>
+
 namespace Crypto::Authentication {
 
-ErrorOr<ByteBuffer> KMAC::sign(ReadonlyBytes, ReadonlyBytes, u32, Optional<ReadonlyBytes>) const
+// SP 800-185, section 4.3. KMAC is cSHAKE with N = "KMAC", a byte-padded
+// encoded key, and a right-encoded requested output length.
+ErrorOr<ByteBuffer> KMAC::sign(ReadonlyBytes key, ReadonlyBytes message, u32 output_length_bits, Optional<ReadonlyBytes> customization) const
 {
-    return Error::from_string_literal("KMAC is not supported on RinOS");
+    if (output_length_bits == 0)
+        return Error::from_string_literal("KMAC output length must be greater than zero");
+    if (output_length_bits % 8 != 0)
+        return Error::from_string_literal("KMAC output length must be a multiple of 8");
+
+    rin_keccak_ctx ctx;
+    ScopeGuard clear_context = [&] { secure_zero(&ctx, sizeof(ctx)); };
+    if (m_kind == KMACKind::KMAC128)
+        rin_cshake128_init(&ctx);
+    else
+        rin_cshake256_init(&ctx);
+
+    static constexpr u8 function_name[] { 'K', 'M', 'A', 'C' };
+    auto customization_bytes = customization.value_or(ReadonlyBytes {});
+    if (!rin_sp800_185_absorb_cshake_prefix(&ctx,
+            function_name, sizeof(function_name),
+            customization_bytes.data(), customization_bytes.size())
+        || !rin_sp800_185_absorb_bytepad_encoded_string(&ctx, key.data(), key.size()))
+        return Error::from_string_literal("KMAC input is too large");
+
+    rin_keccak_update(&ctx, message.data(), message.size());
+    rin_sp800_185_absorb_right_encode(&ctx, output_length_bits);
+
+    auto output = TRY(ByteBuffer::create_uninitialized(output_length_bits / 8));
+    rin_shake_squeeze(&ctx, output.data(), output.size());
+    return output;
 }
 
 }

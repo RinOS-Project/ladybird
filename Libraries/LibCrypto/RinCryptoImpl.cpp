@@ -9,6 +9,8 @@
 
 #ifdef AK_OS_RINOS
 
+#include <AK/Assertions.h>
+#include <AK/NumericLimits.h>
 #include <LibCrypto/RinCryptoImpl.h>
 #include <string.h>
 
@@ -274,7 +276,10 @@ static constexpr int keccak_pi[25] = {
     14, 24, 9, 19, 4,
 };
 
-static inline u64 keccak_rotl64(u64 x, int n) { return (x << n) | (x >> (64 - n)); }
+static inline u64 keccak_rotl64(u64 x, int n)
+{
+    return n == 0 ? x : (x << n) | (x >> (64 - n));
+}
 
 static void keccak_f1600(u64* state)
 {
@@ -302,71 +307,226 @@ static void keccak_f1600(u64* state)
     }
 }
 
-static void keccak_init(rin_keccak_ctx* ctx, size_t rate, size_t digest_len, bool xof)
+static void keccak_init(rin_keccak_ctx* ctx, size_t rate, size_t digest_len, bool xof, u8 domain_separator)
 {
     memset(ctx, 0, sizeof(*ctx));
     ctx->rate = rate;
     ctx->capacity = 200 - rate;
     ctx->digest_len = digest_len;
     ctx->xof = xof;
+    ctx->domain_separator = domain_separator;
 }
 
-void rin_sha3_256_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 136, 32, false); }
-void rin_sha3_384_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 104, 48, false); }
-void rin_sha3_512_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 72, 64, false); }
+void rin_sha3_256_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 136, 32, false, 0x06); }
+void rin_sha3_384_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 104, 48, false, 0x06); }
+void rin_sha3_512_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 72, 64, false, 0x06); }
 
-void rin_keccak_update(rin_keccak_ctx* ctx, u8 const* data, size_t len)
+static void keccak_absorb_block(rin_keccak_ctx* ctx)
 {
-    for (size_t i = 0; i < len; i++) {
-        ctx->buf[ctx->buflen++] = data[i];
-        if (ctx->buflen == ctx->rate) {
-            for (size_t j = 0; j < ctx->rate / 8; j++) {
-                u64 lane;
-                memcpy(&lane, ctx->buf + j * 8, 8);
-                ctx->state[j] ^= lane;
-            }
-            keccak_f1600(ctx->state);
-            ctx->buflen = 0;
-        }
-    }
-}
-
-void rin_keccak_final(rin_keccak_ctx* ctx, u8* digest)
-{
-    // Pad: SHA-3 uses 0x06, SHAKE uses 0x1f
-    u8 pad_byte = ctx->xof ? 0x1f : 0x06;
-    ctx->buf[ctx->buflen++] = pad_byte;
-    memset(ctx->buf + ctx->buflen, 0, ctx->rate - ctx->buflen);
-    ctx->buf[ctx->rate - 1] |= 0x80;
-
     for (size_t j = 0; j < ctx->rate / 8; j++) {
         u64 lane;
         memcpy(&lane, ctx->buf + j * 8, 8);
         ctx->state[j] ^= lane;
     }
     keccak_f1600(ctx->state);
+    ctx->buflen = 0;
+}
 
+void rin_keccak_update(rin_keccak_ctx* ctx, u8 const* data, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        ctx->buf[ctx->buflen++] = data[i];
+        if (ctx->buflen == ctx->rate)
+            keccak_absorb_block(ctx);
+    }
+}
+
+static void keccak_finalize(rin_keccak_ctx* ctx)
+{
+    if (ctx->finalized)
+        return;
+
+    ctx->buf[ctx->buflen] = ctx->domain_separator;
+    memset(ctx->buf + ctx->buflen + 1, 0, ctx->rate - ctx->buflen - 1);
+    ctx->buf[ctx->rate - 1] |= 0x80;
+
+    keccak_absorb_block(ctx);
+    memset(ctx->buf, 0, sizeof(ctx->buf));
+    ctx->squeeze_offset = 0;
+    ctx->finalized = true;
+}
+
+void rin_keccak_final(rin_keccak_ctx* ctx, u8* digest)
+{
+    keccak_finalize(ctx);
     memcpy(digest, ctx->state, ctx->digest_len);
 }
 
-void rin_shake128_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 168, 0, true); }
-void rin_shake256_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 136, 0, true); }
+void rin_shake128_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 168, 0, true, 0x1f); }
+void rin_shake256_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 136, 0, true, 0x1f); }
+void rin_cshake128_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 168, 0, true, 0x04); }
+void rin_cshake256_init(rin_keccak_ctx* ctx) { keccak_init(ctx, 136, 0, true, 0x04); }
 
 void rin_shake_squeeze(rin_keccak_ctx* ctx, u8* out, size_t outlen)
 {
-    // First, finalize if not yet done (indicated by digest_len == 0 and buflen > 0 or first call)
-    // For simplicity, caller should finalize first via rin_keccak_final, then squeeze
-    // This is a simplified XOF squeeze
-    size_t offset = 0;
-    while (offset < outlen) {
-        size_t chunk = outlen - offset;
-        if (chunk > ctx->rate)
-            chunk = ctx->rate;
-        memcpy(out + offset, ctx->state, chunk);
-        offset += chunk;
-        if (offset < outlen)
+    keccak_finalize(ctx);
+
+    while (outlen > 0) {
+        if (ctx->squeeze_offset == ctx->rate) {
             keccak_f1600(ctx->state);
+            ctx->squeeze_offset = 0;
+        }
+
+        size_t chunk = ctx->rate - ctx->squeeze_offset;
+        if (chunk > outlen)
+            chunk = outlen;
+        memcpy(out, reinterpret_cast<u8 const*>(ctx->state) + ctx->squeeze_offset, chunk);
+        out += chunk;
+        outlen -= chunk;
+        ctx->squeeze_offset += chunk;
     }
+}
+
+static size_t sp800_185_left_encode(u64 value, u8 output[9])
+{
+    size_t encoded_value_length = 1;
+    for (u64 remaining = value; remaining > 0xff; remaining >>= 8)
+        encoded_value_length++;
+
+    output[0] = static_cast<u8>(encoded_value_length);
+    for (size_t index = 0; index < encoded_value_length; index++)
+        output[encoded_value_length - index] = static_cast<u8>(value >> (index * 8));
+    return encoded_value_length + 1;
+}
+
+static size_t sp800_185_right_encode(u64 value, u8 output[9])
+{
+    size_t encoded_value_length = 1;
+    for (u64 remaining = value; remaining > 0xff; remaining >>= 8)
+        encoded_value_length++;
+
+    for (size_t index = 0; index < encoded_value_length; index++)
+        output[encoded_value_length - index - 1] = static_cast<u8>(value >> (index * 8));
+    output[encoded_value_length] = static_cast<u8>(encoded_value_length);
+    return encoded_value_length + 1;
+}
+
+static bool sp800_185_bits_for_bytes(size_t byte_count, u64& bit_count)
+{
+    if (byte_count > NumericLimits<u64>::max() / 8)
+        return false;
+    bit_count = static_cast<u64>(byte_count) * 8;
+    return true;
+}
+
+static bool sp800_185_padded_length(size_t rate, size_t encoded_string_length, size_t& padded_length, size_t& padding_length)
+{
+    u8 encoded_rate[9];
+    auto encoded_rate_length = sp800_185_left_encode(rate, encoded_rate);
+    if (encoded_string_length > NumericLimits<size_t>::max() - encoded_rate_length)
+        return false;
+
+    auto unpadded_length = encoded_rate_length + encoded_string_length;
+    padding_length = (rate - (unpadded_length % rate)) % rate;
+    if (padding_length > NumericLimits<size_t>::max() - unpadded_length)
+        return false;
+
+    padded_length = unpadded_length + padding_length;
+    return true;
+}
+
+static bool sp800_185_encoded_string_length(size_t string_length, size_t& encoded_length)
+{
+    u64 bit_count;
+    if (!sp800_185_bits_for_bytes(string_length, bit_count))
+        return false;
+
+    u8 encoded_bits[9];
+    auto encoded_bits_length = sp800_185_left_encode(bit_count, encoded_bits);
+    if (string_length > NumericLimits<size_t>::max() - encoded_bits_length)
+        return false;
+
+    encoded_length = encoded_bits_length + string_length;
+    return true;
+}
+
+static void sp800_185_absorb_left_encode(rin_keccak_ctx* ctx, u64 value)
+{
+    u8 encoded[9];
+    auto encoded_length = sp800_185_left_encode(value, encoded);
+    rin_keccak_update(ctx, encoded, encoded_length);
+}
+
+static void sp800_185_absorb_encode_string(rin_keccak_ctx* ctx, u8 const* string, size_t string_length)
+{
+    u64 bit_count;
+    auto valid_length = sp800_185_bits_for_bytes(string_length, bit_count);
+    VERIFY(valid_length);
+    sp800_185_absorb_left_encode(ctx, bit_count);
+    rin_keccak_update(ctx, string, string_length);
+}
+
+static void sp800_185_absorb_zero_padding(rin_keccak_ctx* ctx, size_t padding_length)
+{
+    u8 zeroes[200] {};
+    while (padding_length > 0) {
+        auto chunk = padding_length < sizeof(zeroes) ? padding_length : sizeof(zeroes);
+        rin_keccak_update(ctx, zeroes, chunk);
+        padding_length -= chunk;
+    }
+}
+
+bool rin_sp800_185_absorb_cshake_prefix(rin_keccak_ctx* ctx,
+    u8 const* function_name, size_t function_name_len,
+    u8 const* customization, size_t customization_len)
+{
+    if ((function_name_len > 0 && !function_name) || (customization_len > 0 && !customization))
+        return false;
+
+    size_t encoded_function_name_length;
+    size_t encoded_customization_length;
+    if (!sp800_185_encoded_string_length(function_name_len, encoded_function_name_length)
+        || !sp800_185_encoded_string_length(customization_len, encoded_customization_length)
+        || encoded_customization_length > NumericLimits<size_t>::max() - encoded_function_name_length)
+        return false;
+
+    size_t prefix_length;
+    size_t padding_length;
+    if (!sp800_185_padded_length(ctx->rate, encoded_function_name_length + encoded_customization_length, prefix_length, padding_length))
+        return false;
+
+    sp800_185_absorb_left_encode(ctx, ctx->rate);
+    sp800_185_absorb_encode_string(ctx, function_name, function_name_len);
+    sp800_185_absorb_encode_string(ctx, customization, customization_len);
+    sp800_185_absorb_zero_padding(ctx, padding_length);
+    return true;
+}
+
+bool rin_sp800_185_absorb_bytepad_encoded_string(rin_keccak_ctx* ctx, u8 const* string, size_t string_len)
+{
+    if (string_len > 0 && !string)
+        return false;
+
+    size_t encoded_string_length;
+    if (!sp800_185_encoded_string_length(string_len, encoded_string_length))
+        return false;
+
+    size_t padded_length;
+    size_t padding_length;
+    if (!sp800_185_padded_length(ctx->rate, encoded_string_length, padded_length, padding_length))
+        return false;
+
+    sp800_185_absorb_left_encode(ctx, ctx->rate);
+    sp800_185_absorb_encode_string(ctx, string, string_len);
+    sp800_185_absorb_zero_padding(ctx, padding_length);
+    return true;
+}
+
+void rin_sp800_185_absorb_right_encode(rin_keccak_ctx* ctx, u64 value)
+{
+    u8 encoded[9];
+    auto encoded_length = sp800_185_right_encode(value, encoded);
+    rin_keccak_update(ctx, encoded, encoded_length);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -367,6 +367,14 @@ if (AK_OS_RINOS AND BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(test-rintls-rsa-webcrypto PRIVATE RinTLSBearSSL)
     target_link_options(test-rintls-rsa-webcrypto PRIVATE -Wl,-z,now)
     add_test(NAME rintls-rsa-webcrypto COMMAND test-rintls-rsa-webcrypto)
+
+    # Exercise the actual LibCrypto WebCrypto-facing KMAC/cSHAKE path. This
+    # deliberately avoids LibTest/LibCore so it stays runnable in the native
+    # provider configuration as the OS-backed shared-memory test shim evolves.
+    add_executable(test-rintls-kmac-cshake
+        ${LADYBIRD_SOURCE_DIR}/../rintls/tests/ladybird_kmac_cshake_test.cpp)
+    target_link_libraries(test-rintls-kmac-cshake PRIVATE LibCrypto AK)
+    add_test(NAME rintls-kmac-cshake COMMAND test-rintls-kmac-cshake)
 endif()
 
 if (ENABLE_GUI_TARGETS)

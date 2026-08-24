@@ -7,6 +7,8 @@
 #ifdef AK_OS_RINOS
 
 #include <AK/ByteBuffer.h>
+#include <AK/Memory.h>
+#include <AK/ScopeGuard.h>
 #include <LibCrypto/Hash/SHAKE.h>
 #include <LibCrypto/RinCryptoImpl.h>
 
@@ -24,31 +26,37 @@ ErrorOr<ByteBuffer> SHAKE::digest(
     Optional<ReadonlyBytes> function_name) const
 {
     bool wants_cshake = (customization.has_value() && !customization->is_empty()) || (function_name.has_value() && !function_name->is_empty());
-    if (wants_cshake)
-        return Error::from_string_literal("cSHAKE with non-empty N or S is not supported on RinOS");
-
     if (length % 8 != 0)
         return Error::from_string_literal("SHAKE output length must be a multiple of 8 bits");
 
     size_t output_bytes = length / 8;
 
     rin_keccak_ctx ctx;
-    if (m_kind == SHAKEKind::CSHAKE128)
-        rin_shake128_init(&ctx);
-    else
-        rin_shake256_init(&ctx);
+    ScopeGuard clear_context = [&] { secure_zero(&ctx, sizeof(ctx)); };
+    if (m_kind == SHAKEKind::CSHAKE128) {
+        if (wants_cshake)
+            rin_cshake128_init(&ctx);
+        else
+            rin_shake128_init(&ctx);
+    } else {
+        if (wants_cshake)
+            rin_cshake256_init(&ctx);
+        else
+            rin_shake256_init(&ctx);
+    }
+
+    if (wants_cshake) {
+        auto customization_bytes = customization.value_or(ReadonlyBytes {});
+        auto function_name_bytes = function_name.value_or(ReadonlyBytes {});
+        if (!rin_sp800_185_absorb_cshake_prefix(&ctx,
+                function_name_bytes.data(), function_name_bytes.size(),
+                customization_bytes.data(), customization_bytes.size()))
+            return Error::from_string_literal("cSHAKE input is too large");
+    }
 
     rin_keccak_update(&ctx, data.data(), data.size());
-
-    // Finalize with XOF padding
-    ctx.digest_len = output_bytes;
     auto buf = TRY(ByteBuffer::create_uninitialized(output_bytes));
-    rin_keccak_final(&ctx, buf.data());
-
-    // If output > rate, squeeze additional blocks
-    if (output_bytes > ctx.rate) {
-        rin_shake_squeeze(&ctx, buf.data() + ctx.rate, output_bytes - ctx.rate);
-    }
+    rin_shake_squeeze(&ctx, buf.data(), output_bytes);
 
     return buf;
 }

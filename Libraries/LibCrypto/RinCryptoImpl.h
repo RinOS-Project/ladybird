@@ -58,7 +58,10 @@ struct rin_keccak_ctx {
     size_t rate;       // rate in bytes (e.g. 136 for SHA3-256)
     size_t capacity;   // capacity in bytes
     size_t digest_len; // output length in bytes
+    size_t squeeze_offset;
+    u8 domain_separator;
     bool xof;          // true for SHAKE, false for SHA-3
+    bool finalized;
 };
 
 void rin_sha3_256_init(rin_keccak_ctx* ctx);
@@ -70,7 +73,17 @@ void rin_keccak_final(rin_keccak_ctx* ctx, u8* digest);
 // SHAKE XOF
 void rin_shake128_init(rin_keccak_ctx* ctx);
 void rin_shake256_init(rin_keccak_ctx* ctx);
+void rin_cshake128_init(rin_keccak_ctx* ctx);
+void rin_cshake256_init(rin_keccak_ctx* ctx);
 void rin_shake_squeeze(rin_keccak_ctx* ctx, u8* out, size_t outlen);
+
+// SP 800-185 absorb helpers. They return false for an invalid/overflowing
+// byte-string length and leave no caller-visible output behind.
+bool rin_sp800_185_absorb_cshake_prefix(rin_keccak_ctx* ctx,
+    u8 const* function_name, size_t function_name_len,
+    u8 const* customization, size_t customization_len);
+bool rin_sp800_185_absorb_bytepad_encoded_string(rin_keccak_ctx* ctx, u8 const* string, size_t string_len);
+void rin_sp800_185_absorb_right_encode(rin_keccak_ctx* ctx, u64 value);
 
 // ── ChaCha20-Poly1305 (RFC 8439) ─────────────────────────────────────────────
 
