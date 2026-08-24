@@ -1187,6 +1187,17 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         auto array_buffer = JS::ArrayBuffer::create(realm(), ByteBuffer {});
         return JS::Uint32Array::create(realm(), 0, array_buffer);
     }
+    case RINGL_IMPLEMENTATION_COLOR_READ_FORMAT:
+    case RINGL_IMPLEMENTATION_COLOR_READ_TYPE: {
+        uint32_t format = 0;
+        uint32_t type = 0;
+
+        if (ringl_get_implementation_color_read_format_type(&format, &type) != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(pname == RINGL_IMPLEMENTATION_COLOR_READ_FORMAT ? format : type);
+    }
     case RINGL_BLEND:
     case RINGL_CULL_FACE:
     case RINGL_DEPTH_TEST:
