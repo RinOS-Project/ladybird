@@ -370,6 +370,22 @@ void OpenGLContext::enable_rin_gl_standard_derivatives()
         fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
 }
 
+void OpenGLContext::enable_rin_gl_draw_buffers()
+{
+    make_current();
+    if (m_impl->bridge.context
+        && ringl_enable_webgl_draw_buffers() != 0)
+        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+}
+
+void OpenGLContext::rin_gl_draw_buffers(u32 count, u32 const* buffers)
+{
+    make_current();
+    if (!m_impl->bridge.context)
+        return;
+    ringl_draw_buffers(static_cast<int32_t>(count), buffers);
+}
+
 u64 OpenGLContext::rin_gl_get_shader_source_length(u32 shader)
 {
     make_current();

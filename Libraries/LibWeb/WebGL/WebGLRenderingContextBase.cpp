@@ -55,6 +55,7 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/OESVertexArrayObject.h>
 #include <LibWeb/WebGL/Extensions/WebGLColorBufferFloat.h>
 #include <LibWeb/WebGL/Extensions/WebGLDepthTexture.h>
+#include <LibWeb/WebGL/Extensions/WebGLDrawBuffers.h>
 #include <LibWeb/WebGL/Extensions/WebGLLoseContext.h>
 #endif
 #include <LibWeb/WebGL/OpenGLContext.h>
@@ -370,6 +371,7 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
         webgl_extensions.append("WEBGL_color_buffer_float"_string);
         webgl_extensions.append("EXT_color_buffer_half_float"_string);
         webgl_extensions.append("WEBGL_depth_texture"_string);
+        webgl_extensions.append("WEBGL_draw_buffers"_string);
         webgl_extensions.append("WEBGL_lose_context"_string);
     }
     return webgl_extensions;
@@ -421,6 +423,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     bool const is_color_buffer_float_extension = name.equals_ignoring_ascii_case("WEBGL_color_buffer_float"sv);
     bool const is_color_buffer_half_float_extension = name.equals_ignoring_ascii_case("EXT_color_buffer_half_float"sv);
     bool const is_depth_texture_extension = name.equals_ignoring_ascii_case("WEBGL_depth_texture"sv);
+    bool const is_draw_buffers_extension = name.equals_ignoring_ascii_case("WEBGL_draw_buffers"sv);
 
     // The WebGL extension algorithm compares names case-insensitively. Store
     // every RinOS extension under its standard spelling, otherwise a caller
@@ -457,6 +460,8 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         cache_key = "EXT_color_buffer_half_float"_string;
     else if (is_depth_texture_extension)
         cache_key = "WEBGL_depth_texture"_string;
+    else if (is_draw_buffers_extension)
+        cache_key = "WEBGL_draw_buffers"_string;
     else if (is_lose_context_extension)
         cache_key = "WEBGL_lose_context"_string;
     if (auto extension = m_enabled_extensions.get(cache_key); extension.has_value())
@@ -557,6 +562,12 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     }
     if (is_depth_texture_extension) {
         auto extension = MUST(Extensions::WebGLDepthTexture::create(realm(), *this));
+        m_enabled_extensions.set(cache_key, extension);
+        return extension;
+    }
+    if (is_draw_buffers_extension) {
+        context().enable_rin_gl_draw_buffers();
+        auto extension = MUST(Extensions::WebGLDrawBuffers::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
         return extension;
     }

@@ -74,6 +74,11 @@ public:
     // OES_standard_derivatives exposes derivative builtins and its advisory
     // hint only after JavaScript has acquired the extension object.
     void enable_rin_gl_standard_derivatives();
+    // WEBGL_draw_buffers exposes the RinGL MRT path only after JavaScript has
+    // acquired the extension object. The WebGL extension object never calls a
+    // GLES/Aquamarine surface entry point directly.
+    void enable_rin_gl_draw_buffers();
+    void rin_gl_draw_buffers(u32 count, u32 const* buffers);
     u64 rin_gl_get_shader_source_length(u32 shader);
     u64 rin_gl_copy_shader_source(u32 shader, char* buffer, u64 buffer_size);
     // HTMLCanvasElement calls this only after it has taken the immutable
