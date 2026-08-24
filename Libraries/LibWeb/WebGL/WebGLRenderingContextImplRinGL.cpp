@@ -1210,6 +1210,19 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         if (!get_integer())
             return JS::js_null();
         return JS::Value(values[0] != 0);
+    case RINGL_MAX_COLOR_ATTACHMENTS_WEBGL:
+    case RINGL_MAX_DRAW_BUFFERS_WEBGL:
+    case RINGL_DRAW_BUFFER0_WEBGL:
+    case RINGL_DRAW_BUFFER1_WEBGL:
+    case RINGL_DRAW_BUFFER2_WEBGL:
+    case RINGL_DRAW_BUFFER3_WEBGL:
+        if (!extension_enabled("WEBGL_draw_buffers"sv)) {
+            set_error(RINGL_INVALID_ENUM);
+            return JS::js_null();
+        }
+        if (!get_integer())
+            return JS::js_null();
+        return JS::Value(values[0]);
     case RINGL_ACTIVE_TEXTURE:
     case RINGL_PACK_ALIGNMENT:
     case RINGL_UNPACK_ALIGNMENT:
