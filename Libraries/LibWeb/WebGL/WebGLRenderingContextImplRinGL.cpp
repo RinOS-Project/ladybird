@@ -1102,6 +1102,21 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
         return JS::Float32Array::create(realm(), result.size(), array_buffer);
     }
+    case RINGL_ALIASED_POINT_SIZE_RANGE: {
+        if (!get_integer())
+            return JS::js_null();
+        Array<float, 2> result {
+            static_cast<float>(values[0]),
+            static_cast<float>(values[1]),
+        };
+        auto bytes_or_error = ByteBuffer::copy(result.span().reinterpret<u8>());
+        if (bytes_or_error.is_error()) {
+            set_error(RINGL_OUT_OF_MEMORY);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+        return JS::Float32Array::create(realm(), result.size(), array_buffer);
+    }
     case RINGL_SAMPLE_COVERAGE_VALUE: {
         RinGLSampleCoverageV1 sample_coverage {};
         sample_coverage.struct_size = sizeof(sample_coverage);
@@ -1145,6 +1160,33 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
         return JS::Int32Array::create(realm(), values.size(), array_buffer);
     }
+    case RINGL_MAX_VIEWPORT_DIMS: {
+        if (!get_integer())
+            return JS::js_null();
+        Array<int32_t, 2> result {
+            values[0],
+            values[1],
+        };
+        auto bytes_or_error = ByteBuffer::copy(result.span().reinterpret<u8>());
+        if (bytes_or_error.is_error()) {
+            set_error(RINGL_OUT_OF_MEMORY);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+        return JS::Int32Array::create(realm(), result.size(), array_buffer);
+    }
+    case COMPRESSED_TEXTURE_FORMATS: {
+        size_t count = 1u;
+
+        if (ringl_get_compressed_texture_format_count(&count) != 0 || count != 0u) {
+            /* RinGL owns this list. Refuse to claim an empty list if the
+             * native profile grows without matching typed-array plumbing. */
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), ByteBuffer {});
+        return JS::Uint32Array::create(realm(), 0, array_buffer);
+    }
     case RINGL_BLEND:
     case RINGL_CULL_FACE:
     case RINGL_DEPTH_TEST:
@@ -1165,6 +1207,7 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
     case RINGL_DEPTH_BITS:
     case RINGL_STENCIL_BITS:
     case RINGL_MAX_TEXTURE_SIZE_QUERY:
+    case RINGL_MAX_RENDERBUFFER_SIZE:
     case RINGL_MAX_TEXTURE_IMAGE_UNITS:
     case RINGL_MAX_COMBINED_TEXTURE_IMAGE_UNITS:
     case RINGL_MAX_VERTEX_ATTRIBS_QUERY:
@@ -1191,6 +1234,8 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
     case RINGL_BLEND_DST_ALPHA:
     case RINGL_BLEND_EQUATION_RGB:
     case RINGL_BLEND_EQUATION_ALPHA:
+    case RINGL_SAMPLE_BUFFERS:
+    case RINGL_SAMPLES:
     case RINGL_SAMPLE_COVERAGE_INVERT:
         if (!get_integer())
             return JS::js_null();
