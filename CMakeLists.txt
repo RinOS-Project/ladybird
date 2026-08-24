@@ -41,13 +41,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(LADYBIRD_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${LADYBIRD_SOURCE_DIR}/Meta/CMake")
 
+# Enable the platform branch before EnableLagom creates AK and the other
+# foundational targets.  Applying this only after that include leaves those
+# targets on their host dependency path (for example fast_float), even though
+# their LibWeb consumer is configured for RinOS.
+if (AK_OS_RINOS)
+    add_compile_definitions(AK_OS_RINOS=1)
+endif()
+
 include(UI/cmake/EnableLagom.cmake)
 include(lagom_options NO_POLICY_SCOPE)
 include(lagom_compile_options)
 
 if (AK_OS_RINOS)
-    add_compile_definitions(AK_OS_RINOS=1)
-
     # rintls owns the public provider boundary.  Build only the libecc
     # primitives required by WebCrypto instead of importing its broad default
     # algorithm set.  The provider's entropy callback is patched to return to
