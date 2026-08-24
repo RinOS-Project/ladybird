@@ -55,6 +55,7 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/OESVertexArrayObject.h>
 #include <LibWeb/WebGL/Extensions/WebGLCompressedTextureEtc1.h>
 #include <LibWeb/WebGL/Extensions/WebGLCompressedTextureS3tc.h>
+#include <LibWeb/WebGL/Extensions/WebGLCompressedTextureS3tcSrgb.h>
 #include <LibWeb/WebGL/Extensions/WebGLColorBufferFloat.h>
 #include <LibWeb/WebGL/Extensions/WebGLDepthTexture.h>
 #include <LibWeb/WebGL/Extensions/WebGLDrawBuffers.h>
@@ -372,6 +373,7 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
         webgl_extensions.append("OES_vertex_array_object"_string);
         webgl_extensions.append("WEBGL_compressed_texture_etc1"_string);
         webgl_extensions.append("WEBGL_compressed_texture_s3tc"_string);
+        webgl_extensions.append("WEBGL_compressed_texture_s3tc_srgb"_string);
         webgl_extensions.append("WEBGL_color_buffer_float"_string);
         webgl_extensions.append("EXT_color_buffer_half_float"_string);
         webgl_extensions.append("WEBGL_depth_texture"_string);
@@ -426,6 +428,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     bool const is_vertex_array_object_extension = name.equals_ignoring_ascii_case("OES_vertex_array_object"sv);
     bool const is_compressed_texture_etc1_extension = name.equals_ignoring_ascii_case("WEBGL_compressed_texture_etc1"sv);
     bool const is_compressed_texture_s3tc_extension = name.equals_ignoring_ascii_case("WEBGL_compressed_texture_s3tc"sv);
+    bool const is_compressed_texture_s3tc_srgb_extension = name.equals_ignoring_ascii_case("WEBGL_compressed_texture_s3tc_srgb"sv);
     bool const is_color_buffer_float_extension = name.equals_ignoring_ascii_case("WEBGL_color_buffer_float"sv);
     bool const is_color_buffer_half_float_extension = name.equals_ignoring_ascii_case("EXT_color_buffer_half_float"sv);
     bool const is_depth_texture_extension = name.equals_ignoring_ascii_case("WEBGL_depth_texture"sv);
@@ -464,6 +467,8 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         cache_key = "WEBGL_compressed_texture_etc1"_string;
     else if (is_compressed_texture_s3tc_extension)
         cache_key = "WEBGL_compressed_texture_s3tc"_string;
+    else if (is_compressed_texture_s3tc_srgb_extension)
+        cache_key = "WEBGL_compressed_texture_s3tc_srgb"_string;
     else if (is_color_buffer_float_extension)
         cache_key = "WEBGL_color_buffer_float"_string;
     else if (is_color_buffer_half_float_extension)
@@ -565,6 +570,11 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     }
     if (is_compressed_texture_s3tc_extension) {
         auto extension = MUST(Extensions::WebGLCompressedTextureS3tc::create(realm(), *this));
+        m_enabled_extensions.set(cache_key, extension);
+        return extension;
+    }
+    if (is_compressed_texture_s3tc_srgb_extension) {
+        auto extension = MUST(Extensions::WebGLCompressedTextureS3tcSrgb::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
         return extension;
     }
