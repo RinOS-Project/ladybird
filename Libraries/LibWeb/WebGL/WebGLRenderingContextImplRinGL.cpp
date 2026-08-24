@@ -2126,6 +2126,11 @@ void WebGLRenderingContextImpl::draw_elements(WebIDL::UnsignedLong mode, WebIDL:
 {
     if (!make_rin_gl_current())
         return;
+    if (type == RINGL_UNSIGNED_INT
+        && !extension_enabled("OES_element_index_uint"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
     if (!rin_gl_bound_framebuffer_is_webgl1_compatible())
         return;
     if (offset < 0) {

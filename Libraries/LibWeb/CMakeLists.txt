@@ -1231,6 +1231,7 @@ if (AK_OS_RINOS)
     # WebGL 2 and every ANGLE-only extension remain excluded.
     list(APPEND SOURCES
         WebGL/EventNames.cpp
+        WebGL/Extensions/OESElementIndexUint.cpp
         WebGL/OpenGLContext.cpp
         WebGL/WebGLActiveInfo.cpp
         WebGL/WebGLBuffer.cpp

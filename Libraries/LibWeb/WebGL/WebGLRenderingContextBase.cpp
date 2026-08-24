@@ -36,13 +36,13 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/EXTRenderSnorm.h>
 #include <LibWeb/WebGL/Extensions/EXTTextureFilterAnisotropic.h>
 #include <LibWeb/WebGL/Extensions/EXTTextureNorm16.h>
-#include <LibWeb/WebGL/Extensions/OESElementIndexUint.h>
 #include <LibWeb/WebGL/Extensions/OESStandardDerivatives.h>
 #include <LibWeb/WebGL/Extensions/OESVertexArrayObject.h>
 #include <LibWeb/WebGL/Extensions/WebGLCompressedTextureS3tc.h>
 #include <LibWeb/WebGL/Extensions/WebGLCompressedTextureS3tcSrgb.h>
 #include <LibWeb/WebGL/Extensions/WebGLDrawBuffers.h>
 #endif
+#include <LibWeb/WebGL/Extensions/OESElementIndexUint.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
@@ -203,7 +203,10 @@ static HashMap<String, Extension, AK::ASCIICaseInsensitiveStringTraits> s_availa
 Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
 {
 #ifdef AK_OS_RINOS
-    return Vector<String> {};
+    Vector<String> webgl_extensions;
+    if (context().webgl_version() == OpenGLContext::WebGLVersion::WebGL1)
+        webgl_extensions.append("OES_element_index_uint"_string);
+    return webgl_extensions;
 #else
     auto opengl_extensions = context().get_supported_opengl_extensions();
     Vector<String> webgl_extensions;
@@ -236,8 +239,17 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
 JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
 {
 #ifdef AK_OS_RINOS
-    (void)name;
-    return nullptr;
+    // RinGL executes a bounded uint32_t element stream, but WebGL 1 exposes
+    // that type only after this extension has been enabled. Keep its single
+    // script-visible object in the common case-insensitive cache.
+    if (context().webgl_version() != OpenGLContext::WebGLVersion::WebGL1
+        || !name.equals_ignoring_ascii_case("OES_element_index_uint"sv))
+        return nullptr;
+    if (auto extension = m_enabled_extensions.get(name); extension.has_value())
+        return extension.release_value();
+    auto extension = MUST(Extensions::OESElementIndexUint::create(realm(), *this));
+    m_enabled_extensions.set(name, extension);
+    return extension;
 #else
     // Returns an object if, and only if, name is an ASCII case-insensitive match [HTML] for one of the names returned
     // from getSupportedExtensions; otherwise, returns null. The object returned from getExtension contains any constants
