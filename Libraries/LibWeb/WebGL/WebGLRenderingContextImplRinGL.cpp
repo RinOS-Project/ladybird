@@ -119,7 +119,7 @@ bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLU
         if (active_location != requested_location)
             continue;
 
-        if (active_uniform.type != expected_type) {
+        if (expected_type != 0 && active_uniform.type != expected_type) {
             set_error(RINGL_INVALID_OPERATION);
             return false;
         }
@@ -1526,6 +1526,14 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             }
             return JS::Value(value);
         }
+        case RINGL_INT: {
+            int32_t value = 0;
+            if (ringl_get_uniform_1i(program_handle, location_handle, &value) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            return JS::Value(value);
+        }
         case RINGL_FLOAT: {
             float value = 0.0f;
             if (ringl_get_uniform_1f(program_handle, location_handle, &value) != 0) {
@@ -1575,6 +1583,48 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             }
             auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
             return JS::Float32Array::create(realm(), values.size(), array_buffer);
+        }
+        case RINGL_INT_VEC2: {
+            Array<int32_t, 2> values {};
+            if (ringl_get_uniform_2i(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+            if (bytes_or_error.is_error()) {
+                set_error(RINGL_OUT_OF_MEMORY);
+                return JS::js_null();
+            }
+            auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+            return JS::Int32Array::create(realm(), values.size(), array_buffer);
+        }
+        case RINGL_INT_VEC3: {
+            Array<int32_t, 3> values {};
+            if (ringl_get_uniform_3i(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+            if (bytes_or_error.is_error()) {
+                set_error(RINGL_OUT_OF_MEMORY);
+                return JS::js_null();
+            }
+            auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+            return JS::Int32Array::create(realm(), values.size(), array_buffer);
+        }
+        case RINGL_INT_VEC4: {
+            Array<int32_t, 4> values {};
+            if (ringl_get_uniform_4i(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+            if (bytes_or_error.is_error()) {
+                set_error(RINGL_OUT_OF_MEMORY);
+                return JS::js_null();
+            }
+            auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+            return JS::Int32Array::create(realm(), values.size(), array_buffer);
         }
         case RINGL_FLOAT_MAT4: {
             Array<float, 16> values {};
@@ -1853,7 +1903,10 @@ void WebGLRenderingContextImpl::uniform1i(GC::Root<WebGLUniformLocation> locatio
         return;
 
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    // WebGL permits uniform1i for either a scalar int or sampler uniform.
+    // RinGL performs the final narrow type check while selecting its linked
+    // program-owned uniform storage.
+    if (!validate_rin_gl_uniform_location(location, 0, location_handle))
         return;
     ringl_uniform_1i(location_handle, x);
 }
@@ -1898,34 +1951,34 @@ void WebGLRenderingContextImpl::uniform4f(GC::Root<WebGLUniformLocation> locatio
     ringl_uniform_4f(location_handle, x, y, z, w);
 }
 
-void WebGLRenderingContextImpl::uniform2i(GC::Root<WebGLUniformLocation> location, WebIDL::Long, WebIDL::Long)
+void WebGLRenderingContextImpl::uniform2i(GC::Root<WebGLUniformLocation> location, WebIDL::Long x, WebIDL::Long y)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+    ringl_uniform_2i(location_handle, x, y);
 }
 
-void WebGLRenderingContextImpl::uniform3i(GC::Root<WebGLUniformLocation> location, WebIDL::Long, WebIDL::Long, WebIDL::Long)
+void WebGLRenderingContextImpl::uniform3i(GC::Root<WebGLUniformLocation> location, WebIDL::Long x, WebIDL::Long y, WebIDL::Long z)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+    ringl_uniform_3i(location_handle, x, y, z);
 }
 
-void WebGLRenderingContextImpl::uniform4i(GC::Root<WebGLUniformLocation> location, WebIDL::Long, WebIDL::Long, WebIDL::Long, WebIDL::Long)
+void WebGLRenderingContextImpl::uniform4i(GC::Root<WebGLUniformLocation> location, WebIDL::Long x, WebIDL::Long y, WebIDL::Long z, WebIDL::Long w)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+    ringl_uniform_4i(location_handle, x, y, z, w);
 }
 
 void WebGLRenderingContextImpl::blend_color(float red, float green, float blue, float alpha)

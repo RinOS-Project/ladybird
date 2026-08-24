@@ -311,7 +311,9 @@ void WebGLRenderingContextOverloads::uniform1iv(GC::Root<WebGLUniformLocation> l
         return;
 
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    // WebGL permits uniform1iv for either a scalar int or sampler uniform.
+    // RinGL keeps the linked program type check adjacent to the state update.
+    if (!validate_rin_gl_uniform_location(location, 0, location_handle))
         return;
 
     auto span_or_error = span_from_int32_list(v, /* src_offset= */ 0);
@@ -323,42 +325,78 @@ void WebGLRenderingContextOverloads::uniform1iv(GC::Root<WebGLUniformLocation> l
     if (span.is_empty())
         return;
     if (span.size() != 1) {
-        // The current RSH1 profile exposes scalar sampler2D declarations,
-        // never sampler arrays.
+        // The bounded profile supports scalar int and sampler declarations,
+        // but not uniform arrays.
         set_error(RINGL_INVALID_OPERATION);
         return;
     }
     ringl_uniform_1i(location_handle, span[0]);
 }
 
-void WebGLRenderingContextOverloads::uniform2iv(GC::Root<WebGLUniformLocation> location, Int32List)
+void WebGLRenderingContextOverloads::uniform2iv(GC::Root<WebGLUniformLocation> location, Int32List v)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+    auto span_or_error = span_from_int32_list(v, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
+    if (span.is_empty())
+        return;
+    if (span.size() != 2) {
+        set_error(RINGL_INVALID_OPERATION);
+        return;
+    }
+    ringl_uniform_2i(location_handle, span[0], span[1]);
 }
 
-void WebGLRenderingContextOverloads::uniform3iv(GC::Root<WebGLUniformLocation> location, Int32List)
+void WebGLRenderingContextOverloads::uniform3iv(GC::Root<WebGLUniformLocation> location, Int32List v)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+    auto span_or_error = span_from_int32_list(v, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
+    if (span.is_empty())
+        return;
+    if (span.size() != 3) {
+        set_error(RINGL_INVALID_OPERATION);
+        return;
+    }
+    ringl_uniform_3i(location_handle, span[0], span[1], span[2]);
 }
 
-void WebGLRenderingContextOverloads::uniform4iv(GC::Root<WebGLUniformLocation> location, Int32List)
+void WebGLRenderingContextOverloads::uniform4iv(GC::Root<WebGLUniformLocation> location, Int32List v)
 {
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_sampler_uniform_location(location, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle))
         return;
-    set_error(RINGL_INVALID_OPERATION);
+    auto span_or_error = span_from_int32_list(v, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
+    if (span.is_empty())
+        return;
+    if (span.size() != 4) {
+        set_error(RINGL_INVALID_OPERATION);
+        return;
+    }
+    ringl_uniform_4i(location_handle, span[0], span[1], span[2], span[3]);
 }
 
 void WebGLRenderingContextOverloads::uniform_matrix2fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List)

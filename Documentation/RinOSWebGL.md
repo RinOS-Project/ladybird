@@ -20,24 +20,24 @@ D24S8 attachment is accepted. `getSupportedExtensions()` is empty on this
 path, so an ANGLE/GLES extension is not exposed until RinGL implements it
 natively. The integration does not introduce a GLES implementation.
 
-The current RSH1 shader profile exposes linked `sampler2D`, scalar `float`,
-and `vec2`, `vec3`, `vec4`, and vertex-stage `mat4` uniforms. The WebGL bridge
-validates a uniform location against RinGL reflection before updating it,
-forwards `uniform1f`/`uniform1fv`, `uniform2f`/`uniform2fv`,
-`uniform3f`/`uniform3fv`, `uniform4f`/`uniform4fv`, and
-`uniformMatrix4fv` to per-program RinGL state, and returns numbers or
-`Float32Array` values from `getUniform` as required by the uniform type. The
+The current RSH1 shader profile exposes linked `sampler2D`, scalar
+`float`/`int`, `vec2`/`vec3`/`vec4`, `ivec2`/`ivec3`/`ivec4`, and vertex-stage
+`mat4` uniforms. The WebGL bridge validates a uniform location against RinGL
+reflection before updating it, forwards scalar and list `uniform1i`/
+`uniform1iv` for scalar sampler or integer locations, and exact-width
+`uniform2i`/`uniform2iv`, `uniform3i`/`uniform3iv`, and `uniform4i`/
+`uniform4iv` for the corresponding signed integer vectors. Float setters and
+`uniformMatrix4fv` retain their per-program route; `getUniform` returns a
+number, `Float32Array`, or `Int32Array` according to the reflected type. The
 matrix profile accepts WebGL column-major values with `transpose == false` for
 `mat4 * vec4 attribute` vertex position transforms. The direct profile also
-executes no-varying `vec2`/`vec3`/`vec4` locals, same-width `+`/`-`, unary
-`-`, and vector/scalar `*`/`/` as RSH1 instructions, so uniform tinting and a
-matrix-transformed position plus a vector offset do not rely on a browser-side
-fallback. Common global `precision lowp`/`mediump`/`highp` declarations for
-`float`, `int`, and `sampler2D` are grammar-validated and execute in RSH1
-binary32; malformed declarations still fail shader compilation. Uniform arrays,
-other matrix expressions, and other uniform types remain unavailable until
-their native RinGL representation exists; they are not emulated by the browser
-layer.
+executes no-varying float/integer scalar/vector locals, same-type arithmetic,
+single-component swizzles, and explicit `int(...)`/`float(...)` RSH1
+conversions. Integer values remain i32 until `float(...)` emits RSH1
+`I32_TO_F32`; no browser-side numeric reinterpretation or fallback is used.
+Uniform arrays, multi-component swizzles, other matrix expressions, control
+flow, and other uniform types remain unavailable until their native RinGL
+representation exists; they are not emulated by the browser layer.
 
 RinGL owns mutable numeric uniforms per stage. Consequently a vertex matrix
 update preserves the independently validated fragment `sampler2D` module and
