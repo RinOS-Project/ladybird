@@ -5,6 +5,7 @@
  */
 
 #include <AK/ByteBuffer.h>
+#include <AK/ByteString.h>
 #include <AK/NumericLimits.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
@@ -883,6 +884,17 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
     };
 
     switch (pname) {
+    case RINGL_VENDOR:
+    case RINGL_RENDERER:
+    case RINGL_VERSION:
+    case RINGL_SHADING_LANGUAGE_VERSION: {
+        auto const* string = ringl_get_string(pname);
+        if (!string) {
+            set_error(RINGL_INVALID_ENUM);
+            return JS::js_null();
+        }
+        return JS::PrimitiveString::create(realm().vm(), ByteString { string });
+    }
     case RINGL_VERTEX_ARRAY_BINDING_OES:
         if (!extension_enabled("OES_vertex_array_object"sv)) {
             set_error(RINGL_INVALID_ENUM);
