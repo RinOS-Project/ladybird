@@ -1199,6 +1199,7 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
             return JS::js_null();
         return JS::Value(values[0] != 0);
     case RINGL_ACTIVE_TEXTURE:
+    case RINGL_PACK_ALIGNMENT:
     case RINGL_UNPACK_ALIGNMENT:
     case RINGL_RED_BITS:
     case RINGL_GREEN_BITS:
