@@ -31,6 +31,13 @@ public:
 
     virtual void present() = 0;
     virtual void needs_to_present() = 0;
+#ifdef AK_OS_RINOS
+    // A native backend may discover device loss while a WebGL command is
+    // being submitted. The concrete browser context owns the WebGL lost flag
+    // and the canvas event, so report that transition through this embedding
+    // hook instead of leaving it as a private OpenGLContext condition.
+    virtual void report_context_loss() const = 0;
+#endif
 
     void active_texture(WebIDL::UnsignedLong texture);
     void attach_shader(GC::Root<WebGLProgram> program, GC::Root<WebGLShader> shader);

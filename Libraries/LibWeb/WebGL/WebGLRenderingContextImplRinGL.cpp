@@ -60,6 +60,9 @@ bool WebGLRenderingContextImpl::make_rin_gl_current()
     if (m_context->rin_gl_is_ready())
         return true;
 
+    if (m_context->is_context_lost())
+        report_context_loss();
+
     // `rin_gl_get_error()` retains the exact allocation/loss reason while the
     // backend surface is absent. `set_error()` consumes that reason before
     // considering the fallback supplied here.

@@ -27,6 +27,9 @@ public:
 
     void present() override;
     void needs_to_present() override;
+#ifdef AK_OS_RINOS
+    void report_context_loss() const override;
+#endif
 
     GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const;
 
@@ -61,7 +64,7 @@ private:
 
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#webgl-context-lost-flag
     // Each WebGLRenderingContext has a webgl context lost flag, which is initially unset.
-    bool m_context_lost { false };
+    mutable bool m_context_lost { false };
 };
 
 void fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, FlyString const& type);

@@ -122,6 +122,10 @@ void WebGLRenderingContext::visit_edges(Cell::Visitor& visitor)
 void WebGLRenderingContext::present()
 {
     context().present(m_context_creation_parameters.preserve_drawing_buffer);
+#ifdef AK_OS_RINOS
+    if (context().is_context_lost())
+        report_context_loss();
+#endif
 }
 
 GC::Ref<HTML::HTMLCanvasElement> WebGLRenderingContext::canvas_for_binding() const
@@ -136,11 +140,30 @@ void WebGLRenderingContext::needs_to_present()
     m_canvas_element->set_needs_repaint();
 }
 
+#ifdef AK_OS_RINOS
+void WebGLRenderingContext::report_context_loss() const
+{
+    if (m_context_lost)
+        return;
+
+    // The native RinGL/RinGPU loss condition becomes the WebGL-visible lost
+    // flag before script observes the event. That makes re-entrant event
+    // handlers safe: every subsequent command sees the same lost context.
+    m_context_lost = true;
+    fire_webgl_context_event(*m_canvas_element, EventNames::webglcontextlost);
+}
+#endif
+
 bool WebGLRenderingContext::is_context_lost() const
 {
     dbgln_if(WEBGL_CONTEXT_DEBUG, "WebGLRenderingContext::is_context_lost()");
 #ifdef AK_OS_RINOS
-    return m_context_lost || context().is_context_lost();
+    if (m_context_lost)
+        return true;
+    if (!context().is_context_lost())
+        return false;
+    report_context_loss();
+    return true;
 #else
     return m_context_lost;
 #endif
