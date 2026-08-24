@@ -1292,16 +1292,23 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         return JS::Int32Array::create(realm(), result.size(), array_buffer);
     }
     case COMPRESSED_TEXTURE_FORMATS: {
-        size_t count = 1u;
+        size_t count = 0u;
+        auto formats = enabled_compressed_texture_formats();
 
-        if (ringl_get_compressed_texture_format_count(&count) != 0 || count != 0u) {
-            /* RinGL owns this list. Refuse to claim an empty list if the
-             * native profile grows without matching typed-array plumbing. */
+        if (ringl_get_compressed_texture_format_count(&count) != 0 ||
+            formats.size() > count) {
+            // RinGL owns the capability ceiling. Never publish a browser
+            // extension format that the active native profile cannot upload.
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
-        auto array_buffer = JS::ArrayBuffer::create(realm(), ByteBuffer {});
-        return JS::Uint32Array::create(realm(), 0, array_buffer);
+        auto bytes_or_error = ByteBuffer::copy(formats.data(), formats.reinterpret<u8 const>().size());
+        if (bytes_or_error.is_error()) {
+            set_error(RINGL_OUT_OF_MEMORY);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+        return JS::Uint32Array::create(realm(), formats.size(), array_buffer);
     }
     case RINGL_IMPLEMENTATION_COLOR_READ_FORMAT:
     case RINGL_IMPLEMENTATION_COLOR_READ_TYPE: {

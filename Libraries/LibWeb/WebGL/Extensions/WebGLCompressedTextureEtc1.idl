@@ -1,0 +1,9 @@
+#import <WebGL/Types.idl>
+
+// https://registry.khronos.org/webgl/extensions/WEBGL_compressed_texture_etc1/
+// The title-cased interface is legacy-no-interface-object only; JavaScript
+// receives it exclusively from getExtension("WEBGL_compressed_texture_etc1").
+[Exposed=(Window,Worker), LegacyNoInterfaceObject]
+interface WebGLCompressedTextureEtc1 {
+    const GLenum COMPRESSED_RGB_ETC1_WEBGL = 0x8D64;
+};

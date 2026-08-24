@@ -253,22 +253,27 @@ void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target
     ringl_tex_sub_image_2d_from_bytes(target, level, xoffset, yoffset, width, height, format, type, span.data(), span.size());
 }
 
-void WebGLRenderingContextOverloads::compressed_tex_image2d(WebIDL::UnsignedLong, WebIDL::Long, WebIDL::UnsignedLong internalformat, WebIDL::Long, WebIDL::Long, WebIDL::Long, GC::Root<WebIDL::ArrayBufferView>)
+void WebGLRenderingContextOverloads::compressed_tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::UnsignedLong internalformat, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border, GC::Root<WebIDL::ArrayBufferView> data)
 {
     if (!make_rin_gl_current())
         return;
 
-    // RinGL advertises no compressed-texture extension or native compressed
-    // storage. Keep the standard WebGL extension gate instead of accepting a
-    // byte stream that the backend cannot decode.
     if (!enabled_compressed_texture_formats().contains_slow(internalformat)) {
         set_error(RINGL_INVALID_ENUM);
         return;
     }
-    set_error(RINGL_INVALID_OPERATION);
+    auto span_or_error = get_offset_span<u8 const>(*data, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
+    ringl_compressed_tex_image_2d_from_bytes(target, level, internalformat,
+                                              width, height, border,
+                                              span.data(), span.size());
 }
 
-void WebGLRenderingContextOverloads::compressed_tex_sub_image2d(WebIDL::UnsignedLong, WebIDL::Long, WebIDL::Long, WebIDL::Long, WebIDL::Long, WebIDL::Long, WebIDL::UnsignedLong format, GC::Root<WebIDL::ArrayBufferView>)
+void WebGLRenderingContextOverloads::compressed_tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, GC::Root<WebIDL::ArrayBufferView> data)
 {
     if (!make_rin_gl_current())
         return;
@@ -276,7 +281,16 @@ void WebGLRenderingContextOverloads::compressed_tex_sub_image2d(WebIDL::Unsigned
         set_error(RINGL_INVALID_ENUM);
         return;
     }
-    set_error(RINGL_INVALID_OPERATION);
+    auto span_or_error = get_offset_span<u8 const>(*data, /* src_offset= */ 0);
+    if (span_or_error.is_error()) {
+        set_error(RINGL_INVALID_VALUE);
+        return;
+    }
+    auto span = span_or_error.release_value();
+    ringl_compressed_tex_sub_image_2d_from_bytes(target, level, xoffset,
+                                                  yoffset, width, height,
+                                                  format, span.data(),
+                                                  span.size());
 }
 
 void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
