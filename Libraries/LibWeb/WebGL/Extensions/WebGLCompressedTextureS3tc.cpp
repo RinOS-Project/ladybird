@@ -4,8 +4,14 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
+#ifdef AK_OS_RINOS
+extern "C" {
+#    include <ringl/ringl.h>
+}
+#else
+#    include <GLES2/gl2.h>
+#    include <GLES2/gl2ext.h>
+#endif
 
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
@@ -27,10 +33,17 @@ WebGLCompressedTextureS3tc::WebGLCompressedTextureS3tc(JS::Realm& realm, GC::Ref
     : PlatformObject(realm)
     , m_context(context)
 {
+#ifdef AK_OS_RINOS
+    m_context->enable_compressed_texture_format(RINGL_COMPRESSED_RGB_S3TC_DXT1_EXT);
+    m_context->enable_compressed_texture_format(RINGL_COMPRESSED_RGBA_S3TC_DXT1_EXT);
+    m_context->enable_compressed_texture_format(RINGL_COMPRESSED_RGBA_S3TC_DXT3_EXT);
+    m_context->enable_compressed_texture_format(RINGL_COMPRESSED_RGBA_S3TC_DXT5_EXT);
+#else
     m_context->enable_compressed_texture_format(GL_COMPRESSED_RGB_S3TC_DXT1_EXT);
     m_context->enable_compressed_texture_format(GL_COMPRESSED_RGBA_S3TC_DXT1_EXT);
     m_context->enable_compressed_texture_format(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);
     m_context->enable_compressed_texture_format(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);
+#endif
 }
 
 void WebGLCompressedTextureS3tc::initialize(JS::Realm& realm)

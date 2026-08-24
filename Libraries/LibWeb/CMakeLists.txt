@@ -1253,6 +1253,7 @@ if (AK_OS_RINOS)
         WebGL/Extensions/OESVertexArrayObject.cpp
         WebGL/Extensions/WebGLColorBufferFloat.cpp
         WebGL/Extensions/WebGLCompressedTextureEtc1.cpp
+        WebGL/Extensions/WebGLCompressedTextureS3tc.cpp
         WebGL/Extensions/WebGLDepthTexture.cpp
         # The WebGLRenderingContextBase extension factory instantiates this
         # object on RinOS. Keep its RinGL-only implementation in the product

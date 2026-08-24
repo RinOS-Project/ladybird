@@ -531,6 +531,7 @@ if (AK_OS_RINOS)
     libweb_js_bindings(WebGL/Extensions/OESVertexArrayObject)
     libweb_js_bindings(WebGL/Extensions/WebGLColorBufferFloat)
     libweb_js_bindings(WebGL/Extensions/WebGLCompressedTextureEtc1)
+    libweb_js_bindings(WebGL/Extensions/WebGLCompressedTextureS3tc)
     libweb_js_bindings(WebGL/Extensions/WebGLDepthTexture)
     # This generated prototype is required by the product-listed RinGL-only
     # WebGLDrawBuffers implementation. Keep source and binding selection in
