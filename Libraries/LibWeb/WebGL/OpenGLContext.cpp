@@ -201,7 +201,9 @@ void OpenGLContext::allocate_painting_surface_if_needed()
 
     result = ringl_aquamarine_surface_create(&target, &m_impl->surface_context);
     if (result == RINGL_AQUAMARINE_SURFACE_OK)
-        result = rin_webgl_ringl_bridge_create(m_impl->surface_context, &m_impl->bridge);
+        result = rin_webgl_ringl_bridge_create(m_impl->surface_context,
+            m_drawing_buffer_options.depth ? 1u : 0u,
+            m_drawing_buffer_options.stencil ? 1u : 0u, &m_impl->bridge);
     if (result == RINGL_AQUAMARINE_SURFACE_OK
         && ringl_make_current(m_impl->bridge.context) != 0) {
         result = m_impl->bridge.context
