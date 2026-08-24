@@ -53,6 +53,9 @@ struct OpenGLContext::Impl {
     ByteBuffer stencil;
     bool allocation_failed { false };
     bool device_lost { false };
+    // `preserveDrawingBuffer: false` clears only after HTMLCanvasElement has
+    // copied the caller-owned BGRA drawing buffer into its compositor image.
+    bool clear_after_compositing { false };
     u32 pending_error { RINGL_NO_ERROR };
 };
 
@@ -85,6 +88,9 @@ OwnPtr<OpenGLContext> OpenGLContext::create(WebGLVersion webgl_version, DrawingB
 
 void OpenGLContext::free_surface_resources()
 {
+    // A stale Canvas presentation callback must never clear a replacement
+    // drawing buffer after resize, loss, or context destruction.
+    m_impl->clear_after_compositing = false;
     rin_webgl_ringl_bridge_destroy(&m_impl->bridge);
     if (m_impl->surface_context)
         ringl_aquamarine_surface_destroy(m_impl->surface_context);
@@ -322,9 +328,24 @@ void OpenGLContext::present(bool preserve_drawing_buffer)
         fail_rin_gl_surface(result);
         return;
     }
-    m_painting_surface->flush();
-    if (!preserve_drawing_buffer)
-        clear_buffer_to_default_values();
+
+    // RinGPU's software PRESENT operates on this same caller-owned BGRA
+    // target. Clearing here would erase it before HTMLCanvasElement can copy
+    // it into the immutable image consumed by the compositor. The canvas
+    // invokes release_drawing_buffer_after_compositing() immediately after
+    // that copy, where the maintenance clear still travels through RinGL.
+    m_impl->clear_after_compositing = !preserve_drawing_buffer;
+}
+
+void OpenGLContext::release_drawing_buffer_after_compositing()
+{
+    if (!m_impl->clear_after_compositing)
+        return;
+
+    // Clear the pending bit first so a re-entrant failure/loss path cannot
+    // submit a second clear for the frame which has already been handed off.
+    m_impl->clear_after_compositing = false;
+    clear_buffer_to_default_values();
 }
 
 RefPtr<Gfx::PaintingSurface> OpenGLContext::surface() { return m_painting_surface; }

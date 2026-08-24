@@ -31,6 +31,7 @@ public:
     void report_context_loss() const override;
     void lose_context_from_extension() override;
     void restore_context_from_extension() override;
+    void release_drawing_buffer_after_compositing();
 #endif
 
     GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const;

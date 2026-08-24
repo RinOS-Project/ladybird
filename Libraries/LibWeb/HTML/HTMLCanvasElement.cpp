@@ -444,6 +444,22 @@ void HTMLCanvasElement::present()
         surface->flush();
         auto snapshot = Gfx::ImmutableBitmap::create_snapshot_from_painting_surface(*surface);
         ensure_external_content_source().update(snapshot);
+#if defined(AK_OS_RINOS)
+        // The RinGL/RinGPU WebGL target is the same BGRA allocation which was
+        // just copied into `snapshot`. Release a non-preserved WebGL drawing
+        // buffer only after that durable compositor handoff; doing it from
+        // OpenGLContext::present() would clear the frame before this copy.
+        m_context.visit(
+            [](GC::Ref<CanvasRenderingContext2D>&) {
+                // Canvas 2D owns its own presentation lifetime.
+            },
+            [](GC::Ref<WebGL::WebGLRenderingContext>& context) {
+                context->release_drawing_buffer_after_compositing();
+            },
+            [](Empty) {
+                // No WebGL drawing buffer is pending.
+            });
+#endif
     }
 }
 

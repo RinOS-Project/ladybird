@@ -147,6 +147,13 @@ void WebGLRenderingContext::needs_to_present()
 }
 
 #ifdef AK_OS_RINOS
+void WebGLRenderingContext::release_drawing_buffer_after_compositing()
+{
+    context().release_drawing_buffer_after_compositing();
+    if (context().is_context_lost())
+        report_context_loss();
+}
+
 void WebGLRenderingContext::report_context_loss() const
 {
     if (m_context_lost)

@@ -59,6 +59,9 @@ public:
     u32 rin_gl_get_error();
     u64 rin_gl_get_shader_source_length(u32 shader);
     u64 rin_gl_copy_shader_source(u32 shader, char* buffer, u64 buffer_size);
+    // HTMLCanvasElement calls this only after it has taken the immutable
+    // compositor snapshot of a successfully presented drawing buffer.
+    void release_drawing_buffer_after_compositing();
 #endif
 
     void present(bool preserve_drawing_buffer);
