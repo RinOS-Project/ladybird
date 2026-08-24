@@ -1252,6 +1252,11 @@ if (AK_OS_RINOS)
         WebGL/Extensions/OESVertexArrayObject.cpp
         WebGL/Extensions/WebGLColorBufferFloat.cpp
         WebGL/Extensions/WebGLDepthTexture.cpp
+        # The WebGLRenderingContextBase extension factory instantiates this
+        # object on RinOS. Keep its RinGL-only implementation in the product
+        # source graph; omitting it leaves the generated binding with an
+        # unresolved WebGLDrawBuffers symbol at final WebContent link.
+        WebGL/Extensions/WebGLDrawBuffers.cpp
         WebGL/Extensions/WebGLVertexArrayObjectOES.cpp
         WebGL/Extensions/WebGLLoseContext.cpp
         WebGL/OpenGLContext.cpp
