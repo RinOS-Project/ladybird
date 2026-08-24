@@ -99,7 +99,12 @@ void OpenGLContext::fail_rin_gl_surface(int result)
     // failure through the existing allocation-failure path instead.
     m_impl->device_lost = device_lost;
     m_impl->allocation_failed = !device_lost;
-    m_impl->pending_error = device_lost ? RINGL_CONTEXT_LOST_WEBGL : RINGL_OUT_OF_MEMORY;
+    if (device_lost)
+        m_impl->pending_error = RINGL_CONTEXT_LOST_WEBGL;
+    else if (result == RIN_WEBGL_RINGPU_SURFACE_NO_MEMORY)
+        m_impl->pending_error = RINGL_OUT_OF_MEMORY;
+    else
+        m_impl->pending_error = RINGL_INVALID_OPERATION;
     free_surface_resources();
 }
 
