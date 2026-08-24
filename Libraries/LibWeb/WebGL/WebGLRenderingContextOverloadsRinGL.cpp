@@ -26,7 +26,7 @@ void WebGLRenderingContextOverloads::buffer_data(WebIDL::UnsignedLong target, We
     if (!make_rin_gl_current())
         return;
 
-    ringl_buffer_data(target, size, nullptr, usage);
+    ringl_buffer_data_from_bytes(target, size, nullptr, 0u, usage);
 }
 
 void WebGLRenderingContextOverloads::buffer_data(WebIDL::UnsignedLong target, Optional<GC::Root<WebIDL::BufferSource>> data, WebIDL::UnsignedLong usage)
@@ -54,7 +54,8 @@ void WebGLRenderingContextOverloads::buffer_data(WebIDL::UnsignedLong target, Op
         set_error(RINGL_OUT_OF_MEMORY);
         return;
     }
-    ringl_buffer_data(target, static_cast<WebIDL::LongLong>(span.size()), span.data(), usage);
+    ringl_buffer_data_from_bytes(target, static_cast<WebIDL::LongLong>(span.size()),
+        span.data(), span.size(), usage);
 }
 
 void WebGLRenderingContextOverloads::buffer_sub_data(WebIDL::UnsignedLong target, WebIDL::LongLong offset, GC::Root<WebIDL::BufferSource> data)
@@ -78,7 +79,8 @@ void WebGLRenderingContextOverloads::buffer_sub_data(WebIDL::UnsignedLong target
         set_error(RINGL_OUT_OF_MEMORY);
         return;
     }
-    ringl_buffer_sub_data(target, offset, static_cast<WebIDL::LongLong>(span.size()), span.data());
+    ringl_buffer_sub_data_from_bytes(target, offset,
+        static_cast<WebIDL::LongLong>(span.size()), span.data(), span.size());
 }
 
 void WebGLRenderingContextOverloads::read_pixels(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels)
