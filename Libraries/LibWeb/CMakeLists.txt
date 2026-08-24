@@ -29,15 +29,18 @@ if (NOT AK_OS_RINOS)
     endif()
 else()
     set(ANGLE_TARGETS "")
-    message(STATUS "RinOS policy: ANGLE/GLES is disabled; the private WebGL surface uses RinGL/RinGPU directly.")
+    message(STATUS "RinOS policy: ANGLE/GLES is disabled; the WebGL drawing buffer is owned by the RinGL Aquamarine embedding.")
 
     # LibWeb lives at <RinOS>/libs/ladybird/Libraries/LibWeb.
     set(RINOS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." CACHE PATH "RinOS source root used by the direct LibWeb RinGL bridge")
     set(RINGL_SOURCE_ROOT "${RINOS_SOURCE_ROOT}/libs/RinGL" CACHE PATH "RinGL source root used by the direct LibWeb RinGPU bridge")
     if (NOT EXISTS "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c" OR
+        NOT EXISTS "${RINGL_SOURCE_ROOT}/src/platform/aquamarine_surface.c" OR
         NOT EXISTS "${RINGL_SOURCE_ROOT}/CMakeLists.txt")
-        message(FATAL_ERROR "RinOS direct WebGL bridge sources are missing (RINOS_SOURCE_ROOT=${RINOS_SOURCE_ROOT}, RINGL_SOURCE_ROOT=${RINGL_SOURCE_ROOT})")
+        message(FATAL_ERROR "RinOS RinGL WebGL embedding sources are missing (RINOS_SOURCE_ROOT=${RINOS_SOURCE_ROOT}, RINGL_SOURCE_ROOT=${RINGL_SOURCE_ROOT})")
     endif()
+    set(RINGL_ENABLE_AQUAMARINE_SURFACE ON CACHE BOOL
+        "Build RinGL's caller-owned Aquamarine embedding surface" FORCE)
     if (NOT TARGET RinGL)
         add_subdirectory("${RINGL_SOURCE_ROOT}" "${CMAKE_BINARY_DIR}/RinGL")
     endif()
@@ -45,13 +48,13 @@ else()
         "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/core.c"
         "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/software_backend.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_software.c"
-        "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringpu_surface.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_sync_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c"
     )
     target_include_directories(RinGL PRIVATE
         "${RINOS_SOURCE_ROOT}/src/webengine"
+        "${RINOS_SOURCE_ROOT}/src/subsystems"
         "${RINOS_SOURCE_ROOT}/libs/aquamarine"
     )
     target_link_libraries(RinGL PRIVATE aquamarine)
