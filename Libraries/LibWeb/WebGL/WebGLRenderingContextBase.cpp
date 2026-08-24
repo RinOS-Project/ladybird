@@ -407,4 +407,18 @@ void WebGLRenderingContextBase::set_error(GLenum error)
 #endif
 }
 
+void WebGLRenderingContextBase::reset_webgl_base_state_after_context_restore()
+{
+    m_unpack_flip_y = false;
+    m_unpack_premultiply_alpha = false;
+    m_unpack_colorspace_conversion = BROWSER_DEFAULT_WEBGL;
+#ifdef AK_OS_RINOS
+    m_error = RINGL_NO_ERROR;
+#else
+    m_error = GL_NO_ERROR;
+#endif
+    m_enabled_compressed_texture_formats.clear();
+    m_enabled_extensions.clear();
+}
+
 }

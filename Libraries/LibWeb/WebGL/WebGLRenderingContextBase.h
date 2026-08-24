@@ -47,6 +47,13 @@ public:
 
     virtual OpenGLContext& context() const = 0;
 
+    // Native handles are scoped to one underlying GL context.  A context
+    // restoration replaces that native context while preserving the
+    // JavaScript WebGLRenderingContext object, so WebGLObject uses this
+    // monotonically increasing generation to reject a stale handle before an
+    // allocator can reuse its numeric value in the replacement context.
+    virtual u64 object_generation() const { return 1; }
+
     Optional<Vector<String>> get_supported_extensions();
     JS::Object* get_extension(String const& name);
 
@@ -147,6 +154,12 @@ protected:
 
     GLenum get_error_value();
     void set_error(GLenum error);
+
+    // Context restoration resets WebGL state, extension admission, and the
+    // pending error.  Keep this at the common context boundary so an enabled
+    // extension or pixel-store flag cannot survive into a fresh native
+    // context.
+    void reset_webgl_base_state_after_context_restore();
 
     // UNPACK_FLIP_Y_WEBGL of type boolean
     //      If set, then during any subsequent calls to texImage2D or texSubImage2D, the source data is flipped along

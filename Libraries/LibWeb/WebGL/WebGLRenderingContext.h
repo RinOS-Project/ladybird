@@ -50,6 +50,11 @@ private:
 
     WebGLRenderingContext(JS::Realm&, HTML::HTMLCanvasElement&, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters);
 
+#ifdef AK_OS_RINOS
+    void queue_context_restore() const;
+    void restore_context_after_loss();
+#endif
+
     virtual void visit_edges(Cell::Visitor&) override;
 
     GC::Ref<HTML::HTMLCanvasElement> m_canvas_element;
@@ -65,9 +70,15 @@ private:
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#webgl-context-lost-flag
     // Each WebGLRenderingContext has a webgl context lost flag, which is initially unset.
     mutable bool m_context_lost { false };
+#ifdef AK_OS_RINOS
+    mutable bool m_context_restore_pending { false };
+#endif
 };
 
-void fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, FlyString const& type);
+// Returns false only when a requested cancelable event was cancelled by
+// script. `webglcontextlost` is the only event in this embedding that permits
+// context restoration.
+bool fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, FlyString const& type, bool cancelable = false);
 void fire_webgl_context_creation_error(HTML::HTMLCanvasElement& canvas_element);
 
 }

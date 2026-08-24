@@ -13,6 +13,7 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/WebGLRenderingContextPrototype.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
+#include <LibWeb/HTML/EventLoop/Task.h>
 #include <LibWeb/Infra/Strings.h>
 #include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/WebGL/EventNames.h>
@@ -32,14 +33,15 @@ namespace Web::WebGL {
 GC_DEFINE_ALLOCATOR(WebGLRenderingContext);
 
 // https://www.khronos.org/registry/webgl/specs/latest/1.0/#fire-a-webgl-context-event
-void fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, FlyString const& type)
+bool fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, FlyString const& type, bool cancelable)
 {
-    // To fire a WebGL context event named e means that an event using the WebGLContextEvent interface, with its type attribute [DOM4] initialized to e, its cancelable attribute initialized to true, and its isTrusted attribute [DOM4] initialized to true, is to be dispatched at the given object.
+    // `webglcontextlost` is cancelable so script may opt in to recovery;
+    // creation-error and restored notifications are observations only.
     // FIXME: Consider setting a status message.
     auto event = WebGLContextEvent::create(canvas_element.realm(), type, WebGLContextEventInit {});
     event->set_is_trusted(true);
-    event->set_cancelable(true);
-    canvas_element.dispatch_event(*event);
+    event->set_cancelable(cancelable);
+    return canvas_element.dispatch_event(*event);
 }
 
 // https://www.khronos.org/registry/webgl/specs/latest/1.0/#fire-a-webgl-context-creation-error
@@ -150,7 +152,47 @@ void WebGLRenderingContext::report_context_loss() const
     // flag before script observes the event. That makes re-entrant event
     // handlers safe: every subsequent command sees the same lost context.
     m_context_lost = true;
-    fire_webgl_context_event(*m_canvas_element, EventNames::webglcontextlost);
+    // As required by WebGL, a user agent may restore only when the lost event
+    // is cancelled. Queue it after the handler returns so re-entrant calls
+    // remain lost for the complete event dispatch.
+    if (!fire_webgl_context_event(*m_canvas_element, EventNames::webglcontextlost, true))
+        queue_context_restore();
+}
+
+void WebGLRenderingContext::queue_context_restore() const
+{
+    if (m_context_restore_pending)
+        return;
+    m_context_restore_pending = true;
+    m_canvas_element->queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
+        const_cast<WebGLRenderingContext*>(this)->restore_context_after_loss();
+    });
+}
+
+void WebGLRenderingContext::restore_context_after_loss()
+{
+    OpenGLContext::DrawingBufferOptions context_options {
+        .depth = m_actual_context_parameters.depth,
+        .stencil = m_actual_context_parameters.stencil,
+        .antialias = m_actual_context_parameters.antialias,
+    };
+    auto replacement = OpenGLContext::create(OpenGLContext::WebGLVersion::WebGL1, context_options);
+
+    m_context_restore_pending = false;
+    if (!m_context_lost || !replacement)
+        return;
+
+    replacement->set_size(m_canvas_element->bitmap_size_for_canvas(1, 1));
+    replacement->make_current();
+    if (!replacement->rin_gl_is_ready())
+        return;
+    if (!restore_rin_gl_context(replacement.release_nonnull()))
+        return;
+
+    m_context_lost = false;
+    m_canvas_element->set_canvas_content_dirty();
+    m_canvas_element->set_needs_repaint();
+    fire_webgl_context_event(*m_canvas_element, EventNames::webglcontextrestored);
 }
 #endif
 

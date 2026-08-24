@@ -38,6 +38,7 @@ protected:
 
 private:
     GLuint m_handle { 0 };
+    u64 m_generation { 0 };
 
     bool m_deleted { false };
     String m_label;

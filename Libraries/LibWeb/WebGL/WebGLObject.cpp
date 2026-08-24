@@ -24,6 +24,7 @@ WebGLObject::WebGLObject(JS::Realm& realm, GC::Ref<WebGLRenderingContextBase> co
     : Bindings::PlatformObject(realm)
     , m_context(context)
     , m_handle(handle)
+    , m_generation(context->object_generation())
 {
 }
 
@@ -43,7 +44,7 @@ void WebGLObject::visit_edges(Visitor& visitor)
 
 ErrorOr<GLuint> WebGLObject::handle(WebGLRenderingContextBase const* context) const
 {
-    if (context == m_context)
+    if (context == m_context && m_generation == context->object_generation())
         return m_handle;
 #ifdef AK_OS_RINOS
     return Error::from_errno(RINGL_INVALID_OPERATION);

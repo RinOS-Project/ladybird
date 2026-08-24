@@ -28,6 +28,7 @@ public:
     WebGLRenderingContextImpl(JS::Realm&, NonnullOwnPtr<OpenGLContext>);
 
     virtual OpenGLContext& context() const override { return *m_context; }
+    virtual u64 object_generation() const override { return m_object_generation; }
 
     virtual void present() = 0;
     virtual void needs_to_present() = 0;
@@ -158,6 +159,12 @@ public:
 
 protected:
 #ifdef AK_OS_RINOS
+    // Replace the native RinGL context only after its replacement surface is
+    // fully realized.  All WebGL object wrappers keep their JS identity, but
+    // their old native handles become invalid through object_generation().
+    bool restore_rin_gl_context(NonnullOwnPtr<OpenGLContext>);
+#endif
+#ifdef AK_OS_RINOS
     // Makes the RinGL context current and reports a WebGL-visible error if the
     // private drawing surface could not be realized. Native command methods
     // must use this instead of calling RinGL without a current context.
@@ -213,6 +220,7 @@ protected:
     GC::Ptr<WebGLQuery> m_transform_feedback_primitives_written;
 
     NonnullOwnPtr<OpenGLContext> m_context;
+    u64 m_object_generation { 1 };
 };
 
 }
