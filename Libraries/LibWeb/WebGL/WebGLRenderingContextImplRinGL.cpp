@@ -1152,6 +1152,12 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
         return JS::Value(values[0] != 0);
     case RINGL_ACTIVE_TEXTURE:
     case RINGL_UNPACK_ALIGNMENT:
+    case RINGL_RED_BITS:
+    case RINGL_GREEN_BITS:
+    case RINGL_BLUE_BITS:
+    case RINGL_ALPHA_BITS:
+    case RINGL_DEPTH_BITS:
+    case RINGL_STENCIL_BITS:
     case RINGL_MAX_TEXTURE_SIZE_QUERY:
     case RINGL_MAX_TEXTURE_IMAGE_UNITS:
     case RINGL_MAX_COMBINED_TEXTURE_IMAGE_UNITS:
