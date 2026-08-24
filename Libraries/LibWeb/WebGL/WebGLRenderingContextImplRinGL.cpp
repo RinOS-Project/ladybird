@@ -290,6 +290,32 @@ void WebGLRenderingContextImpl::attach_shader(GC::Root<WebGLProgram> program, GC
     }
 
     ringl_attach_shader(program_handle, shader_handle);
+    {
+        uint32_t attached_shaders[2] {};
+        uint32_t attached_shader_count = 0;
+        bool attached = false;
+
+        // The browser object cache is not an authority for native attachment
+        // state. Do not publish it until RinGL confirms the exact handle was
+        // accepted; notably, a delete-pending shader is retained by an old
+        // program but cannot be attached to a new one.
+        if (ringl_get_attached_shaders(program_handle, attached_shaders,
+                                       2, &attached_shader_count)
+            != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        for (uint32_t index = 0; index < attached_shader_count; ++index) {
+            if (attached_shaders[index] == shader_handle) {
+                attached = true;
+                break;
+            }
+        }
+        if (!attached) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+    }
     if (shader->type() == RINGL_VERTEX_SHADER)
         program->set_attached_vertex_shader(shader.ptr());
     else
@@ -699,7 +725,48 @@ void WebGLRenderingContextImpl::detach_shader(GC::Root<WebGLProgram> program, GC
         set_error(RINGL_INVALID_OPERATION);
         return;
     }
+    {
+        uint32_t attached_shaders[2] {};
+        uint32_t attached_shader_count = 0;
+        bool attached = false;
+
+        if (ringl_get_attached_shaders(program_handle, attached_shaders,
+                                       2, &attached_shader_count)
+            != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        for (uint32_t index = 0; index < attached_shader_count; ++index) {
+            if (attached_shaders[index] == shader_handle) {
+                attached = true;
+                break;
+            }
+        }
+        if (!attached) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+    }
     ringl_detach_shader(program_handle, shader_handle);
+    {
+        uint32_t attached_shaders[2] {};
+        uint32_t attached_shader_count = 0;
+
+        // Keep the browser cache synchronized with the sole executable owner.
+        // A backend failure must leave the cached program attachments intact.
+        if (ringl_get_attached_shaders(program_handle, attached_shaders,
+                                       2, &attached_shader_count)
+            != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+        for (uint32_t index = 0; index < attached_shader_count; ++index) {
+            if (attached_shaders[index] == shader_handle) {
+                set_error(RINGL_INVALID_OPERATION);
+                return;
+            }
+        }
+    }
     if (shader->type() == RINGL_VERTEX_SHADER && program->attached_vertex_shader() == shader)
         program->set_attached_vertex_shader(nullptr);
     else if (shader->type() == RINGL_FRAGMENT_SHADER && program->attached_fragment_shader() == shader)
@@ -781,16 +848,65 @@ Optional<Vector<GC::Root<WebGLShader>>> WebGLRenderingContextImpl::get_attached_
         set_error(RINGL_INVALID_OPERATION);
         return OptionalNone {};
     }
-    if (ringl_is_program(handle_or_error.release_value()) == 0) {
+    auto handle = handle_or_error.release_value();
+    if (ringl_is_program(handle) == 0) {
         set_error(RINGL_INVALID_OPERATION);
         return OptionalNone {};
     }
 
     Vector<GC::Root<WebGLShader>> result;
-    if (program->attached_vertex_shader())
-        result.append(GC::make_root(*program->attached_vertex_shader()));
-    if (program->attached_fragment_shader())
-        result.append(GC::make_root(*program->attached_fragment_shader()));
+    auto vertex_shader = program->attached_vertex_shader();
+    auto fragment_shader = program->attached_fragment_shader();
+    GLuint vertex_handle = 0;
+    GLuint fragment_handle = 0;
+    uint32_t attached_shaders[2] {};
+    uint32_t attached_shader_count = 0;
+    bool saw_vertex = false;
+    bool saw_fragment = false;
+
+    if (vertex_shader) {
+        auto vertex_handle_or_error = vertex_shader->handle(this);
+        if (vertex_handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return OptionalNone {};
+        }
+        vertex_handle = vertex_handle_or_error.release_value();
+    }
+    if (fragment_shader) {
+        auto fragment_handle_or_error = fragment_shader->handle(this);
+        if (fragment_handle_or_error.is_error()) {
+            set_error(RINGL_INVALID_OPERATION);
+            return OptionalNone {};
+        }
+        fragment_handle = fragment_handle_or_error.release_value();
+    }
+    if (ringl_get_attached_shaders(handle, attached_shaders, 2,
+                                   &attached_shader_count)
+        != 0) {
+        set_error(RINGL_INVALID_OPERATION);
+        return OptionalNone {};
+    }
+    for (uint32_t index = 0; index < attached_shader_count; ++index) {
+        if (vertex_shader && !saw_vertex
+            && attached_shaders[index] == vertex_handle) {
+            result.append(GC::make_root(*vertex_shader));
+            saw_vertex = true;
+        } else if (fragment_shader && !saw_fragment
+                   && attached_shaders[index] == fragment_handle) {
+            result.append(GC::make_root(*fragment_shader));
+            saw_fragment = true;
+        } else {
+            // Never manufacture a WebGL shader object for a RinGL name that
+            // is absent from this context's object cache.
+            set_error(RINGL_INVALID_OPERATION);
+            return OptionalNone {};
+        }
+    }
+    if (saw_vertex != static_cast<bool>(vertex_shader)
+        || saw_fragment != static_cast<bool>(fragment_shader)) {
+        set_error(RINGL_INVALID_OPERATION);
+        return OptionalNone {};
+    }
     return result;
 }
 
