@@ -198,6 +198,9 @@ protected:
     // aspects. WebGL 1 may not expose that profile, so commands which read or
     // modify a bound framebuffer must gate it at the browser boundary.
     bool rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments();
+    // Returns -1 when RinGL cannot authoritatively query the attachment, 0
+    // for a fixed-point/default color attachment, and 1 for Float32 RGBA.
+    int rin_gl_bound_framebuffer_float_color_attachment_state();
     bool rin_gl_bound_framebuffer_is_webgl1_compatible();
 
     // RinGL exposes eight independently bound WebGL 1 texture units. Keep

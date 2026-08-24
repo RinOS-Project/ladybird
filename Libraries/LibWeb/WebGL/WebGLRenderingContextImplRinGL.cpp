@@ -34,6 +34,8 @@ namespace Web::WebGL {
 
 static constexpr GLenum webgl_invalid_framebuffer_operation = 0x0506;
 static constexpr GLenum webgl_framebuffer_unsupported = 0x8cdd;
+static constexpr GLenum webgl_framebuffer_attachment_component_type_ext = 0x8211;
+static constexpr GLenum webgl_unsigned_normalized_ext = 0x8c17;
 static constexpr GLenum webgl_low_float = 0x8df0;
 static constexpr GLenum webgl_medium_float = 0x8df1;
 static constexpr GLenum webgl_high_float = 0x8df2;
@@ -211,16 +213,42 @@ bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_has_distinct_depth_sten
         || depth_attachment.level != stencil_attachment.level;
 }
 
+int WebGLRenderingContextImpl::rin_gl_bound_framebuffer_float_color_attachment_state()
+{
+    uint32_t is_float = RINGL_FALSE;
+
+    // Use the RinGL-owned attachment state instead of duplicating a format
+    // cache in Ladybird. Preserve a query failure separately so enabling the
+    // extension cannot turn a stale/invalid native attachment renderable.
+    if (ringl_framebuffer_color_attachment_is_float(&is_float) != 0)
+        return -1;
+    return is_float != RINGL_FALSE ? 1 : 0;
+}
+
 bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_is_webgl1_compatible()
 {
-    if (!rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments())
-        return true;
-
-    // The raw RinGL profile can render to distinct native depth/stencil
-    // aspects. WebGL 1 deliberately does not expose that combination: it is
-    // incomplete at the browser boundary and must not submit a native pass.
-    set_error(webgl_invalid_framebuffer_operation);
-    return false;
+    if (rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments()) {
+        // The raw RinGL profile can render to distinct native depth/stencil
+        // aspects. WebGL 1 deliberately does not expose that combination: it
+        // is incomplete at the browser boundary and must not submit a native
+        // pass.
+        set_error(webgl_invalid_framebuffer_operation);
+        return false;
+    }
+    auto const float_color_attachment =
+        rin_gl_bound_framebuffer_float_color_attachment_state();
+    if (float_color_attachment < 0) {
+        set_error(webgl_invalid_framebuffer_operation);
+        return false;
+    }
+    if (float_color_attachment != 0
+        && !extension_enabled("WEBGL_color_buffer_float"sv)) {
+        // Float texture storage comes from OES_texture_float, but it is not
+        // color-renderable in WebGL 1 until the separate FBO extension is on.
+        set_error(webgl_invalid_framebuffer_operation);
+        return false;
+    }
+    return true;
 }
 
 void WebGLRenderingContextImpl::attach_shader(GC::Root<WebGLProgram> program, GC::Root<WebGLShader> shader)
@@ -2459,6 +2487,35 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
     case RINGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE:
         // RinGL's current FBO texture profile is TEXTURE_2D only.
         return JS::Value(0);
+    case webgl_framebuffer_attachment_component_type_ext: {
+        uint32_t is_float = RINGL_FALSE;
+
+        if (!extension_enabled("WEBGL_color_buffer_float"sv)) {
+            set_error(RINGL_INVALID_ENUM);
+            return JS::js_null();
+        }
+        // WEBGL_color_buffer_float adopts the ordinary attachment component
+        // query. DEPTH_STENCIL_ATTACHMENT is the one explicitly invalid
+        // combined-aspect query; separate depth/stencil aspects have fixed
+        // component types in RinGL's D32/S8 profile.
+        if (attachment == RINGL_DEPTH_STENCIL_ATTACHMENT) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        if (info.kind == RINGL_FRAMEBUFFER_ATTACHMENT_NONE)
+            return JS::Value(RINGL_NONE);
+        if (attachment == RINGL_DEPTH_ATTACHMENT)
+            return JS::Value(RINGL_FLOAT);
+        if (attachment == RINGL_STENCIL_ATTACHMENT)
+            return JS::Value(RINGL_UNSIGNED_INT);
+        if (attachment != RINGL_COLOR_ATTACHMENT0
+            || ringl_framebuffer_color_attachment_is_float(&is_float) != 0) {
+            set_error(RINGL_INVALID_OPERATION);
+            return JS::js_null();
+        }
+        return JS::Value(is_float != RINGL_FALSE ? RINGL_FLOAT
+                                                 : webgl_unsigned_normalized_ext);
+    }
     default:
         set_error(RINGL_INVALID_ENUM);
         return JS::js_null();
@@ -2469,9 +2526,17 @@ WebIDL::UnsignedLong WebGLRenderingContextImpl::check_framebuffer_status(WebIDL:
 {
     if (!make_rin_gl_current())
         return 0;
-    if (target == RINGL_FRAMEBUFFER
-        && rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments())
-        return webgl_framebuffer_unsupported;
+    if (target == RINGL_FRAMEBUFFER) {
+        if (rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments())
+            return webgl_framebuffer_unsupported;
+        auto const float_color_attachment =
+            rin_gl_bound_framebuffer_float_color_attachment_state();
+        if (float_color_attachment < 0)
+            return webgl_framebuffer_unsupported;
+        if (float_color_attachment != 0
+            && !extension_enabled("WEBGL_color_buffer_float"sv))
+            return webgl_framebuffer_unsupported;
+    }
     return ringl_check_framebuffer_status(target);
 }
 
@@ -2481,6 +2546,11 @@ void WebGLRenderingContextImpl::renderbuffer_storage(WebIDL::UnsignedLong target
         return;
     if (internalformat == RINGL_DEPTH_STENCIL)
         internalformat = RINGL_DEPTH24_STENCIL8;
+    if (internalformat == RINGL_RGBA32F
+        && !extension_enabled("WEBGL_color_buffer_float"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
     ringl_renderbuffer_storage(target, internalformat, width, height);
 }
 

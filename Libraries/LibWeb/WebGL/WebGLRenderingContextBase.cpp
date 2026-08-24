@@ -47,6 +47,7 @@ extern "C" {
 #ifdef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/OESTextureFloat.h>
 #include <LibWeb/WebGL/Extensions/OESVertexArrayObject.h>
+#include <LibWeb/WebGL/Extensions/WebGLColorBufferFloat.h>
 #include <LibWeb/WebGL/Extensions/WebGLDepthTexture.h>
 #include <LibWeb/WebGL/Extensions/WebGLLoseContext.h>
 #endif
@@ -319,6 +320,7 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
         webgl_extensions.append("OES_element_index_uint"_string);
         webgl_extensions.append("OES_texture_float"_string);
         webgl_extensions.append("OES_vertex_array_object"_string);
+        webgl_extensions.append("WEBGL_color_buffer_float"_string);
         webgl_extensions.append("WEBGL_depth_texture"_string);
         webgl_extensions.append("WEBGL_lose_context"_string);
     }
@@ -362,6 +364,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     bool const is_instanced_arrays_extension = name.equals_ignoring_ascii_case("ANGLE_instanced_arrays"sv);
     bool const is_texture_float_extension = name.equals_ignoring_ascii_case("OES_texture_float"sv);
     bool const is_vertex_array_object_extension = name.equals_ignoring_ascii_case("OES_vertex_array_object"sv);
+    bool const is_color_buffer_float_extension = name.equals_ignoring_ascii_case("WEBGL_color_buffer_float"sv);
     bool const is_depth_texture_extension = name.equals_ignoring_ascii_case("WEBGL_depth_texture"sv);
 
     // The WebGL extension algorithm compares names case-insensitively. Store
@@ -381,6 +384,8 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         cache_key = "OES_texture_float"_string;
     else if (is_vertex_array_object_extension)
         cache_key = "OES_vertex_array_object"_string;
+    else if (is_color_buffer_float_extension)
+        cache_key = "WEBGL_color_buffer_float"_string;
     else if (is_depth_texture_extension)
         cache_key = "WEBGL_depth_texture"_string;
     else if (is_lose_context_extension)
@@ -407,6 +412,11 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     }
     if (is_vertex_array_object_extension) {
         auto extension = MUST(Extensions::OESVertexArrayObject::create(realm(), *this));
+        m_enabled_extensions.set(cache_key, extension);
+        return extension;
+    }
+    if (is_color_buffer_float_extension) {
+        auto extension = MUST(Extensions::WebGLColorBufferFloat::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
         return extension;
     }

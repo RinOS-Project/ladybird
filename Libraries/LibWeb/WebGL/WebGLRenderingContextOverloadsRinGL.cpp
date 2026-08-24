@@ -126,6 +126,18 @@ void WebGLRenderingContextOverloads::read_pixels(WebIDL::Long x, WebIDL::Long y,
         set_error(RINGL_INVALID_VALUE);
         return;
     }
+    if (type == RINGL_FLOAT) {
+        if (!extension_enabled("WEBGL_color_buffer_float"sv)) {
+            set_error(RINGL_INVALID_ENUM);
+            return;
+        }
+        // `readPixels(..., FLOAT, ...)` writes native Float32 elements. A
+        // byte view of the same size would expose a type-confused result.
+        if (!is<JS::Float32Array>(*pixels->raw_object())) {
+            set_error(RINGL_INVALID_OPERATION);
+            return;
+        }
+    }
 
     // The browser-owned view must remain bounded all the way through the
     // readback API. In particular, do not reintroduce the raw-pointer
