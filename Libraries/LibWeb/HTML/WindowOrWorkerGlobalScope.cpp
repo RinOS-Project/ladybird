@@ -456,11 +456,30 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                         WebIDL::resolve_promise(realm, *p, image_bitmap);
                     }));
                 },
-                [&](GC::Root<OffscreenCanvas> const&) {
-                    dbgln("(STUBBED) createImageBitmap() for OffscreenCanvas");
-                    auto const error = JS::Error::create(realm, "Not Implemented: createImageBitmap() for OffscreenCanvas"sv);
-                    TemporaryExecutionContext const context { relevant_realm(p->promise()), TemporaryExecutionContext::CallbacksEnabled::Yes };
-                    WebIDL::reject_promise(realm, *p, error);
+                [&](GC::Root<OffscreenCanvas> const& offscreen_canvas) {
+                    // Copy the current bitmap just as the HTMLCanvasElement branch does.
+                    // The source stays usable even when it is tainted; its origin-clean state
+                    // travels with the ImageBitmap and is enforced by the consuming API.
+                    auto offscreen_bitmap = offscreen_canvas->bitmap();
+                    if (!offscreen_bitmap) {
+                        WebIDL::reject_promise(realm, *p, WebIDL::InvalidStateError::create(image_bitmap->realm(), "Image size is invalid"_utf16));
+                        return;
+                    }
+
+                    auto cropped_bitmap_or_error = crop_to_the_source_rectangle_with_formatting(offscreen_bitmap, sx, sy, sw, sh, options);
+                    if (cropped_bitmap_or_error.is_error()) {
+                        WebIDL::reject_promise(realm, *p, WebIDL::InvalidStateError::create(image_bitmap->realm(), "Image size is invalid"_utf16));
+                        return;
+                    }
+
+                    image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
+                    image_bitmap->set_origin_clean(offscreen_canvas->is_origin_clean());
+
+                    queue_global_task(Task::Source::BitmapTask, image_bitmap, GC::create_function(realm.heap(), [p, image_bitmap] {
+                        auto& realm = relevant_realm(image_bitmap);
+                        TemporaryExecutionContext const context { realm, TemporaryExecutionContext::CallbacksEnabled::Yes };
+                        WebIDL::resolve_promise(realm, *p, image_bitmap);
+                    }));
                 },
                 // -> video
                 [&](GC::Root<HTMLVideoElement> const&) {

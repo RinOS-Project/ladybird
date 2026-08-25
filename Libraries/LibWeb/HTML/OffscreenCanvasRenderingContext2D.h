@@ -138,14 +138,14 @@ private:
 
     virtual Gfx::Painter* painter_for_canvas_state() override
     {
-        dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::painter_for_canvas_state()");
-        return nullptr;
+        return painter();
     }
     virtual Gfx::Path& path_for_canvas_state() override { return path(); }
 
     GC::Ref<OffscreenCanvas> m_canvas;
     Gfx::IntSize m_size;
     CanvasRenderingContext2DSettings m_context_attributes;
+    OwnPtr<Gfx::Painter> m_painter;
 };
 
 }

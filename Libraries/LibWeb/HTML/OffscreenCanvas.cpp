@@ -15,6 +15,7 @@
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
+#include <LibWeb/WebIDL/DOMException.h>
 
 #if !defined(AK_OS_RINOS)
 #    include <LibWeb/WebGL/WebGL2RenderingContext.h>
@@ -88,22 +89,24 @@ OffscreenCanvas::~OffscreenCanvas() = default;
 
 WebIDL::ExceptionOr<void> OffscreenCanvas::transfer_steps(HTML::TransferDataEncoder&)
 {
-    // FIXME: Implement this
-    dbgln("(STUBBED) OffscreenCanvas::transfer_steps(HTML::TransferDataEncoder&)");
-    return {};
+    // TransferType has no OffscreenCanvas representation and there is no
+    // receiver that can reconstruct its bitmap/context state. Returning
+    // success here would detach the sender and silently lose its contents.
+    return WebIDL::DataCloneError::create(realm(), "OffscreenCanvas transfer is not implemented"_utf16);
 }
 
 WebIDL::ExceptionOr<void> OffscreenCanvas::transfer_receiving_steps(HTML::TransferDataDecoder&)
 {
-    // FIXME: Implement this
-    dbgln("(STUBBED) OffscreenCanvas::transfer_receiving_steps(HTML::TransferDataDecoder&)");
-    return {};
+    // Do not accept a malformed or future transfer record until the complete
+    // transferable format and receiver-side context restoration exist.
+    return WebIDL::DataCloneError::create(realm(), "OffscreenCanvas transfer is not implemented"_utf16);
 }
 
 HTML::TransferType OffscreenCanvas::primary_interface() const
 {
-    // FIXME: Implement this
-    dbgln("(STUBBED) OffscreenCanvas::primary_interface()");
+    // structured_serialize_with_transfer() calls transfer_steps() before it
+    // records a successful transfer or detaches this object. Unknown is the
+    // only honest discriminator until an OffscreenCanvas transfer type exists.
     return {};
 }
 
@@ -230,14 +233,13 @@ JS::ThrowCompletionOr<OffscreenRenderingContext> OffscreenCanvas::get_context(Bi
     }
 
     if (contextId == Bindings::OffscreenRenderingContextId::Webgl) {
-        dbgln("(STUBBED) OffscreenCanvas::get_context(Webgl)");
-
+        // A RinGL WebGL context needs an owning drawing-buffer lifecycle. Do
+        // not manufacture a context or fall back to a direct Aquamarine path.
         return nullptr;
     }
 
     if (contextId == Bindings::OffscreenRenderingContextId::Webgl2) {
-        dbgln("(STUBBED) OffscreenCanvas::get_context(Webgl2)");
-
+        // WebGL 2 is unavailable in the RinGL profile as well.
         return nullptr;
     }
 
@@ -270,6 +272,22 @@ WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> OffscreenCanvas::transfer_to_image_bit
         m_bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA8888, size));
     }
     m_origin_clean = true;
+
+    // The 2D context caches a painter over its backing bitmap. The replacement
+    // has the same dimensions, so tell it explicitly instead of leaving later
+    // draws pointed at the ImageBitmap's transferred backing storage.
+    m_context.visit(
+        [&](GC::Ref<OffscreenCanvasRenderingContext2D>& context) {
+            context->set_size(size);
+        },
+#if !defined(AK_OS_RINOS)
+        [](GC::Ref<WebGL::WebGLRenderingContext>&) {
+        },
+        [](GC::Ref<WebGL::WebGL2RenderingContext>&) {
+        },
+#endif
+        [](Empty) {
+        });
 
     // 5. Return image.
     return image;

@@ -5,7 +5,9 @@
  */
 
 #include <AK/OwnPtr.h>
+#include <LibGfx/Bitmap.h>
 #include <LibGfx/CompositingAndBlendingOperator.h>
+#include <LibGfx/ImmutableBitmap.h>
 #ifndef AK_OS_RINOS
 #include <LibGfx/PainterSkia.h>
 #endif
@@ -15,6 +17,7 @@
 #include <LibWeb/Bindings/OffscreenCanvasRenderingContext2DPrototype.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
+#include <LibWeb/HTML/CanvasRenderingContext2D.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
 #include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/HTML/ImageBitmap.h>
@@ -67,9 +70,11 @@ void OffscreenCanvasRenderingContext2D::visit_edges(Cell::Visitor& visitor)
 
 void OffscreenCanvasRenderingContext2D::set_size(Gfx::IntSize const& size)
 {
-    if (m_size == size)
-        return;
+    // The caller invokes this after every bitmap replacement, including a
+    // same-size reset and transferToImageBitmap(). Never retain a painter for
+    // the detached backing bitmap.
     m_size = size;
+    m_painter = nullptr;
 }
 
 GC::Ref<OffscreenCanvas> OffscreenCanvasRenderingContext2D::canvas()
@@ -108,9 +113,62 @@ void OffscreenCanvasRenderingContext2D::stroke_rect(float, float, float, float)
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::stroke_rect()");
 }
 
-WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::draw_image_internal(CanvasImageSource const&, float, float, float, float, float, float, float, float)
+WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::draw_image_internal(
+    CanvasImageSource const& image, float source_x, float source_y,
+    float source_width, float source_height, float destination_x,
+    float destination_y, float destination_width, float destination_height)
 {
-    return WebIDL::NotSupportedError::create(realm(), "OffscreenCanvasRenderingContext2D drawImage is not implemented"_utf16);
+    if (!isfinite(source_x) || !isfinite(source_y) || !isfinite(source_width) || !isfinite(source_height) || !isfinite(destination_x) || !isfinite(destination_y) || !isfinite(destination_width) || !isfinite(destination_height))
+        return {};
+
+    auto usability = TRY(check_usability_of_image(image));
+    if (usability == CanvasImageSourceUsability::Bad)
+        return {};
+
+    auto source_bitmap = canvas_image_source_bitmap(image);
+    if (!source_bitmap)
+        return {};
+
+    if (source_width < 0) {
+        source_x += source_width;
+        source_width = abs(source_width);
+    }
+    if (source_height < 0) {
+        source_y += source_height;
+        source_height = abs(source_height);
+    }
+    if (destination_width < 0) {
+        destination_x += destination_width;
+        destination_width = abs(destination_width);
+    }
+    if (destination_height < 0) {
+        destination_y += destination_height;
+        destination_height = abs(destination_height);
+    }
+    if (source_width == 0 || source_height == 0)
+        return {};
+
+    auto source_rect = Gfx::FloatRect { source_x, source_y, source_width, source_height };
+    auto destination_rect = Gfx::FloatRect { destination_x, destination_y, destination_width, destination_height };
+    auto clipped_source = source_rect.intersected(source_bitmap->rect().to_type<float>());
+    auto clipped_destination = destination_rect;
+    if (clipped_source != source_rect) {
+        clipped_destination.set_width(clipped_destination.width() * (clipped_source.width() / source_rect.width()));
+        clipped_destination.set_height(clipped_destination.height() * (clipped_source.height() / source_rect.height()));
+    }
+
+    auto scaling_mode = drawing_state().image_smoothing_enabled
+        ? Gfx::ScalingMode::BilinearMipmap
+        : Gfx::ScalingMode::NearestNeighbor;
+    if (auto* canvas_painter = painter()) {
+        canvas_painter->draw_bitmap(
+            clipped_destination, *source_bitmap, clipped_source.to_rounded<int>(),
+            scaling_mode, drawing_state().filter, drawing_state().global_alpha,
+            drawing_state().current_compositing_and_blending_operator);
+        if (image_is_not_origin_clean(image))
+            mark_as_origin_tainted();
+    }
+    return {};
 }
 
 void OffscreenCanvasRenderingContext2D::begin_path()
@@ -343,8 +401,16 @@ void OffscreenCanvasRenderingContext2D::set_global_composite_operation(String)
 
 [[nodiscard]] Gfx::Painter* OffscreenCanvasRenderingContext2D::painter()
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::painter()");
-    return nullptr;
+    if (m_painter)
+        return m_painter.ptr();
+
+    auto bitmap = m_canvas->bitmap();
+    if (!bitmap)
+        return nullptr;
+
+    m_painter = Gfx::Painter::create(bitmap.release_nonnull());
+    m_painter->set_transform(drawing_state().transform);
+    return m_painter.ptr();
 }
 
 }
