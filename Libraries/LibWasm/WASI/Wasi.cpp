@@ -1009,8 +1009,97 @@ ErrorOr<Result<void>> Implementation::impl$fd_filestat_set_size(Configuration&, 
 #endif
 }
 ErrorOr<Result<void>> Implementation::impl$fd_filestat_set_times(Configuration&, FD, Timestamp atim, Timestamp mtim, FSTFlags) { return Errno::NoSys; }
-ErrorOr<Result<Size>> Implementation::impl$fd_pread(Configuration&, FD, Pointer<IOVec> iovs, Size iovs_len, FileSize offset) { return Errno::NoSys; }
-ErrorOr<Result<Size>> Implementation::impl$fd_pwrite(Configuration&, FD, Pointer<CIOVec> iovs, Size iovs_len, FileSize offset) { return Errno::NoSys; }
+ErrorOr<Result<Size>> Implementation::impl$fd_pread(Configuration& configuration, FD fd, Pointer<IOVec> iovs, Size iovs_len, FileSize offset)
+{
+#if defined(AK_OS_RINOS)
+    auto requested_offset = offset.value();
+    if (requested_offset > static_cast<u64>(NumericLimits<off_t>::max()))
+        return Errno::Overflow;
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+
+    auto iovec_array = TRY(copy_typed_array(configuration, iovs, iovs_len));
+    u64 requested_bytes = 0;
+    for (auto const& iovec : iovec_array) {
+        auto slice = TRY(slice_typed_memory(configuration, iovec.buf, iovec.buf_len));
+        (void)slice;
+        if (iovec.buf_len.value() > NumericLimits<u32>::max() - requested_bytes)
+            return Errno::Overflow;
+        requested_bytes += iovec.buf_len.value();
+    }
+    if (requested_bytes > static_cast<u64>(NumericLimits<off_t>::max()) - requested_offset)
+        return Errno::Overflow;
+
+    u64 bytes_read = 0;
+    for (auto const& iovec : iovec_array) {
+        auto slice = TRY(slice_typed_memory(configuration, iovec.buf, iovec.buf_len));
+        auto result = pread(host_fd, slice.data(), slice.size(),
+            static_cast<off_t>(requested_offset + bytes_read));
+        if (result < 0)
+            return errno_value_from_errno(errno);
+        if (static_cast<size_t>(result) > slice.size())
+            return Errno::IO;
+        bytes_read += static_cast<size_t>(result);
+        if (static_cast<size_t>(result) < slice.size())
+            break;
+    }
+    return Size(static_cast<u32>(bytes_read));
+#else
+    (void)configuration;
+    (void)fd;
+    (void)iovs;
+    (void)iovs_len;
+    (void)offset;
+    return Errno::NoSys;
+#endif
+}
+
+ErrorOr<Result<Size>> Implementation::impl$fd_pwrite(Configuration& configuration, FD fd, Pointer<CIOVec> iovs, Size iovs_len, FileSize offset)
+{
+#if defined(AK_OS_RINOS)
+    auto requested_offset = offset.value();
+    if (requested_offset > static_cast<u64>(NumericLimits<off_t>::max()))
+        return Errno::Overflow;
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+
+    auto iovec_array = TRY(copy_typed_array(configuration, iovs, iovs_len));
+    u64 requested_bytes = 0;
+    for (auto const& iovec : iovec_array) {
+        auto slice = TRY(slice_typed_memory(configuration, iovec.buf, iovec.buf_len));
+        (void)slice;
+        if (iovec.buf_len.value() > NumericLimits<u32>::max() - requested_bytes)
+            return Errno::Overflow;
+        requested_bytes += iovec.buf_len.value();
+    }
+    if (requested_bytes > static_cast<u64>(NumericLimits<off_t>::max()) - requested_offset)
+        return Errno::Overflow;
+
+    u64 bytes_written = 0;
+    for (auto const& iovec : iovec_array) {
+        auto slice = TRY(slice_typed_memory(configuration, iovec.buf, iovec.buf_len));
+        auto result = pwrite(host_fd, slice.data(), slice.size(),
+            static_cast<off_t>(requested_offset + bytes_written));
+        if (result < 0)
+            return errno_value_from_errno(errno);
+        if (static_cast<size_t>(result) > slice.size())
+            return Errno::IO;
+        bytes_written += static_cast<size_t>(result);
+        if (static_cast<size_t>(result) < slice.size())
+            break;
+    }
+    return Size(static_cast<u32>(bytes_written));
+#else
+    (void)configuration;
+    (void)fd;
+    (void)iovs;
+    (void)iovs_len;
+    (void)offset;
+    return Errno::NoSys;
+#endif
+}
 ErrorOr<Result<Size>> Implementation::impl$fd_readdir(Configuration&, FD, Pointer<u8> buf, Size buf_len, DirCookie cookie) { return Errno::NoSys; }
 ErrorOr<Result<void>> Implementation::impl$fd_renumber(Configuration&, FD from, FD to) { return Errno::NoSys; }
 ErrorOr<Result<void>> Implementation::impl$fd_sync(Configuration&, FD fd)
