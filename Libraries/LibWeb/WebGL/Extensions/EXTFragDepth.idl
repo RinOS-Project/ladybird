@@ -1,0 +1,6 @@
+#import <WebGL/Types.idl>
+
+// https://registry.khronos.org/webgl/extensions/EXT_frag_depth/
+[Exposed=(Window,Worker), LegacyNoInterfaceObject]
+interface EXTFragDepth {
+};

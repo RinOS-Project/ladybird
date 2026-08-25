@@ -1239,6 +1239,7 @@ if (AK_OS_RINOS)
         WebGL/Extensions/ANGLEInstancedArrays.cpp
         WebGL/Extensions/EXTBlendMinMax.cpp
         WebGL/Extensions/EXTColorBufferHalfFloat.cpp
+        WebGL/Extensions/EXTFragDepth.cpp
         WebGL/Extensions/EXTSrgb.cpp
         WebGL/Extensions/OESElementIndexUint.cpp
         WebGL/Extensions/OESFboRenderMipmap.cpp

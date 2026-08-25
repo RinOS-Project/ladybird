@@ -370,6 +370,13 @@ void OpenGLContext::enable_rin_gl_standard_derivatives()
         fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
 }
 
+void OpenGLContext::enable_rin_gl_frag_depth()
+{
+    make_current();
+    if (m_impl->bridge.context && ringl_enable_webgl_frag_depth() != 0)
+        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+}
+
 void OpenGLContext::enable_rin_gl_draw_buffers()
 {
     make_current();

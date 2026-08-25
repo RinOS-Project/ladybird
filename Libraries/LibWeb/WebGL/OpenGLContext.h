@@ -74,6 +74,9 @@ public:
     // OES_standard_derivatives exposes derivative builtins and its advisory
     // hint only after JavaScript has acquired the extension object.
     void enable_rin_gl_standard_derivatives();
+    // EXT_frag_depth permits the dedicated RinGL shader output only after the
+    // browser has returned the extension object.
+    void enable_rin_gl_frag_depth();
     // WEBGL_draw_buffers exposes the RinGL MRT path only after JavaScript has
     // acquired the extension object. The WebGL extension object never calls a
     // GLES/Aquamarine surface entry point directly.

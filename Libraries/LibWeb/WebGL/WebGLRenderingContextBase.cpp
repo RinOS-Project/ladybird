@@ -46,6 +46,7 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/OESElementIndexUint.h>
 #ifdef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/EXTColorBufferHalfFloat.h>
+#include <LibWeb/WebGL/Extensions/EXTFragDepth.h>
 #include <LibWeb/WebGL/Extensions/EXTSrgb.h>
 #include <LibWeb/WebGL/Extensions/OESFboRenderMipmap.h>
 #include <LibWeb/WebGL/Extensions/OESStandardDerivatives.h>
@@ -364,6 +365,7 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
     if (context().webgl_version() == OpenGLContext::WebGLVersion::WebGL1) {
         webgl_extensions.append("ANGLE_instanced_arrays"_string);
         webgl_extensions.append("EXT_blend_minmax"_string);
+        webgl_extensions.append("EXT_frag_depth"_string);
         webgl_extensions.append("EXT_sRGB"_string);
         webgl_extensions.append("OES_fbo_render_mipmap"_string);
         webgl_extensions.append("OES_element_index_uint"_string);
@@ -421,6 +423,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     bool const is_element_index_uint_extension = name.equals_ignoring_ascii_case("OES_element_index_uint"sv);
     bool const is_instanced_arrays_extension = name.equals_ignoring_ascii_case("ANGLE_instanced_arrays"sv);
     bool const is_blend_minmax_extension = name.equals_ignoring_ascii_case("EXT_blend_minmax"sv);
+    bool const is_frag_depth_extension = name.equals_ignoring_ascii_case("EXT_frag_depth"sv);
     bool const is_srgb_extension = name.equals_ignoring_ascii_case("EXT_sRGB"sv);
     bool const is_fbo_render_mipmap_extension = name.equals_ignoring_ascii_case("OES_fbo_render_mipmap"sv);
     bool const is_standard_derivatives_extension = name.equals_ignoring_ascii_case("OES_standard_derivatives"sv);
@@ -452,6 +455,8 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         cache_key = "ANGLE_instanced_arrays"_string;
     else if (is_blend_minmax_extension)
         cache_key = "EXT_blend_minmax"_string;
+    else if (is_frag_depth_extension)
+        cache_key = "EXT_frag_depth"_string;
     else if (is_srgb_extension)
         cache_key = "EXT_sRGB"_string;
     else if (is_fbo_render_mipmap_extension)
@@ -502,6 +507,15 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     if (is_blend_minmax_extension) {
         context().enable_rin_gl_blend_minmax();
         auto extension = MUST(Extensions::EXTBlendMinMax::create(realm(), *this));
+        m_enabled_extensions.set(cache_key, extension);
+        return extension;
+    }
+    if (is_frag_depth_extension) {
+        // EXT_frag_depth itself has no JavaScript constants. Its object is
+        // nevertheless the opt-in which permits the RinGL/RinGPU fragment
+        // shader output to participate in the real depth-test path.
+        context().enable_rin_gl_frag_depth();
+        auto extension = MUST(Extensions::EXTFragDepth::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
         return extension;
     }
