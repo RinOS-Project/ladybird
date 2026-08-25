@@ -413,9 +413,11 @@ static size_t sp800_185_right_encode(u64 value, u8 output[9])
 
 static bool sp800_185_bits_for_bytes(size_t byte_count, u64& bit_count)
 {
-    if (byte_count > NumericLimits<u64>::max() / 8)
+    auto byte_count_u64 = static_cast<u64>(byte_count);
+    if (static_cast<size_t>(byte_count_u64) != byte_count
+        || byte_count_u64 > NumericLimits<u64>::max() / 8)
         return false;
-    bit_count = static_cast<u64>(byte_count) * 8;
+    bit_count = byte_count_u64 * 8;
     return true;
 }
 
