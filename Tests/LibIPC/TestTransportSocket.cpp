@@ -46,15 +46,15 @@ static TransportPair create_transport_pair()
     int fds[2] = {};
     MUST(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, fds));
 
-    auto sender_socket = TRY_OR_FAIL(Core::LocalSocket::adopt_fd(fds[0]));
-    auto receiver_socket = TRY_OR_FAIL(Core::LocalSocket::adopt_fd(fds[1]));
+    auto sender_socket = MUST(Core::LocalSocket::adopt_fd(fds[0]));
+    auto receiver_socket = MUST(Core::LocalSocket::adopt_fd(fds[1]));
 
     MUST(sender_socket->set_blocking(false));
     MUST(receiver_socket->set_blocking(false));
 
     return {
-        TRY_OR_FAIL(IPC::TransportSocket::from_socket(move(sender_socket))),
-        TRY_OR_FAIL(IPC::TransportSocket::from_socket(move(receiver_socket))),
+        MUST(IPC::TransportSocket::from_socket(move(sender_socket))),
+        MUST(IPC::TransportSocket::from_socket(move(receiver_socket))),
     };
 }
 
@@ -65,7 +65,7 @@ static T roundtrip_over_transport(T const& value)
 
     IPC::MessageBuffer buffer;
     IPC::Encoder encoder(buffer);
-    TRY_OR_FAIL(encoder.encode(value));
+    MUST(encoder.encode(value));
 
     auto data = buffer.take_data();
     auto attachments = buffer.take_attachments();
@@ -76,9 +76,9 @@ static T roundtrip_over_transport(T const& value)
     Optional<T> decoded_value;
     auto should_shutdown = pair.receiver->read_as_many_messages_as_possible_without_blocking([&](auto&& message) {
         FixedMemoryStream stream { ReadonlyBytes { message.bytes.data(), message.bytes.size() } };
-        auto message_attachments = move(message.attachments);
+        auto& message_attachments = message.attachments;
         IPC::Decoder decoder(stream, message_attachments);
-        decoded_value = TRY_OR_FAIL(decoder.decode<T>());
+        decoded_value = MUST(decoder.decode<T>());
     });
 
     EXPECT_EQ(should_shutdown, IPC::TransportSocket::ShouldShutdown::No);
