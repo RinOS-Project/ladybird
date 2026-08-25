@@ -8,6 +8,7 @@
 
 #include <AK/String.h>
 #include <AK/Variant.h>
+#include <AK/Vector.h>
 #include <LibGfx/AffineTransform.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/Forward.h>
@@ -132,6 +133,15 @@ public:
 
 private:
     explicit OffscreenCanvasRenderingContext2D(JS::Realm&, OffscreenCanvas&, CanvasRenderingContext2DSettings);
+
+    static Gfx::Path rect_path(float x, float y, float width, float height);
+    Gfx::Color clear_color() const;
+    void fill_internal(Gfx::Path const&, Gfx::WindingRule);
+    void stroke_internal(Gfx::Path const&);
+    void clip_internal(Gfx::Path&, Gfx::WindingRule);
+    void paint_shadow_for_fill_internal(Gfx::Path const&, Gfx::WindingRule);
+    void paint_shadow_for_stroke_internal(Gfx::Path const&, Gfx::Path::CapStyle, Gfx::Path::JoinStyle, Vector<float> const&);
+    WebIDL::ExceptionOr<void> put_pixels_from_an_image_data_onto_a_bitmap(ImageData&, Gfx::Painter&, float dx, float dy, float dirty_x, float dirty_y, float dirty_width, float dirty_height);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;

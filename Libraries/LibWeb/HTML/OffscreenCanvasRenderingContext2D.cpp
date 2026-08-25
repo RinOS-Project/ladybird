@@ -12,6 +12,7 @@
 #include <LibGfx/PainterSkia.h>
 #endif
 #include <LibGfx/Rect.h>
+#include <LibJS/Runtime/TypedArray.h>
 #include <LibUnicode/Segmenter.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/OffscreenCanvasRenderingContext2DPrototype.h>
@@ -98,19 +99,45 @@ void OffscreenCanvasRenderingContext2D::mark_as_origin_tainted()
     m_canvas->set_origin_clean(false);
 }
 
-void OffscreenCanvasRenderingContext2D::fill_rect(float, float, float, float)
+Gfx::Path OffscreenCanvasRenderingContext2D::rect_path(float x, float y, float width, float height)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::fill_rect()");
+    auto top_left = Gfx::FloatPoint(x, y);
+    auto top_right = Gfx::FloatPoint(x + width, y);
+    auto bottom_left = Gfx::FloatPoint(x, y + height);
+    auto bottom_right = Gfx::FloatPoint(x + width, y + height);
+
+    Gfx::Path path;
+    path.move_to(top_left);
+    path.line_to(top_right);
+    path.line_to(bottom_right);
+    path.line_to(bottom_left);
+    path.line_to(top_left);
+    return path;
 }
 
-void OffscreenCanvasRenderingContext2D::clear_rect(float, float, float, float)
+Gfx::Color OffscreenCanvasRenderingContext2D::clear_color() const
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::clear_rect()");
+    return m_context_attributes.alpha ? Gfx::Color::Transparent : Gfx::Color::Black;
 }
 
-void OffscreenCanvasRenderingContext2D::stroke_rect(float, float, float, float)
+void OffscreenCanvasRenderingContext2D::fill_rect(float x, float y, float width, float height)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::stroke_rect()");
+    fill_internal(rect_path(x, y, width, height), Gfx::WindingRule::EvenOdd);
+}
+
+// https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-clearrect
+void OffscreenCanvasRenderingContext2D::clear_rect(float x, float y, float width, float height)
+{
+    if (!isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height))
+        return;
+
+    if (auto* canvas_painter = painter())
+        canvas_painter->clear_rect({ x, y, width, height }, clear_color());
+}
+
+void OffscreenCanvasRenderingContext2D::stroke_rect(float x, float y, float width, float height)
+{
+    stroke_internal(rect_path(x, y, width, height));
 }
 
 WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::draw_image_internal(
@@ -173,17 +200,17 @@ WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::draw_image_internal
 
 void OffscreenCanvasRenderingContext2D::begin_path()
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::begin_path()");
+    path().clear();
 }
 
 void OffscreenCanvasRenderingContext2D::stroke()
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::stroke()");
+    stroke_internal(path());
 }
 
-void OffscreenCanvasRenderingContext2D::stroke(Path2D const&)
+void OffscreenCanvasRenderingContext2D::stroke(Path2D const& path)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::stroke(Path2D)");
+    stroke_internal(path.path());
 }
 
 void OffscreenCanvasRenderingContext2D::fill_text(Utf16String const&, float, float, Optional<double>)
@@ -196,47 +223,247 @@ void OffscreenCanvasRenderingContext2D::stroke_text(Utf16String const&, float, f
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::stroke_text()");
 }
 
-void OffscreenCanvasRenderingContext2D::fill(StringView)
+static Gfx::WindingRule parse_fill_rule(StringView fill_rule)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::fill(StringView)");
+    if (fill_rule == "evenodd"sv)
+        return Gfx::WindingRule::EvenOdd;
+    return Gfx::WindingRule::Nonzero;
 }
 
-void OffscreenCanvasRenderingContext2D::fill(Path2D&, StringView)
+static Gfx::Path::CapStyle to_gfx_cap(Bindings::CanvasLineCap cap_style)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::fill(Path2D&, StringView)");
+    switch (cap_style) {
+    case Bindings::CanvasLineCap::Butt:
+        return Gfx::Path::CapStyle::Butt;
+    case Bindings::CanvasLineCap::Round:
+        return Gfx::Path::CapStyle::Round;
+    case Bindings::CanvasLineCap::Square:
+        return Gfx::Path::CapStyle::Square;
+    }
+    VERIFY_NOT_REACHED();
+}
+
+static Gfx::Path::JoinStyle to_gfx_join(Bindings::CanvasLineJoin join_style)
+{
+    switch (join_style) {
+    case Bindings::CanvasLineJoin::Round:
+        return Gfx::Path::JoinStyle::Round;
+    case Bindings::CanvasLineJoin::Bevel:
+        return Gfx::Path::JoinStyle::Bevel;
+    case Bindings::CanvasLineJoin::Miter:
+        return Gfx::Path::JoinStyle::Miter;
+    }
+    VERIFY_NOT_REACHED();
+}
+
+void OffscreenCanvasRenderingContext2D::paint_shadow_for_fill_internal(Gfx::Path const& path, Gfx::WindingRule winding_rule)
+{
+    auto* canvas_painter = painter();
+    if (!canvas_painter)
+        return;
+
+    auto& state = drawing_state();
+    if ((state.shadow_blur == 0.0f && state.shadow_offset_x == 0.0f && state.shadow_offset_y == 0.0f)
+        || state.current_compositing_and_blending_operator == Gfx::CompositingAndBlendingOperator::Copy)
+        return;
+
+    auto alpha = state.global_alpha * (state.shadow_color.alpha() / 255.0f);
+    if (auto fill_style_color = state.fill_style.as_color(); fill_style_color.has_value() && fill_style_color->alpha() > 0)
+        alpha = (fill_style_color->alpha() / 255.0f) * state.global_alpha;
+    if (alpha == 0.0f)
+        return;
+
+    canvas_painter->save();
+    Gfx::AffineTransform transform;
+    transform.translate(state.shadow_offset_x, state.shadow_offset_y);
+    transform.multiply(state.transform);
+    canvas_painter->set_transform(transform);
+    canvas_painter->fill_path(path, state.shadow_color.with_opacity(alpha), winding_rule, state.shadow_blur, state.current_compositing_and_blending_operator);
+    canvas_painter->restore();
+}
+
+void OffscreenCanvasRenderingContext2D::paint_shadow_for_stroke_internal(Gfx::Path const& path, Gfx::Path::CapStyle line_cap, Gfx::Path::JoinStyle line_join, Vector<float> const& dash_array)
+{
+    auto* canvas_painter = painter();
+    if (!canvas_painter)
+        return;
+
+    auto& state = drawing_state();
+    if ((state.shadow_blur == 0.0f && state.shadow_offset_x == 0.0f && state.shadow_offset_y == 0.0f)
+        || state.current_compositing_and_blending_operator == Gfx::CompositingAndBlendingOperator::Copy)
+        return;
+
+    auto alpha = state.global_alpha * (state.shadow_color.alpha() / 255.0f);
+    if (auto fill_style_color = state.fill_style.as_color(); fill_style_color.has_value() && fill_style_color->alpha() > 0)
+        alpha = (fill_style_color->alpha() / 255.0f) * state.global_alpha;
+    if (alpha == 0.0f)
+        return;
+
+    canvas_painter->save();
+    Gfx::AffineTransform transform;
+    transform.translate(state.shadow_offset_x, state.shadow_offset_y);
+    transform.multiply(state.transform);
+    canvas_painter->set_transform(transform);
+    canvas_painter->stroke_path(path, state.shadow_color.with_opacity(alpha), state.line_width, state.shadow_blur, state.current_compositing_and_blending_operator, line_cap, line_join, state.miter_limit, dash_array, state.line_dash_offset);
+    canvas_painter->restore();
+}
+
+void OffscreenCanvasRenderingContext2D::fill_internal(Gfx::Path const& path, Gfx::WindingRule winding_rule)
+{
+    auto* canvas_painter = painter();
+    if (!canvas_painter)
+        return;
+
+    auto& state = drawing_state();
+    auto paint_style = state.fill_style.to_gfx_paint_style();
+    if (!paint_style->is_visible())
+        return;
+
+    paint_shadow_for_fill_internal(path, winding_rule);
+    canvas_painter->fill_path(path, paint_style, state.filter, state.global_alpha, state.current_compositing_and_blending_operator, winding_rule);
+}
+
+void OffscreenCanvasRenderingContext2D::stroke_internal(Gfx::Path const& path)
+{
+    auto* canvas_painter = painter();
+    if (!canvas_painter)
+        return;
+
+    auto& state = drawing_state();
+    auto paint_style = state.stroke_style.to_gfx_paint_style();
+    if (!paint_style->is_visible())
+        return;
+
+    auto dash_array = Vector<float> {};
+    dash_array.ensure_capacity(state.dash_list.size());
+    for (auto dash : state.dash_list)
+        dash_array.append(static_cast<float>(dash));
+
+    auto line_cap = to_gfx_cap(state.line_cap);
+    auto line_join = to_gfx_join(state.line_join);
+    paint_shadow_for_stroke_internal(path, line_cap, line_join, dash_array);
+    canvas_painter->stroke_path(path, paint_style, state.filter, state.line_width, state.global_alpha, state.current_compositing_and_blending_operator, line_cap, line_join, state.miter_limit, dash_array, state.line_dash_offset);
+}
+
+void OffscreenCanvasRenderingContext2D::fill(StringView fill_rule)
+{
+    fill_internal(path(), parse_fill_rule(fill_rule));
+}
+
+void OffscreenCanvasRenderingContext2D::fill(Path2D& path, StringView fill_rule)
+{
+    fill_internal(path.path(), parse_fill_rule(fill_rule));
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-createimagedata
-WebIDL::ExceptionOr<GC::Ref<ImageData>> OffscreenCanvasRenderingContext2D::create_image_data(int, int, Optional<ImageDataSettings> const&) const
+WebIDL::ExceptionOr<GC::Ref<ImageData>> OffscreenCanvasRenderingContext2D::create_image_data(int width, int height, Optional<ImageDataSettings> const& settings) const
 {
-    return WebIDL::NotSupportedError::create(realm(), "(STUBBED) OffscreenCanvasRenderingContext2D::create_image_data(int, int)"_utf16);
+    if (width == 0 || height == 0)
+        return WebIDL::IndexSizeError::create(realm(), "Width and height must not be zero"_utf16);
+    return ImageData::create(realm(), abs(width), abs(height), settings);
 }
 
-WebIDL::ExceptionOr<GC::Ref<ImageData>> OffscreenCanvasRenderingContext2D::create_image_data(ImageData const&) const
+WebIDL::ExceptionOr<GC::Ref<ImageData>> OffscreenCanvasRenderingContext2D::create_image_data(ImageData const& image_data) const
 {
-    return WebIDL::NotSupportedError::create(realm(), "(STUBBED) OffscreenCanvasRenderingContext2D::create_image_data(ImageData&)"_utf16);
+    return ImageData::create(realm(), image_data.width(), image_data.height());
 }
 
-WebIDL::ExceptionOr<GC::Ptr<ImageData>> OffscreenCanvasRenderingContext2D::get_image_data(int, int, int, int, Optional<ImageDataSettings> const&) const
+WebIDL::ExceptionOr<GC::Ptr<ImageData>> OffscreenCanvasRenderingContext2D::get_image_data(int x, int y, int width, int height, Optional<ImageDataSettings> const& settings) const
 {
-    return WebIDL::NotSupportedError::create(realm(), "(STUBBED) OffscreenCanvasRenderingContext2D::get_image_data()"_utf16);
+    if (width == 0 || height == 0)
+        return WebIDL::IndexSizeError::create(realm(), "Width and height must not be zero"_utf16);
+    if (!m_canvas->is_origin_clean())
+        return WebIDL::SecurityError::create(realm(), "OffscreenCanvas is not origin-clean"_utf16);
+
+    auto abs_width = abs(width);
+    auto abs_height = abs(height);
+    auto image_data = TRY(ImageData::create(realm(), abs_width, abs_height, settings));
+    auto bitmap = m_canvas->bitmap();
+    if (!bitmap)
+        return image_data;
+
+    auto source_rect = Gfx::IntRect { x, y, abs_width, abs_height };
+    if (width < 0 || height < 0)
+        source_rect = source_rect.translated(min(width, 0), min(height, 0));
+    auto clipped_source = source_rect.intersected(bitmap->rect());
+    if (clipped_source.is_empty())
+        return image_data;
+
+    VERIFY(bitmap->alpha_type() == Gfx::AlphaType::Premultiplied);
+    VERIFY(image_data->bitmap().alpha_type() == Gfx::AlphaType::Unpremultiplied);
+    auto destination_rect = clipped_source.translated(-source_rect.x(), -source_rect.y());
+    auto immutable_bitmap = Gfx::ImmutableBitmap::create(bitmap.release_nonnull());
+    auto image_data_painter = Gfx::Painter::create(image_data->bitmap());
+    image_data_painter->draw_bitmap(destination_rect.to_type<float>(), *immutable_bitmap, clipped_source, Gfx::ScalingMode::NearestNeighbor, {}, 1, Gfx::CompositingAndBlendingOperator::SourceOver);
+    return image_data;
 }
 
-WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::put_image_data(ImageData&, float, float)
+WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::put_image_data(ImageData& image_data, float dx, float dy)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::put_image_data()");
+    if (auto* canvas_painter = painter())
+        TRY(put_pixels_from_an_image_data_onto_a_bitmap(image_data, *canvas_painter, dx, dy, 0, 0, image_data.width(), image_data.height()));
     return {};
 }
 
-WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::put_image_data(ImageData&, float, float, float, float, float, float)
+WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::put_image_data(ImageData& image_data, float x, float y, float dirty_x, float dirty_y, float dirty_width, float dirty_height)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::put_image_data()");
+    if (auto* canvas_painter = painter())
+        TRY(put_pixels_from_an_image_data_onto_a_bitmap(image_data, *canvas_painter, x, y, dirty_x, dirty_y, dirty_width, dirty_height));
+    return {};
+}
+
+WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::put_pixels_from_an_image_data_onto_a_bitmap(ImageData& image_data, Gfx::Painter& canvas_painter, float dx, float dy, float dirty_x, float dirty_y, float dirty_width, float dirty_height)
+{
+    auto* buffer = image_data.data()->viewed_array_buffer();
+    if (buffer->is_detached())
+        return WebIDL::InvalidStateError::create(image_data.realm(), "ImageData's underlying buffer is detached"_utf16);
+
+    if (dirty_width < 0) {
+        dirty_x += dirty_width;
+        dirty_width = abs(dirty_width);
+    }
+    if (dirty_height < 0) {
+        dirty_y += dirty_height;
+        dirty_height = abs(dirty_height);
+    }
+    if (dirty_x < 0) {
+        dirty_width += dirty_x;
+        dirty_x = 0;
+    }
+    if (dirty_y < 0) {
+        dirty_height += dirty_y;
+        dirty_y = 0;
+    }
+    if (dirty_x + dirty_width > image_data.width())
+        dirty_width = image_data.width() - dirty_x;
+    if (dirty_y + dirty_height > image_data.height())
+        dirty_height = image_data.height() - dirty_y;
+    if (dirty_width <= 0 || dirty_height <= 0)
+        return {};
+
+    auto destination_rect = Gfx::FloatRect { dx + dirty_x, dy + dirty_y, dirty_width, dirty_height };
+    canvas_painter.save();
+    canvas_painter.set_transform({});
+    canvas_painter.draw_bitmap(destination_rect, Gfx::ImmutableBitmap::create(image_data.bitmap(), Gfx::AlphaType::Unpremultiplied), Gfx::IntRect { dirty_x, dirty_y, dirty_width, dirty_height }, Gfx::ScalingMode::NearestNeighbor, {}, 1, Gfx::CompositingAndBlendingOperator::SourceOver);
+    canvas_painter.restore();
     return {};
 }
 
 void OffscreenCanvasRenderingContext2D::reset_to_default_state()
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::reset_to_default_state()");
+    m_canvas->set_origin_clean(true);
+    if (auto* canvas_painter = painter()) {
+        if (auto bitmap = m_canvas->bitmap()) {
+            canvas_painter->reset();
+            canvas_painter->clear_rect(bitmap->rect().to_type<float>(), clear_color());
+        }
+    }
+
+    path().clear();
+    clear_drawing_state_stack();
+    reset_drawing_state();
+    if (auto* canvas_painter = painter())
+        canvas_painter->reset();
 }
 
 GC::Ref<TextMetrics> OffscreenCanvasRenderingContext2D::measure_text(Utf16String const&)
@@ -247,26 +474,38 @@ GC::Ref<TextMetrics> OffscreenCanvasRenderingContext2D::measure_text(Utf16String
     return metrics;
 }
 
-void OffscreenCanvasRenderingContext2D::clip(StringView)
+void OffscreenCanvasRenderingContext2D::clip_internal(Gfx::Path& path, Gfx::WindingRule winding_rule)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::clip(StringView)");
+    if (auto* canvas_painter = painter())
+        canvas_painter->clip(path, winding_rule);
 }
 
-void OffscreenCanvasRenderingContext2D::clip(Path2D&, StringView)
+void OffscreenCanvasRenderingContext2D::clip(StringView fill_rule)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::clip(Path2D&, StringView)");
+    clip_internal(path(), parse_fill_rule(fill_rule));
 }
 
-bool OffscreenCanvasRenderingContext2D::is_point_in_path(double, double, StringView)
+void OffscreenCanvasRenderingContext2D::clip(Path2D& path, StringView fill_rule)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::is_point_in_path(double, double, StringView)");
-    return false;
+    clip_internal(path.path(), parse_fill_rule(fill_rule));
 }
 
-bool OffscreenCanvasRenderingContext2D::is_point_in_path(Path2D const&, double, double, StringView)
+static bool is_point_in_path_internal(Gfx::Path path, Gfx::AffineTransform const& transform, double x, double y, StringView fill_rule)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::clip(Path2D const&, double, double, StringView)");
-    return false;
+    auto point = Gfx::FloatPoint(x, y);
+    if (auto inverse_transform = transform.inverse(); inverse_transform.has_value())
+        point = inverse_transform->map(point);
+    return path.contains(point, parse_fill_rule(fill_rule));
+}
+
+bool OffscreenCanvasRenderingContext2D::is_point_in_path(double x, double y, StringView fill_rule)
+{
+    return is_point_in_path_internal(path(), drawing_state().transform, x, y, fill_rule);
+}
+
+bool OffscreenCanvasRenderingContext2D::is_point_in_path(Path2D const& path, double x, double y, StringView fill_rule)
+{
+    return is_point_in_path_internal(path.path(), drawing_state().transform, x, y, fill_rule);
 }
 
 bool OffscreenCanvasRenderingContext2D::image_smoothing_enabled() const
@@ -389,14 +628,59 @@ void OffscreenCanvasRenderingContext2D::set_global_alpha(float alpha)
 
 String OffscreenCanvasRenderingContext2D::global_composite_operation() const
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::global_composite_operation()");
-    return String::from_utf8_without_validation(""sv.bytes());
+    switch (drawing_state().current_compositing_and_blending_operator) {
+#define ENUMERATE_COMPOSITE_OPERATIONS(E)  \
+    E("normal", Normal)                    \
+    E("multiply", Multiply)                \
+    E("screen", Screen)                    \
+    E("overlay", Overlay)                  \
+    E("darken", Darken)                    \
+    E("lighten", Lighten)                  \
+    E("color-dodge", ColorDodge)           \
+    E("color-burn", ColorBurn)             \
+    E("hard-light", HardLight)             \
+    E("soft-light", SoftLight)             \
+    E("difference", Difference)            \
+    E("exclusion", Exclusion)              \
+    E("hue", Hue)                          \
+    E("saturation", Saturation)            \
+    E("color", Color)                      \
+    E("luminosity", Luminosity)            \
+    E("clear", Clear)                      \
+    E("copy", Copy)                        \
+    E("source-over", SourceOver)           \
+    E("destination-over", DestinationOver) \
+    E("source-in", SourceIn)               \
+    E("destination-in", DestinationIn)     \
+    E("source-out", SourceOut)             \
+    E("destination-out", DestinationOut)   \
+    E("source-atop", SourceATop)           \
+    E("destination-atop", DestinationATop) \
+    E("xor", Xor)                          \
+    E("lighter", Lighter)                  \
+    E("plus-darker", PlusDarker)           \
+    E("plus-lighter", PlusLighter)
+#define ENUMERATE_COMPOSITE_OPERATION(name, operation) \
+    case Gfx::CompositingAndBlendingOperator::operation: \
+        return name##_string;
+        ENUMERATE_COMPOSITE_OPERATIONS(ENUMERATE_COMPOSITE_OPERATION)
+#undef ENUMERATE_COMPOSITE_OPERATION
+    default:
+        VERIFY_NOT_REACHED();
+    }
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-globalcompositeoperation
-void OffscreenCanvasRenderingContext2D::set_global_composite_operation(String)
+void OffscreenCanvasRenderingContext2D::set_global_composite_operation(String global_composite_operation)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::set_global_composite_operation()");
+#define SET_COMPOSITE_OPERATION(name, operation)                                                       \
+    if (global_composite_operation == name##sv) {                                                     \
+        drawing_state().current_compositing_and_blending_operator = Gfx::CompositingAndBlendingOperator::operation; \
+        return;                                                                                        \
+    }
+    ENUMERATE_COMPOSITE_OPERATIONS(SET_COMPOSITE_OPERATION)
+#undef SET_COMPOSITE_OPERATION
+#undef ENUMERATE_COMPOSITE_OPERATIONS
 }
 
 [[nodiscard]] Gfx::Painter* OffscreenCanvasRenderingContext2D::painter()
