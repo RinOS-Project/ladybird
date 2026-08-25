@@ -75,7 +75,7 @@ public:
     GC::Ptr<WebIDL::CallbackType> oncontextrestored();
 
 private:
-    OffscreenCanvas(JS::Realm&, RefPtr<Gfx::Bitmap> bitmap);
+    OffscreenCanvas(JS::Realm&, RefPtr<Gfx::Bitmap> bitmap, Gfx::IntSize size);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
@@ -96,6 +96,7 @@ private:
 #endif
 
     RefPtr<Gfx::Bitmap> m_bitmap;
+    Gfx::IntSize m_size;
     bool m_origin_clean { true };
 };
 

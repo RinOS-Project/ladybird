@@ -38,6 +38,7 @@
 #include <LibWeb/Bindings/ImageBitmapPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/MessagePortPrototype.h>
+#include <LibWeb/Bindings/OffscreenCanvasPrototype.h>
 #include <LibWeb/Bindings/QuotaExceededErrorPrototype.h>
 #include <LibWeb/Bindings/ReadableStreamPrototype.h>
 #include <LibWeb/Bindings/Serializable.h>
@@ -58,6 +59,7 @@
 #include <LibWeb/HTML/ImageBitmap.h>
 #include <LibWeb/HTML/ImageData.h>
 #include <LibWeb/HTML/MessagePort.h>
+#include <LibWeb/HTML/OffscreenCanvas.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/Streams/ReadableStream.h>
@@ -1118,6 +1120,8 @@ static bool is_transferable_interface_exposed_on_target_realm(TransferType name,
         return is_exposed(Bindings::InterfaceName::TransformStream, realm);
     case TransferType::ImageBitmap:
         return is_exposed(Bindings::InterfaceName::ImageBitmap, realm);
+    case TransferType::OffscreenCanvas:
+        return is_exposed(Bindings::InterfaceName::OffscreenCanvas, realm);
     case TransferType::Unknown:
         dbgln("Unknown interface type for transfer: {}", to_underlying(name));
         break;
@@ -1154,6 +1158,14 @@ static WebIDL::ExceptionOr<GC::Ref<Bindings::PlatformObject>> create_transferred
         auto image_bitmap = target_realm.create<ImageBitmap>(target_realm);
         TRY(image_bitmap->transfer_receiving_steps(decoder));
         return image_bitmap;
+    }
+    case TransferType::OffscreenCanvas: {
+        // The receiver fills in the transferred bitmap after it has validated
+        // the record. Constructing an empty canvas avoids allocating any
+        // attacker-controlled dimensions before those checks run.
+        auto offscreen_canvas = OffscreenCanvas::create(target_realm, 0, 0);
+        TRY(offscreen_canvas->transfer_receiving_steps(decoder));
+        return offscreen_canvas;
     }
     case TransferType::ArrayBuffer:
     case TransferType::ResizableArrayBuffer:
