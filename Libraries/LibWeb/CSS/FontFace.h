@@ -114,6 +114,7 @@ private:
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Visitor&) override;
     void reject_status_promise(JS::Value reason);
+    void load_next_worker_url(GC::Ref<GC::Function<void(RefPtr<Gfx::Typeface const>)>>);
 
     // FIXME: Should we be storing StyleValues instead?
     String m_family;
@@ -138,6 +139,7 @@ private:
 
     RefPtr<Gfx::Typeface const> m_parsed_font;
     RefPtr<Core::Promise<NonnullRefPtr<Gfx::Typeface const>>> m_font_load_promise;
+    GC::Ptr<Fetch::Infrastructure::FetchController> m_worker_font_fetch_controller;
 
     GC::Ptr<CSSFontFaceRule> m_css_font_face_rule;
     HashTable<GC::Ref<FontFaceSet>> m_containing_sets;
