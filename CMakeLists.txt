@@ -375,6 +375,13 @@ if (AK_OS_RINOS AND BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         ${LADYBIRD_SOURCE_DIR}/../rintls/tests/ladybird_kmac_cshake_test.cpp)
     target_link_libraries(test-rintls-kmac-cshake PRIVATE LibCrypto AK)
     add_test(NAME rintls-kmac-cshake COMMAND test-rintls-kmac-cshake)
+
+    # Exercise the LibCrypto public-key APIs instead of testing only the
+    # provider archive. This proves the AK_OS_RINOS dispatches reach rintls.
+    add_executable(test-rintls-modern-libcrypto
+        ${LADYBIRD_SOURCE_DIR}/../rintls/tests/ladybird_modern_backend_test.cpp)
+    target_link_libraries(test-rintls-modern-libcrypto PRIVATE LibCrypto AK)
+    add_test(NAME rintls-modern-libcrypto COMMAND test-rintls-modern-libcrypto)
 endif()
 
 if (ENABLE_GUI_TARGETS)
