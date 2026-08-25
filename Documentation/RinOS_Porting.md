@@ -336,7 +336,7 @@ grep -r '#include.*<openssl/' libs/ladybird/Libraries/ && echo "FAIL" || echo "P
 ### ADR-004: rintls の post-quantum provider を使用する
 - **日付**: 2026-08-24
 - **決定**: ML-KEM / ML-DSA は `ENOSYS` stub にせず、rintls provider を経由して実 key generation、encapsulation/decapsulation、signature/verification を実行する
-- **理由**: `LibCrypto` は ML-DSA-44/65/87 と ML-KEM-512/768/1024、Ed448/X448 を rintls API に接続済みであり、Unavailable 表示や synthetic result は安全な代替にならない
+- **理由**: `LibCrypto` は P-256/P-384/P-521、ML-DSA-44/65/87、ML-KEM-512/768/1024、Ed25519/Ed448、X25519/X448 を rintls API に接続済みであり、Unavailable 表示や synthetic result は安全な代替にならない。RinOS WebCryptoのNIST鍵対生成もrintlsがprivate/publicを同時生成し、両方の公開点検証後だけLadybirdへ公開する
 - **残件**: WebCrypto 全 API の entropy failure injection、WebContent isolation、consumer ISO/QEMU JavaScript evidence が未完了であり、P1.4 は完了扱いにしない
 
 ### ADR-005: RequestServer を RinOS transport に載せる
