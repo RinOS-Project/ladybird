@@ -103,13 +103,20 @@ bool WebGLRenderingContextImpl::make_rin_gl_current()
     if (m_context->rin_gl_is_ready())
         return true;
 
-    if (m_context->is_context_lost())
+    if (m_context->is_context_lost()) {
         report_context_loss();
+        // WebGL exposes CONTEXT_LOST_WEBGL exactly once through getError().
+        // OpenGLContext owns that one pending error when it retires the RinGL
+        // context; fabricating another error here would make every later
+        // getError() call report a loss instead of NO_ERROR. Commands issued
+        // while lost remain no-ops through this false return.
+        return false;
+    }
 
-    // `rin_gl_get_error()` retains the exact allocation/loss reason while the
+    // `rin_gl_get_error()` retains the exact realization reason while the
     // backend surface is absent. `set_error()` consumes that reason before
-    // considering the fallback supplied here.
-    set_error(m_context->is_context_lost() ? RINGL_CONTEXT_LOST_WEBGL : RINGL_OUT_OF_MEMORY);
+    // considering this normal allocation fallback.
+    set_error(RINGL_OUT_OF_MEMORY);
     return false;
 }
 
