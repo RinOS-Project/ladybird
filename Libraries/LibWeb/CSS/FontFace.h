@@ -90,6 +90,16 @@ public:
 
     Bindings::FontFaceLoadStatus status() const { return m_status; }
 
+    // A FontFaceSet consumer may use a successfully decoded face without a
+    // Document-owned FontComputer (for example, an OffscreenCanvas in a
+    // WorkerGlobalScope). Never expose a loading or failed face as usable.
+    RefPtr<Gfx::Typeface const> typeface() const
+    {
+        if (m_status != Bindings::FontFaceLoadStatus::Loaded)
+            return {};
+        return m_parsed_font;
+    }
+
     GC::Ref<WebIDL::Promise> load();
     GC::Ref<WebIDL::Promise> loaded() const;
 

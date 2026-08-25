@@ -10,6 +10,10 @@
                     let context = canvas.getContext("2d");
                     context.font = "20px SerenitySans";
                     self.postMessage(context.font);
+                    let narrowWidth = context.measureText("mmmm").width;
+                    context.font = "40px SerenitySans";
+                    let wideWidth = context.measureText("mmmm").width;
+                    self.postMessage(JSON.stringify({ workerFontSizeAffectsMeasureText: wideWidth > narrowWidth }));
                     context.font = "!!!"; // Invalid value, should be ignored.
                     self.postMessage(context.font);
                     self.postMessage(null);
