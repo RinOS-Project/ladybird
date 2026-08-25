@@ -187,6 +187,9 @@ libtommath, HarfBuzz/FreeType, Vulkan, Metal 等）を除去し、RinOS純正ラ
   - `deps.lock`固定のFFmpegを静的・PIC・LGPL・decode-onlyで先行クロスビルド
   - `RINOS_FFMPEG_ROOT` imported targetとRinOS PlaybackStreamをLibMediaへ接続
   - `scripts/build_iso.sh` にladybirdビルド統合
+  - `RINOS_HELPER_SERVICES_ONLY=ON` はdesktop frontendとそのresource bundleを
+    除外する一方、LibWeb/LibCryptoのnative provider CTestを構成できる。desktop
+    harnessである`test-web`はこのprofileに登録しない。
 - **完了条件**:
   - i386/x86_64 両方で cmake 成功
   - ISO生成に ladybird 関連バイナリ含有

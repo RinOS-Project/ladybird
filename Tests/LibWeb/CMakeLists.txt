@@ -24,4 +24,10 @@ target_link_libraries(TestContentFilter PRIVATE LibURL)
 target_link_libraries(TestFetchURL PRIVATE LibURL)
 target_link_libraries(TestSourceHighlighter PRIVATE LibURL LibWebView)
 
-add_subdirectory("test-web")
+# test-web drives the desktop frontend and requires the UI-owned resource
+# bundle. A RinOS helper-services-only build intentionally omits that frontend
+# while still building LibWeb and its provider CTests, so do not register a
+# target that cannot have its required resource dependency in that profile.
+if (NOT RINOS_HELPER_SERVICES_ONLY)
+    add_subdirectory("test-web")
+endif()
