@@ -40,6 +40,16 @@ promiseTest(async () => {
     const same_origin = await load_image(same_origin_url, false);
     const cors_allowed = await load_image(cross_origin(cors_url), true);
     const opaque = await load_image(cross_origin(same_origin_url), false);
+    const load_video = url => new Promise((resolve, reject) => {
+        const video = document.createElement("video");
+        video.preload = "auto";
+        video.oncanplaythrough = () => resolve(video);
+        video.onerror = () => reject(new Error(`failed to load ${url}`));
+        video.src = url;
+    });
+    const video_url = new URL("../../../Assets/test-webm.webm", location.href).href;
+    const same_origin_video = await load_video(video_url);
+    const opaque_video = await load_video(cross_origin(video_url));
 
     const texture = gl.createTexture();
     const framebuffer = gl.createFramebuffer();
@@ -79,6 +89,8 @@ promiseTest(async () => {
     require(gl.getError() === gl.NO_ERROR, "same-origin image upload failed");
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cors_allowed);
     require(gl.getError() === gl.NO_ERROR, "CORS-authorized image upload failed");
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, same_origin_video);
+    require(gl.getError() === gl.NO_ERROR, "same-origin video upload failed");
 
     // Restore a known definition, then prove that opaque image, canvas, and
     // ImageBitmap sources all reject before the RinGL import can mutate it.
@@ -93,6 +105,12 @@ promiseTest(async () => {
 
     const tainted_bitmap = await createImageBitmap(tainted_canvas);
     require_rejected_without_mutation(tainted_bitmap);
+
+    // Video frames use the same filtered-response origin state. The ImageBitmap
+    // copy must preserve it instead of turning an opaque video into a clean source.
+    require_rejected_without_mutation(opaque_video);
+    const tainted_video_bitmap = await createImageBitmap(opaque_video);
+    require_rejected_without_mutation(tainted_video_bitmap);
 
     // Offscreen canvas state must also survive both drawImage and the bitmap
     // copy: clean source remains usable, while a tainted one is rejected.
