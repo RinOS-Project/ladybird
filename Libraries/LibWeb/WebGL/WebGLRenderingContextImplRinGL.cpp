@@ -1035,6 +1035,12 @@ WebIDL::ExceptionOr<JS::Value> WebGLRenderingContextImpl::get_parameter(WebIDL::
             return JS::js_null();
         }
         return JS::Value(m_rin_current_vertex_array_oes);
+    case RINGL_MAX_TEXTURE_MAX_ANISOTROPY_EXT:
+        if (!extension_enabled("EXT_texture_filter_anisotropic"sv)) {
+            set_error(RINGL_INVALID_ENUM);
+            return JS::js_null();
+        }
+        return JS::Value(ringl_get_max_texture_anisotropy());
     case RINGL_ARRAY_BUFFER_BINDING: {
         if (!get_integer() || values[0] == 0)
             return JS::js_null();
@@ -1694,6 +1700,12 @@ JS::Value WebGLRenderingContextImpl::get_tex_parameter(WebIDL::UnsignedLong targ
     case RINGL_TEXTURE_WRAP_S:
     case RINGL_TEXTURE_WRAP_T:
         return JS::Value(ringl_get_tex_parameteri(target, pname));
+    case RINGL_TEXTURE_MAX_ANISOTROPY_EXT:
+        if (!extension_enabled("EXT_texture_filter_anisotropic"sv)) {
+            set_error(RINGL_INVALID_ENUM);
+            return JS::js_null();
+        }
+        return JS::Value(ringl_get_tex_parameterf(target, pname));
     default:
         set_error(RINGL_INVALID_ENUM);
         return JS::js_null();
@@ -2244,7 +2256,14 @@ void WebGLRenderingContextImpl::tex_parameterf(WebIDL::UnsignedLong target, WebI
     if (!make_rin_gl_current())
         return;
 
-    // RinGL currently exposes only WebGL 1's enumerated texture parameters.
+    if (pname == RINGL_TEXTURE_MAX_ANISOTROPY_EXT) {
+        // RinGL preserves the extension gate and finite/range validation,
+        // then realizes the degree through the normal RinGPU sampler path.
+        ringl_tex_parameterf(target, pname, param);
+        return;
+    }
+
+    // The remaining RinGL WebGL 1 texture parameters are enumerated values.
     // Do not cast NaN, infinity, fractional values, or out-of-range values to
     // an integer ABI value: each would either be undefined at the C++ boundary
     // or could accidentally select a different native enum.

@@ -63,6 +63,9 @@ public:
     // OES_texture_half_float_linear has a separate gate: enabling Float
     // filtering must not make binary16 texture sampling visible.
     void enable_rin_gl_half_float_texture_linear();
+    // EXT_texture_filter_anisotropic enables the bounded RinGL/RinGPU sampler
+    // state only after its browser extension object is acquired.
+    void enable_rin_gl_texture_filter_anisotropic();
     // WEBGL_color_buffer_float enables unclamped blendColor state only after
     // its WebGL extension object has been acquired.
     void enable_rin_gl_float_color_buffer();

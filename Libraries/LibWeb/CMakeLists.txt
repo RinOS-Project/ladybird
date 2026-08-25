@@ -1241,6 +1241,7 @@ if (AK_OS_RINOS)
         WebGL/Extensions/EXTColorBufferHalfFloat.cpp
         WebGL/Extensions/EXTFragDepth.cpp
         WebGL/Extensions/EXTSrgb.cpp
+        WebGL/Extensions/EXTTextureFilterAnisotropic.cpp
         WebGL/Extensions/OESElementIndexUint.cpp
         WebGL/Extensions/OESFboRenderMipmap.cpp
         WebGL/Extensions/OESStandardDerivatives.cpp

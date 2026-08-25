@@ -48,6 +48,7 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/EXTColorBufferHalfFloat.h>
 #include <LibWeb/WebGL/Extensions/EXTFragDepth.h>
 #include <LibWeb/WebGL/Extensions/EXTSrgb.h>
+#include <LibWeb/WebGL/Extensions/EXTTextureFilterAnisotropic.h>
 #include <LibWeb/WebGL/Extensions/OESFboRenderMipmap.h>
 #include <LibWeb/WebGL/Extensions/OESStandardDerivatives.h>
 #include <LibWeb/WebGL/Extensions/OESTextureFloat.h>
@@ -367,6 +368,7 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
         webgl_extensions.append("EXT_blend_minmax"_string);
         webgl_extensions.append("EXT_frag_depth"_string);
         webgl_extensions.append("EXT_sRGB"_string);
+        webgl_extensions.append("EXT_texture_filter_anisotropic"_string);
         webgl_extensions.append("OES_fbo_render_mipmap"_string);
         webgl_extensions.append("OES_element_index_uint"_string);
         webgl_extensions.append("OES_standard_derivatives"_string);
@@ -425,6 +427,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     bool const is_blend_minmax_extension = name.equals_ignoring_ascii_case("EXT_blend_minmax"sv);
     bool const is_frag_depth_extension = name.equals_ignoring_ascii_case("EXT_frag_depth"sv);
     bool const is_srgb_extension = name.equals_ignoring_ascii_case("EXT_sRGB"sv);
+    bool const is_texture_filter_anisotropic_extension = name.equals_ignoring_ascii_case("EXT_texture_filter_anisotropic"sv);
     bool const is_fbo_render_mipmap_extension = name.equals_ignoring_ascii_case("OES_fbo_render_mipmap"sv);
     bool const is_standard_derivatives_extension = name.equals_ignoring_ascii_case("OES_standard_derivatives"sv);
     bool const is_texture_float_extension = name.equals_ignoring_ascii_case("OES_texture_float"sv);
@@ -459,6 +462,8 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         cache_key = "EXT_frag_depth"_string;
     else if (is_srgb_extension)
         cache_key = "EXT_sRGB"_string;
+    else if (is_texture_filter_anisotropic_extension)
+        cache_key = "EXT_texture_filter_anisotropic"_string;
     else if (is_fbo_render_mipmap_extension)
         cache_key = "OES_fbo_render_mipmap"_string;
     else if (is_standard_derivatives_extension)
@@ -524,6 +529,15 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         // FBO encoding, and readback still execute through RinGL; this does
         // not request a GLES/Aquamarine command path.
         auto extension = MUST(Extensions::EXTSrgb::create(realm(), *this));
+        m_enabled_extensions.set(cache_key, extension);
+        return extension;
+    }
+    if (is_texture_filter_anisotropic_extension) {
+        // This flips only the private RinGL sampler gate. Texture sampling
+        // remains on Ladybird -> RinGL -> RinGPU; it does not use a legacy
+        // direct Aquamarine/GLES command path.
+        context().enable_rin_gl_texture_filter_anisotropic();
+        auto extension = MUST(Extensions::EXTTextureFilterAnisotropic::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
         return extension;
     }

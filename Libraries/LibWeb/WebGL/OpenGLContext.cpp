@@ -55,6 +55,7 @@ struct OpenGLContext::Impl {
     bool device_lost { false };
     bool float_texture_linear_enabled { false };
     bool half_float_texture_linear_enabled { false };
+    bool texture_filter_anisotropic_enabled { false };
     bool float_color_buffer_enabled { false };
     bool half_float_color_buffer_enabled { false };
     bool blend_minmax_enabled { false };
@@ -241,6 +242,11 @@ void OpenGLContext::allocate_painting_surface_if_needed()
         result = RINGL_AQUAMARINE_SURFACE_STATE;
     }
     if (result == RINGL_AQUAMARINE_SURFACE_OK
+        && m_impl->texture_filter_anisotropic_enabled
+        && ringl_enable_webgl_texture_filter_anisotropic() != 0) {
+        result = RINGL_AQUAMARINE_SURFACE_STATE;
+    }
+    if (result == RINGL_AQUAMARINE_SURFACE_OK
         && m_impl->float_color_buffer_enabled
         && ringl_enable_webgl_float_color_buffer() != 0) {
         result = RINGL_AQUAMARINE_SURFACE_STATE;
@@ -331,6 +337,15 @@ void OpenGLContext::enable_rin_gl_half_float_texture_linear()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_half_float_texture_linear() != 0)
+        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+}
+
+void OpenGLContext::enable_rin_gl_texture_filter_anisotropic()
+{
+    m_impl->texture_filter_anisotropic_enabled = true;
+    make_current();
+    if (m_impl->bridge.context
+        && ringl_enable_webgl_texture_filter_anisotropic() != 0)
         fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
 }
 
