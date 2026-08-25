@@ -61,26 +61,28 @@ JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::cre
     auto context_attributes = TRY(convert_value_to_context_attributes_dictionary(canvas_element.vm(), options));
 #ifdef AK_OS_RINOS
     // RinGPU currently supplies a synchronous software BGRA target. Do not
-    // claim multisampling, an opaque backing store, or desynchronized
-    // presentation until those paths exist. A caller that explicitly rejects
-    // a major performance caveat must not receive this software context.
+    // claim multisampling or desynchronized presentation until those paths
+    // exist. Alpha and premultiplied-alpha are fully represented by the RinGL
+    // default framebuffer and compositor snapshot, so retain the caller's
+    // requested values. A caller that explicitly rejects a major performance
+    // caveat must not receive this software context.
     if (context_attributes.fail_if_major_performance_caveat) {
         fire_webgl_context_creation_error(canvas_element);
         return GC::Ptr<WebGLRenderingContext> { nullptr };
     }
     auto actual_context_attributes = context_attributes;
-    actual_context_attributes.alpha = true;
     actual_context_attributes.antialias = false;
-    actual_context_attributes.premultiplied_alpha = true;
     actual_context_attributes.desynchronized = false;
 #else
     auto actual_context_attributes = context_attributes;
 #endif
 
     OpenGLContext::DrawingBufferOptions context_options {
+        .alpha = actual_context_attributes.alpha,
         .depth = actual_context_attributes.depth,
         .stencil = actual_context_attributes.stencil,
         .antialias = actual_context_attributes.antialias,
+        .premultiplied_alpha = actual_context_attributes.premultiplied_alpha,
     };
 #ifdef AK_OS_RINOS
     auto context = OpenGLContext::create(OpenGLContext::WebGLVersion::WebGL1, context_options);
@@ -234,9 +236,11 @@ void WebGLRenderingContext::queue_context_restore() const
 void WebGLRenderingContext::restore_context_after_loss()
 {
     OpenGLContext::DrawingBufferOptions context_options {
+        .alpha = m_actual_context_parameters.alpha,
         .depth = m_actual_context_parameters.depth,
         .stencil = m_actual_context_parameters.stencil,
         .antialias = m_actual_context_parameters.antialias,
+        .premultiplied_alpha = m_actual_context_parameters.premultiplied_alpha,
     };
     auto replacement = OpenGLContext::create(OpenGLContext::WebGLVersion::WebGL1, context_options);
 

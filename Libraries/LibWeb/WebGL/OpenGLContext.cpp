@@ -168,7 +168,16 @@ void OpenGLContext::allocate_painting_surface_if_needed()
     }
     pixel_count = static_cast<size_t>(width) * static_cast<size_t>(height);
 
-    auto painting_surface = Gfx::PaintingSurface::try_create_with_size(m_size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
+    // The physical image remains BGRA for RinGL's private embedding. Its
+    // alpha type tells the HTML compositor whether WebGL supplied premultiplied
+    // colors; an opaque drawing buffer always has alpha one, so either
+    // representation is equivalent and we retain the normal premultiplied
+    // bitmap convention.
+    auto const alpha_type = m_drawing_buffer_options.alpha
+            && !m_drawing_buffer_options.premultiplied_alpha
+        ? Gfx::AlphaType::Unpremultiplied
+        : Gfx::AlphaType::Premultiplied;
+    auto painting_surface = Gfx::PaintingSurface::try_create_with_size(m_size, Gfx::BitmapFormat::BGRA8888, alpha_type);
     if (painting_surface.is_error()) {
         m_impl->allocation_failed = true;
         m_impl->pending_error = RINGL_OUT_OF_MEMORY;
@@ -219,11 +228,17 @@ void OpenGLContext::allocate_painting_surface_if_needed()
         target.stencil_pitch_bytes = static_cast<u32>(width);
     }
 
+    RinWebGLRinGLDrawingBufferOptionsV1 bridge_options {};
+    bridge_options.struct_size = sizeof(bridge_options);
+    bridge_options.version = RIN_WEBGL_RINGL_DRAWING_BUFFER_OPTIONS_VERSION;
+    bridge_options.has_alpha = m_drawing_buffer_options.alpha ? 1u : 0u;
+    bridge_options.has_depth = m_drawing_buffer_options.depth ? 1u : 0u;
+    bridge_options.has_stencil = m_drawing_buffer_options.stencil ? 1u : 0u;
+
     result = ringl_aquamarine_surface_create(&target, &m_impl->surface_context);
     if (result == RINGL_AQUAMARINE_SURFACE_OK)
-        result = rin_webgl_ringl_bridge_create(m_impl->surface_context,
-            m_drawing_buffer_options.depth ? 1u : 0u,
-            m_drawing_buffer_options.stencil ? 1u : 0u, &m_impl->bridge);
+        result = rin_webgl_ringl_bridge_create_with_options(
+            m_impl->surface_context, &bridge_options, &m_impl->bridge);
     if (result == RINGL_AQUAMARINE_SURFACE_OK
         && ringl_make_current(m_impl->bridge.context) != 0) {
         result = m_impl->bridge.context

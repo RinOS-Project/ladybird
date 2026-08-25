@@ -190,7 +190,13 @@ NonnullRefPtr<ImmutableBitmap> ImmutableBitmap::create(NonnullRefPtr<Bitmap> bit
 NonnullRefPtr<ImmutableBitmap> ImmutableBitmap::create_snapshot_from_painting_surface(NonnullRefPtr<PaintingSurface> painting_surface)
 {
     auto size = painting_surface->size();
-    auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, size));
+    // A RinOS WebGL surface may explicitly opt out of premultiplied alpha.
+    // Preserve the source surface's declaration in the compositor snapshot
+    // instead of re-labeling straight-alpha pixels as premultiplied.
+    auto const alpha_type = painting_surface->bitmap()
+        ? painting_surface->bitmap()->alpha_type()
+        : Gfx::AlphaType::Premultiplied;
+    auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, alpha_type, size));
     painting_surface->read_into_bitmap(*bitmap);
     return create(move(bitmap));
 }

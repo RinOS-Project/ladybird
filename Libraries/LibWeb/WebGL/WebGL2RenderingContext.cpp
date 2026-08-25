@@ -42,9 +42,11 @@ JS::ThrowCompletionOr<GC::Ptr<WebGL2RenderingContext>> WebGL2RenderingContext::c
         return GC::Ptr<WebGL2RenderingContext> { nullptr };
     }
     OpenGLContext::DrawingBufferOptions context_options {
+        .alpha = context_attributes.alpha,
         .depth = context_attributes.depth,
         .stencil = context_attributes.stencil,
         .antialias = context_attributes.antialias,
+        .premultiplied_alpha = context_attributes.premultiplied_alpha,
     };
     auto context = OpenGLContext::create(*skia_backend_context, OpenGLContext::WebGLVersion::WebGL2, context_options);
     if (!context) {
