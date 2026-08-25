@@ -362,6 +362,12 @@ grep -r '#include.*<openssl/' libs/ladybird/Libraries/ && echo "FAIL" || echo "P
 - **理由**: `WorkerAgentParent` が空の transport を非同期 `error` event へ変換するため、単一の Dedicated/Shared Worker helper 起動失敗で WebContent 全体を `exit(0)` させない
 - **残件**: product image/QEMU での worker 実行、crash recovery、および File Portal mediation は未完了であり、P1.4 の worker 項目を完了扱いにしない
 
+### ADR-008: WASI の closed descriptor は即時に失効させる
+- **日付**: 2026-08-26
+- **決定**: WASI `fd_close` が host close に成功した時点で、WASI→host descriptor map から同じ entry を削除する
+- **理由**: host が同じ数値の descriptor を再利用しても、closed WASI descriptor が別 object の権限を得ないようにする
+- **残件**: WASI rights/inheriting の全実装、product image/QEMU での Wasm execution は未完了であり、P1.4 を完了扱いにしない
+
 ### ADR-006: 固定済みFFmpegをdecode-onlyで組み込む
 - **日付**: 2026-08-08
 - **決定**: `deps.lock`の`libs/FFmpeg`を変更せず、i386/x86_64ごとに静的・PICで先行ビルドしてLibMediaへリンクする
