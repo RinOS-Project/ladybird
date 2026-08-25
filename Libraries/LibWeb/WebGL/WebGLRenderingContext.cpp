@@ -311,4 +311,14 @@ WebIDL::Long WebGLRenderingContext::drawing_buffer_height() const
     return size.height();
 }
 
+WebIDL::UnsignedLong WebGLRenderingContext::drawing_buffer_format() const
+{
+    // WebGL exposes the effective default color-buffer format, not the
+    // embedding's storage layout. RinOS uses BGRA storage internally, but its
+    // alpha-capable drawing buffer is specified as RGBA8 to script.
+    constexpr WebIDL::UnsignedLong rgba8 = 0x8058;
+    constexpr WebIDL::UnsignedLong rgb8 = 0x8051;
+    return m_actual_context_parameters.alpha ? rgba8 : rgb8;
+}
+
 }

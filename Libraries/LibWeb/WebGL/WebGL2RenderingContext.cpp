@@ -144,4 +144,13 @@ WebIDL::Long WebGL2RenderingContext::drawing_buffer_height() const
     return size.height();
 }
 
+WebIDL::UnsignedLong WebGL2RenderingContext::drawing_buffer_format() const
+{
+    // This is the WebGL-visible drawing-buffer format. Backends may use a
+    // different physical channel order, which must not alter this value.
+    constexpr WebIDL::UnsignedLong rgba8 = 0x8058;
+    constexpr WebIDL::UnsignedLong rgb8 = 0x8051;
+    return m_actual_context_parameters.alpha ? rgba8 : rgb8;
+}
+
 }

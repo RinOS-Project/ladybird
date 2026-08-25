@@ -42,6 +42,7 @@ public:
 
     WebIDL::Long drawing_buffer_width() const;
     WebIDL::Long drawing_buffer_height() const;
+    WebIDL::UnsignedLong drawing_buffer_format() const;
 
 private:
     virtual void initialize(JS::Realm&) override;

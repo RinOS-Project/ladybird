@@ -34,7 +34,7 @@ interface mixin WebGLRenderingContextBase {
     [ImplementedAs=canvas_for_binding] readonly attribute HTMLCanvasElement canvas;
     readonly attribute GLsizei drawingBufferWidth;
     readonly attribute GLsizei drawingBufferHeight;
-    [FIXME] readonly attribute GLenum drawingBufferFormat;
+    readonly attribute GLenum drawingBufferFormat;
 
     [FIXME] attribute PredefinedColorSpace drawingBufferColorSpace;
     [FIXME] attribute PredefinedColorSpace unpackColorSpace;
