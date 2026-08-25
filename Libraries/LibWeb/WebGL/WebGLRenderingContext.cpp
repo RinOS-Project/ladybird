@@ -98,6 +98,18 @@ JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::cre
     }
 
     context->set_size(canvas_element.bitmap_size_for_canvas(1, 1));
+#ifdef AK_OS_RINOS
+    // A WebGL context is not usable until its initial drawing buffer exists.
+    // The RinGL bridge owns that allocation, so realize it here rather than
+    // returning a JavaScript context whose first command discovers an
+    // allocation failure. This stays entirely on the RinGL/private-surface
+    // path; it does not introduce an Aquamarine command backend.
+    context->make_current();
+    if (!context->rin_gl_is_ready()) {
+        fire_webgl_context_creation_error(canvas_element);
+        return GC::Ptr<WebGLRenderingContext> { nullptr };
+    }
+#endif
 
     return realm.create<WebGLRenderingContext>(realm, canvas_element, context.release_nonnull(), context_attributes, actual_context_attributes);
 }
