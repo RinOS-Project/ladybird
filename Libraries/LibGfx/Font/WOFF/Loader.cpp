@@ -61,6 +61,33 @@ namespace WOFF {
 
 static constexpr u32 WOFF_SIGNATURE = 0x774F4646;
 
+static bool range_is_within(u32 offset, u32 length, u32 total_length)
+{
+    return offset <= total_length && length <= total_length - offset;
+}
+
+static bool ranges_overlap(u32 left_offset, u32 left_length, u32 right_offset, u32 right_length)
+{
+    auto left_end = static_cast<u64>(left_offset) + left_length;
+    auto right_end = static_cast<u64>(right_offset) + right_length;
+    return left_offset < right_end && right_offset < left_end;
+}
+
+static u32 table_checksum(ReadonlyBytes bytes)
+{
+    u32 sum = 0;
+    for (size_t offset = 0; offset < bytes.size(); offset += 4) {
+        u32 word = 0;
+        for (size_t byte_index = 0; byte_index < 4; ++byte_index) {
+            word <<= 8;
+            if (byte_index < bytes.size() - offset)
+                word |= bytes[offset + byte_index];
+        }
+        sum += word;
+    }
+    return sum;
+}
+
 static u16 pow_2_less_than_or_equal(u16 x)
 {
     VERIFY(x > 0);
@@ -118,19 +145,34 @@ ErrorOr<NonnullRefPtr<Gfx::Typeface>> try_load_from_bytes(ReadonlyBytes buffer, 
     // (The value 0x74727565 'true' has been used for some TrueType-flavored fonts on Mac OS, for example.)
     // Whether client software will actually support other types of sfnt font data is outside the scope of the WOFF specification, which simply describes how the sfnt is repackaged for Web use.
 
-    auto expected_total_sfnt_size = sizeof(TableDirectory) + header.num_tables * 16;
-    if (header.length > buffer.size())
+    auto expected_total_sfnt_size = static_cast<u64>(sizeof(TableDirectory))
+        + static_cast<u64>(header.num_tables) * sizeof(TableRecord);
+    if (header.length != buffer.size() || header.length > 10 * MiB)
         return Error::from_string_literal("Invalid WOFF length");
     if (header.num_tables == 0 || header.num_tables > NumericLimits<u16>::max() / 16)
         return Error::from_string_literal("Invalid WOFF numTables");
     if (header.reserved != 0)
         return Error::from_string_literal("Invalid WOFF reserved field");
-    if (header.meta_length == 0 && header.meta_offset != 0)
-        return Error::from_string_literal("Invalid WOFF meta block offset");
-    if (header.priv_length == 0 && header.priv_offset != 0)
-        return Error::from_string_literal("Invalid WOFF private block offset");
-    if (sizeof(Header) + header.num_tables * sizeof(TableDirectoryEntry) > header.length)
+    auto directory_end = static_cast<u64>(sizeof(Header))
+        + static_cast<u64>(header.num_tables) * sizeof(TableDirectoryEntry);
+    if (directory_end > header.length)
         return Error::from_string_literal("Truncated WOFF table directory");
+    if ((header.meta_length == 0) != (header.meta_offset == 0)
+        || (header.meta_length == 0) != (header.meta_orig_length == 0))
+        return Error::from_string_literal("Invalid WOFF meta block offset");
+    if (header.meta_length != 0
+        && (header.meta_offset < directory_end
+            || !range_is_within(header.meta_offset, header.meta_length, header.length)))
+        return Error::from_string_literal("Truncated WOFF meta block");
+    if ((header.priv_length == 0) != (header.priv_offset == 0))
+        return Error::from_string_literal("Invalid WOFF private block offset");
+    if (header.priv_length != 0
+        && (header.priv_offset < directory_end
+            || !range_is_within(header.priv_offset, header.priv_length, header.length)))
+        return Error::from_string_literal("Truncated WOFF private block");
+    if (header.meta_length != 0 && header.priv_length != 0
+        && ranges_overlap(header.meta_offset, header.meta_length, header.priv_offset, header.priv_length))
+        return Error::from_string_literal("Overlapping WOFF metadata blocks");
     if (header.total_sfnt_size < expected_total_sfnt_size)
         return Error::from_string_literal("Invalid WOFF total sfnt size");
     if (header.total_sfnt_size > 10 * MiB)
@@ -147,28 +189,56 @@ ErrorOr<NonnullRefPtr<Gfx::Typeface>> try_load_from_bytes(ReadonlyBytes buffer, 
     };
     font_buffer.overwrite(0, &table_directory, sizeof(table_directory));
 
+    struct SourceRange {
+        u32 offset;
+        u32 length;
+    };
+    Vector<SourceRange> source_ranges;
+    TRY(source_ranges.try_ensure_capacity(header.num_tables));
+
     size_t font_buffer_offset = sizeof(TableDirectory) + header.num_tables * sizeof(TableRecord);
     for (size_t i = 0; i < header.num_tables; ++i) {
         auto entry = TRY(stream.read_value<TableDirectoryEntry>());
+        auto table_offset = static_cast<u32>(entry.offset);
+        auto compressed_length = static_cast<u32>(entry.comp_length);
+        auto original_length = static_cast<u32>(entry.orig_length);
+        auto aligned_original_length = (static_cast<u64>(original_length) + 3u) & ~static_cast<u64>(3u);
 
-        expected_total_sfnt_size += (entry.orig_length + 3) & 0xFFFFFFFC;
+        expected_total_sfnt_size += aligned_original_length;
         if (expected_total_sfnt_size > header.total_sfnt_size)
             return Error::from_string_literal("Invalid WOFF total sfnt size");
-        if ((size_t)entry.offset + entry.comp_length > header.length)
+        if (compressed_length > original_length
+            || table_offset < directory_end
+            || !range_is_within(table_offset, compressed_length, header.length))
             return Error::from_string_literal("Truncated WOFF table");
-        if (font_buffer_offset + entry.orig_length > font_buffer.size())
+        for (auto const& source_range : source_ranges) {
+            if (ranges_overlap(table_offset, compressed_length, source_range.offset, source_range.length))
+                return Error::from_string_literal("Overlapping WOFF tables");
+        }
+        if ((header.meta_length != 0
+                && ranges_overlap(table_offset, compressed_length, header.meta_offset, header.meta_length))
+            || (header.priv_length != 0
+                && ranges_overlap(table_offset, compressed_length, header.priv_offset, header.priv_length)))
+            return Error::from_string_literal("WOFF table overlaps metadata");
+        TRY(source_ranges.try_append({ table_offset, compressed_length }));
+        if (font_buffer_offset > font_buffer.size()
+            || original_length > font_buffer.size() - font_buffer_offset)
             return Error::from_string_literal("Uncompressed WOFF table too big");
-        if (entry.comp_length < entry.orig_length) {
-            auto compressed_data_stream = make<FixedMemoryStream>(buffer.slice(entry.offset, entry.comp_length));
+        if (compressed_length < original_length) {
+            auto compressed_data_stream = make<FixedMemoryStream>(buffer.slice(table_offset, compressed_length));
             auto decompressor = TRY(Compress::ZlibDecompressor::create(move(compressed_data_stream)));
-            auto decompressed = TRY(decompressor->read_until_eof());
-            if (entry.orig_length != decompressed.size())
+            auto decompressed = TRY(ByteBuffer::create_uninitialized(original_length));
+            TRY(decompressor->read_until_filled(decompressed.bytes()));
+            if (!decompressor->is_eof())
                 return Error::from_string_literal("Invalid decompressed WOFF table length");
-            font_buffer.overwrite(font_buffer_offset, decompressed.data(), entry.orig_length);
+            if (table_checksum(decompressed.bytes()) != entry.orig_checksum)
+                return Error::from_string_literal("Invalid decompressed WOFF table checksum");
+            font_buffer.overwrite(font_buffer_offset, decompressed.data(), original_length);
         } else {
-            if (entry.comp_length != entry.orig_length)
-                return Error::from_string_literal("Invalid uncompressed WOFF table length");
-            font_buffer.overwrite(font_buffer_offset, buffer.data() + entry.offset, entry.orig_length);
+            auto table = buffer.slice(table_offset, original_length);
+            if (table_checksum(table) != entry.orig_checksum)
+                return Error::from_string_literal("Invalid WOFF table checksum");
+            font_buffer.overwrite(font_buffer_offset, table.data(), original_length);
         }
 
         size_t table_directory_offset = sizeof(TableDirectory) + i * sizeof(TableRecord);
@@ -176,14 +246,14 @@ ErrorOr<NonnullRefPtr<Gfx::Typeface>> try_load_from_bytes(ReadonlyBytes buffer, 
             .table_tag = entry.tag,
             .checksum = entry.orig_checksum,
             .offset = font_buffer_offset,
-            .length = entry.orig_length,
+            .length = original_length,
         };
         font_buffer.overwrite(table_directory_offset, &table_record, sizeof(table_record));
 
-        font_buffer_offset += entry.orig_length;
+        font_buffer_offset += aligned_original_length;
     }
 
-    if (header.total_sfnt_size != expected_total_sfnt_size)
+    if (header.total_sfnt_size != expected_total_sfnt_size || font_buffer_offset != font_buffer.size())
         return Error::from_string_literal("Invalid WOFF total sfnt size");
 
     auto font_data = Gfx::FontData::create_from_byte_buffer(move(font_buffer));

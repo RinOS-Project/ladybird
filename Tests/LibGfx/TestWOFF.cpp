@@ -9,6 +9,13 @@
 
 #define TEST_INPUT(x) ("test-inputs/" x)
 
+TEST_CASE(valid_woff)
+{
+    auto file = MUST(Core::MappedFile::map("../LibWeb/Assets/HashSans.woff"sv));
+    auto font_or_error = WOFF::try_load_from_bytes(file->bytes());
+    EXPECT(!font_or_error.is_error());
+}
+
 TEST_CASE(malformed_woff)
 {
     Array test_inputs = {
