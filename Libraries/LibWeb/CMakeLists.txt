@@ -32,8 +32,8 @@ else()
     message(STATUS "RinOS policy: ANGLE/GLES is disabled; the WebGL drawing buffer is owned by the RinGL Aquamarine embedding.")
 
     # LibWeb lives at <RinOS>/libs/ladybird/Libraries/LibWeb.
-    set(RINOS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." CACHE PATH "RinOS source root used by the direct LibWeb RinGL bridge")
-    set(RINGL_SOURCE_ROOT "${RINOS_SOURCE_ROOT}/libs/RinGL" CACHE PATH "RinGL source root used by the direct LibWeb RinGPU bridge")
+    set(RINOS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." CACHE PATH "RinOS source root used by the LibWeb RinGL bridge")
+    set(RINGL_SOURCE_ROOT "${RINOS_SOURCE_ROOT}/libs/RinGL" CACHE PATH "RinGL source root used by the LibWeb WebGL bridge")
     if (NOT EXISTS "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c" OR
         NOT EXISTS "${RINGL_SOURCE_ROOT}/src/platform/aquamarine_ringpu_software_surface.c" OR
         NOT EXISTS "${RINGL_SOURCE_ROOT}/CMakeLists.txt")
@@ -57,9 +57,7 @@ else()
     target_include_directories(RinGL PRIVATE
         "${RINOS_SOURCE_ROOT}/src/webengine"
         "${RINOS_SOURCE_ROOT}/src/subsystems"
-        "${RINOS_SOURCE_ROOT}/libs/aquamarine"
     )
-    target_link_libraries(RinGL PRIVATE aquamarine)
 endif()
 
 set(LIBWEB_WASM_SOURCES
