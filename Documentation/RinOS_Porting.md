@@ -190,6 +190,14 @@ libtommath, HarfBuzz/FreeType, Vulkan, Metal 等）を除去し、RinOS純正ラ
   - `RINOS_HELPER_SERVICES_ONLY=ON` はdesktop frontendとそのresource bundleを
     除外する一方、LibWeb/LibCryptoのnative provider CTestを構成できる。desktop
     harnessである`test-web`はこのprofileに登録しない。
+  - 同 profile のnative CTestは target syscallを発行せず、`LibCore`の
+    POSIX named-shared-memory providerでRinOS AnonymousBufferのname handoffを
+    実行する。対象 ISO は従来どおり`rin_runtime.c`のsyscall ABIを使う。
+    native CTest の`LibCompress`だけはhost zlibを明示linkし、製品RinOS zlib
+    経路を置換しない。
+  - Aquamarine rendererを選ぶRinOS profileは`VulkanContext.cpp`をsource graph
+    に入れない。Vulkanの有無とlink条件を食い違わせてnative CTestや製品linkへ
+    未解決`vk*` symbolを持ち込まない。
 - **完了条件**:
   - i386/x86_64 両方で cmake 成功
   - ISO生成に ladybird 関連バイナリ含有

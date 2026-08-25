@@ -16,6 +16,12 @@ if (LINUX)
     )
 endif()
 
+if (AK_OS_RINOS)
+    list(APPEND TEST_SOURCES
+        TestLibCoreRinOSAnonymousBuffer.cpp
+    )
+endif()
+
 foreach(source IN LISTS TEST_SOURCES)
     ladybird_test("${source}" LibCore)
 endforeach()
