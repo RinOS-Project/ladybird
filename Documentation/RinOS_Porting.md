@@ -356,6 +356,12 @@ grep -r '#include.*<openssl/' libs/ladybird/Libraries/ && echo "FAIL" || echo "P
 - **理由**: Browser → WebContent → RequestServer の公式プロセス境界を保ったまま、curl/OpenSSL/workerd を退役できる
 - **補足**: host前段では helper service を組まず、`LAGOM_TOOLS_ONLY=ON` の Lagom tools/code generators のみをビルドする
 
+### ADR-007: worker helper の起動失敗は renderer を終了させない
+- **日付**: 2026-08-26
+- **決定**: `RequestWorkerAgent` の Browser/WebContent transport が切断された場合、`PageClient` は空の worker transport を返す
+- **理由**: `WorkerAgentParent` が空の transport を非同期 `error` event へ変換するため、単一の Dedicated/Shared Worker helper 起動失敗で WebContent 全体を `exit(0)` させない
+- **残件**: product image/QEMU での worker 実行、crash recovery、および File Portal mediation は未完了であり、P1.4 の worker 項目を完了扱いにしない
+
 ### ADR-006: 固定済みFFmpegをdecode-onlyで組み込む
 - **日付**: 2026-08-08
 - **決定**: `deps.lock`の`libs/FFmpeg`を変更せず、i386/x86_64ごとに静的・PICで先行ビルドしてLibMediaへリンクする
