@@ -72,6 +72,13 @@ void WorkerAgentParent::initialize(JS::Realm& realm)
 
 void WorkerAgentParent::queue_worker_error_event()
 {
+    // Helper creation, a rejected script, and an abrupt helper exit can be
+    // delivered by independent IPC/process-supervisor paths. They are all
+    // terminal for this worker and must not produce duplicate error events.
+    if (m_worker_terminal_event_queued)
+        return;
+    m_worker_terminal_event_queued = true;
+
     auto outside_settings = m_outside_settings;
     auto worker_event_target = m_worker_event_target;
     // See: https://html.spec.whatwg.org/multipage/workers.html#worker-processing-model,
@@ -94,6 +101,11 @@ void WorkerAgentParent::setup_worker_ipc_callbacks(JS::Realm& realm)
         return { move(response.worker_handle), move(response.request_server_handle), move(response.image_decoder_handle) };
     };
     m_worker_ipc->on_worker_script_load_failure = [self = GC::Weak { *this }]() {
+        if (!self)
+            return;
+        self->queue_worker_error_event();
+    };
+    m_worker_ipc->on_worker_crash = [self = GC::Weak { *this }]() {
         if (!self)
             return;
         self->queue_worker_error_event();

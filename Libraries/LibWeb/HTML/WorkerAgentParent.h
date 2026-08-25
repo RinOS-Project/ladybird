@@ -44,6 +44,7 @@ private:
     GC::Ref<DOM::EventTarget> m_worker_event_target;
 
     RefPtr<Web::HTML::WebWorkerClient> m_worker_ipc;
+    bool m_worker_terminal_event_queued { false };
 };
 
 }

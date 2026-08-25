@@ -29,12 +29,17 @@ public:
     virtual Messages::WebWorkerClient::RequestWorkerAgentResponse request_worker_agent(Web::Bindings::AgentType worker_type) override;
 
     Function<void()> on_worker_close;
+    Function<void()> on_worker_crash;
     Function<void()> on_worker_script_load_failure;
     Function<HTTP::Cookie::VersionedCookie(URL::URL const&, HTTP::Cookie::Source)> on_request_cookie;
     Function<Messages::WebWorkerClient::RequestWorkerAgentResponse(Web::Bindings::AgentType)> on_request_worker_agent;
 
 private:
     virtual void die() override;
+    void notify_worker_crash();
+
+    bool m_worker_closed_normally { false };
+    bool m_worker_crash_notified { false };
 };
 
 }

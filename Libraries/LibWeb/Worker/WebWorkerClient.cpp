@@ -10,11 +10,29 @@ namespace Web::HTML {
 
 void WebWorkerClient::die()
 {
-    // FIXME: Notify WorkerAgent that the worker is dead
+    notify_worker_crash();
+}
+
+void WebWorkerClient::notify_worker_crash()
+{
+    // A clean close is acknowledged by the service before it tears down this
+    // transport. An abrupt helper exit instead reaches the owning
+    // WorkerAgent through this connection's close handler. Notify only for
+    // the latter, and only once.
+    if (m_worker_closed_normally || m_worker_crash_notified)
+        return;
+
+    m_worker_crash_notified = true;
+    if (on_worker_crash)
+        on_worker_crash();
 }
 
 void WebWorkerClient::did_close_worker()
 {
+    if (m_worker_closed_normally)
+        return;
+
+    m_worker_closed_normally = true;
     if (on_worker_close)
         on_worker_close();
 }
