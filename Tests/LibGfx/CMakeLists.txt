@@ -10,6 +10,10 @@ set(TEST_SOURCES
     TestWOFF2.cpp
 )
 
+if (AK_OS_RINOS)
+    list(APPEND TEST_SOURCES TestPathAquamarine.cpp)
+endif()
+
 foreach(source IN LISTS TEST_SOURCES)
     ladybird_test("${source}" LibGfx LIBS LibGfx)
 endforeach()

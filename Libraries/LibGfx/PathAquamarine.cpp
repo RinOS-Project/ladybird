@@ -5,46 +5,16 @@
  */
 
 #include <AK/StringBuilder.h>
-#include <AK/RefPtr.h>
 #include <AK/Utf16String.h>
-#include <LibCore/Resource.h>
 #include <LibGfx/PathAquamarine.h>
 #include <LibGfx/TextLayout.h>
 #include <math.h>
-
-extern "C" {
-#include <aquamarine.h>
-}
 
 namespace Gfx {
 
 static constexpr size_t s_max_contours = 16384;
 static constexpr size_t s_max_points = 131072;
 static constexpr RinOSPathFlatten::Config s_flatten_config { 0.25f, 12 };
-
-static AqFont const* path_bitmap_font()
-{
-    static AqFont const* s_font = nullptr;
-    static RefPtr<Core::Resource> s_font_resource;
-    static bool s_attempted_load = false;
-    if (s_attempted_load)
-        return s_font ? s_font : aq_font_builtin_8x16();
-
-    s_attempted_load = true;
-    auto resource_or_error = Core::Resource::load_from_uri(
-        "resource://fonts/browser-ui.psf"sv);
-    if (!resource_or_error.is_error()) {
-        auto resource = resource_or_error.release_value();
-        auto data = resource->data();
-        if (auto* loaded_font = aq_font_load_psf(data.data(), data.size()); loaded_font) {
-            // Aquamarine retains a view of PSF bytes. Keep the resource alive
-            // for exactly as long as the cached AqFont can be queried.
-            s_font_resource = resource;
-            s_font = loaded_font;
-        }
-    }
-    return s_font ? s_font : aq_font_builtin_8x16();
-}
 
 static bool valid_path_point(FloatPoint const& point)
 {
@@ -321,109 +291,60 @@ void PathImplAquamarine::glyph_run(GlyphRun const& glyph_run)
     if (!m_valid)
         return;
     auto const& typeface = glyph_run.font().typeface();
-    if (typeface.has_glyph_outlines()) {
-        auto units_per_em = typeface.units_per_em();
-        auto scale = glyph_run.font().pixel_size() / static_cast<float>(units_per_em);
-        if (!isfinite(scale) || scale <= 0) {
-            reject_path();
-            return;
-        }
-        auto baseline_offset = glyph_run.font().pixel_metrics().ascent;
-        for (auto const& glyph : glyph_run.glyphs()) {
-            auto outline = typeface.glyph_outline(glyph.glyph_id);
-            // A parsed outline typeface must never silently fall back to PSF:
-            // doing so would substitute an unrelated Unicode glyph for a
-            // verified glyph id after an allocation or decoding failure.
-            if (!outline.has_value()) {
-                reject_path();
-                return;
-            }
-            for (auto const& command : outline.value()) {
-                auto point = FloatPoint {
-                    glyph.position.x() + command.x * scale,
-                    glyph.position.y() + baseline_offset - command.y * scale,
-                };
-                if (!valid_path_point(point)) {
-                    reject_path();
-                    return;
-                }
-                switch (command.type) {
-                case GlyphOutlineCommand::Type::MoveTo:
-                    move_to(point);
-                    break;
-                case GlyphOutlineCommand::Type::LineTo:
-                    line_to(point);
-                    break;
-                case GlyphOutlineCommand::Type::QuadraticCurveTo: {
-                    auto control = FloatPoint {
-                        glyph.position.x() + command.control_x * scale,
-                        glyph.position.y() + baseline_offset - command.control_y * scale,
-                    };
-                    if (!valid_path_point(control)) {
-                        reject_path();
-                        return;
-                    }
-                    quadratic_bezier_curve_to(control, point);
-                    break;
-                }
-                case GlyphOutlineCommand::Type::Close:
-                    close();
-                    break;
-                }
-                if (!m_valid)
-                    return;
-            }
-        }
-        return;
-    }
-    auto const* bitmap_font = path_bitmap_font();
-    if (!bitmap_font || bitmap_font->glyph_w <= 0 || bitmap_font->glyph_h <= 0) {
+    if (!typeface.has_glyph_outlines()) {
+        // A GlyphRun holds glyph IDs, not Unicode scalar values. Mapping one
+        // to a PSF font would draw an unrelated glyph after shaping, so no
+        // outline-less fallback is correct here.
         reject_path();
         return;
     }
-    auto target_height = max(glyph_run.font().pixel_size(), 1.0f);
-    auto target_width = target_height * static_cast<float>(bitmap_font->glyph_w)
-        / static_cast<float>(bitmap_font->glyph_h);
-    auto scale_x = target_width / static_cast<float>(bitmap_font->glyph_w);
-    auto scale_y = target_height / static_cast<float>(bitmap_font->glyph_h);
-    auto bytes_per_row = (bitmap_font->glyph_w + 7) / 8;
-
+    auto units_per_em = typeface.units_per_em();
+    auto scale = glyph_run.font().pixel_size() / static_cast<float>(units_per_em);
+    if (!isfinite(scale) || scale <= 0) {
+        reject_path();
+        return;
+    }
+    auto baseline_offset = glyph_run.font().pixel_metrics().ascent;
     for (auto const& glyph : glyph_run.glyphs()) {
-        auto glyph_index = aq_font_lookup_glyph(bitmap_font, glyph.glyph_id);
-        auto const* bitmap = aq_font_glyph_data(bitmap_font, glyph_index);
-        if (!bitmap) {
-            glyph_index = aq_font_lookup_glyph(bitmap_font, '?');
-            bitmap = aq_font_glyph_data(bitmap_font, glyph_index);
+        auto outline = typeface.glyph_outline(glyph.glyph_id);
+        if (!outline.has_value()) {
+            reject_path();
+            return;
         }
-        if (!bitmap)
-            continue;
-
-        for (int row = 0; row < bitmap_font->glyph_h; ++row) {
-            int column = 0;
-            while (column < bitmap_font->glyph_w) {
-                auto byte_index = row * bytes_per_row + column / 8;
-                auto bit_index = 7 - (column % 8);
-                if ((bitmap[byte_index] & (1 << bit_index)) == 0) {
-                    ++column;
-                    continue;
-                }
-                auto run_start = column;
-                do {
-                    ++column;
-                    if (column >= bitmap_font->glyph_w)
-                        break;
-                    byte_index = row * bytes_per_row + column / 8;
-                    bit_index = 7 - (column % 8);
-                } while ((bitmap[byte_index] & (1 << bit_index)) != 0);
-                append_rectangle({
-                    glyph.position.x() + static_cast<float>(run_start) * scale_x,
-                    glyph.position.y() + static_cast<float>(row) * scale_y,
-                    static_cast<float>(column - run_start) * scale_x,
-                    scale_y,
-                });
-                if (!m_valid)
-                    return;
+        for (auto const& command : outline.value()) {
+            auto point = FloatPoint {
+                glyph.position.x() + command.x * scale,
+                glyph.position.y() + baseline_offset - command.y * scale,
+            };
+            if (!valid_path_point(point)) {
+                reject_path();
+                return;
             }
+            switch (command.type) {
+            case GlyphOutlineCommand::Type::MoveTo:
+                move_to(point);
+                break;
+            case GlyphOutlineCommand::Type::LineTo:
+                line_to(point);
+                break;
+            case GlyphOutlineCommand::Type::QuadraticCurveTo: {
+                auto control = FloatPoint {
+                    glyph.position.x() + command.control_x * scale,
+                    glyph.position.y() + baseline_offset - command.control_y * scale,
+                };
+                if (!valid_path_point(control)) {
+                    reject_path();
+                    return;
+                }
+                quadratic_bezier_curve_to(control, point);
+                break;
+            }
+            case GlyphOutlineCommand::Type::Close:
+                close();
+                break;
+            }
+            if (!m_valid)
+                return;
         }
     }
 }
@@ -605,89 +526,72 @@ NonnullOwnPtr<PathImpl> PathImplAquamarine::place_text_along(Utf16View const& te
     if (!path_length.has_value())
         return result;
 
-    auto const* bitmap_font = path_bitmap_font();
-    if (!bitmap_font || bitmap_font->glyph_w <= 0 || bitmap_font->glyph_h <= 0)
+    auto const& typeface = font.typeface();
+    if (!typeface.has_glyph_outlines()) {
+        result->reject_path();
         return result;
-
-    auto target_height = font.pixel_size();
-    if (!isfinite(target_height) || target_height <= 0)
+    }
+    auto scale = font.pixel_size() / static_cast<float>(typeface.units_per_em());
+    if (!isfinite(scale) || scale <= 0) {
+        result->reject_path();
         return result;
-    auto target_width = target_height * static_cast<float>(bitmap_font->glyph_w) / static_cast<float>(bitmap_font->glyph_h);
-    if (!isfinite(target_width) || target_width <= 0)
-        return result;
-    auto scale_x = target_width / static_cast<float>(bitmap_font->glyph_w);
-    auto scale_y = target_height / static_cast<float>(bitmap_font->glyph_h);
-    if (!isfinite(scale_x) || !isfinite(scale_y) || scale_x <= 0 || scale_y <= 0)
-        return result;
+    }
 
     auto glyphs = shape_text({ 0.0f, font.pixel_metrics().ascent }, 0.0f, text, font, GlyphRun::TextType::Common);
-    auto bytes_per_row = (bitmap_font->glyph_w + 7) / 8;
 
     float cursor = 0.0f;
     for (auto const& glyph : glyphs->glyphs()) {
-        auto advance = max(glyph.glyph_width, 1.0f);
-        if (!isfinite(advance) || advance <= 0 || cursor + advance * 0.5f > path_length.value())
+        auto advance = glyph.glyph_width;
+        if (!isfinite(advance) || advance < 0) {
+            result->reject_path();
+            return result;
+        }
+        if (cursor + advance * 0.5f > path_length.value())
             break;
 
         auto placement = first_contour_position_and_tangent(m_contours, cursor);
-        if (!placement.has_value())
-            break;
-
-        auto glyph_index = aq_font_lookup_glyph(bitmap_font, glyph.glyph_id);
-        auto const* bitmap = aq_font_glyph_data(bitmap_font, glyph_index);
-        if (!bitmap) {
-            glyph_index = aq_font_lookup_glyph(bitmap_font, '?');
-            bitmap = aq_font_glyph_data(bitmap_font, glyph_index);
+        if (!placement.has_value()) {
+            result->reject_path();
+            return result;
         }
-        if (!bitmap) {
-            cursor += advance;
-            continue;
+        auto outline = typeface.glyph_outline(glyph.glyph_id);
+        if (!outline.has_value()) {
+            result->reject_path();
+            return result;
         }
-
         auto normal = FloatPoint { placement->tangent.y(), -placement->tangent.x() };
         auto transform_point = [&](float x, float y) {
-            return placement->point + placement->tangent * x + normal * y;
+            return placement->point + placement->tangent * (x * scale) + normal * (y * scale);
         };
 
-        for (int row = 0; row < bitmap_font->glyph_h; ++row) {
-            int column = 0;
-            while (column < bitmap_font->glyph_w) {
-                auto byte_index = row * bytes_per_row + column / 8;
-                auto bit_index = 7 - (column % 8);
-                if ((bitmap[byte_index] & (1 << bit_index)) == 0) {
-                    ++column;
-                    continue;
-                }
-                auto run_start = column;
-                do {
-                    ++column;
-                    if (column >= bitmap_font->glyph_w)
-                        break;
-                    byte_index = row * bytes_per_row + column / 8;
-                    bit_index = 7 - (column % 8);
-                } while ((bitmap[byte_index] & (1 << bit_index)) != 0);
-
-                auto left = static_cast<float>(run_start) * scale_x;
-                auto right = static_cast<float>(column) * scale_x;
-                auto top = target_height - static_cast<float>(row) * scale_y;
-                auto bottom = top - scale_y;
-                auto top_left = transform_point(left, top);
-                auto top_right = transform_point(right, top);
-                auto bottom_right = transform_point(right, bottom);
-                auto bottom_left = transform_point(left, bottom);
-                if (!valid_path_point(top_left) || !valid_path_point(top_right)
-                    || !valid_path_point(bottom_right) || !valid_path_point(bottom_left)) {
+        for (auto const& command : outline.value()) {
+            auto point = transform_point(command.x, command.y);
+            if (!valid_path_point(point)) {
+                result->reject_path();
+                return result;
+            }
+            switch (command.type) {
+            case GlyphOutlineCommand::Type::MoveTo:
+                result->move_to(point);
+                break;
+            case GlyphOutlineCommand::Type::LineTo:
+                result->line_to(point);
+                break;
+            case GlyphOutlineCommand::Type::QuadraticCurveTo: {
+                auto control = transform_point(command.control_x, command.control_y);
+                if (!valid_path_point(control)) {
                     result->reject_path();
                     return result;
                 }
-                result->move_to(top_left);
-                result->line_to(top_right);
-                result->line_to(bottom_right);
-                result->line_to(bottom_left);
-                result->close();
-                if (!result->m_valid)
-                    return result;
+                result->quadratic_bezier_curve_to(control, point);
+                break;
             }
+            case GlyphOutlineCommand::Type::Close:
+                result->close();
+                break;
+            }
+            if (!result->m_valid)
+                return result;
         }
         cursor += advance;
     }

@@ -188,8 +188,16 @@ ErrorOr<NonnullRefPtr<Web::HTML::WebWorkerClient>> launch_web_worker_process(Web
         arguments.append("shared"sv);
         break;
     case Web::Bindings::AgentType::ServiceWorker:
+#if defined(AK_OS_RINOS)
+        // The RinOS policy advertises only dedicated and shared workers. A
+        // Service Worker needs durable registration, lifecycle, cache and
+        // offline-fetch ownership; launching the generic helper would expose
+        // a partially initialized service runtime as if it were supported.
+        return Error::from_string_literal("Service workers are not available on RinOS");
+#else
         arguments.append("service"sv);
         break;
+#endif
     default:
         VERIFY_NOT_REACHED();
     }

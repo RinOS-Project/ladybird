@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibCore/File.h>
+#if !defined(AK_OS_RINOS)
+#    include <LibCore/File.h>
+#endif
 #include <LibHTTP/HeaderList.h>
 #include <LibRequests/Request.h>
 #include <LibRequests/RequestClient.h>
@@ -17,15 +19,27 @@ namespace WebView {
 FileDownloader::FileDownloader() = default;
 FileDownloader::~FileDownloader() = default;
 
+#if !defined(AK_OS_RINOS)
 static ErrorOr<void> save_file(LexicalPath const& destination, ReadonlyBytes data)
 {
     auto file = TRY(Core::File::open(destination.string(), Core::File::OpenMode::Write));
     TRY(file->write_until_depleted(data));
     return {};
 }
+#endif
 
 void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
 {
+#if defined(AK_OS_RINOS)
+    // A LexicalPath is not a File Portal grant. Do not allow the generic
+    // WebView downloader to bypass Browser's chooser-owned destination and
+    // write an arbitrary RinOS path. The Browser-specific portal transaction
+    // will replace this only once its privileged chooser adapter is present.
+    (void)url;
+    (void)destination;
+    Application::the().display_error_dialog("Secure File Portal download destination is unavailable"sv);
+    return;
+#else
     static u64 next_request_id = 0;
 
     // FIXME: What other request headers should be set? Perhaps we want to use exactly the same request headers used to
@@ -67,6 +81,7 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
         });
 
     m_requests.set(request_id, request.release_nonnull());
+#endif
 }
 
 }
