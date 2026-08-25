@@ -144,6 +144,7 @@ void OffscreenCanvas::reset_context_to_default_state()
 
 WebIDL::ExceptionOr<void> OffscreenCanvas::set_new_bitmap_size(Gfx::IntSize new_size)
 {
+    m_origin_clean = true;
     if (new_size.width() == 0 || new_size.height() == 0)
         m_bitmap = nullptr;
     else {
@@ -258,6 +259,7 @@ WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> OffscreenCanvas::transfer_to_image_bit
     // 3. Let image be a newly created ImageBitmap object that references the same underlying bitmap data as this OffscreenCanvas object's bitmap.
     auto image = ImageBitmap::create(realm());
     image->set_bitmap(m_bitmap);
+    image->set_origin_clean(m_origin_clean);
 
     // 4. Set this OffscreenCanvas object's bitmap to reference a newly created bitmap of the same dimensions and color space as the previous bitmap, and with its pixels initialized to transparent black, or opaque black if the rendering context' s alpha is false.
     // FIXME: implement the checking of the alpha from the context
@@ -267,6 +269,7 @@ WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> OffscreenCanvas::transfer_to_image_bit
     } else {
         m_bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA8888, size));
     }
+    m_origin_clean = true;
 
     // 5. Return image.
     return image;
@@ -287,7 +290,9 @@ GC::Ref<WebIDL::Promise> OffscreenCanvas::convert_to_blob(Optional<ImageEncodeOp
 {
     // FIXME: 1. If the value of this's [[Detached]] internal slot is true, then return a promise rejected with an "InvalidStateError" DOMException.
 
-    // FIXME: 2. If this's context mode is 2d and the rendering context's output bitmap's origin-clean flag is set to false, then return a promise rejected with a "SecurityError" DOMException.
+    // 2. If this's context mode is 2d and the rendering context's output bitmap's origin-clean flag is set to false, then return a promise rejected with a "SecurityError" DOMException.
+    if (!is_origin_clean())
+        return WebIDL::create_rejected_promise_from_exception(realm(), WebIDL::SecurityError::create(realm(), "OffscreenCanvas is not origin-clean"_utf16));
 
     auto size = bitmap_size_for_canvas();
 

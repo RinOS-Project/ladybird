@@ -64,6 +64,7 @@ public:
     virtual ~OffscreenCanvasRenderingContext2D() override;
 
     GC::Ref<OffscreenCanvas> canvas();
+    void mark_as_origin_tainted();
 
     virtual void fill_rect(float x, float y, float width, float height) override;
     virtual void stroke_rect(float x, float y, float width, float height) override;

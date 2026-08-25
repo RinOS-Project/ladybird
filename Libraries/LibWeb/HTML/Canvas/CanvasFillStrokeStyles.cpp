@@ -64,7 +64,9 @@ void CanvasFillStrokeStyles<IncludingClass>::set_fill_style(FillOrStrokeStyleVar
             return;
         },
         [&](auto fill_or_stroke_style) {
-            // FIXME: 2. If the given value is a CanvasPattern object that is marked as not origin-clean, then set this's origin-clean flag to false.
+            // 2. If the given value is a CanvasPattern object that is marked as not origin-clean, then set this's origin-clean flag to false.
+            if (!fill_or_stroke_style->is_origin_clean())
+                static_cast<IncludingClass&>(*this).mark_as_origin_tainted();
 
             // 3. Set this's fill style to the given value.
             my_drawing_state().fill_style = GC::Ref { *fill_or_stroke_style };
@@ -122,9 +124,11 @@ void CanvasFillStrokeStyles<IncludingClass>::set_stroke_style(FillOrStrokeStyleV
         },
         [&](auto fill_or_stroke_style) {
             // FIXME: 2. If the given value is a CanvasPattern object that is marked as not origin-clean, then set this's origin-clean flag to false.
+            if (!fill_or_stroke_style->is_origin_clean())
+                static_cast<IncludingClass&>(*this).mark_as_origin_tainted();
 
             // 3. Set this's stroke style to the given value.
-            my_drawing_state().fill_style = GC::Ref { *fill_or_stroke_style };
+            my_drawing_state().stroke_style = GC::Ref { *fill_or_stroke_style };
         });
 }
 

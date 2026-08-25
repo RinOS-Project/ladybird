@@ -206,6 +206,11 @@ void SVGImageElement::fetch_the_document(URL::URL const& url)
     }
 }
 
+bool SVGImageElement::is_origin_clean() const
+{
+    return !m_resource_request || !m_resource_request->is_cors_cross_origin();
+}
+
 GC::Ptr<Layout::Node> SVGImageElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
 {
     return heap().allocate<Layout::SVGImageBox>(document(), *this, move(style));

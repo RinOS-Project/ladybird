@@ -88,15 +88,16 @@ void WebGL2RenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, W
     glTexImage2DRobustANGLE(target, level, internalformat, width, height, border, format, type, pixels_span.size(), pixels_span.data());
 }
 
-void WebGL2RenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
+WebIDL::ExceptionOr<void> WebGL2RenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
 {
     m_context->make_current();
 
-    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type);
+    auto maybe_converted_texture = TRY(read_and_pixel_convert_texture_image_source(source, format, type));
     if (!maybe_converted_texture.has_value())
-        return;
+        return {};
     auto converted_texture = maybe_converted_texture.release_value();
     glTexImage2DRobustANGLE(target, level, internalformat, converted_texture.width, converted_texture.height, 0, format, type, converted_texture.buffer.size(), converted_texture.buffer.data());
+    return {};
 }
 
 void WebGL2RenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels)
@@ -111,27 +112,29 @@ void WebGL2RenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong targe
     glTexSubImage2DRobustANGLE(target, level, xoffset, yoffset, width, height, format, type, pixels_span.size(), pixels_span.data());
 }
 
-void WebGL2RenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
+WebIDL::ExceptionOr<void> WebGL2RenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
 {
     m_context->make_current();
 
-    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type);
+    auto maybe_converted_texture = TRY(read_and_pixel_convert_texture_image_source(source, format, type));
 
     if (!maybe_converted_texture.has_value())
-        return;
+        return {};
     auto converted_texture = maybe_converted_texture.release_value();
     glTexSubImage2DRobustANGLE(target, level, xoffset, yoffset, converted_texture.width, converted_texture.height, format, type, converted_texture.buffer.size(), converted_texture.buffer.data());
+    return {};
 }
 
-void WebGL2RenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
+WebIDL::ExceptionOr<void> WebGL2RenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
 {
     m_context->make_current();
 
-    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type, width, height);
+    auto maybe_converted_texture = TRY(read_and_pixel_convert_texture_image_source(source, format, type, width, height));
     if (!maybe_converted_texture.has_value())
-        return;
+        return {};
     auto converted_texture = maybe_converted_texture.release_value();
     glTexImage2DRobustANGLE(target, level, internalformat, converted_texture.width, converted_texture.height, border, format, type, converted_texture.buffer.size(), converted_texture.buffer.data());
+    return {};
 }
 
 void WebGL2RenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> src_data, WebIDL::UnsignedLongLong src_offset)
@@ -146,16 +149,17 @@ void WebGL2RenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, W
     glTexImage2DRobustANGLE(target, level, internalformat, width, height, border, format, type, pixels_span.size(), pixels_span.data());
 }
 
-void WebGL2RenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
+WebIDL::ExceptionOr<void> WebGL2RenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
 {
     m_context->make_current();
 
-    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type, width, height);
+    auto maybe_converted_texture = TRY(read_and_pixel_convert_texture_image_source(source, format, type, width, height));
 
     if (!maybe_converted_texture.has_value())
-        return;
+        return {};
     auto converted_texture = maybe_converted_texture.release_value();
     glTexSubImage2DRobustANGLE(target, level, xoffset, yoffset, converted_texture.width, converted_texture.height, format, type, converted_texture.buffer.size(), converted_texture.buffer.data());
+    return {};
 }
 
 void WebGL2RenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> src_data, WebIDL::UnsignedLongLong src_offset)

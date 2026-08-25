@@ -1031,6 +1031,7 @@ void HTMLMediaElement::select_resource()
 
 void HTMLMediaElement::fetch_resource(URL::URL const& url_record, Function<void(String)> failure_callback)
 {
+    m_media_data_is_cors_cross_origin = false;
     m_fetch_data = make<FetchData>();
     m_fetch_data->url_record = url_record;
     m_fetch_data->stream = Media::IncrementallyPopulatedStream::create_empty();
@@ -1135,6 +1136,13 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
         Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
 
         fetch_algorithms_input.process_response = [self = GC::Ref(*this), byte_range = move(byte_range), fetch_generation](auto response) mutable {
+            if (fetch_generation != self->m_current_fetch_generation)
+                return;
+
+            // The filtered response, rather than its internal response, carries
+            // the Fetch tainting classification. Once any range is opaque, the
+            // media resource must remain unsuitable for canvas/WebGL readback.
+            self->m_media_data_is_cors_cross_origin |= response->is_cors_cross_origin();
             auto& fetch_data = self->m_fetch_data;
             auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
             auto internal_response = rooted_responses->internal_response();

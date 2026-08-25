@@ -88,6 +88,11 @@ OffscreenCanvas const& OffscreenCanvasRenderingContext2D::canvas_element() const
     return *m_canvas;
 }
 
+void OffscreenCanvasRenderingContext2D::mark_as_origin_tainted()
+{
+    m_canvas->set_origin_clean(false);
+}
+
 void OffscreenCanvasRenderingContext2D::fill_rect(float, float, float, float)
 {
     dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::fill_rect()");
@@ -105,8 +110,7 @@ void OffscreenCanvasRenderingContext2D::stroke_rect(float, float, float, float)
 
 WebIDL::ExceptionOr<void> OffscreenCanvasRenderingContext2D::draw_image_internal(CanvasImageSource const&, float, float, float, float, float, float, float, float)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::draw_image_internal()");
-    return {};
+    return WebIDL::NotSupportedError::create(realm(), "OffscreenCanvasRenderingContext2D drawImage is not implemented"_utf16);
 }
 
 void OffscreenCanvasRenderingContext2D::begin_path()

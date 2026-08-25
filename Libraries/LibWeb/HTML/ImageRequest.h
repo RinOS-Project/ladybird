@@ -12,6 +12,7 @@
 #include <LibGfx/Size.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/HTML/CORSSettingAttribute.h>
 
 namespace Web::HTML {
 
@@ -40,7 +41,7 @@ public:
     void set_state(State);
 
     String const& current_url() const { return m_current_url; }
-    void set_current_url(JS::Realm&, String);
+    void set_current_url(JS::Realm&, String, CORSSettingAttribute = CORSSettingAttribute::NoCORS);
 
     [[nodiscard]] GC::Ptr<DecodedImageData> image_data() const;
     void set_image_data(GC::Ptr<DecodedImageData>);
@@ -58,6 +59,7 @@ public:
     void add_callbacks(Function<void()> on_finish, Function<void()> on_fail);
 
     GC::Ptr<SharedResourceRequest const> shared_resource_request() const { return m_shared_resource_request; }
+    bool is_cors_cross_origin() const;
 
     virtual void visit_edges(JS::Cell::Visitor&) override;
 

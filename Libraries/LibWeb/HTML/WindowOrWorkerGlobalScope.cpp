@@ -424,7 +424,8 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                     }
                     image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
 
-                    // FIXME: 2. Set the origin-clean flag of the imageBitmap's bitmap to the same value as the origin-clean flag of image's bitmap.
+                    // 2. Preserve the origin-clean flag of the source canvas.
+                    image_bitmap->set_origin_clean(canvas_element->is_origin_clean());
 
                     // 3. Queue a global task, using the bitmap task source, to resolve promise with imageBitmap.
                     queue_global_task(Task::Source::BitmapTask, image_bitmap, GC::create_function(realm.heap(), [p, image_bitmap] {
@@ -445,7 +446,8 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                     }
                     image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
 
-                    // FIXME: 2. Set the origin-clean flag of imageBitmap's bitmap to the same value as the origin-clean flag of image's bitmap.
+                    // 2. Preserve the origin-clean flag of the source bitmap.
+                    image_bitmap->set_origin_clean(source_image_bitmap->is_origin_clean());
 
                     // 3. Queue a global task, using the bitmap task source, to resolve promise with imageBitmap.
                     queue_global_task(Task::Source::BitmapTask, image_bitmap, GC::create_function(realm.heap(), [p, image_bitmap] {
@@ -494,7 +496,8 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                     }
                     image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
 
-                    // FIXME: 4. If image is not origin-clean, then set the origin-clean flag of imageBitmap's bitmap to false.
+                    // 4. Preserve the image source's origin-clean state.
+                    image_bitmap->set_origin_clean(!image_is_not_origin_clean(image_source));
 
                     // 5. Queue a global task, using the bitmap task source, to resolve promise with imageBitmap.
                     queue_global_task(Task::Source::BitmapTask, image_bitmap, GC::create_function(realm.heap(), [p, image_bitmap] {

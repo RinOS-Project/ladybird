@@ -16,7 +16,7 @@ interface HTMLCanvasElement : HTMLElement {
 
     RenderingContext? getContext(DOMString contextId, optional any options = null);
 
-    USVString toDataURL(optional DOMString type = "image/png", optional any quality);
+    USVString toDataURL(optional DOMString type = "image/png", optional any quality); // May throw DOMException
     undefined toBlob(BlobCallback _callback, optional DOMString type = "image/png", optional any quality);
 
 };

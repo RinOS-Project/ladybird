@@ -64,6 +64,9 @@ public:
 
     WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> transfer_to_image_bitmap();
 
+    bool is_origin_clean() const { return m_origin_clean; }
+    void set_origin_clean(bool origin_clean) { m_origin_clean = origin_clean; }
+
     GC::Ref<WebIDL::Promise> convert_to_blob(Optional<ImageEncodeOptions> options);
 
     void set_oncontextlost(GC::Ptr<WebIDL::CallbackType>);
@@ -93,6 +96,7 @@ private:
 #endif
 
     RefPtr<Gfx::Bitmap> m_bitmap;
+    bool m_origin_clean { true };
 };
 
 }
