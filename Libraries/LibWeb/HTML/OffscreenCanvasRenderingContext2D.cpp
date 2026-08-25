@@ -52,6 +52,7 @@ OffscreenCanvasRenderingContext2D::OffscreenCanvasRenderingContext2D(JS::Realm& 
     , m_size(offscreen_canvas.bitmap_size_for_canvas())
     , m_context_attributes(context_attributes)
 {
+    initialize_new_bitmap_to_context_defaults();
 }
 
 OffscreenCanvasRenderingContext2D::~OffscreenCanvasRenderingContext2D() = default;
@@ -76,6 +77,25 @@ void OffscreenCanvasRenderingContext2D::set_size(Gfx::IntSize const& size)
     // the detached backing bitmap.
     m_size = size;
     m_painter = nullptr;
+}
+
+void OffscreenCanvasRenderingContext2D::initialize_new_bitmap_to_context_defaults()
+{
+    if (m_context_attributes.alpha)
+        return;
+
+    auto bitmap = m_canvas->bitmap();
+    if (!bitmap)
+        return;
+
+    // A bitmap newly allocated by OffscreenCanvas starts transparent. The 2D
+    // alpha:false contract instead exposes opaque black, independent of the
+    // retained transform from a transferToImageBitmap() call.
+    if (auto* canvas_painter = painter()) {
+        canvas_painter->reset();
+        canvas_painter->clear_rect(bitmap->rect().to_type<float>(), clear_color());
+        canvas_painter->set_transform(drawing_state().transform);
+    }
 }
 
 GC::Ref<OffscreenCanvas> OffscreenCanvasRenderingContext2D::canvas()

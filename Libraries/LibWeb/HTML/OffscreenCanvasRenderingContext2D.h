@@ -130,6 +130,7 @@ public:
     [[nodiscard]] Gfx::Painter* painter();
 
     void set_size(Gfx::IntSize const&);
+    void initialize_new_bitmap_to_context_defaults();
 
 private:
     explicit OffscreenCanvasRenderingContext2D(JS::Realm&, OffscreenCanvas&, CanvasRenderingContext2DSettings);

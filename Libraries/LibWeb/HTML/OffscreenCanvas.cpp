@@ -279,6 +279,7 @@ WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> OffscreenCanvas::transfer_to_image_bit
     m_context.visit(
         [&](GC::Ref<OffscreenCanvasRenderingContext2D>& context) {
             context->set_size(size);
+            context->initialize_new_bitmap_to_context_defaults();
         },
 #if !defined(AK_OS_RINOS)
         [](GC::Ref<WebGL::WebGLRenderingContext>&) {

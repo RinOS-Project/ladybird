@@ -2,6 +2,10 @@
 <script src="../include.js"></script>
 <script>
     test(() => {
+        const opaque_canvas = new OffscreenCanvas(1, 1);
+        const opaque_context = opaque_canvas.getContext("2d", { alpha: false });
+        println(Array.from(opaque_context.getImageData(0, 0, 1, 1).data).join(","));
+
         const canvas = new OffscreenCanvas(4, 4);
         const context = canvas.getContext("2d");
 
