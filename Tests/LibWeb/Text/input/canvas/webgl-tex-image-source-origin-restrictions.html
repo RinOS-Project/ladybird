@@ -83,6 +83,18 @@ promiseTest(async () => {
         require(pixel[0] === 255 && pixel[1] === 0 && pixel[2] === 0 && pixel[3] === 255, "rejected upload changed the existing texture definition");
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     };
+    const require_invalid_value_without_mutation = source => {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+        require(gl.getError() === gl.INVALID_VALUE, "detached TexImageSource must set INVALID_VALUE");
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        require(gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE, "retained texture framebuffer is incomplete");
+        const pixel = new Uint8Array(4);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        require(pixel[0] === 255 && pixel[1] === 0 && pixel[2] === 0 && pixel[3] === 255, "invalid TexImageSource changed the existing texture definition");
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    };
 
     // same-origin and successful anonymous CORS imports remain usable.
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, same_origin);
@@ -125,5 +137,12 @@ promiseTest(async () => {
     const tainted_offscreen_bitmap = await createImageBitmap(tainted_offscreen_canvas);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 0, 0, 255]));
     require_rejected_without_mutation(tainted_offscreen_bitmap);
+
+    // A closed ImageBitmap is a detached TexImageSource, not an empty bitmap
+    // that may erase a valid texture definition.
+    const detached_bitmap = await createImageBitmap(clean_offscreen_canvas);
+    detached_bitmap.close();
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 0, 0, 255]));
+    require_invalid_value_without_mutation(detached_bitmap);
 });
 </script>

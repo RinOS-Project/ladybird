@@ -21,6 +21,7 @@ extern "C" {
 #include <AK/Checked.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImmutableBitmap.h>
+#include <LibJS/Runtime/TypedArray.h>
 #ifndef AK_OS_RINOS
 #include <LibGfx/SkiaUtils.h>
 #endif
@@ -715,13 +716,36 @@ static bool tex_image_source_is_origin_clean(TexImageSource const& source)
         [](GC::Root<HTML::ImageData> const&) { return true; });
 }
 
+static bool tex_image_source_is_usable(TexImageSource const& source)
+{
+    return source.visit(
+        [](GC::Root<HTML::HTMLImageElement> const&) { return true; },
+        [](GC::Root<HTML::HTMLCanvasElement> const&) { return true; },
+        [](GC::Root<HTML::OffscreenCanvas> const& canvas) { return !canvas->is_detached() && canvas->bitmap(); },
+        [](GC::Root<HTML::HTMLVideoElement> const&) { return true; },
+        [](GC::Root<HTML::ImageBitmap> const& image_bitmap) { return !image_bitmap->is_detached() && image_bitmap->bitmap(); },
+        [](GC::Root<HTML::ImageData> const& image_data) {
+            auto* data = image_data->data();
+            auto* buffer = data ? data->viewed_array_buffer() : nullptr;
+            return buffer && !buffer->is_detached();
+        });
+}
+
 WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase::read_and_pixel_convert_texture_image_source(TexImageSource const& source, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, Optional<int> destination_width, Optional<int> destination_height)
 {
-    // FIXME: If this function is called with an ImageData whose data attribute has been neutered,
-    //        an INVALID_VALUE error is generated.
-    // FIXME: If this function is called with an ImageBitmap that has been neutered, an INVALID_VALUE
-    //        error is generated.
-    // FIXME: If source is null then an INVALID_VALUE error is generated.
+    // A detached ImageBitmap, an OffscreenCanvas whose bitmap has been unset,
+    // or an ImageData whose typed-array buffer was detached cannot be exported.
+    // Reject before source presentation or RinGL import, leaving the existing
+    // texture definition unchanged.
+    if (!tex_image_source_is_usable(source)) {
+#ifdef AK_OS_RINOS
+        set_error(RINGL_INVALID_VALUE);
+#else
+        set_error(GL_INVALID_VALUE);
+#endif
+        return OptionalNone {};
+    }
+
     // The check intentionally precedes canvas presentation and immutable bitmap
     // export. A rejected upload must neither expose tainted pixels nor mutate
     // the current texture definition.
@@ -746,13 +770,15 @@ WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase
             return Gfx::ImmutableBitmap::create_snapshot_from_painting_surface(*surface);
         },
         [](GC::Root<HTML::OffscreenCanvas> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
-            return Gfx::ImmutableBitmap::create(*source->bitmap());
+            auto bitmap = source->bitmap();
+            return bitmap ? Gfx::ImmutableBitmap::create(*bitmap) : nullptr;
         },
         [](GC::Root<HTML::HTMLVideoElement> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
             return source->bitmap();
         },
         [](GC::Root<HTML::ImageBitmap> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
-            return Gfx::ImmutableBitmap::create(*source->bitmap());
+            auto* bitmap = source->bitmap();
+            return bitmap ? Gfx::ImmutableBitmap::create(*bitmap) : nullptr;
         },
         [](GC::Root<HTML::ImageData> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
             return Gfx::ImmutableBitmap::create(source->bitmap());
