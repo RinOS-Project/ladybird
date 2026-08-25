@@ -326,6 +326,38 @@ static ErrorOr<size_t> copy_string_excluding_terminating_null(Configuration& con
 static Errno errno_value_from_errno(int value);
 static FileType file_type_of(struct stat const& buf);
 
+#if defined(AK_OS_RINOS)
+static Optional<Errno> validate_beneath_path(ReadonlyBytes path)
+{
+    // The kernel repeats these checks. Doing them on the exact WASI byte span
+    // prevents ByteString's terminating NUL from changing what was validated.
+    if (path.is_empty())
+        return Errno::NoEntry;
+    if (path.size() >= 256)
+        return Errno::NameTooLong;
+    if (path[0] == '/')
+        return Errno::NotCapable;
+
+    for (size_t index = 0; index < path.size(); ++index) {
+        if (path[index] == 0)
+            return Errno::Invalid;
+    }
+    for (size_t component_start = 0; component_start < path.size();) {
+        while (component_start < path.size() && path[component_start] == '/')
+            ++component_start;
+        auto component_end = component_start;
+        while (component_end < path.size() && path[component_end] != '/')
+            ++component_end;
+        if (component_end - component_start == 2
+            && path[component_start] == '.'
+            && path[component_start + 1] == '.')
+            return Errno::NotCapable;
+        component_start = component_end + 1;
+    }
+    return {};
+}
+#endif
+
 Vector<AK::String> const& Implementation::arguments() const
 {
     return cache.cached_arguments.ensure([&] {
@@ -553,10 +585,18 @@ ErrorOr<Result<FileStat>> Implementation::impl$path_filestat_get(Configuration& 
         options |= AT_SYMLINK_NOFOLLOW;
 
     auto slice = TRY(slice_typed_memory(configuration, path, path_len));
+#if defined(AK_OS_RINOS)
+    if (auto error = validate_beneath_path(slice); error.has_value())
+        return Result<FileStat> { Errno { error.value() } };
+#endif
     auto null_terminated_string = ByteString::copy(slice);
 
     struct stat stat_buf;
+#if defined(AK_OS_RINOS)
+    if (rin_fstatat_beneath(dir_fd, null_terminated_string.characters(), &stat_buf, options) < 0)
+#else
     if (fstatat(dir_fd, null_terminated_string.characters(), &stat_buf, options) < 0)
+#endif
         return errno_value_from_errno(errno);
 
     constexpr auto file_type_of = [](struct stat const& buf) {
@@ -596,9 +636,17 @@ ErrorOr<Result<void>> Implementation::impl$path_create_directory(Configuration& 
         return errno_value_from_errno(errno);
 
     auto slice = TRY(slice_typed_memory(configuration, path, path_len));
+#if defined(AK_OS_RINOS)
+    if (auto error = validate_beneath_path(slice); error.has_value())
+        return Result<void> { Errno { error.value() } };
+#endif
     auto null_terminated_string = ByteString::copy(slice);
 
+#if defined(AK_OS_RINOS)
+    if (rin_mkdirat_beneath(dir_fd, null_terminated_string.characters(), 0755) < 0)
+#else
     if (mkdirat(dir_fd, null_terminated_string.characters(), 0755) < 0)
+#endif
         return errno_value_from_errno(errno);
 
     return Result<void> {};
@@ -640,15 +688,30 @@ ErrorOr<Result<FD>> Implementation::impl$path_open(Configuration& configuration,
     if (o_flags.bits.excl)
         open_flags |= O_EXCL;
 
+#if defined(AK_OS_RINOS)
+    // OPENAT_BENEATH rejects every symlink in the kernel. O_NOFOLLOW is not
+    // part of that syscall's intentionally small flag ABI, and passing it
+    // would reject even an ordinary child path before VFS resolution.
+    (void)lookup_flags;
+#else
     if (!lookup_flags.bits.symlink_follow)
         open_flags |= O_NOFOLLOW;
+#endif
 
     auto path_data = TRY(slice_typed_memory(configuration, path, path_len));
+#if defined(AK_OS_RINOS)
+    if (auto error = validate_beneath_path(path_data); error.has_value())
+        return Result<FD> { Errno { error.value() } };
+#endif
     auto path_string = ByteString::copy(path_data);
 
     dbgln_if(WASI_FINE_GRAINED_DEBUG, "path_open: dir_fd={}, path={}, open_flags={}", dir_fd, path_string, open_flags);
 
+#if defined(AK_OS_RINOS)
+    int opened_fd = rin_openat_beneath(dir_fd, path_string.characters(), open_flags, 0644);
+#else
     int opened_fd = openat(dir_fd, path_string.characters(), open_flags, 0644);
+#endif
     if (opened_fd < 0)
         return errno_value_from_errno(errno);
 
