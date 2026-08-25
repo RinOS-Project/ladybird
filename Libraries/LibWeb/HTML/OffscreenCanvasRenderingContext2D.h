@@ -143,6 +143,9 @@ private:
     void paint_shadow_for_fill_internal(Gfx::Path const&, Gfx::WindingRule);
     void paint_shadow_for_stroke_internal(Gfx::Path const&, Gfx::Path::CapStyle, Gfx::Path::JoinStyle, Vector<float> const&);
     WebIDL::ExceptionOr<void> put_pixels_from_an_image_data_onto_a_bitmap(ImageData&, Gfx::Painter&, float dx, float dy, float dirty_x, float dirty_y, float dirty_width, float dirty_height);
+    RefPtr<Gfx::FontCascadeList const> font_cascade_list();
+    float resolved_letter_spacing() const;
+    Gfx::Path text_path(Utf16String const&, float x, float y, Optional<double> max_width);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;

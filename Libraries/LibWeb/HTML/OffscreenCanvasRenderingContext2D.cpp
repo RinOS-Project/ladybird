@@ -7,17 +7,21 @@
 #include <AK/OwnPtr.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/CompositingAndBlendingOperator.h>
+#include <LibGfx/FontCascadeList.h>
 #include <LibGfx/ImmutableBitmap.h>
 #ifndef AK_OS_RINOS
 #include <LibGfx/PainterSkia.h>
 #endif
 #include <LibGfx/Rect.h>
+#include <LibGfx/TextLayout.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibUnicode/Segmenter.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/OffscreenCanvasRenderingContext2DPrototype.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
+#include <LibWeb/CSS/StyleValues/ComputationContext.h>
+#include <LibWeb/CSS/StyleValues/FilterValueListStyleValue.h>
 #include <LibWeb/HTML/CanvasRenderingContext2D.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
 #include <LibWeb/HTML/HTMLImageElement.h>
@@ -28,6 +32,7 @@
 #include <LibWeb/HTML/Path2D.h>
 #include <LibWeb/HTML/TextMetrics.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 #include <LibWeb/Layout/TextNode.h>
 #include <LibWeb/Painting/Paintable.h>
@@ -233,14 +238,106 @@ void OffscreenCanvasRenderingContext2D::stroke(Path2D const& path)
     stroke_internal(path.path());
 }
 
-void OffscreenCanvasRenderingContext2D::fill_text(Utf16String const&, float, float, Optional<double>)
+RefPtr<Gfx::FontCascadeList const> OffscreenCanvasRenderingContext2D::font_cascade_list()
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::fill_text()");
+    if (!drawing_state().font_style_value)
+        set_font("10px sans-serif"sv);
+
+    if (!drawing_state().current_font_cascade_list) {
+        // A worker has no Document FontComputer yet. It must still render text
+        // with the platform's real default face instead of reporting a
+        // successful fillText()/measureText() operation with no glyphs.
+        auto default_font = Platform::FontPlugin::the().default_font(10);
+        if (!default_font)
+            return {};
+        auto font_list = Gfx::FontCascadeList::create();
+        font_list->add(default_font.release_nonnull());
+        drawing_state().current_font_cascade_list = move(font_list);
+    }
+
+    return drawing_state().current_font_cascade_list;
 }
 
-void OffscreenCanvasRenderingContext2D::stroke_text(Utf16String const&, float, float, Optional<double>)
+float OffscreenCanvasRenderingContext2D::resolved_letter_spacing() const
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::stroke_text()");
+    auto const& letter_spacing = drawing_state().letter_spacing;
+    if (!letter_spacing.is_absolute())
+        return 0;
+    return static_cast<float>(letter_spacing.absolute_length_to_px().to_double());
+}
+
+Gfx::Path OffscreenCanvasRenderingContext2D::text_path(Utf16String const& text, float x, float y, Optional<double> max_width)
+{
+    if (max_width.has_value() && max_width.value() <= 0)
+        return {};
+
+    auto font_list = font_cascade_list();
+    if (!font_list)
+        return {};
+
+    auto& state = drawing_state();
+    auto const& font = font_list->first();
+    auto glyph_runs = Gfx::shape_text({ x, y }, text.utf16_view(), *font_list, resolved_letter_spacing());
+    Gfx::Path path;
+    for (auto const& glyph_run : glyph_runs)
+        path.glyph_run(glyph_run);
+
+    auto text_width = path.bounding_box().width();
+    Gfx::AffineTransform transform;
+    if (max_width.has_value() && text_width > static_cast<float>(max_width.value())) {
+        auto horizontal_scale = static_cast<float>(max_width.value()) / text_width;
+        transform = Gfx::AffineTransform {}.scale({ horizontal_scale, 1 });
+        text_width *= horizontal_scale;
+    }
+
+    auto const is_rtl = state.direction == Bindings::CanvasDirection::Rtl;
+    if (state.text_align == Bindings::CanvasTextAlign::Center) {
+        transform = Gfx::AffineTransform {}.set_translation({ -text_width / 2, 0 }).multiply(transform);
+    } else if (state.text_align == Bindings::CanvasTextAlign::Start) {
+        if (is_rtl)
+            transform = Gfx::AffineTransform {}.set_translation({ -text_width, 0 }).multiply(transform);
+    } else if (state.text_align == Bindings::CanvasTextAlign::End) {
+        if (!is_rtl)
+            transform = Gfx::AffineTransform {}.set_translation({ -text_width, 0 }).multiply(transform);
+    } else if (state.text_align == Bindings::CanvasTextAlign::Right) {
+        transform = Gfx::AffineTransform {}.set_translation({ -text_width, 0 }).multiply(transform);
+    }
+
+    auto const& font_pixel_metrics = font.pixel_metrics();
+    auto baseline_y_offset = [&] {
+        switch (state.text_baseline) {
+        case Bindings::CanvasTextBaseline::Top:
+            return font_pixel_metrics.ascent;
+        case Bindings::CanvasTextBaseline::Hanging:
+            return font_pixel_metrics.ascent * 0.8f;
+        case Bindings::CanvasTextBaseline::Middle:
+            return (font_pixel_metrics.ascent - font_pixel_metrics.descent) / 2.0f;
+        case Bindings::CanvasTextBaseline::Alphabetic:
+            return 0.0f;
+        case Bindings::CanvasTextBaseline::Ideographic:
+        case Bindings::CanvasTextBaseline::Bottom:
+            return -font_pixel_metrics.descent;
+        }
+        VERIFY_NOT_REACHED();
+    }();
+    if (baseline_y_offset != 0.0f)
+        transform = Gfx::AffineTransform {}.set_translation({ 0, baseline_y_offset }).multiply(transform);
+
+    return path.copy_transformed(transform);
+}
+
+void OffscreenCanvasRenderingContext2D::fill_text(Utf16String const& text, float x, float y, Optional<double> max_width)
+{
+    if (!isfinite(x) || !isfinite(y) || (max_width.has_value() && !isfinite(max_width.value())))
+        return;
+    fill_internal(text_path(text, x, y, max_width), Gfx::WindingRule::Nonzero);
+}
+
+void OffscreenCanvasRenderingContext2D::stroke_text(Utf16String const& text, float x, float y, Optional<double> max_width)
+{
+    if (!isfinite(x) || !isfinite(y) || (max_width.has_value() && !isfinite(max_width.value())))
+        return;
+    stroke_internal(text_path(text, x, y, max_width));
 }
 
 static Gfx::WindingRule parse_fill_rule(StringView fill_rule)
@@ -486,11 +583,57 @@ void OffscreenCanvasRenderingContext2D::reset_to_default_state()
         canvas_painter->reset();
 }
 
-GC::Ref<TextMetrics> OffscreenCanvasRenderingContext2D::measure_text(Utf16String const&)
+GC::Ref<TextMetrics> OffscreenCanvasRenderingContext2D::measure_text(Utf16String const& text)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::measure_text()");
-
     auto metrics = TextMetrics::create(realm());
+    auto font_list = font_cascade_list();
+    if (!font_list)
+        return metrics;
+
+    auto glyph_runs = Gfx::shape_text({ 0, 0 }, text.utf16_view(), *font_list, resolved_letter_spacing());
+    float width = 0;
+    float height = 0;
+    for (auto const& glyph_run : glyph_runs) {
+        width += glyph_run->width();
+        height = max(height, glyph_run->font().pixel_size());
+    }
+
+    auto const& font = font_list->first();
+    auto const& font_pixel_metrics = font.pixel_metrics();
+    auto const ascent = font_pixel_metrics.ascent;
+    auto const descent = font_pixel_metrics.descent;
+    auto const hanging_baseline = ascent * 0.8f;
+    float baseline_offset = 0;
+    switch (drawing_state().text_baseline) {
+    case Bindings::CanvasTextBaseline::Top:
+        baseline_offset = ascent;
+        break;
+    case Bindings::CanvasTextBaseline::Hanging:
+        baseline_offset = hanging_baseline;
+        break;
+    case Bindings::CanvasTextBaseline::Middle:
+        baseline_offset = (ascent - descent) / 2.0f;
+        break;
+    case Bindings::CanvasTextBaseline::Alphabetic:
+        break;
+    case Bindings::CanvasTextBaseline::Ideographic:
+    case Bindings::CanvasTextBaseline::Bottom:
+        baseline_offset = -descent;
+        break;
+    }
+
+    metrics->set_width(width);
+    metrics->set_actual_bounding_box_left(0);
+    metrics->set_actual_bounding_box_right(width);
+    metrics->set_font_bounding_box_ascent(ascent - baseline_offset);
+    metrics->set_font_bounding_box_descent(descent + baseline_offset);
+    metrics->set_actual_bounding_box_ascent(ascent - baseline_offset);
+    metrics->set_actual_bounding_box_descent(descent + baseline_offset);
+    metrics->set_em_height_ascent(ascent - baseline_offset);
+    metrics->set_em_height_descent(descent + baseline_offset);
+    metrics->set_hanging_baseline(hanging_baseline - baseline_offset);
+    metrics->set_alphabetic_baseline(-baseline_offset);
+    metrics->set_ideographic_baseline(-descent - baseline_offset);
     return metrics;
 }
 
@@ -550,13 +693,127 @@ void OffscreenCanvasRenderingContext2D::set_image_smoothing_quality(Bindings::Im
 
 String OffscreenCanvasRenderingContext2D::filter() const
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::filter()");
-    return String::from_utf8_without_validation("none"sv.bytes());
+    return drawing_state().filter_string.value_or("none"_string);
 }
 
-void OffscreenCanvasRenderingContext2D::set_filter(String)
+// https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-filter
+void OffscreenCanvasRenderingContext2D::set_filter(String filter)
 {
-    dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::set_filter()");
+    // `none` is the only special value. Invalid or unimplementable values
+    // leave the current filter unchanged, as required by the setter.
+    if (filter == "none"sv) {
+        drawing_state().filter.clear();
+        drawing_state().filter_string.clear();
+        return;
+    }
+
+    auto parser = CSS::Parser::Parser::create(CSS::Parser::ParsingParams(realm()), filter);
+    auto style_value = parser.parse_as_css_value(CSS::PropertyID::Filter);
+    if (!style_value || !style_value->is_filter_value_list())
+        return;
+
+    auto length_resolution_context = [&] -> Optional<CSS::Length::ResolutionContext> {
+        if (auto& global_object = relevant_global_object(*m_canvas); is<Window>(global_object))
+            return CSS::Length::ResolutionContext::for_window(as<Window>(global_object));
+
+        // Worker globals do not have a Document FontComputer. Resolve the
+        // worker canvas' relative length units against its real default face
+        // and its own bitmap viewport, rather than accepting a filter and
+        // silently drawing it without an effect.
+        auto font_list = font_cascade_list();
+        if (!font_list)
+            return {};
+        auto const& font = font_list->first();
+        auto const font_size = CSSPixels::nearest_value_for(font.pixel_size());
+        auto const font_metrics = CSS::Length::FontMetrics {
+            font_size,
+            font.pixel_metrics(),
+            CSSPixels::nearest_value_for(font.pixel_metrics().line_spacing()),
+        };
+        return CSS::Length::ResolutionContext {
+            .viewport_rect = CSSPixelRect { 0, 0, CSSPixels { m_size.width() }, CSSPixels { m_size.height() } },
+            .font_metrics = font_metrics,
+            .root_font_metrics = font_metrics,
+        };
+    }();
+
+    if (!length_resolution_context.has_value())
+        return;
+
+    CSS::ComputationContext computation_context {
+        .length_resolution_context = length_resolution_context.value(),
+    };
+    auto filter_value_list = style_value->absolutized(computation_context)->as_filter_value_list().filter_value_list();
+
+    CSS::ColorResolutionContext color_resolution_context {
+        .color_scheme = {},
+        .current_color = Gfx::Color::Black,
+        .accent_color = {},
+        .document = {},
+        .calculation_resolution_context = {
+            .length_resolution_context = length_resolution_context.value(),
+        },
+    };
+
+    Optional<Gfx::Filter> resolved_filter;
+    auto append_filter = [&](Gfx::Filter new_filter) {
+        resolved_filter = resolved_filter.has_value()
+            ? Gfx::Filter::compose(new_filter, *resolved_filter)
+            : new_filter;
+    };
+
+    for (auto const& item : filter_value_list) {
+        auto did_resolve = item.visit(
+            [&](CSS::FilterOperation::Blur const& blur_filter) {
+                auto radius = blur_filter.resolved_radius();
+                if (!isfinite(radius))
+                    return false;
+                append_filter(Gfx::Filter::blur(radius, radius));
+                return true;
+            },
+            [&](CSS::FilterOperation::Color const& color_filter) {
+                auto amount = color_filter.resolved_amount();
+                if (!isfinite(amount))
+                    return false;
+                append_filter(Gfx::Filter::color(color_filter.operation, amount));
+                return true;
+            },
+            [&](CSS::FilterOperation::HueRotate const& hue_rotate_filter) {
+                auto angle = hue_rotate_filter.angle_degrees();
+                if (!isfinite(angle))
+                    return false;
+                append_filter(Gfx::Filter::hue_rotate(angle));
+                return true;
+            },
+            [&](CSS::FilterOperation::DropShadow const& drop_shadow) {
+                auto offset_x = static_cast<float>(CSS::Length::from_style_value(drop_shadow.offset_x, {}).absolute_length_to_px());
+                auto offset_y = static_cast<float>(CSS::Length::from_style_value(drop_shadow.offset_y, {}).absolute_length_to_px());
+                auto radius = drop_shadow.radius
+                    ? static_cast<float>(CSS::Length::from_style_value(*drop_shadow.radius, {}).absolute_length_to_px())
+                    : 0.0f;
+                if (!isfinite(offset_x) || !isfinite(offset_y) || !isfinite(radius))
+                    return false;
+
+                auto color = drop_shadow.color
+                    ? drop_shadow.color->to_color(color_resolution_context)
+                    : Optional<Gfx::Color> { Gfx::Color::Black };
+                if (!color.has_value())
+                    return false;
+                append_filter(Gfx::Filter::drop_shadow(offset_x, offset_y, radius, color.value()));
+                return true;
+            },
+            [](CSS::URL const&) {
+                // SVG filter resolution is not an available execution path for
+                // an OffscreenCanvas. Do not publish a successful-looking
+                // filter string whose raster effect cannot be applied.
+                return false;
+            });
+        if (!did_resolve)
+            return;
+    }
+
+    drawing_state().filter = move(resolved_filter);
+    drawing_state().filter_string = move(filter);
 }
 
 float OffscreenCanvasRenderingContext2D::shadow_offset_x() const

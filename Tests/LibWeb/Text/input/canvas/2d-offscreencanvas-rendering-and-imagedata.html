@@ -32,5 +32,25 @@
 
         canvas.width = canvas.width;
         println(Array.from(context.getImageData(3, 3, 1, 1).data).join(","));
+
+        const text_canvas = new OffscreenCanvas(32, 16);
+        const text_context = text_canvas.getContext("2d");
+        println(text_context.measureText("M").width > 0);
+        text_context.fillStyle = "red";
+        text_context.fillText("M", 0, 12);
+        println(Array.from(text_context.getImageData(0, 0, 32, 16).data).some(value => value > 0));
+        text_context.clearRect(0, 0, 32, 16);
+        text_context.strokeText("M", 0, 12);
+        println(Array.from(text_context.getImageData(0, 0, 32, 16).data).some(value => value > 0));
+
+        const filter_canvas = new OffscreenCanvas(1, 1);
+        const filter_context = filter_canvas.getContext("2d");
+        filter_context.filter = "brightness(0%)";
+        println(filter_context.filter);
+        filter_context.fillStyle = "red";
+        filter_context.fillRect(0, 0, 1, 1);
+        println(Array.from(filter_context.getImageData(0, 0, 1, 1).data).join(","));
+        filter_context.filter = "url(#unavailable)";
+        println(filter_context.filter);
     });
 </script>
