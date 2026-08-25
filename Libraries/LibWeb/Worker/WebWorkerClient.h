@@ -23,6 +23,10 @@ class WEB_API WebWorkerClient final
 public:
     explicit WebWorkerClient(NonnullOwnPtr<IPC::Transport>);
 
+    // Worker::terminate() is fire-and-forget. Once it has requested a normal
+    // close, an IPC teardown must not be reported to script as a helper crash.
+    void begin_close();
+
     virtual void did_close_worker() override;
     virtual void did_fail_loading_worker_script() override;
     virtual Messages::WebWorkerClient::DidRequestCookieResponse did_request_cookie(URL::URL, HTTP::Cookie::Source) override;
@@ -39,6 +43,7 @@ private:
     void notify_worker_crash();
 
     bool m_worker_closed_normally { false };
+    bool m_worker_close_requested { false };
     bool m_worker_crash_notified { false };
 };
 

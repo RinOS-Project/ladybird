@@ -27,10 +27,12 @@ void ConnectionFromClient::connect_to_image_decoder(IPC::TransportHandle handle)
 
 void ConnectionFromClient::close_worker()
 {
-    async_did_close_worker();
-
-    // FIXME: Invoke a worker shutdown operation that implements the spec
+    // RinOS launches one worker per helper process. Releasing the host and
+    // quitting this process is therefore the concrete terminate-a-worker
+    // operation, rather than a no-op acknowledgement.
     m_worker_host = nullptr;
+    m_requested_files.clear();
+    async_did_close_worker();
 
     die();
 }

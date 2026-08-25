@@ -25,6 +25,9 @@ class WorkerAgentParent : public JS::Cell {
     GC_CELL(WorkerAgentParent, JS::Cell);
     GC_DECLARE_ALLOCATOR(WorkerAgentParent);
 
+public:
+    void terminate();
+
 protected:
     WorkerAgentParent(URL::URL url, WorkerOptions const& options, GC::Ptr<MessagePort> outside_port, GC::Ref<EnvironmentSettingsObject> outside_settings, GC::Ref<DOM::EventTarget> worker_event_target, Bindings::AgentType);
     virtual void initialize(JS::Realm&) override;
@@ -44,6 +47,7 @@ private:
     GC::Ref<DOM::EventTarget> m_worker_event_target;
 
     RefPtr<Web::HTML::WebWorkerClient> m_worker_ipc;
+    bool m_worker_termination_requested { false };
     bool m_worker_terminal_event_queued { false };
 };
 

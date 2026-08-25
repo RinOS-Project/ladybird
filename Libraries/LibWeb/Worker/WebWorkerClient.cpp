@@ -19,12 +19,18 @@ void WebWorkerClient::notify_worker_crash()
     // transport. An abrupt helper exit instead reaches the owning
     // WorkerAgent through this connection's close handler. Notify only for
     // the latter, and only once.
-    if (m_worker_closed_normally || m_worker_crash_notified)
+    if (m_worker_closed_normally || m_worker_close_requested
+        || m_worker_crash_notified)
         return;
 
     m_worker_crash_notified = true;
     if (on_worker_crash)
         on_worker_crash();
+}
+
+void WebWorkerClient::begin_close()
+{
+    m_worker_close_requested = true;
 }
 
 void WebWorkerClient::did_close_worker()

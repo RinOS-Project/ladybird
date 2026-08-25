@@ -70,6 +70,21 @@ void WorkerAgentParent::initialize(JS::Realm& realm)
     m_worker_ipc->async_start_worker(m_url, m_worker_options.type, m_worker_options.credentials, m_worker_options.name, move(data_holder), serialized_outside_settings, m_agent_type);
 }
 
+void WorkerAgentParent::terminate()
+{
+    if (m_worker_termination_requested)
+        return;
+    m_worker_termination_requested = true;
+
+    // The helper owns exactly one WorkerHost. The close message stops that
+    // host and exits its event loop; it is deliberately asynchronous because
+    // Worker.terminate() returns undefined and must not wait for script code.
+    if (m_worker_ipc) {
+        m_worker_ipc->begin_close();
+        m_worker_ipc->async_close_worker();
+    }
+}
+
 void WorkerAgentParent::queue_worker_error_event()
 {
     // Helper creation, a rejected script, and an abrupt helper exit can be

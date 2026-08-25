@@ -123,7 +123,8 @@ WebIDL::ExceptionOr<void> Worker::terminate()
 {
     dbgln_if(WEB_WORKER_DEBUG, "WebWorker: Terminate");
 
-    // FIXME: The terminate() method steps are to terminate a worker given this's worker.
+    if (m_agent)
+        m_agent->terminate();
     return {};
 }
 
