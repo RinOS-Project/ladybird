@@ -502,8 +502,8 @@ void WebGLRenderingContextOverloads::uniform1iv(GC::Root<WebGLUniformLocation> l
         return;
 
     WebIDL::Long location_handle;
-    // WebGL permits uniform1iv for either a scalar int or sampler uniform.
-    // RinGL keeps the linked program type check adjacent to the state update.
+    // RinGL validates the linked scalar/array type and keeps sampler-array
+    // mutations all-or-nothing before it dirties the RinGPU binding state.
     if (!validate_rin_gl_uniform_location(location, 0, location_handle))
         return;
 
@@ -515,13 +515,11 @@ void WebGLRenderingContextOverloads::uniform1iv(GC::Root<WebGLUniformLocation> l
     auto span = span_or_error.release_value();
     if (span.is_empty())
         return;
-    if (span.size() != 1) {
-        // The bounded profile supports scalar int and sampler declarations,
-        // but not uniform arrays.
-        set_error(RINGL_INVALID_OPERATION);
+    if (span.size() > NumericLimits<u32>::max()) {
+        set_error(RINGL_INVALID_VALUE);
         return;
     }
-    ringl_uniform_1i(location_handle, span[0]);
+    ringl_uniform_1iv(location_handle, static_cast<u32>(span.size()), span.data());
 }
 
 void WebGLRenderingContextOverloads::uniform2iv(GC::Root<WebGLUniformLocation> location, Int32List v)
