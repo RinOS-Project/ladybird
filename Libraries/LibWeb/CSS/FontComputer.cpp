@@ -278,7 +278,7 @@ RefPtr<Gfx::FontCascadeList const> FontComputer::find_matching_font_weight_ascen
     using Fn = AK::Function<bool(MatchingFontCandidate const&)>;
     auto pred = inclusive ? Fn([&](auto const& matching_font_candidate) { return matching_font_candidate.key.weight.min >= target_weight; })
                           : Fn([&](auto const& matching_font_candidate) { return matching_font_candidate.key.weight.min > target_weight; });
-    auto it = find_if(candidates.begin(), candidates.end(), pred);
+    auto it = find_if(candidates.begin(), candidates.end(), move(pred));
     for (; it != candidates.end(); ++it) {
         if (auto found_font = it->font_with_point_size(font_size_in_pt, variations, font_feature_data, font_feature_values))
             return found_font;
@@ -291,7 +291,7 @@ RefPtr<Gfx::FontCascadeList const> FontComputer::find_matching_font_weight_desce
     using Fn = AK::Function<bool(MatchingFontCandidate const&)>;
     auto pred = inclusive ? Fn([&](auto const& matching_font_candidate) { return matching_font_candidate.key.weight.max <= target_weight; })
                           : Fn([&](auto const& matching_font_candidate) { return matching_font_candidate.key.weight.max < target_weight; });
-    auto it = find_if(candidates.rbegin(), candidates.rend(), pred);
+    auto it = find_if(candidates.rbegin(), candidates.rend(), move(pred));
     for (; it != candidates.rend(); ++it) {
         if (auto found_font = it->font_with_point_size(font_size_in_pt, variations, font_feature_data, font_feature_values))
             return found_font;
