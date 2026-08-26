@@ -704,13 +704,36 @@ ReadonlySpan<WebIDL::UnsignedLong> WebGLRenderingContextBase::enabled_compressed
     return m_enabled_compressed_texture_formats;
 }
 
+static bool tex_image_source_is_usable(TexImageSource const& source)
+{
+    return source.visit(
+        [](GC::Root<HTML::HTMLImageElement> const&) { return true; },
+        [](GC::Root<HTML::HTMLCanvasElement> const&) { return true; },
+        [](GC::Root<HTML::OffscreenCanvas> const& canvas) { return !canvas->is_detached() && canvas->bitmap(); },
+        [](GC::Root<HTML::HTMLVideoElement> const&) { return true; },
+        [](GC::Root<HTML::ImageBitmap> const& bitmap) { return !bitmap->is_detached() && bitmap->bitmap(); },
+        [](GC::Root<HTML::ImageData> const& image_data) {
+            auto const* data = image_data->data();
+            auto const* buffer = data ? data->viewed_array_buffer() : nullptr;
+            return buffer && !buffer->is_detached();
+        });
+}
+
 WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase::read_and_pixel_convert_texture_image_source(TexImageSource const& source, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, Optional<int> destination_width, Optional<int> destination_height)
 {
-    // FIXME: If this function is called with an ImageData whose data attribute has been neutered,
-    //        an INVALID_VALUE error is generated.
-    // FIXME: If this function is called with an ImageBitmap that has been neutered, an INVALID_VALUE
-    //        error is generated.
     // FIXME: If source is null then an INVALID_VALUE error is generated.
+    // Detached transferable objects and a detached ImageData buffer have no
+    // pixels that WebGL may read. Reject before canvas presentation, byte
+    // export, or the RinGL upload so the existing texture stays unchanged.
+    if (!tex_image_source_is_usable(source)) {
+#ifdef AK_OS_RINOS
+        set_error(RINGL_INVALID_VALUE);
+#else
+        set_error(GL_INVALID_VALUE);
+#endif
+        return OptionalNone {};
+    }
+
     auto source_is_origin_clean = source.visit(
         [](GC::Root<HTML::HTMLImageElement> const& image) { return image->is_origin_clean(); },
         [](GC::Root<HTML::HTMLCanvasElement> const& canvas) { return canvas->is_origin_clean(); },

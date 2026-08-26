@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    test(() => {
+        const destination = new OffscreenCanvas(1, 1);
+        const gl = destination.getContext("webgl");
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+
+        const source = new OffscreenCanvas(1, 1);
+        source.getContext("2d").fillRect(0, 0, 1, 1);
+        const closed_bitmap = source.transferToImageBitmap();
+        closed_bitmap.close();
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, closed_bitmap);
+        println(gl.getError() === gl.INVALID_VALUE);
+
+        const image_data = new ImageData(1, 1);
+        structuredClone(image_data.data.buffer, { transfer: [image_data.data.buffer] });
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image_data);
+        println(gl.getError() === gl.INVALID_VALUE);
+
+        const transferred_canvas = new OffscreenCanvas(1, 1);
+        structuredClone(transferred_canvas, { transfer: [transferred_canvas] });
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, transferred_canvas);
+        println(gl.getError() === gl.INVALID_VALUE);
+    });
+</script>
