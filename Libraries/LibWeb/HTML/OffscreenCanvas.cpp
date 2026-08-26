@@ -97,6 +97,11 @@ OffscreenCanvas::~OffscreenCanvas() = default;
 
 WebIDL::ExceptionOr<void> OffscreenCanvas::transfer_steps(HTML::TransferDataEncoder& data_holder)
 {
+    // Structured serialization rejects this before reaching transfer steps,
+    // but keep this entry point safe for any direct caller as well.
+    if (is_detached())
+        return WebIDL::DataCloneError::create(realm(), "Cannot transfer a detached OffscreenCanvas"_utf16);
+
     // An OffscreenCanvas with an active rendering context owns context-local
     // state and cannot be detached. The receiving side gets a fresh bitmap,
     // never the sender's pixels or context.

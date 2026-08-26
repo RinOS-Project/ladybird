@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    test(() => {
+        const two_d_canvas = new OffscreenCanvas(1, 1);
+        const two_d = two_d_canvas.getContext("2d");
+        two_d.fillStyle = "red";
+        two_d.fillRect(0, 0, 1, 1);
+        try {
+            structuredClone(two_d_canvas, { transfer: [two_d_canvas] });
+            println(false);
+        } catch (error) {
+            println(error.name === "InvalidStateError");
+        }
+        println(Array.from(two_d.getImageData(0, 0, 1, 1).data).join(","));
+
+        const webgl_canvas = new OffscreenCanvas(1, 1);
+        const webgl = webgl_canvas.getContext("webgl");
+        try {
+            structuredClone(webgl_canvas, { transfer: [webgl_canvas] });
+            println(false);
+        } catch (error) {
+            println(error.name === "InvalidStateError");
+        }
+        println(webgl_canvas.getContext("webgl") === webgl);
+    });
+</script>
