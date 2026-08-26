@@ -362,26 +362,36 @@ if (AK_OS_RINOS AND BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_compile_definitions(test-rintls-rsa-webcrypto PRIVATE
         RIN_FREESTANDING=1 RINTLS_TEST_HOST_TYPES=1)
     target_compile_options(test-rintls-rsa-webcrypto PRIVATE
+        # This test intentionally uses assert() for every provider result.
+        # The project-wide release flags define NDEBUG, so explicitly keep
+        # assertions live for this security regression target.
+        -UNDEBUG
         -Wno-unused-parameter
         -Wno-missing-prototypes)
     target_link_libraries(test-rintls-rsa-webcrypto PRIVATE RinTLSBearSSL)
     target_link_options(test-rintls-rsa-webcrypto PRIVATE -Wl,-z,now)
     add_test(NAME rintls-rsa-webcrypto COMMAND test-rintls-rsa-webcrypto)
 
-    # Exercise the actual LibCrypto WebCrypto-facing KMAC/cSHAKE path. This
-    # deliberately avoids LibTest/LibCore so it stays runnable in the native
-    # provider configuration as the OS-backed shared-memory test shim evolves.
-    add_executable(test-rintls-kmac-cshake
-        ${LADYBIRD_SOURCE_DIR}/../rintls/tests/ladybird_kmac_cshake_test.cpp)
-    target_link_libraries(test-rintls-kmac-cshake PRIVATE LibCrypto AK)
-    add_test(NAME rintls-kmac-cshake COMMAND test-rintls-kmac-cshake)
+    # A LAGOM_TOOLS_ONLY configuration deliberately omits LibCrypto. Keep
+    # provider tests available there, while registering public LibCrypto API
+    # tests only in a configuration that actually builds their dependency.
+    if (TARGET LibCrypto)
+        # Exercise the actual LibCrypto WebCrypto-facing KMAC/cSHAKE path.
+        # This deliberately avoids LibTest/LibCore so it stays runnable in
+        # the native provider configuration as the OS-backed shared-memory
+        # test shim evolves.
+        add_executable(test-rintls-kmac-cshake
+            ${LADYBIRD_SOURCE_DIR}/../rintls/tests/ladybird_kmac_cshake_test.cpp)
+        target_link_libraries(test-rintls-kmac-cshake PRIVATE LibCrypto AK)
+        add_test(NAME rintls-kmac-cshake COMMAND test-rintls-kmac-cshake)
 
-    # Exercise the LibCrypto public-key APIs instead of testing only the
-    # provider archive. This proves the AK_OS_RINOS dispatches reach rintls.
-    add_executable(test-rintls-modern-libcrypto
-        ${LADYBIRD_SOURCE_DIR}/../rintls/tests/ladybird_modern_backend_test.cpp)
-    target_link_libraries(test-rintls-modern-libcrypto PRIVATE LibCrypto AK)
-    add_test(NAME rintls-modern-libcrypto COMMAND test-rintls-modern-libcrypto)
+        # Exercise the LibCrypto public-key APIs instead of testing only the
+        # provider archive. This proves the AK_OS_RINOS dispatches reach rintls.
+        add_executable(test-rintls-modern-libcrypto
+            ${LADYBIRD_SOURCE_DIR}/../rintls/tests/ladybird_modern_backend_test.cpp)
+        target_link_libraries(test-rintls-modern-libcrypto PRIVATE LibCrypto AK)
+        add_test(NAME rintls-modern-libcrypto COMMAND test-rintls-modern-libcrypto)
+    endif()
 endif()
 
 if (ENABLE_GUI_TARGETS)
