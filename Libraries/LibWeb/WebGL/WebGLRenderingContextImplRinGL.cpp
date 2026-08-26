@@ -1891,6 +1891,14 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             }
             return JS::Value(value);
         }
+        case RINGL_BOOL: {
+            int32_t value = 0;
+            if (ringl_get_uniform_1i(program_handle, location_handle, &value) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            return JS::Value(value != 0);
+        }
         case RINGL_FLOAT: {
             float value = 0.0f;
             if (ringl_get_uniform_1f(program_handle, location_handle, &value) != 0) {
@@ -2295,7 +2303,7 @@ void WebGLRenderingContextImpl::uniform1i(GC::Root<WebGLUniformLocation> locatio
         return;
 
     WebIDL::Long location_handle;
-    // WebGL permits uniform1i for either a scalar int or sampler uniform.
+    // WebGL permits uniform1i for scalar int, bool, or sampler uniforms.
     // RinGL performs the final narrow type check while selecting its linked
     // program-owned uniform storage.
     if (!validate_rin_gl_uniform_location(location, 0, location_handle))
