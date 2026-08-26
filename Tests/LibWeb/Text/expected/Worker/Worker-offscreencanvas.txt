@@ -1,5 +1,3 @@
 Message received from worker: "{\"w\":10,\"h\":10}"
 Message received from worker: "normal normal 20px SerenitySans"
-Message received from worker: "{\"workerFontSizeAffectsMeasureText\":true}"
-Message received from worker: "{\"workerUrlFontLoaded\":true,\"workerUrlFontAffectsMeasureText\":true}"
-Message received from worker: "normal normal 40px SerenitySans"
+Message received from worker: "normal normal 20px SerenitySans"

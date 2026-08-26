@@ -129,8 +129,6 @@ public:
 
     RefPtr<Gfx::PaintingSurface> surface() { return m_surface; }
     void allocate_painting_surface_if_needed();
-    bool is_origin_clean() const { return m_origin_clean; }
-    void mark_as_origin_tainted() { m_origin_clean = false; }
 
 private:
     CanvasRenderingContext2D(JS::Realm&, HTMLCanvasElement&, CanvasRenderingContext2DSettings);

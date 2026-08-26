@@ -498,13 +498,9 @@ ErrorOr<void> Implementation::impl$proc_exit(Configuration&, ExitCode exit_code)
 ErrorOr<Result<void>> Implementation::impl$fd_close(Configuration&, FD fd)
 {
     return map_fd(fd).visit(
-        [&](u32 host_fd) -> Result<void> {
-            if (close(bit_cast<i32>(host_fd)) != 0)
+        [&](u32 fd) -> Result<void> {
+            if (close(bit_cast<i32>(fd)) != 0)
                 return errno_value_from_errno(errno);
-            // A host descriptor number may be reused immediately. Keep a
-            // closed WASI descriptor unmapped so it cannot acquire authority
-            // over an unrelated object that later receives the same number.
-            m_fd_map.remove(fd.value());
             return {};
         },
         [&](PreopenedDirectoryDescriptor) -> Result<void> {

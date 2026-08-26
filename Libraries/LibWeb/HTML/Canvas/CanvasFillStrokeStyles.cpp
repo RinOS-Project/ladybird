@@ -65,8 +65,10 @@ void CanvasFillStrokeStyles<IncludingClass>::set_fill_style(FillOrStrokeStyleVar
         },
         [&](auto fill_or_stroke_style) {
             // 2. If the given value is a CanvasPattern object that is marked as not origin-clean, then set this's origin-clean flag to false.
-            if (!fill_or_stroke_style->is_origin_clean())
-                static_cast<IncludingClass&>(*this).mark_as_origin_tainted();
+            if constexpr (IsSame<decltype(fill_or_stroke_style), GC::Root<CanvasPattern>>) {
+                if (!fill_or_stroke_style->is_origin_clean())
+                    static_cast<IncludingClass&>(*this).mark_as_origin_tainted();
+            }
 
             // 3. Set this's fill style to the given value.
             my_drawing_state().fill_style = GC::Ref { *fill_or_stroke_style };
@@ -123,9 +125,12 @@ void CanvasFillStrokeStyles<IncludingClass>::set_stroke_style(FillOrStrokeStyleV
             return;
         },
         [&](auto fill_or_stroke_style) {
-            // FIXME: 2. If the given value is a CanvasPattern object that is marked as not origin-clean, then set this's origin-clean flag to false.
-            if (!fill_or_stroke_style->is_origin_clean())
-                static_cast<IncludingClass&>(*this).mark_as_origin_tainted();
+            // 2. A gradient is origin-clean by construction. Only a pattern
+            // can inherit origin taint from an image source.
+            if constexpr (IsSame<decltype(fill_or_stroke_style), GC::Root<CanvasPattern>>) {
+                if (!fill_or_stroke_style->is_origin_clean())
+                    static_cast<IncludingClass&>(*this).mark_as_origin_tainted();
+            }
 
             // 3. Set this's stroke style to the given value.
             my_drawing_state().stroke_style = GC::Ref { *fill_or_stroke_style };

@@ -64,8 +64,7 @@ WebIDL::ExceptionOr<GC::Ptr<CanvasPattern>> CanvasPattern::create(JS::Realm& rea
     auto paint_style = TRY_OR_THROW_OOM(realm.vm(), Gfx::CanvasPatternPaintStyle::create(immutable_bitmap, *repetition_value));
     auto pattern = realm.create<CanvasPattern>(realm, *paint_style);
 
-    // 7. If image is not origin-clean, then mark pattern as not origin-clean.
-    pattern->m_origin_clean = !image_is_not_origin_clean(image);
+    // FIXME: 7. If image is not origin-clean, then mark pattern as not origin-clean.
 
     // 8. Return pattern.
     return pattern;

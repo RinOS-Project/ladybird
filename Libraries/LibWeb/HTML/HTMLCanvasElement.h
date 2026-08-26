@@ -10,7 +10,6 @@
 #include <LibGfx/PaintingSurface.h>
 #include <LibWeb/HTML/HTMLElement.h>
 #include <LibWeb/Painting/ExternalContentSource.h>
-#include <LibWeb/WebIDL/ExceptionOr.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::HTML {
@@ -47,10 +46,9 @@ public:
 
     virtual void attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
 
-    WebIDL::ExceptionOr<String> to_data_url(StringView type, JS::Value quality);
+    String to_data_url(StringView type, JS::Value quality);
     WebIDL::ExceptionOr<void> to_blob(GC::Ref<WebIDL::CallbackType> callback, StringView type, JS::Value quality);
     RefPtr<Gfx::Bitmap> get_bitmap_from_surface();
-    bool is_origin_clean() const;
 
     void present();
     void set_canvas_content_dirty();

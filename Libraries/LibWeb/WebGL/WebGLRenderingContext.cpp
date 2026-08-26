@@ -61,28 +61,26 @@ JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::cre
     auto context_attributes = TRY(convert_value_to_context_attributes_dictionary(canvas_element.vm(), options));
 #ifdef AK_OS_RINOS
     // RinGPU currently supplies a synchronous software BGRA target. Do not
-    // claim multisampling or desynchronized presentation until those paths
-    // exist. Alpha and premultiplied-alpha are fully represented by the RinGL
-    // default framebuffer and compositor snapshot, so retain the caller's
-    // requested values. A caller that explicitly rejects a major performance
-    // caveat must not receive this software context.
+    // claim multisampling, an opaque backing store, or desynchronized
+    // presentation until those paths exist. A caller that explicitly rejects
+    // a major performance caveat must not receive this software context.
     if (context_attributes.fail_if_major_performance_caveat) {
         fire_webgl_context_creation_error(canvas_element);
         return GC::Ptr<WebGLRenderingContext> { nullptr };
     }
     auto actual_context_attributes = context_attributes;
+    actual_context_attributes.alpha = true;
     actual_context_attributes.antialias = false;
+    actual_context_attributes.premultiplied_alpha = true;
     actual_context_attributes.desynchronized = false;
 #else
     auto actual_context_attributes = context_attributes;
 #endif
 
     OpenGLContext::DrawingBufferOptions context_options {
-        .alpha = actual_context_attributes.alpha,
         .depth = actual_context_attributes.depth,
         .stencil = actual_context_attributes.stencil,
         .antialias = actual_context_attributes.antialias,
-        .premultiplied_alpha = actual_context_attributes.premultiplied_alpha,
     };
 #ifdef AK_OS_RINOS
     auto context = OpenGLContext::create(OpenGLContext::WebGLVersion::WebGL1, context_options);
@@ -100,18 +98,6 @@ JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::cre
     }
 
     context->set_size(canvas_element.bitmap_size_for_canvas(1, 1));
-#ifdef AK_OS_RINOS
-    // A WebGL context is not usable until its initial drawing buffer exists.
-    // The RinGL bridge owns that allocation, so realize it here rather than
-    // returning a JavaScript context whose first command discovers an
-    // allocation failure. This stays entirely on the RinGL/private-surface
-    // path; it does not introduce an Aquamarine command backend.
-    context->make_current();
-    if (!context->rin_gl_is_ready()) {
-        fire_webgl_context_creation_error(canvas_element);
-        return GC::Ptr<WebGLRenderingContext> { nullptr };
-    }
-#endif
 
     return realm.create<WebGLRenderingContext>(realm, canvas_element, context.release_nonnull(), context_attributes, actual_context_attributes);
 }
@@ -236,11 +222,9 @@ void WebGLRenderingContext::queue_context_restore() const
 void WebGLRenderingContext::restore_context_after_loss()
 {
     OpenGLContext::DrawingBufferOptions context_options {
-        .alpha = m_actual_context_parameters.alpha,
         .depth = m_actual_context_parameters.depth,
         .stencil = m_actual_context_parameters.stencil,
         .antialias = m_actual_context_parameters.antialias,
-        .premultiplied_alpha = m_actual_context_parameters.premultiplied_alpha,
     };
     auto replacement = OpenGLContext::create(OpenGLContext::WebGLVersion::WebGL1, context_options);
 
@@ -325,16 +309,6 @@ WebIDL::Long WebGLRenderingContext::drawing_buffer_height() const
 {
     auto size = canvas_for_binding()->bitmap_size_for_canvas();
     return size.height();
-}
-
-WebIDL::UnsignedLong WebGLRenderingContext::drawing_buffer_format() const
-{
-    // WebGL exposes the effective default color-buffer format, not the
-    // embedding's storage layout. RinOS uses BGRA storage internally, but its
-    // alpha-capable drawing buffer is specified as RGBA8 to script.
-    constexpr WebIDL::UnsignedLong rgba8 = 0x8058;
-    constexpr WebIDL::UnsignedLong rgb8 = 0x8051;
-    return m_actual_context_parameters.alpha ? rgba8 : rgb8;
 }
 
 }

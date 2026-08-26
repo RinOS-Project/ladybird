@@ -2,24 +2,14 @@
 <script src="../include.js"></script>
 <script>
     asyncTest(done => {
-        const workerFontURL = new URL("../../Assets/HashSans.woff", location.href).href;
         const workerScript = `
-            self.onmessage = async function(evt) {
+            self.onmessage = function(evt) {
                 try{
-                    const workerFace = new FontFace("Worker Hash Sans", "url(${workerFontURL})");
-                    self.fonts.add(workerFace);
-                    await workerFace.load();
                     let canvas = new OffscreenCanvas(10, 10);
                     self.postMessage(JSON.stringify({ w: canvas.width, h: canvas.height }));
                     let context = canvas.getContext("2d");
                     context.font = "20px SerenitySans";
                     self.postMessage(context.font);
-                    let narrowWidth = context.measureText("mmmm").width;
-                    context.font = "40px SerenitySans";
-                    let wideWidth = context.measureText("mmmm").width;
-                    self.postMessage(JSON.stringify({ workerFontSizeAffectsMeasureText: wideWidth > narrowWidth }));
-                    context.font = "40px Worker Hash Sans";
-                    self.postMessage(JSON.stringify({ workerUrlFontLoaded: workerFace.status === "loaded", workerUrlFontAffectsMeasureText: context.measureText("mmmm").width > 0 }));
                     context.font = "!!!"; // Invalid value, should be ignored.
                     self.postMessage(context.font);
                     self.postMessage(null);

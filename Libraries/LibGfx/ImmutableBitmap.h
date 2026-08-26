@@ -44,7 +44,6 @@ struct ExportFlags {
     enum : u8 {
         PremultiplyAlpha = 1 << 0,
         FlipY = 1 << 1,
-        ConvertDisplayP3ToSRGB = 1 << 2,
     };
 };
 

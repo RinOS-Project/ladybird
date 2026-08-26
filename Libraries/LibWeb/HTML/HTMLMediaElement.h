@@ -150,7 +150,6 @@ public:
     void destroy_controls();
 
     CORSSettingAttribute crossorigin() const { return m_crossorigin; }
-    bool is_origin_clean() const { return !m_media_data_is_cors_cross_origin; }
 
     RefPtr<Media::DisplayingVideoSink> const& selected_video_track_sink() const { return m_selected_video_track_sink; }
 
@@ -262,7 +261,6 @@ private:
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-media-crossorigin
     CORSSettingAttribute m_crossorigin { CORSSettingAttribute::NoCORS };
-    bool m_media_data_is_cors_cross_origin { false };
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-media-currentsrc
     String m_current_src;

@@ -54,16 +54,14 @@ public:
     // Implementation specific:
     void set_bitmap(RefPtr<Gfx::Bitmap>);
     Gfx::Bitmap* bitmap() const;
-    bool is_origin_clean() const { return m_origin_clean; }
-    void set_origin_clean(bool origin_clean) { m_origin_clean = origin_clean; }
 
 private:
     explicit ImageBitmap(JS::Realm&);
 
+    // FIXME: We don't implement this flag yet:
     // An ImageBitmap object's bitmap has an origin-clean flag, which indicates whether the bitmap is tainted by content
     // from a different origin. The flag is initially set to true and may be changed to false by the steps of
     // createImageBitmap().
-    bool m_origin_clean { true };
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;

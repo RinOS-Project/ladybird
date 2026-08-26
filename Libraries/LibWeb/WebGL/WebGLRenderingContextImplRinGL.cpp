@@ -103,24 +103,17 @@ bool WebGLRenderingContextImpl::make_rin_gl_current()
     if (m_context->rin_gl_is_ready())
         return true;
 
-    if (m_context->is_context_lost()) {
+    if (m_context->is_context_lost())
         report_context_loss();
-        // WebGL exposes CONTEXT_LOST_WEBGL exactly once through getError().
-        // OpenGLContext owns that one pending error when it retires the RinGL
-        // context; fabricating another error here would make every later
-        // getError() call report a loss instead of NO_ERROR. Commands issued
-        // while lost remain no-ops through this false return.
-        return false;
-    }
 
-    // `rin_gl_get_error()` retains the exact realization reason while the
+    // `rin_gl_get_error()` retains the exact allocation/loss reason while the
     // backend surface is absent. `set_error()` consumes that reason before
-    // considering this normal allocation fallback.
-    set_error(RINGL_OUT_OF_MEMORY);
+    // considering the fallback supplied here.
+    set_error(m_context->is_context_lost() ? RINGL_CONTEXT_LOST_WEBGL : RINGL_OUT_OF_MEMORY);
     return false;
 }
 
-bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out, GLenum alternate_type)
+bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out)
 {
     if (!m_current_program) {
         set_error(RINGL_INVALID_OPERATION);
@@ -172,7 +165,7 @@ bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLU
         if (active_location != requested_location)
             continue;
 
-        if (expected_type != 0 && active_uniform.type != expected_type && active_uniform.type != alternate_type) {
+        if (expected_type != 0 && active_uniform.type != expected_type) {
             set_error(RINGL_INVALID_OPERATION);
             return false;
         }
@@ -1891,47 +1884,6 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             }
             return JS::Value(value);
         }
-        case RINGL_BOOL: {
-            int32_t value = 0;
-            if (ringl_get_uniform_1i(program_handle, location_handle, &value) != 0) {
-                set_error(RINGL_INVALID_OPERATION);
-                return JS::js_null();
-            }
-            return JS::Value(value != 0);
-        }
-        case RINGL_BOOL_VEC2: {
-            Array<int32_t, 2> values {};
-            if (ringl_get_uniform_2i(program_handle, location_handle, values.data()) != 0) {
-                set_error(RINGL_INVALID_OPERATION);
-                return JS::js_null();
-            }
-            auto sequence = MUST(JS::Array::create(realm(), values.size()));
-            for (size_t value_index = 0; value_index < values.size(); ++value_index)
-                MUST(sequence->create_data_property(JS::PropertyKey(value_index), JS::Value(values[value_index] != 0)));
-            return JS::Value(sequence);
-        }
-        case RINGL_BOOL_VEC3: {
-            Array<int32_t, 3> values {};
-            if (ringl_get_uniform_3i(program_handle, location_handle, values.data()) != 0) {
-                set_error(RINGL_INVALID_OPERATION);
-                return JS::js_null();
-            }
-            auto sequence = MUST(JS::Array::create(realm(), values.size()));
-            for (size_t value_index = 0; value_index < values.size(); ++value_index)
-                MUST(sequence->create_data_property(JS::PropertyKey(value_index), JS::Value(values[value_index] != 0)));
-            return JS::Value(sequence);
-        }
-        case RINGL_BOOL_VEC4: {
-            Array<int32_t, 4> values {};
-            if (ringl_get_uniform_4i(program_handle, location_handle, values.data()) != 0) {
-                set_error(RINGL_INVALID_OPERATION);
-                return JS::js_null();
-            }
-            auto sequence = MUST(JS::Array::create(realm(), values.size()));
-            for (size_t value_index = 0; value_index < values.size(); ++value_index)
-                MUST(sequence->create_data_property(JS::PropertyKey(value_index), JS::Value(values[value_index] != 0)));
-            return JS::Value(sequence);
-        }
         case RINGL_FLOAT: {
             float value = 0.0f;
             if (ringl_get_uniform_1f(program_handle, location_handle, &value) != 0) {
@@ -2336,7 +2288,7 @@ void WebGLRenderingContextImpl::uniform1i(GC::Root<WebGLUniformLocation> locatio
         return;
 
     WebIDL::Long location_handle;
-    // WebGL permits uniform1i for scalar int, bool, or sampler uniforms.
+    // WebGL permits uniform1i for either a scalar int or sampler uniform.
     // RinGL performs the final narrow type check while selecting its linked
     // program-owned uniform storage.
     if (!validate_rin_gl_uniform_location(location, 0, location_handle))
@@ -2389,7 +2341,7 @@ void WebGLRenderingContextImpl::uniform2i(GC::Root<WebGLUniformLocation> locatio
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle, RINGL_BOOL_VEC2))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle))
         return;
     ringl_uniform_2i(location_handle, x, y);
 }
@@ -2399,7 +2351,7 @@ void WebGLRenderingContextImpl::uniform3i(GC::Root<WebGLUniformLocation> locatio
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle, RINGL_BOOL_VEC3))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle))
         return;
     ringl_uniform_3i(location_handle, x, y, z);
 }
@@ -2409,7 +2361,7 @@ void WebGLRenderingContextImpl::uniform4i(GC::Root<WebGLUniformLocation> locatio
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle, RINGL_BOOL_VEC4))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle))
         return;
     ringl_uniform_4i(location_handle, x, y, z, w);
 }
@@ -2667,13 +2619,6 @@ void WebGLRenderingContextImpl::pixel_storei(WebIDL::UnsignedLong pname, WebIDL:
         m_unpack_premultiply_alpha = param != 0;
         return;
     case UNPACK_COLORSPACE_CONVERSION_WEBGL:
-        // This WebGL pixel-store parameter has exactly two legal values.
-        // Do not retain an arbitrary value that later makes TexImageSource
-        // conversion silently depend on a non-WebGL state.
-        if (param != 0 && param != BROWSER_DEFAULT_WEBGL) {
-            set_error(RINGL_INVALID_VALUE);
-            return;
-        }
         m_unpack_colorspace_conversion = param;
         return;
     default:

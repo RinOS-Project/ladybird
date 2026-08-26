@@ -90,16 +90,6 @@ public:
 
     Bindings::FontFaceLoadStatus status() const { return m_status; }
 
-    // A FontFaceSet consumer may use a successfully decoded face without a
-    // Document-owned FontComputer (for example, an OffscreenCanvas in a
-    // WorkerGlobalScope). Never expose a loading or failed face as usable.
-    RefPtr<Gfx::Typeface const> typeface() const
-    {
-        if (m_status != Bindings::FontFaceLoadStatus::Loaded)
-            return {};
-        return m_parsed_font;
-    }
-
     GC::Ref<WebIDL::Promise> load();
     GC::Ref<WebIDL::Promise> loaded() const;
 
@@ -114,7 +104,6 @@ private:
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Visitor&) override;
     void reject_status_promise(JS::Value reason);
-    void load_next_worker_url(GC::Ref<GC::Function<void(RefPtr<Gfx::Typeface const>)>>);
 
     // FIXME: Should we be storing StyleValues instead?
     String m_family;
@@ -139,7 +128,6 @@ private:
 
     RefPtr<Gfx::Typeface const> m_parsed_font;
     RefPtr<Core::Promise<NonnullRefPtr<Gfx::Typeface const>>> m_font_load_promise;
-    GC::Ptr<Fetch::Infrastructure::FetchController> m_worker_font_fetch_controller;
 
     GC::Ptr<CSSFontFaceRule> m_css_font_face_rule;
     HashTable<GC::Ref<FontFaceSet>> m_containing_sets;

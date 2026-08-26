@@ -42,11 +42,9 @@ JS::ThrowCompletionOr<GC::Ptr<WebGL2RenderingContext>> WebGL2RenderingContext::c
         return GC::Ptr<WebGL2RenderingContext> { nullptr };
     }
     OpenGLContext::DrawingBufferOptions context_options {
-        .alpha = context_attributes.alpha,
         .depth = context_attributes.depth,
         .stencil = context_attributes.stencil,
         .antialias = context_attributes.antialias,
-        .premultiplied_alpha = context_attributes.premultiplied_alpha,
     };
     auto context = OpenGLContext::create(*skia_backend_context, OpenGLContext::WebGLVersion::WebGL2, context_options);
     if (!context) {
@@ -144,15 +142,6 @@ WebIDL::Long WebGL2RenderingContext::drawing_buffer_height() const
 {
     auto size = canvas_for_binding()->bitmap_size_for_canvas();
     return size.height();
-}
-
-WebIDL::UnsignedLong WebGL2RenderingContext::drawing_buffer_format() const
-{
-    // This is the WebGL-visible drawing-buffer format. Backends may use a
-    // different physical channel order, which must not alter this value.
-    constexpr WebIDL::UnsignedLong rgba8 = 0x8058;
-    constexpr WebIDL::UnsignedLong rgb8 = 0x8051;
-    return m_actual_context_parameters.alpha ? rgba8 : rgb8;
 }
 
 }

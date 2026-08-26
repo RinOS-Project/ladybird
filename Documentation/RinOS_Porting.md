@@ -187,17 +187,6 @@ libtommath, HarfBuzz/FreeType, Vulkan, Metal 等）を除去し、RinOS純正ラ
   - `deps.lock`固定のFFmpegを静的・PIC・LGPL・decode-onlyで先行クロスビルド
   - `RINOS_FFMPEG_ROOT` imported targetとRinOS PlaybackStreamをLibMediaへ接続
   - `scripts/build_iso.sh` にladybirdビルド統合
-  - `RINOS_HELPER_SERVICES_ONLY=ON` はdesktop frontendとそのresource bundleを
-    除外する一方、LibWeb/LibCryptoのnative provider CTestを構成できる。desktop
-    harnessである`test-web`はこのprofileに登録しない。
-  - 同 profile のnative CTestは target syscallを発行せず、`LibCore`の
-    POSIX named-shared-memory providerでRinOS AnonymousBufferのname handoffを
-    実行する。対象 ISO は従来どおり`rin_runtime.c`のsyscall ABIを使う。
-    native CTest の`LibCompress`だけはhost zlibを明示linkし、製品RinOS zlib
-    経路を置換しない。
-  - Aquamarine rendererを選ぶRinOS profileは`VulkanContext.cpp`をsource graph
-    に入れない。Vulkanの有無とlink条件を食い違わせてnative CTestや製品linkへ
-    未解決`vk*` symbolを持ち込まない。
 - **完了条件**:
   - i386/x86_64 両方で cmake 成功
   - ISO生成に ladybird 関連バイナリ含有
@@ -347,7 +336,7 @@ grep -r '#include.*<openssl/' libs/ladybird/Libraries/ && echo "FAIL" || echo "P
 ### ADR-004: rintls の post-quantum provider を使用する
 - **日付**: 2026-08-24
 - **決定**: ML-KEM / ML-DSA は `ENOSYS` stub にせず、rintls provider を経由して実 key generation、encapsulation/decapsulation、signature/verification を実行する
-- **理由**: `LibCrypto` は P-256/P-384/P-521、ML-DSA-44/65/87、ML-KEM-512/768/1024、Ed25519/Ed448、X25519/X448 を rintls API に接続済みであり、Unavailable 表示や synthetic result は安全な代替にならない。RinOS WebCryptoのNIST鍵対生成もrintlsがprivate/publicを同時生成し、両方の公開点検証後だけLadybirdへ公開する
+- **理由**: `LibCrypto` は ML-DSA-44/65/87 と ML-KEM-512/768/1024、Ed448/X448 を rintls API に接続済みであり、Unavailable 表示や synthetic result は安全な代替にならない
 - **残件**: WebCrypto 全 API の entropy failure injection、WebContent isolation、consumer ISO/QEMU JavaScript evidence が未完了であり、P1.4 は完了扱いにしない
 
 ### ADR-005: RequestServer を RinOS transport に載せる
@@ -355,18 +344,6 @@ grep -r '#include.*<openssl/' libs/ladybird/Libraries/ && echo "FAIL" || echo "P
 - **決定**: Ladybird の RequestServer を維持し、内部 transport を RinOS の direct socket + `resolved` + `rintls` に置換
 - **理由**: Browser → WebContent → RequestServer の公式プロセス境界を保ったまま、curl/OpenSSL/workerd を退役できる
 - **補足**: host前段では helper service を組まず、`LAGOM_TOOLS_ONLY=ON` の Lagom tools/code generators のみをビルドする
-
-### ADR-007: worker helper の起動失敗は renderer を終了させない
-- **日付**: 2026-08-26
-- **決定**: `RequestWorkerAgent` の Browser/WebContent transport が切断された場合、`PageClient` は空の worker transport を返す
-- **理由**: `WorkerAgentParent` が空の transport を非同期 `error` event へ変換するため、単一の Dedicated/Shared Worker helper 起動失敗で WebContent 全体を `exit(0)` させない
-- **残件**: product image/QEMU での worker 実行、crash recovery、および File Portal mediation は未完了であり、P1.4 の worker 項目を完了扱いにしない
-
-### ADR-008: WASI の closed descriptor は即時に失効させる
-- **日付**: 2026-08-26
-- **決定**: WASI `fd_close` が host close に成功した時点で、WASI→host descriptor map から同じ entry を削除する
-- **理由**: host が同じ数値の descriptor を再利用しても、closed WASI descriptor が別 object の権限を得ないようにする
-- **残件**: WASI rights/inheriting の全実装、product image/QEMU での Wasm execution は未完了であり、P1.4 を完了扱いにしない
 
 ### ADR-006: 固定済みFFmpegをdecode-onlyで組み込む
 - **日付**: 2026-08-08

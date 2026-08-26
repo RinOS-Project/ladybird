@@ -816,11 +816,8 @@ Web::PageClient::WorkerAgentResponse PageClient::request_worker_agent(Web::Bindi
 {
     auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::RequestWorkerAgent>(m_id, type);
     if (!response) {
-        // WorkerAgentParent turns an empty transport into the worker's error
-        // event. Do not let one failed isolated-helper request terminate the
-        // entire WebContent process.
-        dbgln("WebContent client disconnected during RequestWorkerAgent.");
-        return {};
+        dbgln("WebContent client disconnected during RequestWorkerAgent. Exiting peacefully.");
+        exit(0);
     }
 
     return { response->take_handle(), response->take_request_server_handle(), response->take_image_decoder_handle() };

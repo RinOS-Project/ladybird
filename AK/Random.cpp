@@ -32,18 +32,13 @@ static inline ErrorOr<void> csprng(void* const buf, size_t size)
     while (size > 0u) {
         // EINTR can be handled safely by just trying again. Others are fatal
         // See manual for more details
-        ssize_t ret = getrandom(out, size, 0);
+        int ret = getrandom(out, size, 0);
         if (ret == -1 && errno != EINTR) [[unlikely]]
             return Error::from_errno(errno);
 
-        // A zero-length successful read cannot advance this loop. Treat it
-        // as an unavailable CSPRNG rather than spinning indefinitely.
-        if (ret == 0) [[unlikely]]
-            return Error::from_errno(EIO);
-
         // If ret > 0 then ret indicates how much was copied
         if (ret > 0) [[likely]] {
-            size -= static_cast<size_t>(ret);
+            size -= ret;
             out += ret;
         }
     }

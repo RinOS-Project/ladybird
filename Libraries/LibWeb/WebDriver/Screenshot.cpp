@@ -74,9 +74,7 @@ ErrorOr<GC::Ref<HTML::HTMLCanvasElement>, WebDriver::Error> draw_bounding_box_fr
 // https://w3c.github.io/webdriver/#dfn-encoding-a-canvas-as-base64
 Response encode_canvas_element(HTML::HTMLCanvasElement& canvas)
 {
-    // 1. If the canvas element’s bitmap’s origin-clean flag is set to false, return error with error code unable to capture screen.
-    if (!canvas.is_origin_clean())
-        return Error::from_code(ErrorCode::UnableToCaptureScreen, "Captured canvas is not origin-clean"sv);
+    // FIXME: 1. If the canvas element’s bitmap’s origin-clean flag is set to false, return error with error code unable to capture screen.
 
     // 2. If the canvas element’s bitmap has no pixels (i.e. either its horizontal dimension or vertical dimension is zero) then return error with error code unable to capture screen.
     if (canvas.surface()->size().is_empty())
@@ -84,10 +82,7 @@ Response encode_canvas_element(HTML::HTMLCanvasElement& canvas)
 
     // 3. Let file be a serialization of the canvas element’s bitmap as a file, using "image/png" as an argument.
     // 4. Let data url be a data: URL representing file. [RFC2397]
-    auto data_url_or_exception = canvas.to_data_url("image/png"sv, JS::js_undefined());
-    if (data_url_or_exception.is_exception())
-        return Error::from_code(ErrorCode::UnableToCaptureScreen, "Failed to encode captured canvas"sv);
-    auto data_url = data_url_or_exception.release_value();
+    auto data_url = canvas.to_data_url("image/png"sv, JS::js_undefined());
 
     // 5. Let index be the index of "," in data url.
     auto index = data_url.find_byte_offset(',');

@@ -36,7 +36,6 @@
 #include <LibWeb/HTML/ImageBitmap.h>
 #include <LibWeb/HTML/ImageData.h>
 #include <LibWeb/HTML/ImageRequest.h>
-#include <LibWeb/HTML/OffscreenCanvas.h>
 #include <LibWeb/HTML/Path2D.h>
 #include <LibWeb/HTML/TextMetrics.h>
 #include <LibWeb/Infra/CharacterTypes.h>
@@ -687,7 +686,6 @@ void CanvasRenderingContext2D::reset_to_default_state()
     auto surface = canvas_element().surface();
 
     // 1. Clear canvas's bitmap to transparent black.
-    m_origin_clean = true;
     if (surface) {
         painter()->clear_rect(surface->rect().to_type<float>(), clear_color());
     }
@@ -961,18 +959,22 @@ bool image_is_not_origin_clean(CanvasImageSource const& image)
     // An object image is not origin-clean if, switching on image's type:
     return image.visit(
         // HTMLOrSVGImageElement
-        [](GC::Root<HTMLImageElement> const& image_element) {
-            return !image_element->is_origin_clean();
+        [](GC::Root<HTMLImageElement> const&) {
+            // FIXME: image's current request's image data is CORS-cross-origin.
+            return false;
         },
-        [](GC::Root<SVG::SVGImageElement> const& image_element) {
-            return !image_element->is_origin_clean();
+        [](GC::Root<SVG::SVGImageElement> const&) {
+            // FIXME: image's current request's image data is CORS-cross-origin.
+            return false;
         },
-        [](GC::Root<HTML::HTMLVideoElement> const& video_element) {
-            return !video_element->is_origin_clean();
+        [](GC::Root<HTML::HTMLVideoElement> const&) {
+            // FIXME: image's media data is CORS-cross-origin.
+            return false;
         },
         // HTMLCanvasElement, ImageBitmap or OffscreenCanvas
-        [](OneOf<GC::Root<HTMLCanvasElement>, GC::Root<ImageBitmap>, GC::Root<OffscreenCanvas>> auto const& image_element) {
-            return !image_element->is_origin_clean();
+        [](OneOf<GC::Root<HTMLCanvasElement>, GC::Root<ImageBitmap>, GC::Root<OffscreenCanvas>> auto const&) {
+            // FIXME: image's bitmap's origin-clean flag is false.
+            return false;
         });
 }
 

@@ -12,7 +12,6 @@
 #include <LibURL/URL.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/Forward.h>
-#include <LibWeb/HTML/CORSSettingAttribute.h>
 
 namespace Web::HTML {
 
@@ -23,13 +22,11 @@ class SharedResourceRequest final : public JS::Cell {
 public:
     static constexpr bool OVERRIDES_FINALIZE = true;
 
-    [[nodiscard]] static GC::Ref<SharedResourceRequest> get_or_create(JS::Realm&, GC::Ref<Page>, URL::URL const&, CORSSettingAttribute = CORSSettingAttribute::NoCORS);
+    [[nodiscard]] static GC::Ref<SharedResourceRequest> get_or_create(JS::Realm&, GC::Ref<Page>, URL::URL const&);
 
     virtual ~SharedResourceRequest() override;
 
     URL::URL const& url() const { return m_url; }
-    CORSSettingAttribute cors_setting() const { return m_cors_setting; }
-    bool is_cors_cross_origin() const { return m_is_cors_cross_origin; }
 
     [[nodiscard]] GC::Ptr<DecodedImageData> image_data() const;
 
@@ -44,7 +41,7 @@ public:
     bool needs_fetching() const;
 
 private:
-    explicit SharedResourceRequest(GC::Ref<Page>, URL::URL, GC::Ref<DOM::Document>, CORSSettingAttribute);
+    explicit SharedResourceRequest(GC::Ref<Page>, URL::URL, GC::Ref<DOM::Document>);
 
     virtual void finalize() override;
     virtual void visit_edges(JS::Cell::Visitor&) override;
@@ -71,8 +68,6 @@ private:
     Vector<Callbacks> m_callbacks;
 
     URL::URL m_url;
-    CORSSettingAttribute m_cors_setting;
-    bool m_is_cors_cross_origin { false };
     GC::Ptr<DecodedImageData> m_image_data;
     GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
 

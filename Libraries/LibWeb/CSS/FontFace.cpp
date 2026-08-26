@@ -20,7 +20,6 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSFontFaceRule.h>
 #include <LibWeb/CSS/Enums.h>
-#include <LibWeb/CSS/Fetch.h>
 #include <LibWeb/CSS/FontComputer.h>
 #include <LibWeb/CSS/FontFace.h>
 #include <LibWeb/CSS/FontFaceSet.h>
@@ -29,7 +28,6 @@
 #include <LibWeb/CSS/StyleValues/StringStyleValue.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
-#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
@@ -318,7 +316,6 @@ void FontFace::visit_edges(JS::Cell::Visitor& visitor)
 
     visitor.visit(m_font_status_promise);
     visitor.visit(m_css_font_face_rule);
-    visitor.visit(m_worker_font_fetch_controller);
     for (auto const& font_face_set : m_containing_sets)
         visitor.visit(font_face_set);
 }
@@ -607,69 +604,6 @@ void FontFace::set_line_gap_override_impl(NonnullRefPtr<StyleValue const> const&
     m_line_gap_override = value->to_string(SerializationMode::Normal);
 }
 
-void FontFace::load_next_worker_url(GC::Ref<GC::Function<void(RefPtr<Gfx::Typeface const>)>> on_load)
-{
-    // A WorkerGlobalScope has the same CSS font source as a document canvas,
-    // but no Document-owned FontComputer. Fetch each supported URL directly
-    // with the worker's environment settings and keep the FontFace alive until
-    // the selected source has either decoded or all sources have failed.
-    if (m_status != Bindings::FontFaceLoadStatus::Loading)
-        return;
-
-    Optional<URL> url;
-    while (!m_urls.is_empty()) {
-        auto source = m_urls.take_first();
-        if (source.local_or_url.has<URL>()) {
-            url = source.local_or_url.get<URL>();
-            break;
-        }
-    }
-    if (!url.has_value()) {
-        on_load->function()({});
-        return;
-    }
-
-    RuleOrDeclaration rule_or_declaration {
-        .environment_settings_object = HTML::relevant_settings_object(*this),
-        .value = RuleOrDeclaration::StyleDeclaration {},
-    };
-    auto font_face = GC::Ref { *this };
-    m_worker_font_fetch_controller = fetch_a_style_resource(url.value(), rule_or_declaration, Fetch::Infrastructure::Request::Destination::Font, CorsMode::Cors,
-        [font_face, on_load](auto, auto stream) {
-            font_face->m_worker_font_fetch_controller = nullptr;
-            if (font_face->m_status != Bindings::FontFaceLoadStatus::Loading)
-                return;
-
-            auto* bytes = stream.template get_pointer<ByteBuffer>();
-            if (!bytes) {
-                font_face->load_next_worker_url(on_load);
-                return;
-            }
-
-            auto data = ByteBuffer::copy(*bytes);
-            if (data.is_error()) {
-                // Allocation failure cannot be improved by trying another
-                // source; report the normal FontFace terminal failure.
-                on_load->function()({});
-                return;
-            }
-            font_face->m_binary_data = data.release_value();
-            font_face->m_font_load_promise = load_vector_font(font_face->realm(), font_face->m_binary_data);
-            font_face->m_font_load_promise->when_resolved([font_face, on_load](auto const& typeface) -> ErrorOr<void> {
-                font_face->m_font_load_promise = nullptr;
-                on_load->function()(typeface);
-                return {};
-            });
-            font_face->m_font_load_promise->when_rejected([font_face, on_load](auto const&) {
-                font_face->m_font_load_promise = nullptr;
-                font_face->load_next_worker_url(on_load);
-            });
-        });
-
-    if (!m_worker_font_fetch_controller)
-        load_next_worker_url(move(on_load));
-}
-
 // https://drafts.csswg.org/css-font-loading/#dom-fontface-load
 GC::Ref<WebIDL::Promise> FontFace::load()
 {
@@ -748,7 +682,8 @@ GC::Ref<WebIDL::Promise> FontFace::load()
             if (auto loader = font_computer.load_font_face(parsed_font_face(), move(on_load)))
                 loader->start_loading_next_url();
         } else {
-            load_next_worker_url(move(on_load));
+            // FIXME: Don't know how to load fonts in workers! They don't have a StyleComputer
+            dbgln("FIXME: Worker font loading not implemented");
         }
     }));
 

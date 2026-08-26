@@ -13,7 +13,6 @@
 #include <LibWeb/Forward.h>
 #include <LibWeb/WebGL/Types.h>
 #include <LibWeb/WebIDL/Buffers.h>
-#include <LibWeb/WebIDL/ExceptionOr.h>
 #include <LibWeb/WebIDL/Types.h>
 
 #define SET_ERROR_VALUE_IF_ERROR(expression, error_value) \
@@ -147,7 +146,7 @@ protected:
         return get_offset_span(buffer->data(), src_offset, src_length_override);
     }
 
-    WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> read_and_pixel_convert_texture_image_source(TexImageSource const& source, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, Optional<int> destination_width = OptionalNone {}, Optional<int> destination_height = OptionalNone {});
+    Optional<Gfx::BitmapExportResult> read_and_pixel_convert_texture_image_source(TexImageSource const& source, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, Optional<int> destination_width = OptionalNone {}, Optional<int> destination_height = OptionalNone {});
 
     static Vector<GLchar> null_terminated_string(StringView string)
     {
