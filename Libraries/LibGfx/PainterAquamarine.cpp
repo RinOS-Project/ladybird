@@ -4,11 +4,13 @@
  */
 
 #include <AK/QuickSort.h>
+#include <AK/TypeCasts.h>
 #include <AK/Vector.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/PathAquamarine.h>
 #include <LibGfx/PainterAquamarine.h>
+#include <LibGfx/PaintStyle.h>
 #include <LibGfx/PaintingSurface.h>
 #include <math.h>
 #include <stdlib.h>
@@ -22,6 +24,28 @@ namespace Gfx {
 static AqColor to_aq_color(Color c)
 {
     return AQ_RGBA(c.red(), c.green(), c.blue(), c.alpha());
+}
+
+static Color with_global_alpha(Color color, float global_alpha)
+{
+    if (!isfinite(global_alpha) || global_alpha <= 0.0f)
+        return color.with_alpha(0);
+
+    auto alpha = min(global_alpha, 1.0f);
+    return color.with_alpha(static_cast<u8>(roundf(static_cast<float>(color.alpha()) * alpha)));
+}
+
+static bool supports_source_over(CompositingAndBlendingOperator compositing_and_blending_operator)
+{
+    return compositing_and_blending_operator == CompositingAndBlendingOperator::Normal
+        || compositing_and_blending_operator == CompositingAndBlendingOperator::SourceOver;
+}
+
+static Optional<Color> solid_color_for_paint_style(PaintStyle const& paint_style, float global_alpha)
+{
+    if (auto const* solid_color = as_if<SolidColorPaintStyle>(paint_style))
+        return with_global_alpha(solid_color->color(), global_alpha);
+    return {};
 }
 
 static void* aquamarine_malloc(unsigned size)
@@ -305,12 +329,24 @@ void PainterAquamarine::stroke_path(Path const& path, Color color, float thickne
     stroke_path(path, color, thickness);
 }
 
-void PainterAquamarine::stroke_path(Path const&, PaintStyle const&, Optional<Filter>, float, float, CompositingAndBlendingOperator)
+void PainterAquamarine::stroke_path(Path const& path, PaintStyle const& paint_style, Optional<Filter> filter, float thickness, float global_alpha, CompositingAndBlendingOperator compositing_and_blending_operator)
 {
+    // Canvas' ordinary fill and stroke styles are SolidColorPaintStyle. Do not
+    // turn them into a successful no-op merely because this backend has no
+    // shader implementation for the more complex paint styles yet.
+    if (filter.has_value() || !supports_source_over(compositing_and_blending_operator))
+        return;
+
+    auto color = solid_color_for_paint_style(paint_style, global_alpha);
+    if (!color.has_value())
+        return;
+
+    stroke_path(path, color.value(), thickness);
 }
 
-void PainterAquamarine::stroke_path(Path const&, PaintStyle const&, Optional<Filter>, float, float, CompositingAndBlendingOperator, Path::CapStyle const&, Path::JoinStyle const&, float, Vector<float> const&, float)
+void PainterAquamarine::stroke_path(Path const& path, PaintStyle const& paint_style, Optional<Filter> filter, float thickness, float global_alpha, CompositingAndBlendingOperator compositing_and_blending_operator, Path::CapStyle const&, Path::JoinStyle const&, float, Vector<float> const&, float)
 {
+    stroke_path(path, paint_style, move(filter), thickness, global_alpha, compositing_and_blending_operator);
 }
 
 void PainterAquamarine::fill_path(Path const& path, Color color, WindingRule winding_rule)
@@ -326,8 +362,16 @@ void PainterAquamarine::fill_path(Path const& path, Color color, WindingRule win
     fill_path(path, color, winding_rule);
 }
 
-void PainterAquamarine::fill_path(Path const&, PaintStyle const&, Optional<Filter>, float, CompositingAndBlendingOperator, WindingRule)
+void PainterAquamarine::fill_path(Path const& path, PaintStyle const& paint_style, Optional<Filter> filter, float global_alpha, CompositingAndBlendingOperator compositing_and_blending_operator, WindingRule winding_rule)
 {
+    if (filter.has_value() || !supports_source_over(compositing_and_blending_operator))
+        return;
+
+    auto color = solid_color_for_paint_style(paint_style, global_alpha);
+    if (!color.has_value())
+        return;
+
+    fill_path(path, color.value(), winding_rule);
 }
 
 void PainterAquamarine::set_transform(AffineTransform const& transform)
