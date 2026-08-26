@@ -10,13 +10,12 @@
 #include <LibWeb/Bindings/WebGLFramebufferPrototype.h>
 #include <LibWeb/WebGL/WebGLFramebuffer.h>
 
-#ifdef AK_OS_RINOS
-extern "C" {
-#    include <ringl/ringl.h>
-}
-#endif
-
 namespace Web::WebGL {
+
+static constexpr GLenum color_attachment0 = 0x8ce0;
+static constexpr GLenum depth_attachment = 0x8d00;
+static constexpr GLenum stencil_attachment = 0x8d20;
+static constexpr GLenum depth_stencil_attachment = 0x821a;
 
 GC_DEFINE_ALLOCATOR(WebGLFramebuffer);
 
@@ -41,84 +40,80 @@ void WebGLFramebuffer::initialize(JS::Realm& realm)
 void WebGLFramebuffer::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-#ifdef AK_OS_RINOS
-    visitor.visit(m_rin_gl_color_attachment.object);
-    visitor.visit(m_rin_gl_depth_attachment.object);
-    visitor.visit(m_rin_gl_stencil_attachment.object);
-#endif
+    visitor.visit(m_color_attachment.object);
+    visitor.visit(m_depth_attachment.object);
+    visitor.visit(m_stencil_attachment.object);
 }
 
-#ifdef AK_OS_RINOS
-void WebGLFramebuffer::set_rin_gl_attachment(GLenum attachment, GC::Ptr<WebGLObject> object, GLint level)
+void WebGLFramebuffer::set_attachment(GLenum attachment, GC::Ptr<WebGLObject> object, GLint level)
 {
-    RinGLAttachment value { object, level };
+    Attachment value { object, level };
 
     switch (attachment) {
-    case RINGL_COLOR_ATTACHMENT0:
-        m_rin_gl_color_attachment = value;
+    case color_attachment0:
+        m_color_attachment = value;
         return;
-    case RINGL_DEPTH_ATTACHMENT:
-        m_rin_gl_depth_attachment = value;
-        m_rin_gl_uses_separate_depth_stencil_attachments = true;
+    case depth_attachment:
+        m_depth_attachment = value;
+        m_uses_separate_depth_stencil_attachments = true;
         return;
-    case RINGL_STENCIL_ATTACHMENT:
-        m_rin_gl_stencil_attachment = value;
-        m_rin_gl_uses_separate_depth_stencil_attachments = true;
+    case stencil_attachment:
+        m_stencil_attachment = value;
+        m_uses_separate_depth_stencil_attachments = true;
         return;
-    case RINGL_DEPTH_STENCIL_ATTACHMENT:
-        m_rin_gl_depth_attachment = value;
-        m_rin_gl_stencil_attachment = value;
-        m_rin_gl_uses_separate_depth_stencil_attachments = false;
+    case depth_stencil_attachment:
+        m_depth_attachment = value;
+        m_stencil_attachment = value;
+        m_uses_separate_depth_stencil_attachments = false;
         return;
     default:
         return;
     }
 }
 
-GC::Ptr<WebGLObject> WebGLFramebuffer::rin_gl_attachment_object(GLenum attachment) const
+GC::Ptr<WebGLObject> WebGLFramebuffer::attachment_object(GLenum attachment) const
 {
     switch (attachment) {
-    case RINGL_COLOR_ATTACHMENT0:
-        return m_rin_gl_color_attachment.object;
-    case RINGL_DEPTH_ATTACHMENT:
-        return m_rin_gl_depth_attachment.object;
-    case RINGL_STENCIL_ATTACHMENT:
-        return m_rin_gl_stencil_attachment.object;
-    case RINGL_DEPTH_STENCIL_ATTACHMENT:
-        if (m_rin_gl_depth_attachment.object != m_rin_gl_stencil_attachment.object
-            || !m_rin_gl_depth_attachment.object)
+    case color_attachment0:
+        return m_color_attachment.object;
+    case depth_attachment:
+        return m_depth_attachment.object;
+    case stencil_attachment:
+        return m_stencil_attachment.object;
+    case depth_stencil_attachment:
+        if (m_depth_attachment.object != m_stencil_attachment.object
+            || !m_depth_attachment.object)
             return nullptr;
-        return m_rin_gl_depth_attachment.object;
+        return m_depth_attachment.object;
     default:
         return nullptr;
     }
 }
 
-GLint WebGLFramebuffer::rin_gl_attachment_level(GLenum attachment) const
+GLint WebGLFramebuffer::attachment_level(GLenum attachment) const
 {
     switch (attachment) {
-    case RINGL_COLOR_ATTACHMENT0:
-        return m_rin_gl_color_attachment.level;
-    case RINGL_DEPTH_ATTACHMENT:
-        return m_rin_gl_depth_attachment.level;
-    case RINGL_STENCIL_ATTACHMENT:
-        return m_rin_gl_stencil_attachment.level;
-    case RINGL_DEPTH_STENCIL_ATTACHMENT:
-        if (m_rin_gl_depth_attachment.object != m_rin_gl_stencil_attachment.object
-            || !m_rin_gl_depth_attachment.object)
+    case color_attachment0:
+        return m_color_attachment.level;
+    case depth_attachment:
+        return m_depth_attachment.level;
+    case stencil_attachment:
+        return m_stencil_attachment.level;
+    case depth_stencil_attachment:
+        if (m_depth_attachment.object != m_stencil_attachment.object
+            || !m_depth_attachment.object)
             return 0;
-        return m_rin_gl_depth_attachment.level;
+        return m_depth_attachment.level;
     default:
         return 0;
     }
 }
 
-bool WebGLFramebuffer::rin_gl_uses_separate_depth_stencil_attachments() const
+bool WebGLFramebuffer::uses_separate_depth_stencil_attachments() const
 {
-    return m_rin_gl_uses_separate_depth_stencil_attachments
-        && m_rin_gl_depth_attachment.object
-        && m_rin_gl_stencil_attachment.object;
+    return m_uses_separate_depth_stencil_attachments
+        && m_depth_attachment.object
+        && m_stencil_attachment.object;
 }
-#endif
 
 }

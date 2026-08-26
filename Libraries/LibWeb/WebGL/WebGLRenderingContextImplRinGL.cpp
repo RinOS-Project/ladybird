@@ -2693,7 +2693,7 @@ void WebGLRenderingContextImpl::framebuffer_renderbuffer(WebIDL::UnsignedLong ta
     auto attached_object = renderbuffer
         ? GC::Ptr<WebGLObject> { static_cast<WebGLObject*>(renderbuffer.ptr()) }
         : GC::Ptr<WebGLObject> {};
-    m_framebuffer_binding->set_rin_gl_attachment(attachment, attached_object, 0);
+    m_framebuffer_binding->set_attachment(attachment, attached_object, 0);
 }
 
 void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong textarget, GC::Root<WebGLTexture> texture, WebIDL::Long level)
@@ -2734,7 +2734,7 @@ void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong targe
     auto attached_object = texture
         ? GC::Ptr<WebGLObject> { static_cast<WebGLObject*>(texture.ptr()) }
         : GC::Ptr<WebGLObject> {};
-    m_framebuffer_binding->set_rin_gl_attachment(attachment, attached_object, level);
+    m_framebuffer_binding->set_attachment(attachment, attached_object, level);
 }
 
 JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong pname)
@@ -2772,12 +2772,10 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
             return JS::js_null();
         }
     case RINGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME: {
-        if (info.kind == RINGL_FRAMEBUFFER_ATTACHMENT_NONE) {
-            set_error(RINGL_INVALID_OPERATION);
+        if (info.kind == RINGL_FRAMEBUFFER_ATTACHMENT_NONE)
             return JS::js_null();
-        }
-        auto object = m_framebuffer_binding->rin_gl_attachment_object(attachment);
-        if (!object || m_framebuffer_binding->rin_gl_attachment_level(attachment) != info.level) {
+        auto object = m_framebuffer_binding->attachment_object(attachment);
+        if (!object || m_framebuffer_binding->attachment_level(attachment) != info.level) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
