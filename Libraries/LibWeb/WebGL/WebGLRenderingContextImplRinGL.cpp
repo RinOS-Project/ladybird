@@ -120,7 +120,7 @@ bool WebGLRenderingContextImpl::make_rin_gl_current()
     return false;
 }
 
-bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out)
+bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out, GLenum alternate_type)
 {
     if (!m_current_program) {
         set_error(RINGL_INVALID_OPERATION);
@@ -172,7 +172,7 @@ bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLU
         if (active_location != requested_location)
             continue;
 
-        if (expected_type != 0 && active_uniform.type != expected_type) {
+        if (expected_type != 0 && active_uniform.type != expected_type && active_uniform.type != alternate_type) {
             set_error(RINGL_INVALID_OPERATION);
             return false;
         }
@@ -1899,6 +1899,39 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             }
             return JS::Value(value != 0);
         }
+        case RINGL_BOOL_VEC2: {
+            Array<int32_t, 2> values {};
+            if (ringl_get_uniform_2i(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto sequence = MUST(JS::Array::create(realm(), values.size()));
+            for (size_t value_index = 0; value_index < values.size(); ++value_index)
+                MUST(sequence->create_data_property(JS::PropertyKey(value_index), JS::Value(values[value_index] != 0)));
+            return JS::Value(sequence);
+        }
+        case RINGL_BOOL_VEC3: {
+            Array<int32_t, 3> values {};
+            if (ringl_get_uniform_3i(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto sequence = MUST(JS::Array::create(realm(), values.size()));
+            for (size_t value_index = 0; value_index < values.size(); ++value_index)
+                MUST(sequence->create_data_property(JS::PropertyKey(value_index), JS::Value(values[value_index] != 0)));
+            return JS::Value(sequence);
+        }
+        case RINGL_BOOL_VEC4: {
+            Array<int32_t, 4> values {};
+            if (ringl_get_uniform_4i(program_handle, location_handle, values.data()) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            auto sequence = MUST(JS::Array::create(realm(), values.size()));
+            for (size_t value_index = 0; value_index < values.size(); ++value_index)
+                MUST(sequence->create_data_property(JS::PropertyKey(value_index), JS::Value(values[value_index] != 0)));
+            return JS::Value(sequence);
+        }
         case RINGL_FLOAT: {
             float value = 0.0f;
             if (ringl_get_uniform_1f(program_handle, location_handle, &value) != 0) {
@@ -2356,7 +2389,7 @@ void WebGLRenderingContextImpl::uniform2i(GC::Root<WebGLUniformLocation> locatio
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle, RINGL_BOOL_VEC2))
         return;
     ringl_uniform_2i(location_handle, x, y);
 }
@@ -2366,7 +2399,7 @@ void WebGLRenderingContextImpl::uniform3i(GC::Root<WebGLUniformLocation> locatio
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle, RINGL_BOOL_VEC3))
         return;
     ringl_uniform_3i(location_handle, x, y, z);
 }
@@ -2376,7 +2409,7 @@ void WebGLRenderingContextImpl::uniform4i(GC::Root<WebGLUniformLocation> locatio
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle, RINGL_BOOL_VEC4))
         return;
     ringl_uniform_4i(location_handle, x, y, z, w);
 }

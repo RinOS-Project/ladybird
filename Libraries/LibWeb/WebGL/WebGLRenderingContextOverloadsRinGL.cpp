@@ -531,7 +531,7 @@ void WebGLRenderingContextOverloads::uniform2iv(GC::Root<WebGLUniformLocation> l
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle, RINGL_BOOL_VEC2))
         return;
     auto span_or_error = span_from_int32_list(v, /* src_offset= */ 0);
     if (span_or_error.is_error()) {
@@ -553,7 +553,7 @@ void WebGLRenderingContextOverloads::uniform3iv(GC::Root<WebGLUniformLocation> l
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle, RINGL_BOOL_VEC3))
         return;
     auto span_or_error = span_from_int32_list(v, /* src_offset= */ 0);
     if (span_or_error.is_error()) {
@@ -575,7 +575,7 @@ void WebGLRenderingContextOverloads::uniform4iv(GC::Root<WebGLUniformLocation> l
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle, RINGL_BOOL_VEC4))
         return;
     auto span_or_error = span_from_int32_list(v, /* src_offset= */ 0);
     if (span_or_error.is_error()) {

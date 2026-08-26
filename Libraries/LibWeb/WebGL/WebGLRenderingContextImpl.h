@@ -191,7 +191,7 @@ protected:
     // Resolve a WebGL uniform location against the currently linked RinGL
     // program. This checks ownership, range, and reflection type before an
     // entry point mutates native per-program uniform state.
-    bool validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out);
+    bool validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out, GLenum alternate_type = 0);
     bool validate_rin_gl_sampler_uniform_location(GC::Root<WebGLUniformLocation> location, WebIDL::Long& location_out);
 
     // RinGL intentionally supports native, separate depth/stencil FBO
