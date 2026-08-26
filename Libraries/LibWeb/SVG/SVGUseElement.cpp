@@ -177,6 +177,23 @@ void SVGUseElement::fetch_the_document(URL::URL const& url)
     }
 }
 
+bool SVGUseElement::is_origin_clean() const
+{
+    // Same-document references introduce no response. An external reference
+    // is relevant once it has decoded data that can participate in painting.
+    if (!m_resource_request)
+        return true;
+
+    auto image_data = m_resource_request->image_data();
+    if (!image_data)
+        return true;
+    if (m_resource_request->is_cors_cross_origin())
+        return false;
+    if (is<SVGDecodedImageData>(*image_data))
+        return as<SVGDecodedImageData>(*image_data).is_origin_clean();
+    return true;
+}
+
 // https://svgwg.org/svg2-draft/struct.html#UseShadowTree
 void SVGUseElement::clone_element_tree_as_our_shadow_tree(Element* to_clone)
 {

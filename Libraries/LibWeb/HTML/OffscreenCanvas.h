@@ -65,6 +65,9 @@ public:
 
     WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> transfer_to_image_bitmap();
 
+    bool is_origin_clean() const { return m_origin_clean; }
+    void set_origin_clean(bool origin_clean) { m_origin_clean = origin_clean; }
+
     GC::Ref<WebIDL::Promise> convert_to_blob(Optional<ImageEncodeOptions> options);
 
     void set_oncontextlost(GC::Ptr<WebIDL::CallbackType>);
@@ -73,7 +76,7 @@ public:
     GC::Ptr<WebIDL::CallbackType> oncontextrestored();
 
 private:
-    OffscreenCanvas(JS::Realm&, RefPtr<Gfx::Bitmap> bitmap);
+    OffscreenCanvas(JS::Realm&, RefPtr<Gfx::Bitmap> bitmap, Gfx::IntSize size);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
@@ -94,6 +97,8 @@ private:
 #endif
 
     RefPtr<Gfx::Bitmap> m_bitmap;
+    Gfx::IntSize m_size;
+    bool m_origin_clean { true };
 };
 
 }

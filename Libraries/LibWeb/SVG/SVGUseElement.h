@@ -34,6 +34,8 @@ public:
     GC::Ref<SVGAnimatedLength> width() const;
     GC::Ref<SVGAnimatedLength> height() const;
 
+    bool is_origin_clean() const;
+
     GC::Ptr<SVGElement> instance_root() const;
     GC::Ptr<SVGElement> animated_instance_root() const;
 

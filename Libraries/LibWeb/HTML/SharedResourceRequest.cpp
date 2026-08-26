@@ -28,21 +28,27 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(SharedResourceRequest);
 
-GC::Ref<SharedResourceRequest> SharedResourceRequest::get_or_create(JS::Realm& realm, GC::Ref<Page> page, URL::URL const& url)
+GC::Ref<SharedResourceRequest> SharedResourceRequest::get_or_create(JS::Realm& realm, GC::Ref<Page> page, URL::URL const& url, CORSSettingAttribute cors_setting)
 {
     auto document = Bindings::principal_host_defined_environment_settings_object(realm).responsible_document();
     VERIFY(document);
     auto& shared_resource_requests = document->shared_resource_requests();
-    if (auto it = shared_resource_requests.find(url); it != shared_resource_requests.end())
+    if (auto it = shared_resource_requests.find(url); it != shared_resource_requests.end() && it->value->cors_setting() == cors_setting)
         return *it->value;
-    auto request = realm.create<SharedResourceRequest>(page, url, *document);
+
+    // The cache key predates CORS-aware image fetching and only contains the
+    // URL. Never let a request made under one CORS setting provide decoded
+    // pixels to a request made under another one. Replacing the map entry is
+    // safe: active ImageRequests retain their own strong reference.
+    auto request = realm.create<SharedResourceRequest>(page, url, *document, cors_setting);
     shared_resource_requests.set(url, request);
     return request;
 }
 
-SharedResourceRequest::SharedResourceRequest(GC::Ref<Page> page, URL::URL url, GC::Ref<DOM::Document> document)
+SharedResourceRequest::SharedResourceRequest(GC::Ref<Page> page, URL::URL url, GC::Ref<DOM::Document> document, CORSSettingAttribute cors_setting)
     : m_page(page)
     , m_url(move(url))
+    , m_cors_setting(cors_setting)
     , m_document(document)
 {
 }
@@ -53,7 +59,8 @@ void SharedResourceRequest::finalize()
 {
     Base::finalize();
     auto& shared_resource_requests = m_document->shared_resource_requests();
-    shared_resource_requests.remove(m_url);
+    if (auto it = shared_resource_requests.find(m_url); it != shared_resource_requests.end() && it->value.ptr() == this)
+        shared_resource_requests.remove(m_url);
 }
 
 void SharedResourceRequest::visit_edges(JS::Cell::Visitor& visitor)
@@ -88,6 +95,10 @@ void SharedResourceRequest::fetch_resource(JS::Realm& realm, GC::Ref<Fetch::Infr
 {
     Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
     fetch_algorithms_input.process_response = [this, &realm, request](GC::Ref<Fetch::Infrastructure::Response> response) {
+        // This must be read from the filtered response. Its opaque type is the
+        // Fetch-layer proof that a no-CORS cross-origin image is tainted;
+        // successful CORS responses remain origin-clean.
+        m_is_cors_cross_origin = response->is_cors_cross_origin();
         auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
         auto internal_response = rooted_responses->internal_response();
 

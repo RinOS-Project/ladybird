@@ -1,0 +1,148 @@
+<!doctype html>
+<!-- Serve this document over HTTP so localhost and 127.0.0.1 are distinct origins. -->
+<script src="../include.js"></script>
+<script>
+promiseTest(async () => {
+    const gl = document.createElement("canvas").getContext("webgl");
+    // Host test-web deliberately has no WebGL backend. A RinOS test-web build
+    // has the RinGL context and executes the assertions below.
+    if (!gl)
+        return;
+
+    const server = httpTestServer();
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAD0lEQVR4nGNgaGAAIQgFAA4OAgFhGn2EAAAAAElFTkSuQmCC";
+    const same_origin_url = await server.createEcho("GET", "/webgl-tex-image-source-same.png", {
+        status: 200,
+        headers: { "Content-Type": "image/png", "Cache-Control": "no-store" },
+        body: png,
+        body_encoding: "base64",
+    });
+    const cors_url = await server.createEcho("GET", "/webgl-tex-image-source-cors.png", {
+        status: 200,
+        headers: {
+            "Content-Type": "image/png",
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+        },
+        body: png,
+        body_encoding: "base64",
+    });
+
+    const cross_origin = url => url.replace("localhost", "127.0.0.1");
+    const load_image = (url, cors) => new Promise((resolve, reject) => {
+        const image = new Image();
+        if (cors)
+            image.crossOrigin = "anonymous";
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error(`failed to load ${url}`));
+        image.src = url;
+    });
+    const same_origin = await load_image(same_origin_url, false);
+    const cors_allowed = await load_image(cross_origin(cors_url), true);
+    const opaque = await load_image(cross_origin(same_origin_url), false);
+    const load_video = url => new Promise((resolve, reject) => {
+        const video = document.createElement("video");
+        video.preload = "auto";
+        video.oncanplaythrough = () => resolve(video);
+        video.onerror = () => reject(new Error(`failed to load ${url}`));
+        video.src = url;
+    });
+    const video_url = new URL("../../../Assets/test-webm.webm", location.href).href;
+    const same_origin_video = await load_video(video_url);
+    const opaque_video = await load_video(cross_origin(video_url));
+
+    const texture = gl.createTexture();
+    const framebuffer = gl.createFramebuffer();
+    if (!texture || !framebuffer)
+        throw new Error("RinGL did not create the texture/framebuffer");
+
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 0, 0, 255]));
+    if (gl.getError() !== gl.NO_ERROR)
+        throw new Error("failed to define the retained texture");
+
+    const require = (condition, message) => {
+        if (!condition)
+            throw new Error(message);
+    };
+    const require_rejected_without_mutation = source => {
+        let exception;
+        try {
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+        } catch (error) {
+            exception = error;
+        }
+        require(exception && exception.name === "SecurityError", "tainted TexImageSource must throw SecurityError");
+        require(gl.getError() === gl.NO_ERROR, "origin rejection must not synthesize a GL error");
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        require(gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE, "retained texture framebuffer is incomplete");
+        const pixel = new Uint8Array(4);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        require(pixel[0] === 255 && pixel[1] === 0 && pixel[2] === 0 && pixel[3] === 255, "rejected upload changed the existing texture definition");
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    };
+    const require_invalid_value_without_mutation = source => {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+        require(gl.getError() === gl.INVALID_VALUE, "detached TexImageSource must set INVALID_VALUE");
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        require(gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE, "retained texture framebuffer is incomplete");
+        const pixel = new Uint8Array(4);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        require(pixel[0] === 255 && pixel[1] === 0 && pixel[2] === 0 && pixel[3] === 255, "invalid TexImageSource changed the existing texture definition");
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    };
+
+    // same-origin and successful anonymous CORS imports remain usable.
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, same_origin);
+    require(gl.getError() === gl.NO_ERROR, "same-origin image upload failed");
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cors_allowed);
+    require(gl.getError() === gl.NO_ERROR, "CORS-authorized image upload failed");
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, same_origin_video);
+    require(gl.getError() === gl.NO_ERROR, "same-origin video upload failed");
+
+    // Restore a known definition, then prove that opaque image, canvas, and
+    // ImageBitmap sources all reject before the RinGL import can mutate it.
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 0, 0, 255]));
+    require_rejected_without_mutation(opaque);
+
+    const tainted_canvas = document.createElement("canvas");
+    tainted_canvas.width = tainted_canvas.height = 2;
+    const context_2d = tainted_canvas.getContext("2d");
+    context_2d.drawImage(opaque, 0, 0);
+    require_rejected_without_mutation(tainted_canvas);
+
+    const tainted_bitmap = await createImageBitmap(tainted_canvas);
+    require_rejected_without_mutation(tainted_bitmap);
+
+    // Video frames use the same filtered-response origin state. The ImageBitmap
+    // copy must preserve it instead of turning an opaque video into a clean source.
+    require_rejected_without_mutation(opaque_video);
+    const tainted_video_bitmap = await createImageBitmap(opaque_video);
+    require_rejected_without_mutation(tainted_video_bitmap);
+
+    // Offscreen canvas state must also survive both drawImage and the bitmap
+    // copy: clean source remains usable, while a tainted one is rejected.
+    const clean_offscreen_canvas = new OffscreenCanvas(1, 1);
+    clean_offscreen_canvas.getContext("2d");
+    const offscreen_bitmap = await createImageBitmap(clean_offscreen_canvas);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, offscreen_bitmap);
+    require(gl.getError() === gl.NO_ERROR, "clean OffscreenCanvas ImageBitmap upload failed");
+
+    const tainted_offscreen_canvas = new OffscreenCanvas(2, 2);
+    tainted_offscreen_canvas.getContext("2d").drawImage(opaque, 0, 0);
+    const tainted_offscreen_bitmap = await createImageBitmap(tainted_offscreen_canvas);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 0, 0, 255]));
+    require_rejected_without_mutation(tainted_offscreen_bitmap);
+
+    // A closed ImageBitmap is a detached TexImageSource, not an empty bitmap
+    // that may erase a valid texture definition.
+    const detached_bitmap = await createImageBitmap(clean_offscreen_canvas);
+    detached_bitmap.close();
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 0, 0, 255]));
+    require_invalid_value_without_mutation(detached_bitmap);
+});
+</script>

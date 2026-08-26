@@ -14,6 +14,7 @@
 #include <LibWeb/HTML/SharedResourceRequest.h>
 #include <LibWeb/Layout/SVGImageBox.h>
 #include <LibWeb/Namespace.h>
+#include <LibWeb/SVG/SVGDecodedImageData.h>
 
 namespace Web::SVG {
 
@@ -87,6 +88,21 @@ RefPtr<Gfx::ImmutableBitmap> SVGFEImageElement::current_image_bitmap(Gfx::IntSiz
     if (auto data = m_resource_request->image_data())
         return data->bitmap(0, size);
     return {};
+}
+
+bool SVGFEImageElement::is_origin_clean() const
+{
+    if (!m_resource_request)
+        return true;
+
+    auto image_data = m_resource_request->image_data();
+    if (!image_data)
+        return true;
+    if (m_resource_request->is_cors_cross_origin())
+        return false;
+    if (is<SVGDecodedImageData>(*image_data))
+        return as<SVGDecodedImageData>(*image_data).is_origin_clean();
+    return true;
 }
 
 Optional<Gfx::IntRect> SVGFEImageElement::content_rect() const

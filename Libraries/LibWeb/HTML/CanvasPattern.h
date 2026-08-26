@@ -24,6 +24,7 @@ public:
     ~CanvasPattern();
 
     NonnullRefPtr<Gfx::PaintStyle> to_gfx_paint_style() { return m_pattern; }
+    bool is_origin_clean() const { return m_origin_clean; }
     WebIDL::ExceptionOr<void> set_transform(Geometry::DOMMatrix2DInit& transform);
 
 private:
@@ -32,6 +33,7 @@ private:
     virtual void initialize(JS::Realm&) override;
 
     NonnullRefPtr<Gfx::CanvasPatternPaintStyle> m_pattern;
+    bool m_origin_clean { true };
 };
 
 }

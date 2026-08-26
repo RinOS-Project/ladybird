@@ -75,7 +75,9 @@ void ImageBitmap::visit_edges(Cell::Visitor& visitor)
 // https://html.spec.whatwg.org/multipage/imagebitmap-and-animations.html#the-imagebitmap-interface:serialization-steps
 WebIDL::ExceptionOr<void> ImageBitmap::serialization_steps(HTML::TransferDataEncoder& serialized, bool, HTML::SerializationMemory&)
 {
-    // FIXME: 1. If value's origin-clean flag is not set, then throw a "DataCloneError" DOMException.
+    // 1. If value's origin-clean flag is not set, then throw a "DataCloneError" DOMException.
+    if (!m_origin_clean)
+        return WebIDL::DataCloneError::create(realm(), "Cannot serialize a tainted ImageBitmap"_utf16);
 
     // 2. Set serialized.[[BitmapData]] to a copy of value's bitmap data.
     serialize_bitmap(serialized, m_bitmap);
@@ -95,7 +97,9 @@ WebIDL::ExceptionOr<void> ImageBitmap::deserialization_steps(HTML::TransferDataD
 // https://html.spec.whatwg.org/multipage/imagebitmap-and-animations.html#the-imagebitmap-interface:transfer-steps
 WebIDL::ExceptionOr<void> ImageBitmap::transfer_steps(HTML::TransferDataEncoder& data_holder)
 {
-    // FIXME: 1. If value's origin-clean flag is not set, then throw a "DataCloneError" DOMException.
+    // 1. If value's origin-clean flag is not set, then throw a "DataCloneError" DOMException.
+    if (!m_origin_clean)
+        return WebIDL::DataCloneError::create(realm(), "Cannot transfer a tainted ImageBitmap"_utf16);
 
     // 2. Set dataHolder.[[BitmapData]] to value's bitmap data.
     serialize_bitmap(data_holder, m_bitmap);

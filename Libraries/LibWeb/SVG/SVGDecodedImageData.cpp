@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ScopeGuard.h>
 #include <LibGfx/Bitmap.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/CSS/ComputedProperties.h>
@@ -24,7 +25,10 @@
 #endif
 #include <LibWeb/Painting/DisplayListRecordingContext.h>
 #include <LibWeb/SVG/SVGDecodedImageData.h>
+#include <LibWeb/SVG/SVGFEImageElement.h>
+#include <LibWeb/SVG/SVGImageElement.h>
 #include <LibWeb/SVG/SVGSVGElement.h>
+#include <LibWeb/SVG/SVGUseElement.h>
 #include <LibWeb/XML/XMLDocumentBuilder.h>
 #include <LibXML/Parser/Parser.h>
 
@@ -43,7 +47,10 @@ ErrorOr<GC::Ref<SVGDecodedImageData>> SVGDecodedImageData::create(JS::Realm& rea
     GC::Ref<HTML::Navigable> navigable = page->top_level_traversable();
     auto response = Fetch::Infrastructure::Response::create(navigable->vm());
     response->url_list().append(url);
-    auto origin = URL::Origin::create_opaque();
+    // The SVG document remains script-isolated, but its image fetches need the
+    // embedding document's origin. Using a fresh opaque origin here would mark
+    // every same-origin SVG subresource as cross-origin.
+    auto origin = as<HTML::Window>(realm.global_object()).associated_document().origin();
     auto navigation_params = navigable->heap().allocate<HTML::NavigationParams>(OptionalNone {},
         navigable,
         nullptr,
@@ -95,6 +102,35 @@ SVGDecodedImageData::SVGDecodedImageData(GC::Ref<Page> page, GC::Ref<SVGPageClie
 }
 
 SVGDecodedImageData::~SVGDecodedImageData() = default;
+
+bool SVGDecodedImageData::is_origin_clean() const
+{
+    // A recursive SVG resource graph without a finite clean result is not safe
+    // to expose through canvas or WebGL.
+    if (m_is_checking_origin_clean)
+        return false;
+
+    m_is_checking_origin_clean = true;
+    ScopeGuard const reset_check = [this] { m_is_checking_origin_clean = false; };
+
+    bool clean = true;
+    auto check_resource = [&clean](auto const& resource_element) {
+        if (!resource_element.is_origin_clean()) {
+            clean = false;
+            return TraversalDecision::Break;
+        }
+        return TraversalDecision::Continue;
+    };
+
+    m_document->for_each_in_subtree_of_type<SVGImageElement>(check_resource);
+    if (!clean)
+        return false;
+    m_document->for_each_in_subtree_of_type<SVGFEImageElement>(check_resource);
+    if (!clean)
+        return false;
+    m_document->for_each_in_subtree_of_type<SVGUseElement>(check_resource);
+    return clean;
+}
 
 void SVGDecodedImageData::visit_edges(Cell::Visitor& visitor)
 {

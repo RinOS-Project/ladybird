@@ -309,29 +309,29 @@ void WebGLRenderingContextOverloads::compressed_tex_sub_image2d(WebIDL::Unsigned
                                                   span.size());
 }
 
-void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
+WebIDL::ExceptionOr<void> WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
 {
     if (!make_rin_gl_current())
-        return;
+        return {};
     if (uses_webgl_depth_texture_format(internalformat, format)
         && !extension_enabled("WEBGL_depth_texture"sv)) {
         set_error(RINGL_INVALID_ENUM);
-        return;
+        return {};
     }
     if (uses_ext_srgb_internal_format(internalformat)
         && !extension_enabled("EXT_sRGB"sv)) {
         set_error(RINGL_INVALID_ENUM);
-        return;
+        return {};
     }
     if (uses_oes_texture_float_format(internalformat, format, type)
         && !extension_enabled("OES_texture_float"sv)) {
         set_error(RINGL_INVALID_ENUM);
-        return;
+        return {};
     }
     if (uses_oes_texture_half_float_format(internalformat, format, type)
         && !extension_enabled("OES_texture_half_float"sv)) {
         set_error(RINGL_INVALID_ENUM);
-        return;
+        return {};
     }
 
     // The bitmap exporter understands the physical RGB/RGBA layouts. Keep the
@@ -339,38 +339,39 @@ void WebGLRenderingContextOverloads::tex_image2d(WebIDL::UnsignedLong target, We
     auto source_format = format == RINGL_SRGB_EXT ? RINGL_RGB
         : format == RINGL_SRGB_ALPHA_EXT ? RINGL_RGBA
                                          : format;
-    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, source_format, type);
+    auto maybe_converted_texture = TRY(read_and_pixel_convert_texture_image_source(source, source_format, type));
     if (!maybe_converted_texture.has_value())
-        return;
+        return {};
     auto converted_texture = maybe_converted_texture.release_value();
     ringl_tex_image_2d_from_bytes(target, level, internalformat,
                                   converted_texture.width, converted_texture.height, 0,
                                   format, type, converted_texture.buffer.data(), converted_texture.buffer.size());
+    return {};
 }
 
-void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
+WebIDL::ExceptionOr<void> WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
 {
     if (!make_rin_gl_current())
-        return;
+        return {};
     if (uses_webgl_depth_texture_format(format)
         && !extension_enabled("WEBGL_depth_texture"sv)) {
         set_error(RINGL_INVALID_ENUM);
-        return;
+        return {};
     }
     if ((format == RINGL_SRGB_EXT || format == RINGL_SRGB_ALPHA_EXT)
         && !extension_enabled("EXT_sRGB"sv)) {
         set_error(RINGL_INVALID_ENUM);
-        return;
+        return {};
     }
     if (uses_oes_texture_float_format(format, type)
         && !extension_enabled("OES_texture_float"sv)) {
         set_error(RINGL_INVALID_ENUM);
-        return;
+        return {};
     }
     if (uses_oes_texture_half_float_format(format, type)
         && !extension_enabled("OES_texture_half_float"sv)) {
         set_error(RINGL_INVALID_ENUM);
-        return;
+        return {};
     }
 
     // See tex_image2d(): exporter layout is RGB/RGBA, while RinGL retains the
@@ -378,13 +379,14 @@ void WebGLRenderingContextOverloads::tex_sub_image2d(WebIDL::UnsignedLong target
     auto source_format = format == RINGL_SRGB_EXT ? RINGL_RGB
         : format == RINGL_SRGB_ALPHA_EXT ? RINGL_RGBA
                                          : format;
-    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, source_format, type);
+    auto maybe_converted_texture = TRY(read_and_pixel_convert_texture_image_source(source, source_format, type));
     if (!maybe_converted_texture.has_value())
-        return;
+        return {};
     auto converted_texture = maybe_converted_texture.release_value();
     ringl_tex_sub_image_2d_from_bytes(target, level, xoffset, yoffset,
                                       converted_texture.width, converted_texture.height,
                                       format, type, converted_texture.buffer.data(), converted_texture.buffer.size());
+    return {};
 }
 
 void WebGLRenderingContextOverloads::uniform1fv(GC::Root<WebGLUniformLocation> location, Float32List values)
@@ -527,7 +529,7 @@ void WebGLRenderingContextOverloads::uniform2iv(GC::Root<WebGLUniformLocation> l
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle, RINGL_BOOL_VEC2))
         return;
     auto span_or_error = span_from_int32_list(v, /* src_offset= */ 0);
     if (span_or_error.is_error()) {
@@ -549,7 +551,7 @@ void WebGLRenderingContextOverloads::uniform3iv(GC::Root<WebGLUniformLocation> l
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle, RINGL_BOOL_VEC3))
         return;
     auto span_or_error = span_from_int32_list(v, /* src_offset= */ 0);
     if (span_or_error.is_error()) {
@@ -571,7 +573,7 @@ void WebGLRenderingContextOverloads::uniform4iv(GC::Root<WebGLUniformLocation> l
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle, RINGL_BOOL_VEC4))
         return;
     auto span_or_error = span_from_int32_list(v, /* src_offset= */ 0);
     if (span_or_error.is_error()) {

@@ -206,6 +206,24 @@ void SVGImageElement::fetch_the_document(URL::URL const& url)
     }
 }
 
+bool SVGImageElement::is_origin_clean() const
+{
+    // An image that has not produced pixels yet cannot taint a canvas. Once
+    // decoded, a filtered cross-origin response and every nested SVG resource
+    // are both part of the source's origin-clean state.
+    if (!m_resource_request)
+        return true;
+
+    auto image_data = m_resource_request->image_data();
+    if (!image_data)
+        return true;
+    if (m_resource_request->is_cors_cross_origin())
+        return false;
+    if (is<SVGDecodedImageData>(*image_data))
+        return as<SVGDecodedImageData>(*image_data).is_origin_clean();
+    return true;
+}
+
 GC::Ptr<Layout::Node> SVGImageElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
 {
     return heap().allocate<Layout::SVGImageBox>(document(), *this, move(style));

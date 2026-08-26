@@ -8,6 +8,7 @@
 
 #include <AK/String.h>
 #include <AK/Variant.h>
+#include <AK/Vector.h>
 #include <LibGfx/AffineTransform.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/Forward.h>
@@ -64,6 +65,7 @@ public:
     virtual ~OffscreenCanvasRenderingContext2D() override;
 
     GC::Ref<OffscreenCanvas> canvas();
+    void mark_as_origin_tainted();
 
     virtual void fill_rect(float x, float y, float width, float height) override;
     virtual void stroke_rect(float x, float y, float width, float height) override;
@@ -128,23 +130,36 @@ public:
     [[nodiscard]] Gfx::Painter* painter();
 
     void set_size(Gfx::IntSize const&);
+    void initialize_new_bitmap_to_context_defaults();
 
 private:
     explicit OffscreenCanvasRenderingContext2D(JS::Realm&, OffscreenCanvas&, CanvasRenderingContext2DSettings);
+
+    static Gfx::Path rect_path(float x, float y, float width, float height);
+    Gfx::Color clear_color() const;
+    void fill_internal(Gfx::Path const&, Gfx::WindingRule);
+    void stroke_internal(Gfx::Path const&);
+    void clip_internal(Gfx::Path&, Gfx::WindingRule);
+    void paint_shadow_for_fill_internal(Gfx::Path const&, Gfx::WindingRule);
+    void paint_shadow_for_stroke_internal(Gfx::Path const&, Gfx::Path::CapStyle, Gfx::Path::JoinStyle, Vector<float> const&);
+    WebIDL::ExceptionOr<void> put_pixels_from_an_image_data_onto_a_bitmap(ImageData&, Gfx::Painter&, float dx, float dy, float dirty_x, float dirty_y, float dirty_width, float dirty_height);
+    RefPtr<Gfx::FontCascadeList const> font_cascade_list();
+    float resolved_letter_spacing() const;
+    Gfx::Path text_path(Utf16String const&, float x, float y, Optional<double> max_width);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     virtual Gfx::Painter* painter_for_canvas_state() override
     {
-        dbgln("(STUBBED) OffscreenCanvasRenderingContext2D::painter_for_canvas_state()");
-        return nullptr;
+        return painter();
     }
     virtual Gfx::Path& path_for_canvas_state() override { return path(); }
 
     GC::Ref<OffscreenCanvas> m_canvas;
     Gfx::IntSize m_size;
     CanvasRenderingContext2DSettings m_context_attributes;
+    OwnPtr<Gfx::Painter> m_painter;
 };
 
 }
