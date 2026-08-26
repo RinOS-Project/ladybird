@@ -5,6 +5,7 @@
  */
 
 #include <AK/Tuple.h>
+#include <AK/NumericLimits.h>
 #include <LibGfx/Bitmap.h>
 #include <LibWeb/Bindings/OffscreenCanvasPrototype.h>
 #include <LibWeb/DOM/Document.h>
@@ -12,6 +13,7 @@
 #include <LibWeb/HTML/OffscreenCanvas.h>
 #include <LibWeb/HTML/OffscreenCanvasRenderingContext2D.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
+#include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
@@ -38,9 +40,13 @@ WebIDL::ExceptionOr<GC::Ref<OffscreenCanvas>> OffscreenCanvas::construct_impl(
     WebIDL::UnsignedLong height)
 {
     RefPtr<Gfx::Bitmap> bitmap;
+    if (width > NumericLimits<int>::max() || height > NumericLimits<int>::max())
+        return WebIDL::InvalidStateError::create(realm, "OffscreenCanvas dimensions exceed the supported range"_utf16);
+
+    auto size = Gfx::IntSize { static_cast<int>(width), static_cast<int>(height) };
     if (width > 0 && height > 0) {
         // The new OffscreenCanvas(width, height) constructor steps are:
-        auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA8888, Gfx::IntSize { width, height });
+        auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA8888, size);
 
         if (bitmap_or_error.is_error()) {
             return WebIDL::InvalidStateError::create(realm, Utf16String::formatted("Error in allocating bitmap: {}", bitmap_or_error.error()));
@@ -53,7 +59,7 @@ WebIDL::ExceptionOr<GC::Ref<OffscreenCanvas>> OffscreenCanvas::construct_impl(
 
     // 2. Initialize the width of this to width.
     // 3. Initialize the height of this to height.
-    // noop, we use the height and width from the bitmap
+    // The logical dimensions are retained separately when either axis is zero.
 
     // FIXME: 4. Set this's inherited language to explicitly unknown.
 
@@ -74,53 +80,81 @@ WebIDL::ExceptionOr<GC::Ref<OffscreenCanvas>> OffscreenCanvas::construct_impl(
         }
     }
 
-    return realm.create<OffscreenCanvas>(realm, bitmap);
+    return realm.create<OffscreenCanvas>(realm, bitmap, size);
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-offscreencanvas
-OffscreenCanvas::OffscreenCanvas(JS::Realm& realm, RefPtr<Gfx::Bitmap> bitmap)
+OffscreenCanvas::OffscreenCanvas(JS::Realm& realm, RefPtr<Gfx::Bitmap> bitmap, Gfx::IntSize size)
     : EventTarget(realm)
     , m_bitmap { move(bitmap) }
+    , m_size(size)
 {
 }
 
 OffscreenCanvas::~OffscreenCanvas() = default;
 
-WebIDL::ExceptionOr<void> OffscreenCanvas::transfer_steps(HTML::TransferDataEncoder&)
+WebIDL::ExceptionOr<void> OffscreenCanvas::transfer_steps(HTML::TransferDataEncoder& data_holder)
 {
-    // FIXME: Implement this
-    dbgln("(STUBBED) OffscreenCanvas::transfer_steps(HTML::TransferDataEncoder&)");
+    // An OffscreenCanvas with an active rendering context owns context-local
+    // state and cannot be detached. The receiving side gets a fresh bitmap,
+    // never the sender's pixels or context.
+    if (!m_context.has<Empty>())
+        return WebIDL::InvalidStateError::create(realm(), "Cannot transfer an OffscreenCanvas with a rendering context"_utf16);
+
+    constexpr u8 transfer_record_version = 1;
+    data_holder.encode(transfer_record_version);
+    data_holder.encode(width());
+    data_holder.encode(height());
+
+    m_bitmap = nullptr;
+    m_size = {};
+    m_origin_clean = true;
     return {};
 }
 
-WebIDL::ExceptionOr<void> OffscreenCanvas::transfer_receiving_steps(HTML::TransferDataDecoder&)
+WebIDL::ExceptionOr<void> OffscreenCanvas::transfer_receiving_steps(HTML::TransferDataDecoder& data_holder)
 {
-    // FIXME: Implement this
-    dbgln("(STUBBED) OffscreenCanvas::transfer_receiving_steps(HTML::TransferDataDecoder&)");
+    constexpr u8 transfer_record_version = 1;
+    if (data_holder.decode<u8>() != transfer_record_version)
+        return WebIDL::DataCloneError::create(realm(), "Unsupported OffscreenCanvas transfer record"_utf16);
+
+    auto width = data_holder.decode<WebIDL::UnsignedLong>();
+    auto height = data_holder.decode<WebIDL::UnsignedLong>();
+    if (width > NumericLimits<int>::max() || height > NumericLimits<int>::max())
+        return WebIDL::DataCloneError::create(realm(), "OffscreenCanvas transfer dimensions exceed the supported range"_utf16);
+
+    auto size = Gfx::IntSize { static_cast<int>(width), static_cast<int>(height) };
+    RefPtr<Gfx::Bitmap> bitmap;
+    if (!size.is_empty()) {
+        auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA8888, size);
+        if (bitmap_or_error.is_error())
+            return WebIDL::DataCloneError::create(realm(), "Unable to allocate OffscreenCanvas transfer bitmap"_utf16);
+        bitmap = bitmap_or_error.release_value();
+    }
+
+    m_bitmap = move(bitmap);
+    m_size = size;
+    m_origin_clean = true;
     return {};
 }
 
 HTML::TransferType OffscreenCanvas::primary_interface() const
 {
-    // FIXME: Implement this
-    dbgln("(STUBBED) OffscreenCanvas::primary_interface()");
-    return {};
+    return TransferType::OffscreenCanvas;
 }
 
 WebIDL::UnsignedLong OffscreenCanvas::width() const
 {
-    if (!m_bitmap)
+    if (is_detached())
         return 0;
-
-    return m_bitmap->size().width();
+    return m_size.width();
 }
 
 WebIDL::UnsignedLong OffscreenCanvas::height() const
 {
-    if (!m_bitmap)
+    if (is_detached())
         return 0;
-
-    return m_bitmap->size().height();
+    return m_size.height();
 }
 
 void OffscreenCanvas::reset_context_to_default_state()
@@ -144,17 +178,18 @@ void OffscreenCanvas::reset_context_to_default_state()
 
 WebIDL::ExceptionOr<void> OffscreenCanvas::set_new_bitmap_size(Gfx::IntSize new_size)
 {
-    if (new_size.width() == 0 || new_size.height() == 0)
-        m_bitmap = nullptr;
-    else {
+    RefPtr<Gfx::Bitmap> bitmap;
+    if (!new_size.is_empty()) {
         // FIXME: Other browsers appear to not throw for unreasonable sizes being set. We could consider deferring allocation of the bitmap until it is used,
         //        but for now, lets just allocate it here and throw if it fails instead of crashing.
         auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA8888, Gfx::IntSize { new_size.width(), new_size.height() });
         if (bitmap_or_error.is_error()) {
             return WebIDL::InvalidStateError::create(realm(), Utf16String::formatted("Error in allocating bitmap: {}", bitmap_or_error.error()));
         }
-        m_bitmap = bitmap_or_error.release_value();
+        bitmap = bitmap_or_error.release_value();
     }
+    m_bitmap = move(bitmap);
+    m_size = new_size;
     m_origin_clean = true;
 
     m_context.visit(
@@ -177,11 +212,18 @@ WebIDL::ExceptionOr<void> OffscreenCanvas::set_new_bitmap_size(Gfx::IntSize new_
 
 RefPtr<Gfx::Bitmap> OffscreenCanvas::bitmap() const
 {
+    if (is_detached())
+        return nullptr;
     return m_bitmap;
 }
 
 WebIDL::ExceptionOr<void> OffscreenCanvas::set_width(WebIDL::UnsignedLong value)
 {
+    if (is_detached())
+        return WebIDL::InvalidStateError::create(realm(), "OffscreenCanvas is detached"_utf16);
+    if (value > NumericLimits<int>::max())
+        return WebIDL::InvalidStateError::create(realm(), "OffscreenCanvas width exceeds the supported range"_utf16);
+
     Gfx::IntSize current_size = bitmap_size_for_canvas();
     current_size.set_width(value);
 
@@ -191,6 +233,11 @@ WebIDL::ExceptionOr<void> OffscreenCanvas::set_width(WebIDL::UnsignedLong value)
 }
 WebIDL::ExceptionOr<void> OffscreenCanvas::set_height(WebIDL::UnsignedLong value)
 {
+    if (is_detached())
+        return WebIDL::InvalidStateError::create(realm(), "OffscreenCanvas is detached"_utf16);
+    if (value > NumericLimits<int>::max())
+        return WebIDL::InvalidStateError::create(realm(), "OffscreenCanvas height exceeds the supported range"_utf16);
+
     Gfx::IntSize current_size = bitmap_size_for_canvas();
     current_size.set_height(value);
 
@@ -201,14 +248,17 @@ WebIDL::ExceptionOr<void> OffscreenCanvas::set_height(WebIDL::UnsignedLong value
 
 Gfx::IntSize OffscreenCanvas::bitmap_size_for_canvas() const
 {
-    if (!m_bitmap)
+    if (is_detached())
         return { 0, 0 };
-    return m_bitmap->size();
+    return m_size;
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-offscreencanvas-getcontext
 JS::ThrowCompletionOr<OffscreenRenderingContext> OffscreenCanvas::get_context(Bindings::OffscreenRenderingContextId contextId, JS::Value options)
 {
+    if (is_detached())
+        return throw_completion(WebIDL::InvalidStateError::create(realm(), "OffscreenCanvas is detached"_utf16));
+
     // 1. If options is not an object, then set options to null.
     if (!options.is_object())
         options = JS::js_null();
@@ -249,7 +299,8 @@ WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> OffscreenCanvas::transfer_to_image_bit
 {
     // The transferToImageBitmap() method, when invoked, must run the following steps :
 
-    // FIXME: 1. If the value of this OffscreenCanvas object's [[Detached]] internal slot is set to true, then throw an "InvalidStateError" DOMException.
+    if (is_detached())
+        return WebIDL::InvalidStateError::create(realm(), "OffscreenCanvas is detached"_utf16);
 
     // 2. If this OffscreenCanvas object's context mode is set to none, then throw an "InvalidStateError" DOMException.
     if (m_context.has<Empty>()) {
@@ -264,15 +315,30 @@ WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> OffscreenCanvas::transfer_to_image_bit
     // 4. Set this OffscreenCanvas object's bitmap to reference a newly created bitmap of the same dimensions and color space as the previous bitmap, and with its pixels initialized to transparent black, or opaque black if the rendering context' s alpha is false.
     // FIXME: implement the checking of the alpha from the context
     auto size = bitmap_size_for_canvas();
-    if (size.is_empty()) {
-        m_bitmap = nullptr;
-    } else {
+    RefPtr<Gfx::Bitmap> replacement;
+    if (!size.is_empty()) {
         auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA8888, size);
         if (bitmap_or_error.is_error())
             return WebIDL::InvalidStateError::create(realm(), "Unable to allocate OffscreenCanvas transfer bitmap"_utf16);
-        m_bitmap = bitmap_or_error.release_value();
+        replacement = bitmap_or_error.release_value();
     }
+    m_bitmap = move(replacement);
     m_origin_clean = true;
+    m_context.visit(
+        [&](GC::Ref<OffscreenCanvasRenderingContext2D>& context) {
+            context->set_size(size);
+            context->initialize_new_bitmap_to_context_defaults();
+        },
+#if !defined(AK_OS_RINOS)
+        [&](GC::Ref<WebGL::WebGLRenderingContext>& context) {
+            context->set_size(size);
+        },
+        [&](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
+            context->set_size(size);
+        },
+#endif
+        [](Empty) {
+        });
 
     // 5. Return image.
     return image;
@@ -291,7 +357,10 @@ static Tuple<FlyString, Optional<double>> options_convert_or_default(Optional<Im
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-offscreencanvas-converttoblob
 GC::Ref<WebIDL::Promise> OffscreenCanvas::convert_to_blob(Optional<ImageEncodeOptions> maybe_options)
 {
-    // FIXME: 1. If the value of this's [[Detached]] internal slot is true, then return a promise rejected with an "InvalidStateError" DOMException.
+    if (is_detached()) {
+        auto error = WebIDL::InvalidStateError::create(realm(), "OffscreenCanvas is detached"_utf16);
+        return WebIDL::create_rejected_promise_from_exception(realm(), error);
+    }
 
     // 2. Reject before snapshotting an origin-tainted bitmap.
     if (!m_origin_clean) {
