@@ -265,7 +265,10 @@ WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> OffscreenCanvas::transfer_to_image_bit
     if (size.is_empty()) {
         m_bitmap = nullptr;
     } else {
-        m_bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA8888, size));
+        auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA8888, size);
+        if (bitmap_or_error.is_error())
+            return WebIDL::InvalidStateError::create(realm(), "Unable to allocate OffscreenCanvas transfer bitmap"_utf16);
+        m_bitmap = bitmap_or_error.release_value();
     }
 
     // 5. Return image.
