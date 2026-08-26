@@ -6,6 +6,7 @@
  */
 
 #include <AK/OwnPtr.h>
+#include <AK/Try.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/PaintingSurface.h>
@@ -47,6 +48,46 @@ struct ImmutableBitmapImpl {
     OwnPtr<YUVData> yuv_data;
     IntSize cached_size;
 };
+
+static Color convert_alpha_type_for_export(Color color, AlphaType source_alpha_type, bool destination_is_premultiplied)
+{
+    if ((source_alpha_type == AlphaType::Premultiplied) == destination_is_premultiplied)
+        return color;
+
+    auto alpha = color.alpha();
+    if (destination_is_premultiplied) {
+        return Color(
+            static_cast<u8>(static_cast<u16>(color.red()) * alpha / 255u),
+            static_cast<u8>(static_cast<u16>(color.green()) * alpha / 255u),
+            static_cast<u8>(static_cast<u16>(color.blue()) * alpha / 255u),
+            alpha);
+    }
+
+    // Premultiplied transparent pixels have no recoverable color. Returning
+    // transparent black avoids exposing arbitrary stored RGB residue as a
+    // TexImageSource upload.
+    if (alpha == 0)
+        return Color(0, 0, 0, 0);
+
+    auto unpremultiply = [alpha](u8 component) {
+        return static_cast<u8>(min(255u, static_cast<u32>(component) * 255u / alpha));
+    };
+    return Color(unpremultiply(color.red()), unpremultiply(color.green()), unpremultiply(color.blue()), alpha);
+}
+
+static void write_little_endian_u16(u8* destination, u16 value)
+{
+    destination[0] = static_cast<u8>(value);
+    destination[1] = static_cast<u8>(value >> 8u);
+}
+
+static u16 quantize_unorm8(u8 component, u16 maximum)
+{
+    // Match the normalised fixed-point conversion used by the generic
+    // exporter. Bit truncation darkens values such as 51/255 in the green
+    // channel of RGB565, so round to the nearest representable value first.
+    return static_cast<u16>((static_cast<u32>(component) * maximum + 127u) / 255u);
+}
 
 int ImmutableBitmap::width() const
 {
@@ -101,13 +142,26 @@ ErrorOr<BitmapExportResult> ImmutableBitmap::export_to_byte_buffer(ExportFormat 
     if (buffer_pitch.has_overflow() || Checked<size_t>::multiplication_would_overflow(buffer_pitch.value(), h))
         return Error::from_string_literal("ImmutableBitmap::export_to_byte_buffer size overflow");
 
-    auto buffer = MUST(ByteBuffer::create_zeroed(buffer_pitch.value() * h));
+    auto buffer = TRY(ByteBuffer::create_zeroed(buffer_pitch.value() * h));
     auto* raw = buffer.data();
+    auto source_alpha_type = m_impl->bitmap->alpha_type();
 
     for (int y = 0; y < h; ++y) {
         auto target_y = (flags & ExportFlags::FlipY) ? h - y - 1 : y;
         for (int x = 0; x < w; ++x) {
-            auto pixel = get_pixel(x, y);
+            auto target_has_alpha = format == ExportFormat::Alpha8
+                || format == ExportFormat::RGBA5551
+                || format == ExportFormat::RGBA4444
+                || format == ExportFormat::RGBA8888;
+            // Exporting to an RGB-only layout drops alpha. Preserve the
+            // represented color by premultiplying an unpremultiplied source
+            // before that loss; a source already stored premultiplied remains
+            // unchanged. RGBA targets instead honor WebGL's explicit unpack
+            // premultiply flag.
+            auto destination_is_premultiplied = target_has_alpha
+                ? (flags & ExportFlags::PremultiplyAlpha) != 0
+                : true;
+            auto pixel = convert_alpha_type_for_export(get_pixel(x, y), source_alpha_type, destination_is_premultiplied);
             auto offset = target_y * buffer_pitch.value() + x * bpp;
             switch (format) {
             case ExportFormat::RGBA8888:
@@ -127,8 +181,29 @@ ErrorOr<BitmapExportResult> ImmutableBitmap::export_to_byte_buffer(ExportFormat 
             case ExportFormat::Alpha8:
                 raw[offset] = pixel.alpha();
                 break;
-            default:
-                break; // Other formats not fully supported on RinOS
+            case ExportFormat::RGB565: {
+                auto packed = static_cast<u16>((quantize_unorm8(pixel.red(), 31u) << 11u)
+                    | (quantize_unorm8(pixel.green(), 63u) << 5u)
+                    | quantize_unorm8(pixel.blue(), 31u));
+                write_little_endian_u16(raw + offset, packed);
+                break;
+            }
+            case ExportFormat::RGBA5551: {
+                auto packed = static_cast<u16>((quantize_unorm8(pixel.red(), 31u) << 11u)
+                    | (quantize_unorm8(pixel.green(), 31u) << 6u)
+                    | (quantize_unorm8(pixel.blue(), 31u) << 1u)
+                    | static_cast<u16>(pixel.alpha() >> 7u));
+                write_little_endian_u16(raw + offset, packed);
+                break;
+            }
+            case ExportFormat::RGBA4444: {
+                auto packed = static_cast<u16>((quantize_unorm8(pixel.red(), 15u) << 12u)
+                    | (quantize_unorm8(pixel.green(), 15u) << 8u)
+                    | (quantize_unorm8(pixel.blue(), 15u) << 4u)
+                    | quantize_unorm8(pixel.alpha(), 15u));
+                write_little_endian_u16(raw + offset, packed);
+                break;
+            }
             }
         }
     }
