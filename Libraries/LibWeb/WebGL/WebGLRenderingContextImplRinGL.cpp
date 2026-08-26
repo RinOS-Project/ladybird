@@ -113,7 +113,7 @@ bool WebGLRenderingContextImpl::make_rin_gl_current()
     return false;
 }
 
-bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out)
+bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out, GLenum accepted_alternate_type)
 {
     if (!m_current_program) {
         set_error(RINGL_INVALID_OPERATION);
@@ -162,10 +162,16 @@ bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLU
             set_error(RINGL_INVALID_OPERATION);
             return false;
         }
-        if (active_location != requested_location)
+        // Active uniform reflection represents an array by its `[0]` name and
+        // base location. WebGL locations for the remaining elements are valid
+        // only inside this linked, contiguous range.
+        auto active_location_begin = static_cast<u64>(active_location);
+        auto active_location_end = active_location_begin + active_uniform.size;
+        auto requested_location_unsigned = static_cast<u64>(requested_location);
+        if (active_uniform.size == 0 || requested_location_unsigned < active_location_begin || requested_location_unsigned >= active_location_end)
             continue;
 
-        if (expected_type != 0 && active_uniform.type != expected_type) {
+        if (expected_type != 0 && active_uniform.type != expected_type && active_uniform.type != accepted_alternate_type) {
             set_error(RINGL_INVALID_OPERATION);
             return false;
         }
