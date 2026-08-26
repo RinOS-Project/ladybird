@@ -403,12 +403,11 @@ void WebGLRenderingContextOverloads::uniform1fv(GC::Root<WebGLUniformLocation> l
     auto view = values_or_error.release_value();
     if (view.is_empty())
         return;
-    // RSH1 has one scalar declaration per location and no uniform arrays.
-    if (view.size() != 1) {
+    if (view.size() > NumericLimits<u32>::max()) {
         set_error(RINGL_INVALID_OPERATION);
         return;
     }
-    ringl_uniform_1f(location_handle, view[0]);
+    ringl_uniform_1fv(location_handle, static_cast<u32>(view.size()), view.data());
 }
 
 void WebGLRenderingContextOverloads::uniform2fv(GC::Root<WebGLUniformLocation> location, Float32List values)
