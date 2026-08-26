@@ -425,7 +425,7 @@ bool TypefaceTrueTypeRinOS::append_command(Vector<GlyphOutlineCommand>& commands
     return true;
 }
 
-bool TypefaceTrueTypeRinOS::decode_simple_glyph(ReadonlyBytes glyph, i16 contour_count, Transform const& transform, Vector<GlyphOutlineCommand>& commands, u32& command_budget) const
+bool TypefaceTrueTypeRinOS::decode_simple_glyph(ReadonlyBytes glyph, i16 contour_count, Transform const& transform, DecodedOutline& outline, u32& point_budget) const
 {
     Vector<u16> end_points;
     Vector<u8> flags;
@@ -499,7 +499,7 @@ bool TypefaceTrueTypeRinOS::decode_simple_glyph(ReadonlyBytes glyph, i16 contour
         }
         coordinate += delta;
         if (coordinate < -maximum_design_coordinate || coordinate > maximum_design_coordinate
-            || points.try_append({ static_cast<i32>(coordinate), 0, (flag & 1u) != 0u }).is_error())
+            || points.try_append({ static_cast<float>(coordinate), 0, (flag & 1u) != 0u }).is_error())
             return false;
     }
     coordinate = 0;
@@ -522,76 +522,93 @@ bool TypefaceTrueTypeRinOS::decode_simple_glyph(ReadonlyBytes glyph, i16 contour
         coordinate += delta;
         if (coordinate < -maximum_design_coordinate || coordinate > maximum_design_coordinate)
             return false;
-        points[index].y = static_cast<i32>(coordinate);
+        points[index].y = static_cast<float>(coordinate);
     }
     if (cursor != glyph.size())
         return false;
 
+    if (point_count > point_budget)
+        return false;
+    for (auto& point : points) {
+        float transformed_x;
+        float transformed_y;
+        if (!transform_point(transform, point.x, point.y, transformed_x, transformed_y))
+            return false;
+        point.x = transformed_x;
+        point.y = transformed_y;
+    }
+
     u32 contour_start = 0;
     for (auto contour_end : end_points) {
         auto contour_size = static_cast<u32>(contour_end) - contour_start + 1u;
-        auto point_at = [&points, contour_start, contour_size](u32 index) -> Point const& {
-            return points[contour_start + index % contour_size];
-        };
-        Point start;
-        u32 index;
-        float x;
-        float y;
-        if (point_at(0).on_curve) {
-            start = point_at(0);
-            index = 1;
-        } else if (point_at(contour_size - 1).on_curve) {
-            start = point_at(contour_size - 1);
-            index = 0;
-        } else {
-            auto const& first = point_at(0);
-            auto const& last = point_at(contour_size - 1);
-            start = { static_cast<i32>((static_cast<i64>(first.x) + last.x) / 2), static_cast<i32>((static_cast<i64>(first.y) + last.y) / 2), true };
-            index = 0;
-        }
-        if (!transform_point(transform, start.x, start.y, x, y)
-            || !append_command(commands, { GlyphOutlineCommand::Type::MoveTo, x, y }, command_budget))
+        Contour contour;
+        if (contour.try_ensure_capacity(contour_size).is_error())
             return false;
-        while (index < contour_size) {
-            auto const& point = point_at(index);
-            if (point.on_curve) {
-                if (!transform_point(transform, point.x, point.y, x, y)
-                    || !append_command(commands, { GlyphOutlineCommand::Type::LineTo, x, y }, command_budget))
-                    return false;
-                ++index;
-                continue;
-            }
-            auto const& next = point_at(index + 1u);
-            Point end = next.on_curve ? next : Point {
-                static_cast<i32>((static_cast<i64>(point.x) + next.x) / 2),
-                static_cast<i32>((static_cast<i64>(point.y) + next.y) / 2), true
-            };
-            float control_x;
-            float control_y;
-            if (!transform_point(transform, point.x, point.y, control_x, control_y)
-                || !transform_point(transform, end.x, end.y, x, y)
-                || !append_command(commands, { GlyphOutlineCommand::Type::QuadraticCurveTo, x, y, control_x, control_y }, command_budget))
+        for (u32 index = 0; index < contour_size; ++index) {
+            if (contour.try_append(points[contour_start + index]).is_error())
                 return false;
-            ++index;
-            if (next.on_curve)
-                ++index;
         }
-        if (!append_command(commands, { GlyphOutlineCommand::Type::Close }, command_budget))
+        if (outline.contours.try_append(move(contour)).is_error())
             return false;
         contour_start = static_cast<u32>(contour_end) + 1u;
+    }
+    point_budget -= point_count;
+    return true;
+}
+
+bool TypefaceTrueTypeRinOS::outline_point_at(DecodedOutline const& outline, u32 point_index, Point& point) const
+{
+    for (auto const& contour : outline.contours) {
+        if (point_index < contour.size()) {
+            point = contour[point_index];
+            return true;
+        }
+        point_index -= contour.size();
+    }
+    return false;
+}
+
+bool TypefaceTrueTypeRinOS::translate_outline(DecodedOutline& outline, float dx, float dy) const
+{
+    if (!isfinite(dx) || !isfinite(dy))
+        return false;
+    for (auto const& contour : outline.contours) {
+        for (auto const& point : contour) {
+            auto x = point.x + dx;
+            auto y = point.y + dy;
+            if (!isfinite(x) || !isfinite(y)
+                || fabsf(x) > maximum_design_coordinate
+                || fabsf(y) > maximum_design_coordinate)
+                return false;
+        }
+    }
+    for (auto& contour : outline.contours) {
+        for (auto& point : contour) {
+            point.x += dx;
+            point.y += dy;
+        }
     }
     return true;
 }
 
-bool TypefaceTrueTypeRinOS::decode_composite_glyph(ReadonlyBytes glyph, Transform const& transform, Vector<GlyphOutlineCommand>& commands, u32& command_budget, u32 depth, u32& component_budget) const
+bool TypefaceTrueTypeRinOS::decode_composite_glyph(ReadonlyBytes glyph, Transform const& transform, DecodedOutline& outline, u32& point_budget, u32 depth, u32& component_budget) const
 {
     constexpr u16 arg_words = 0x0001;
     constexpr u16 args_are_xy = 0x0002;
+    constexpr u16 round_xy_to_grid = 0x0004;
     constexpr u16 have_scale = 0x0008;
     constexpr u16 more_components = 0x0020;
     constexpr u16 have_xy_scale = 0x0040;
     constexpr u16 have_2x2 = 0x0080;
     constexpr u16 have_instructions = 0x0100;
+    constexpr u16 use_my_metrics = 0x0200;
+    constexpr u16 overlap_compound = 0x0400;
+    constexpr u16 scaled_component_offset = 0x0800;
+    constexpr u16 unscaled_component_offset = 0x1000;
+    constexpr u16 known_flags = arg_words | args_are_xy | round_xy_to_grid
+        | have_scale | more_components | have_xy_scale | have_2x2
+        | have_instructions | use_my_metrics | overlap_compound
+        | scaled_component_offset | unscaled_component_offset;
     size_t cursor = 10;
     u16 flags = 0;
 
@@ -599,27 +616,48 @@ bool TypefaceTrueTypeRinOS::decode_composite_glyph(ReadonlyBytes glyph, Transfor
         u16 component_glyph;
         i16 arg_x = 0;
         i16 arg_y = 0;
+        u16 parent_point_index = 0;
+        u16 component_point_index = 0;
         Transform child;
         Transform combined;
+        DecodedOutline component_outline;
         if (component_budget == 0 || !read_u16(glyph, cursor, flags)
             || !read_u16(glyph, cursor + 2, component_glyph))
             return false;
         cursor += 4;
-        if ((flags & args_are_xy) == 0u)
+        if ((flags & ~known_flags) != 0u
+            || ((flags & have_scale) != 0u && (flags & have_xy_scale) != 0u)
+            || ((flags & have_scale) != 0u && (flags & have_2x2) != 0u)
+            || ((flags & have_xy_scale) != 0u && (flags & have_2x2) != 0u)
+            || ((flags & scaled_component_offset) != 0u
+                && (flags & unscaled_component_offset) != 0u))
             return false;
-        if ((flags & arg_words) != 0u) {
-            if (!read_i16(glyph, cursor, arg_x) || !read_i16(glyph, cursor + 2, arg_y))
-                return false;
-            cursor += 4;
+        if ((flags & args_are_xy) != 0u) {
+            if ((flags & arg_words) != 0u) {
+                if (!read_i16(glyph, cursor, arg_x) || !read_i16(glyph, cursor + 2, arg_y))
+                    return false;
+                cursor += 4;
+            } else {
+                if (cursor > glyph.size() || 2 > glyph.size() - cursor)
+                    return false;
+                arg_x = static_cast<i8>(glyph[cursor]);
+                arg_y = static_cast<i8>(glyph[cursor + 1]);
+                cursor += 2;
+            }
         } else {
-            if (cursor > glyph.size() || 2 > glyph.size() - cursor)
-                return false;
-            arg_x = static_cast<i8>(glyph[cursor]);
-            arg_y = static_cast<i8>(glyph[cursor + 1]);
-            cursor += 2;
+            if ((flags & arg_words) != 0u) {
+                if (!read_u16(glyph, cursor, parent_point_index)
+                    || !read_u16(glyph, cursor + 2, component_point_index))
+                    return false;
+                cursor += 4;
+            } else {
+                if (cursor > glyph.size() || 2 > glyph.size() - cursor)
+                    return false;
+                parent_point_index = glyph[cursor];
+                component_point_index = glyph[cursor + 1];
+                cursor += 2;
+            }
         }
-        child.tx = arg_x;
-        child.ty = arg_y;
         if ((flags & have_scale) != 0u) {
             i16 scale;
             if (!read_i16(glyph, cursor, scale))
@@ -652,11 +690,49 @@ bool TypefaceTrueTypeRinOS::decode_composite_glyph(ReadonlyBytes glyph, Transfor
         combined.xy = transform.xx * child.xy + transform.xy * child.yy;
         combined.yx = transform.yx * child.xx + transform.yy * child.yx;
         combined.yy = transform.yx * child.xy + transform.yy * child.yy;
-        combined.tx = transform.xx * child.tx + transform.xy * child.ty + transform.tx;
-        combined.ty = transform.yx * child.tx + transform.yy * child.ty + transform.ty;
-        if (!isfinite(combined.xx) || !isfinite(combined.xy) || !isfinite(combined.yx) || !isfinite(combined.yy)
-            || !decode_glyph(component_glyph, combined, commands, command_budget, depth + 1u, --component_budget))
+        combined.tx = transform.tx;
+        combined.ty = transform.ty;
+        if (!isfinite(combined.xx) || !isfinite(combined.xy)
+            || !isfinite(combined.yx) || !isfinite(combined.yy)
+            || !isfinite(combined.tx) || !isfinite(combined.ty))
             return false;
+        --component_budget;
+        if (!decode_glyph(component_glyph, combined, component_outline,
+                          point_budget, depth + 1u, component_budget))
+            return false;
+        if ((flags & args_are_xy) != 0u) {
+            float component_x = arg_x;
+            float component_y = arg_y;
+            float dx;
+            float dy;
+            if ((flags & scaled_component_offset) != 0u) {
+                auto scaled_x = child.xx * component_x + child.xy * component_y;
+                component_y = child.yx * component_x + child.yy * component_y;
+                component_x = scaled_x;
+            }
+            dx = transform.xx * component_x + transform.xy * component_y;
+            dy = transform.yx * component_x + transform.yy * component_y;
+            if ((flags & round_xy_to_grid) != 0u) {
+                dx = roundf(dx);
+                dy = roundf(dy);
+            }
+            if (!translate_outline(component_outline, dx, dy))
+                return false;
+        } else {
+            Point parent_point;
+            Point component_point;
+            if (!outline_point_at(outline, parent_point_index, parent_point)
+                || !outline_point_at(component_outline, component_point_index,
+                                     component_point)
+                || !translate_outline(component_outline,
+                                      parent_point.x - component_point.x,
+                                      parent_point.y - component_point.y))
+                return false;
+        }
+        for (auto& contour : component_outline.contours) {
+            if (outline.contours.try_append(move(contour)).is_error())
+                return false;
+        }
     } while ((flags & more_components) != 0u);
 
     if ((flags & have_instructions) != 0u) {
@@ -671,7 +747,7 @@ bool TypefaceTrueTypeRinOS::decode_composite_glyph(ReadonlyBytes glyph, Transfor
     return cursor == glyph.size();
 }
 
-bool TypefaceTrueTypeRinOS::decode_glyph(u32 glyph_id, Transform const& transform, Vector<GlyphOutlineCommand>& commands, u32& command_budget, u32 depth, u32& component_budget) const
+bool TypefaceTrueTypeRinOS::decode_glyph(u32 glyph_id, Transform const& transform, DecodedOutline& outline, u32& point_budget, u32 depth, u32& component_budget) const
 {
     ReadonlyBytes glyf;
     auto offset = glyph_offset(glyph_id);
@@ -689,17 +765,79 @@ bool TypefaceTrueTypeRinOS::decode_glyph(u32 glyph_id, Transform const& transfor
     if (!read_i16(glyph, 0, contour_count))
         return false;
     if (contour_count >= 0)
-        return contour_count == 0 || decode_simple_glyph(glyph, contour_count, transform, commands, command_budget);
-    return decode_composite_glyph(glyph, transform, commands, command_budget, depth, component_budget);
+        return contour_count == 0 || decode_simple_glyph(glyph, contour_count, transform, outline, point_budget);
+    return decode_composite_glyph(glyph, transform, outline, point_budget, depth, component_budget);
+}
+
+bool TypefaceTrueTypeRinOS::append_outline_commands(DecodedOutline const& outline, Vector<GlyphOutlineCommand>& commands, u32& command_budget) const
+{
+    for (auto const& contour : outline.contours) {
+        auto contour_size = contour.size();
+        auto point_at = [&contour, contour_size](u32 index) -> Point const& {
+            return contour[index % contour_size];
+        };
+        Point start;
+        u32 index;
+        if (contour_size == 0)
+            return false;
+        if (point_at(0).on_curve) {
+            start = point_at(0);
+            index = 1;
+        } else if (point_at(contour_size - 1).on_curve) {
+            start = point_at(contour_size - 1);
+            index = 0;
+        } else {
+            auto const& first = point_at(0);
+            auto const& last = point_at(contour_size - 1);
+            start = { (first.x + last.x) * 0.5f,
+                      (first.y + last.y) * 0.5f, true };
+            index = 0;
+        }
+        if (!append_command(commands,
+                            { GlyphOutlineCommand::Type::MoveTo, start.x,
+                              start.y }, command_budget))
+            return false;
+        while (index < contour_size) {
+            auto const& point = point_at(index);
+            if (point.on_curve) {
+                if (!append_command(commands,
+                                    { GlyphOutlineCommand::Type::LineTo,
+                                      point.x, point.y }, command_budget))
+                    return false;
+                ++index;
+                continue;
+            }
+            auto const& next = point_at(index + 1u);
+            Point end = next.on_curve ? next : Point {
+                (point.x + next.x) * 0.5f, (point.y + next.y) * 0.5f, true
+            };
+            if (!append_command(commands,
+                                { GlyphOutlineCommand::Type::QuadraticCurveTo,
+                                  end.x, end.y, point.x, point.y },
+                                command_budget))
+                return false;
+            ++index;
+            if (next.on_curve)
+                ++index;
+        }
+        if (!append_command(commands, { GlyphOutlineCommand::Type::Close },
+                            command_budget))
+            return false;
+    }
+    return true;
 }
 
 Optional<Vector<GlyphOutlineCommand>> TypefaceTrueTypeRinOS::glyph_outline(u32 glyph_id) const
 {
+    DecodedOutline outline;
     Vector<GlyphOutlineCommand> commands;
+    u32 point_budget = maximum_points;
     u32 command_budget = maximum_outline_commands;
     u32 component_budget = maximum_composite_components;
     if (glyph_id >= m_glyph_count || commands.try_ensure_capacity(64).is_error()
-        || !decode_glyph(glyph_id, {}, commands, command_budget, 0, component_budget))
+        || !decode_glyph(glyph_id, {}, outline, point_budget, 0,
+                         component_budget)
+        || !append_outline_commands(outline, commands, command_budget))
         return {};
     return commands;
 }

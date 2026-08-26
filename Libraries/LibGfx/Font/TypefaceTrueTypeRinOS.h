@@ -41,9 +41,18 @@ private:
     };
 
     struct Point {
-        i32 x { 0 };
-        i32 y { 0 };
+        float x { 0 };
+        float y { 0 };
         bool on_curve { false };
+    };
+
+    using Contour = Vector<Point>;
+
+    // Composite TrueType glyphs may attach a component point to a point in an
+    // earlier component. Preserve that topology until the whole glyph is
+    // resolved; command-only output cannot represent those point references.
+    struct DecodedOutline {
+        Vector<Contour> contours;
     };
 
     struct Transform {
@@ -62,9 +71,12 @@ private:
     Optional<u32> glyph_offset(u32 glyph_id) const;
     Optional<u16> cmap_format4_glyph(u32 code_point) const;
     Optional<u16> cmap_format12_glyph(u32 code_point) const;
-    bool decode_glyph(u32 glyph_id, Transform const&, Vector<GlyphOutlineCommand>&, u32& command_budget, u32 depth, u32& component_budget) const;
-    bool decode_simple_glyph(ReadonlyBytes, i16 contour_count, Transform const&, Vector<GlyphOutlineCommand>&, u32& command_budget) const;
-    bool decode_composite_glyph(ReadonlyBytes, Transform const&, Vector<GlyphOutlineCommand>&, u32& command_budget, u32 depth, u32& component_budget) const;
+    bool decode_glyph(u32 glyph_id, Transform const&, DecodedOutline&, u32& point_budget, u32 depth, u32& component_budget) const;
+    bool decode_simple_glyph(ReadonlyBytes, i16 contour_count, Transform const&, DecodedOutline&, u32& point_budget) const;
+    bool decode_composite_glyph(ReadonlyBytes, Transform const&, DecodedOutline&, u32& point_budget, u32 depth, u32& component_budget) const;
+    bool append_outline_commands(DecodedOutline const&, Vector<GlyphOutlineCommand>&, u32& command_budget) const;
+    bool outline_point_at(DecodedOutline const&, u32 point_index, Point&) const;
+    bool translate_outline(DecodedOutline&, float dx, float dy) const;
     bool append_command(Vector<GlyphOutlineCommand>&, GlyphOutlineCommand, u32& command_budget) const;
     bool transform_point(Transform const&, float x, float y, float& transformed_x, float& transformed_y) const;
 
