@@ -6,6 +6,7 @@
  */
 
 #include <AK/OwnPtr.h>
+#include <AK/Try.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/PaintingSurface.h>
@@ -74,6 +75,45 @@ AlphaType ImmutableBitmap::alpha_type() const
     return m_impl->bitmap ? m_impl->bitmap->alpha_type() : AlphaType::Premultiplied;
 }
 
+static u8 export_premultiplied_component(u8 component, u8 alpha)
+{
+    return static_cast<u8>((static_cast<u32>(component) * alpha) / 255u);
+}
+
+static u8 export_unpremultiplied_component(u8 component, u8 alpha)
+{
+    u32 value;
+
+    if (alpha == 0)
+        return 0;
+    value = (static_cast<u32>(component) * 255u) / alpha;
+    return static_cast<u8>(value > 255u ? 255u : value);
+}
+
+static u8 export_packed_component(u8 component, u32 maximum)
+{
+    return static_cast<u8>((static_cast<u32>(component) * maximum + 127u) / 255u);
+}
+
+static void export_pixel_components(Color source, AlphaType source_alpha_type,
+    bool destination_is_premultiplied, u8& red, u8& green, u8& blue, u8& alpha)
+{
+    red = source.red();
+    green = source.green();
+    blue = source.blue();
+    alpha = source.alpha();
+
+    if (source_alpha_type == AlphaType::Premultiplied && !destination_is_premultiplied) {
+        red = export_unpremultiplied_component(red, alpha);
+        green = export_unpremultiplied_component(green, alpha);
+        blue = export_unpremultiplied_component(blue, alpha);
+    } else if (source_alpha_type == AlphaType::Unpremultiplied && destination_is_premultiplied) {
+        red = export_premultiplied_component(red, alpha);
+        green = export_premultiplied_component(green, alpha);
+        blue = export_premultiplied_component(blue, alpha);
+    }
+}
+
 ErrorOr<BitmapExportResult> ImmutableBitmap::export_to_byte_buffer(ExportFormat format, int flags, Optional<int> target_width, Optional<int> target_height) const
 {
     if (!m_impl->bitmap)
@@ -101,34 +141,70 @@ ErrorOr<BitmapExportResult> ImmutableBitmap::export_to_byte_buffer(ExportFormat 
     if (buffer_pitch.has_overflow() || Checked<size_t>::multiplication_would_overflow(buffer_pitch.value(), h))
         return Error::from_string_literal("ImmutableBitmap::export_to_byte_buffer size overflow");
 
-    auto buffer = MUST(ByteBuffer::create_zeroed(buffer_pitch.value() * h));
+    auto buffer = TRY(ByteBuffer::create_zeroed(buffer_pitch.value() * h));
     auto* raw = buffer.data();
+    bool const destination_is_premultiplied = (flags & ExportFlags::PremultiplyAlpha) != 0;
 
     for (int y = 0; y < h; ++y) {
         auto target_y = (flags & ExportFlags::FlipY) ? h - y - 1 : y;
         for (int x = 0; x < w; ++x) {
             auto pixel = get_pixel(x, y);
             auto offset = target_y * buffer_pitch.value() + x * bpp;
+            u8 red;
+            u8 green;
+            u8 blue;
+            u8 alpha;
+
+            // WebGL's TexImageSource route requests this conversion through
+            // UNPACK_PREMULTIPLY_ALPHA_WEBGL. The bitmap's alpha metadata is
+            // the source representation; do the conversion before packing so
+            // RGBA8 and all packed WebGL texture types agree.
+            export_pixel_components(pixel, alpha_type(), destination_is_premultiplied,
+                red, green, blue, alpha);
             switch (format) {
             case ExportFormat::RGBA8888:
-                raw[offset + 0] = pixel.red();
-                raw[offset + 1] = pixel.green();
-                raw[offset + 2] = pixel.blue();
-                raw[offset + 3] = pixel.alpha();
+                raw[offset + 0] = red;
+                raw[offset + 1] = green;
+                raw[offset + 2] = blue;
+                raw[offset + 3] = alpha;
                 break;
             case ExportFormat::RGB888:
-                raw[offset + 0] = pixel.red();
-                raw[offset + 1] = pixel.green();
-                raw[offset + 2] = pixel.blue();
+                raw[offset + 0] = red;
+                raw[offset + 1] = green;
+                raw[offset + 2] = blue;
                 break;
             case ExportFormat::Gray8:
-                raw[offset] = static_cast<u8>(0.299f * pixel.red() + 0.587f * pixel.green() + 0.114f * pixel.blue());
+                raw[offset] = static_cast<u8>(0.299f * red + 0.587f * green + 0.114f * blue);
                 break;
             case ExportFormat::Alpha8:
-                raw[offset] = pixel.alpha();
+                raw[offset] = alpha;
                 break;
-            default:
-                break; // Other formats not fully supported on RinOS
+            case ExportFormat::RGB565: {
+                auto packed = static_cast<u16>((static_cast<u16>(export_packed_component(red, 31u)) << 11u)
+                    | (static_cast<u16>(export_packed_component(green, 63u)) << 5u)
+                    | export_packed_component(blue, 31u));
+                raw[offset + 0] = static_cast<u8>(packed);
+                raw[offset + 1] = static_cast<u8>(packed >> 8u);
+                break;
+            }
+            case ExportFormat::RGBA5551: {
+                auto packed = static_cast<u16>((static_cast<u16>(export_packed_component(red, 31u)) << 11u)
+                    | (static_cast<u16>(export_packed_component(green, 31u)) << 6u)
+                    | (static_cast<u16>(export_packed_component(blue, 31u)) << 1u)
+                    | export_packed_component(alpha, 1u));
+                raw[offset + 0] = static_cast<u8>(packed);
+                raw[offset + 1] = static_cast<u8>(packed >> 8u);
+                break;
+            }
+            case ExportFormat::RGBA4444: {
+                auto packed = static_cast<u16>((static_cast<u16>(export_packed_component(red, 15u)) << 12u)
+                    | (static_cast<u16>(export_packed_component(green, 15u)) << 8u)
+                    | (static_cast<u16>(export_packed_component(blue, 15u)) << 4u)
+                    | export_packed_component(alpha, 15u));
+                raw[offset + 0] = static_cast<u8>(packed);
+                raw[offset + 1] = static_cast<u8>(packed >> 8u);
+                break;
+            }
             }
         }
     }
