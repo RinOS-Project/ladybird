@@ -47,7 +47,6 @@ namespace Web::WebGL {
 
 #ifdef AK_OS_RINOS
 struct OpenGLContext::Impl {
-    RinGLAquamarineSurfaceContext* surface_context { nullptr };
     RinWebGLRinGLBridge bridge {};
     Vector<float> depth;
     ByteBuffer stencil;
@@ -99,9 +98,6 @@ void OpenGLContext::free_surface_resources()
     // drawing buffer after resize, loss, or context destruction.
     m_impl->clear_after_compositing = false;
     rin_webgl_ringl_bridge_destroy(&m_impl->bridge);
-    if (m_impl->surface_context)
-        ringl_aquamarine_surface_destroy(m_impl->surface_context);
-    m_impl->surface_context = nullptr;
     m_impl->depth.clear();
     m_impl->stencil.clear();
     m_painting_surface = nullptr;
@@ -219,11 +215,10 @@ void OpenGLContext::allocate_painting_surface_if_needed()
         target.stencil_pitch_bytes = static_cast<u32>(width);
     }
 
-    result = ringl_aquamarine_surface_create(&target, &m_impl->surface_context);
-    if (result == RINGL_AQUAMARINE_SURFACE_OK)
-        result = rin_webgl_ringl_bridge_create(m_impl->surface_context,
-            m_drawing_buffer_options.depth ? 1u : 0u,
-            m_drawing_buffer_options.stencil ? 1u : 0u, &m_impl->bridge);
+    result = rin_webgl_ringl_bridge_create_drawing_buffer(
+        &target, m_drawing_buffer_options.alpha ? 1u : 0u,
+        m_drawing_buffer_options.depth ? 1u : 0u,
+        m_drawing_buffer_options.stencil ? 1u : 0u, &m_impl->bridge);
     if (result == RINGL_AQUAMARINE_SURFACE_OK
         && ringl_make_current(m_impl->bridge.context) != 0) {
         result = m_impl->bridge.context
