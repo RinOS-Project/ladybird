@@ -24,6 +24,7 @@ public:
 
     RefPtr<Gfx::ImmutableBitmap> current_image_bitmap(Gfx::IntSize = {}) const;
     Optional<Gfx::IntRect> content_rect() const;
+    bool is_origin_clean() const;
 
 private:
     SVGFEImageElement(DOM::Document&, DOM::QualifiedName);

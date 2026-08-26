@@ -207,6 +207,17 @@ RefPtr<Gfx::ImmutableBitmap> HTMLImageElement::immutable_bitmap() const
     return current_image_bitmap();
 }
 
+bool HTMLImageElement::is_origin_clean() const
+{
+    if (!current_request().is_origin_clean())
+        return false;
+
+    auto image_data = current_request().image_data();
+    if (image_data && is<SVG::SVGDecodedImageData>(*image_data))
+        return as<SVG::SVGDecodedImageData>(*image_data).is_origin_clean();
+    return true;
+}
+
 RefPtr<Gfx::ImmutableBitmap> HTMLImageElement::default_image_bitmap_sized(Gfx::IntSize size) const
 {
     if (auto data = m_current_request->image_data())

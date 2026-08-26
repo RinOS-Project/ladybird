@@ -960,13 +960,10 @@ bool image_is_not_origin_clean(CanvasImageSource const& image)
     return image.visit(
         // HTMLOrSVGImageElement
         [](GC::Root<HTMLImageElement> const& image_element) {
-            return !image_element->current_request().is_origin_clean();
+            return !image_element->is_origin_clean();
         },
-        [](GC::Root<SVG::SVGImageElement> const&) {
-            // SVG image elements do not yet expose their fetch tainting state.
-            // Treat that unavailable state as tainted rather than allowing it
-            // to open a readback channel through a destination canvas.
-            return true;
+        [](GC::Root<SVG::SVGImageElement> const& image_element) {
+            return !image_element->is_origin_clean();
         },
         [](GC::Root<HTML::HTMLVideoElement> const& video_element) {
             return !video_element->is_origin_clean();

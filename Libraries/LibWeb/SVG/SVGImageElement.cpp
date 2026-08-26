@@ -206,6 +206,24 @@ void SVGImageElement::fetch_the_document(URL::URL const& url)
     }
 }
 
+bool SVGImageElement::is_origin_clean() const
+{
+    // A pending or failed image does not contribute pixels to a rendered SVG.
+    // Once image data is available, it is safe only if the fetch was readable
+    // by the embedding origin and a nested SVG has no tainted resources.
+    if (!m_resource_request)
+        return true;
+
+    auto image_data = m_resource_request->image_data();
+    if (!image_data)
+        return true;
+    if (!m_resource_request->is_origin_clean())
+        return false;
+    if (is<SVGDecodedImageData>(*image_data))
+        return as<SVGDecodedImageData>(*image_data).is_origin_clean();
+    return true;
+}
+
 GC::Ptr<Layout::Node> SVGImageElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
 {
     return heap().allocate<Layout::SVGImageBox>(document(), *this, move(style));

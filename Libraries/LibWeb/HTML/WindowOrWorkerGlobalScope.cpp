@@ -482,7 +482,7 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                         WebIDL::reject_promise(realm, *p, WebIDL::InvalidStateError::create(image_bitmap->realm(), "Video frame is not available"_utf16));
                         return;
                     }
-                    auto cropped_bitmap_or_error = crop_to_the_source_rectangle_with_formatting(video_bitmap, sx, sy, sw, sh, options);
+                    auto cropped_bitmap_or_error = crop_to_the_source_rectangle_with_formatting(video_bitmap->bitmap(), sx, sy, sw, sh, options);
                     if (cropped_bitmap_or_error.is_error()) {
                         WebIDL::reject_promise(realm, *p, WebIDL::InvalidStateError::create(image_bitmap->realm(), "Image size is invalid"_utf16));
                         return;
@@ -522,13 +522,7 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                         return;
                     }
                     image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
-                    if constexpr (IsSame<RemoveCVReference<decltype(image_element)>, GC::Root<HTMLImageElement>>) {
-                        image_bitmap->set_origin_clean(image_element->current_request().is_origin_clean());
-                    } else {
-                        // SVGImageElement does not yet retain response tainting
-                        // state. Preserve confidentiality until it does.
-                        image_bitmap->set_origin_clean(false);
-                    }
+                    image_bitmap->set_origin_clean(image_element->is_origin_clean());
 
                     // 5. Queue a global task, using the bitmap task source, to resolve promise with imageBitmap.
                     queue_global_task(Task::Source::BitmapTask, image_bitmap, GC::create_function(realm.heap(), [p, image_bitmap] {

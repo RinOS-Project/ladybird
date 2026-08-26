@@ -712,7 +712,7 @@ WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase
     //        error is generated.
     // FIXME: If source is null then an INVALID_VALUE error is generated.
     auto source_is_origin_clean = source.visit(
-        [](GC::Root<HTML::HTMLImageElement> const& image) { return image->current_request().is_origin_clean(); },
+        [](GC::Root<HTML::HTMLImageElement> const& image) { return image->is_origin_clean(); },
         [](GC::Root<HTML::HTMLCanvasElement> const& canvas) { return canvas->is_origin_clean(); },
         [](GC::Root<HTML::OffscreenCanvas> const& canvas) { return canvas->is_origin_clean(); },
         [](GC::Root<HTML::HTMLVideoElement> const& video) { return video->is_origin_clean(); },

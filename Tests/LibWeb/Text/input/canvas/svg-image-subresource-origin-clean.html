@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    asyncTest(async done => {
+        const nestedSVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3Crect width='1' height='1' fill='red'/%3E%3C/svg%3E";
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><image href="${nestedSVG}" width="1" height="1"/></svg>`;
+        const svgURL = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+        const image = new Image();
+
+        image.onload = async () => {
+            // The outer SVG load completes after parsing; allow the embedded
+            // image request to finish before drawing the SVG as a pixel source.
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            const canvas = document.createElement("canvas");
+            canvas.width = 1;
+            canvas.height = 1;
+            canvas.getContext("2d").drawImage(image, 0, 0);
+
+            try {
+                canvas.toDataURL();
+                println("FAIL: canvas remained origin-clean");
+            } catch (error) {
+                println(error.name === "SecurityError" ? "PASS" : `FAIL: ${error.name}`);
+            }
+
+            URL.revokeObjectURL(svgURL);
+            done();
+        };
+        image.onerror = () => {
+            println("FAIL: outer SVG did not decode");
+            URL.revokeObjectURL(svgURL);
+            done();
+        };
+        image.src = svgURL;
+    });
+</script>
