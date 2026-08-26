@@ -1884,6 +1884,34 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             }
             return JS::Value(value);
         }
+        case RINGL_BOOL: {
+            int32_t value = 0;
+            if (ringl_get_uniform_1i(program_handle, location_handle, &value) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            return JS::Value(value != 0);
+        }
+        case RINGL_BOOL_VEC2:
+        case RINGL_BOOL_VEC3:
+        case RINGL_BOOL_VEC4: {
+            Array<int32_t, 4> values {};
+            size_t value_count = active_uniform.type == RINGL_BOOL_VEC2 ? 2
+                : active_uniform.type == RINGL_BOOL_VEC3 ? 3
+                                                        : 4;
+            int result = value_count == 2 ? ringl_get_uniform_2i(program_handle, location_handle, values.data())
+                : value_count == 3 ? ringl_get_uniform_3i(program_handle, location_handle, values.data())
+                                   : ringl_get_uniform_4i(program_handle, location_handle, values.data());
+            if (result != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            Array<JS::Value, 4> boolean_values {};
+            for (size_t value_index = 0; value_index < value_count; ++value_index)
+                boolean_values[value_index] = JS::Value(values[value_index] != 0);
+            return JS::Value(JS::Array::create_from(
+                realm(), boolean_values.span().slice(0, value_count)));
+        }
         case RINGL_FLOAT: {
             float value = 0.0f;
             if (ringl_get_uniform_1f(program_handle, location_handle, &value) != 0) {
