@@ -201,7 +201,12 @@ protected:
     // its declared RINGL component type. This distinguishes binary16 uploads
     // from Float32 storage so an unrelated extension cannot make them FBO
     // renderable at the WebGL boundary.
-    int rin_gl_bound_framebuffer_color_attachment_component_type();
+    int rin_gl_bound_framebuffer_color_attachment_component_type(GLenum attachment);
+    // A WEBGL_draw_buffers FBO may have four native color attachments. Check
+    // every exposed slot before a draw, clear, copy, or readback; inspecting
+    // COLOR_ATTACHMENT0 alone would let an extension-gated attachment in a
+    // later slot bypass the WebGL 1 framebuffer rules.
+    bool rin_gl_bound_framebuffer_color_attachments_are_webgl1_compatible();
     bool rin_gl_bound_framebuffer_is_webgl1_compatible();
 
     // RinGL exposes eight independently bound WebGL 1 texture units. Keep
