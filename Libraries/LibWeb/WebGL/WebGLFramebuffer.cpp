@@ -13,9 +13,16 @@
 namespace Web::WebGL {
 
 static constexpr GLenum color_attachment0 = 0x8ce0;
+static constexpr size_t color_attachment_count = 16;
 static constexpr GLenum depth_attachment = 0x8d00;
 static constexpr GLenum stencil_attachment = 0x8d20;
 static constexpr GLenum depth_stencil_attachment = 0x821a;
+
+static bool is_color_attachment(GLenum attachment)
+{
+    return attachment >= color_attachment0
+        && attachment - color_attachment0 < color_attachment_count;
+}
 
 GC_DEFINE_ALLOCATOR(WebGLFramebuffer);
 
@@ -40,7 +47,8 @@ void WebGLFramebuffer::initialize(JS::Realm& realm)
 void WebGLFramebuffer::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(m_color_attachment.object);
+    for (auto& attachment : m_color_attachments)
+        visitor.visit(attachment.object);
     visitor.visit(m_depth_attachment.object);
     visitor.visit(m_stencil_attachment.object);
 }
@@ -49,10 +57,12 @@ void WebGLFramebuffer::set_attachment(GLenum attachment, GC::Ptr<WebGLObject> ob
 {
     Attachment value { object, level };
 
-    switch (attachment) {
-    case color_attachment0:
-        m_color_attachment = value;
+    if (is_color_attachment(attachment)) {
+        m_color_attachments[attachment - color_attachment0] = value;
         return;
+    }
+
+    switch (attachment) {
     case depth_attachment:
         m_depth_attachment = value;
         m_uses_separate_depth_stencil_attachments = true;
@@ -73,9 +83,10 @@ void WebGLFramebuffer::set_attachment(GLenum attachment, GC::Ptr<WebGLObject> ob
 
 GC::Ptr<WebGLObject> WebGLFramebuffer::attachment_object(GLenum attachment) const
 {
+    if (is_color_attachment(attachment))
+        return m_color_attachments[attachment - color_attachment0].object;
+
     switch (attachment) {
-    case color_attachment0:
-        return m_color_attachment.object;
     case depth_attachment:
         return m_depth_attachment.object;
     case stencil_attachment:
@@ -92,9 +103,10 @@ GC::Ptr<WebGLObject> WebGLFramebuffer::attachment_object(GLenum attachment) cons
 
 GLint WebGLFramebuffer::attachment_level(GLenum attachment) const
 {
+    if (is_color_attachment(attachment))
+        return m_color_attachments[attachment - color_attachment0].level;
+
     switch (attachment) {
-    case color_attachment0:
-        return m_color_attachment.level;
     case depth_attachment:
         return m_depth_attachment.level;
     case stencil_attachment:

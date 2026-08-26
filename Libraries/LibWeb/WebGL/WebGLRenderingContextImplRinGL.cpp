@@ -39,9 +39,21 @@ static constexpr GLenum webgl_framebuffer_attachment_color_encoding_ext = 0x8210
 static constexpr GLenum webgl_framebuffer_attachment_component_type_ext = 0x8211;
 static constexpr GLenum webgl_unsigned_normalized_ext = 0x8c17;
 
+static bool rin_gl_color_attachment_valid(GLenum attachment)
+{
+    return attachment >= RINGL_COLOR_ATTACHMENT0
+        && attachment < RINGL_COLOR_ATTACHMENT0 + RINGL_MAX_COLOR_ATTACHMENTS;
+}
+
+static bool rin_gl_draw_buffers_attachment(GLenum attachment)
+{
+    return rin_gl_color_attachment_valid(attachment)
+        && attachment != RINGL_COLOR_ATTACHMENT0;
+}
+
 static bool rin_gl_framebuffer_attachment_valid(GLenum attachment)
 {
-    return attachment == RINGL_COLOR_ATTACHMENT0
+    return rin_gl_color_attachment_valid(attachment)
         || attachment == RINGL_DEPTH_ATTACHMENT
         || attachment == RINGL_STENCIL_ATTACHMENT
         || attachment == RINGL_DEPTH_STENCIL_ATTACHMENT;
@@ -2668,6 +2680,12 @@ void WebGLRenderingContextImpl::framebuffer_renderbuffer(WebIDL::UnsignedLong ta
     if (!make_rin_gl_current())
         return;
 
+    if (rin_gl_draw_buffers_attachment(attachment)
+        && !extension_enabled("WEBGL_draw_buffers"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+
     GLuint handle = 0;
     if (renderbuffer) {
         auto handle_or_error = renderbuffer->handle(this);
@@ -2700,6 +2718,12 @@ void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong targe
 {
     if (!make_rin_gl_current())
         return;
+
+    if (rin_gl_draw_buffers_attachment(attachment)
+        && !extension_enabled("WEBGL_draw_buffers"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
 
     // WebGL 1 admits only level zero until OES_fbo_render_mipmap is enabled.
     // Reject before resolving an object handle or touching the RinGL FBO so a
@@ -2741,7 +2765,9 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
 {
     if (!make_rin_gl_current())
         return JS::js_null();
-    if (target != RINGL_FRAMEBUFFER || !rin_gl_framebuffer_attachment_valid(attachment)) {
+    if (target != RINGL_FRAMEBUFFER || !rin_gl_framebuffer_attachment_valid(attachment)
+        || (rin_gl_draw_buffers_attachment(attachment)
+            && !extension_enabled("WEBGL_draw_buffers"sv))) {
         set_error(RINGL_INVALID_ENUM);
         return JS::js_null();
     }

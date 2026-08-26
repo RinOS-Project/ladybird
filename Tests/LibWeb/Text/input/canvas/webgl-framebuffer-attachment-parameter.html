@@ -22,6 +22,17 @@
 
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, null, 0);
         println(`detached object: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME) === null}`);
+
+        const drawBuffers = gl.getExtension("WEBGL_draw_buffers");
+        if (drawBuffers) {
+            const secondTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, secondTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, gl.TEXTURE_2D, secondTexture, 0);
+            println(`mrt object identity: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME) === secondTexture}`);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, gl.TEXTURE_2D, null, 0);
+            println(`mrt detached object: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME) === null}`);
+        }
         println(`error: ${gl.getError()}`);
     });
 </script>

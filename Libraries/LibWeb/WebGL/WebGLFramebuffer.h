@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/Array.h>
 #include <LibWeb/WebGL/WebGLObject.h>
 
 namespace Web::WebGL {
@@ -41,7 +42,10 @@ private:
         GLint level { 0 };
     };
 
-    Attachment m_color_attachment;
+    // WebGL 2 defines sixteen color attachment tokens. RinGL's WebGL 1 MRT
+    // profile currently uses the first four, while the generic backend can
+    // retain wrapper identity for all standard tokens.
+    Array<Attachment, 16> m_color_attachments;
     Attachment m_depth_attachment;
     Attachment m_stencil_attachment;
     bool m_uses_separate_depth_stencil_attachments { false };
