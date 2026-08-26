@@ -207,7 +207,7 @@ WebIDL::ExceptionOr<void> CanvasRenderingContext2D::draw_image_internal(CanvasIm
 
     // 7. If image is not origin-clean, then set the CanvasRenderingContext2D's origin-clean flag to false.
     if (image_is_not_origin_clean(image))
-        m_origin_clean = false;
+        mark_as_origin_tainted();
 
     return {};
 }
@@ -539,7 +539,7 @@ WebIDL::ExceptionOr<GC::Ptr<ImageData>> CanvasRenderingContext2D::get_image_data
         return WebIDL::IndexSizeError::create(realm(), "Width and height must not be zero"_utf16);
 
     // 2. If the CanvasRenderingContext2D's origin-clean flag is set to false, then throw a "SecurityError" DOMException.
-    if (!m_origin_clean)
+    if (!is_origin_clean())
         return WebIDL::SecurityError::create(realm(), "CanvasRenderingContext2D is not origin-clean"_utf16);
 
     // ImageData initialization requires positive width and height
@@ -959,22 +959,26 @@ bool image_is_not_origin_clean(CanvasImageSource const& image)
     // An object image is not origin-clean if, switching on image's type:
     return image.visit(
         // HTMLOrSVGImageElement
-        [](GC::Root<HTMLImageElement> const&) {
-            // FIXME: image's current request's image data is CORS-cross-origin.
-            return false;
+        [](GC::Root<HTMLImageElement> const& image_element) {
+            return !image_element->current_request().is_origin_clean();
         },
         [](GC::Root<SVG::SVGImageElement> const&) {
-            // FIXME: image's current request's image data is CORS-cross-origin.
-            return false;
+            // SVG image elements do not yet expose their fetch tainting state.
+            // Treat that unavailable state as tainted rather than allowing it
+            // to open a readback channel through a destination canvas.
+            return true;
         },
-        [](GC::Root<HTML::HTMLVideoElement> const&) {
-            // FIXME: image's media data is CORS-cross-origin.
-            return false;
+        [](GC::Root<HTML::HTMLVideoElement> const& video_element) {
+            return !video_element->is_origin_clean();
         },
-        // HTMLCanvasElement, ImageBitmap or OffscreenCanvas
-        [](OneOf<GC::Root<HTMLCanvasElement>, GC::Root<ImageBitmap>, GC::Root<OffscreenCanvas>> auto const&) {
-            // FIXME: image's bitmap's origin-clean flag is false.
-            return false;
+        [](GC::Root<HTMLCanvasElement> const& canvas) {
+            return !canvas->is_origin_clean();
+        },
+        [](GC::Root<ImageBitmap> const& image_bitmap) {
+            return !image_bitmap->is_origin_clean();
+        },
+        [](GC::Root<OffscreenCanvas> const& offscreen_canvas) {
+            return !offscreen_canvas->is_origin_clean();
         });
 }
 

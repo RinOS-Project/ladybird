@@ -904,8 +904,10 @@ void HTMLImageElement::add_callbacks_to_image_request(GC::Ref<ImageRequest> imag
                 }
 
                 VERIFY(image_request->shared_resource_request());
-                auto image_data = image_request->shared_resource_request()->image_data();
+                auto shared_resource_request = image_request->shared_resource_request();
+                auto image_data = shared_resource_request->image_data();
                 image_request->set_image_data(image_data);
+                image_request->set_origin_clean(shared_resource_request->is_origin_clean());
 
                 ListOfAvailableImages::Key key;
                 key.url = url_string;
@@ -925,7 +927,7 @@ void HTMLImageElement::add_callbacks_to_image_request(GC::Ref<ImageRequest> imag
                 image_request->set_state(ImageRequest::State::CompletelyAvailable);
 
                 // 3. Add the image to the list of available images using the key key, with the ignore higher-layer caching flag set.
-                document().list_of_available_images().add(key, *image_data, true);
+                document().list_of_available_images().add(key, *image_data, true, image_request->is_origin_clean());
 
                 set_needs_style_update(true);
                 set_needs_layout_update(DOM::SetNeedsLayoutReason::HTMLImageElementUpdateTheImageData);
@@ -1075,7 +1077,7 @@ void HTMLImageElement::react_to_changes_in_the_environment()
             image_request->set_state(ImageRequest::State::CompletelyAvailable);
 
             // 4. Add the image to the list of available images using the key key, with the ignore higher-layer caching flag set.
-            document().list_of_available_images().add(key, image_data, true);
+            document().list_of_available_images().add(key, image_data, true, image_request->is_origin_clean());
 
             // 5. Upgrade the pending request to the current request.
             upgrade_pending_request_to_current_request();
@@ -1095,6 +1097,7 @@ void HTMLImageElement::react_to_changes_in_the_environment()
     //     Continue to the next step.
     if (auto* entry = document().list_of_available_images().get(key)) {
         image_request->set_image_data(entry->image_data);
+        image_request->set_origin_clean(entry->origin_clean);
         step_16(selected_source.value(), *image_request, key, entry->image_data);
     }
     // Otherwise:
@@ -1135,8 +1138,10 @@ void HTMLImageElement::react_to_changes_in_the_environment()
                     // 7. Otherwise, response's unsafe response is image request's image data. It can be either CORS-same-origin
                     //    or CORS-cross-origin; this affects the image's interaction with other APIs (e.g., when used on a canvas).
                     VERIFY(image_request->shared_resource_request());
-                    auto image_data = image_request->shared_resource_request()->image_data();
+                    auto shared_resource_request = image_request->shared_resource_request();
+                    auto image_data = shared_resource_request->image_data();
                     image_request->set_image_data(image_data);
+                    image_request->set_origin_clean(shared_resource_request->is_origin_clean());
                     step_16(selected_source, image_request, key, *image_data);
                 }));
             },

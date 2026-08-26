@@ -55,6 +55,9 @@ public:
     WebIDL::UnsignedLong height() const;
 
     RefPtr<Gfx::Bitmap> bitmap() const;
+    bool is_origin_clean() const { return m_origin_clean; }
+    void set_origin_clean(bool origin_clean) { m_origin_clean = origin_clean; }
+    void mark_as_origin_tainted() { m_origin_clean = false; }
 
     WebIDL::ExceptionOr<void> set_width(WebIDL::UnsignedLong);
     WebIDL::ExceptionOr<void> set_height(WebIDL::UnsignedLong);
@@ -94,6 +97,7 @@ private:
 #endif
 
     RefPtr<Gfx::Bitmap> m_bitmap;
+    bool m_origin_clean { true };
 };
 
 }

@@ -44,6 +44,8 @@ public:
 
     [[nodiscard]] GC::Ptr<DecodedImageData> image_data() const;
     void set_image_data(GC::Ptr<DecodedImageData>);
+    bool is_origin_clean() const { return m_origin_clean; }
+    void set_origin_clean(bool origin_clean) { m_origin_clean = origin_clean; }
 
     [[nodiscard]] float current_pixel_density() const { return m_current_pixel_density; }
     void set_current_pixel_density(float density) { m_current_pixel_density = density; }
@@ -76,6 +78,8 @@ private:
 
     // https://html.spec.whatwg.org/multipage/images.html#img-req-data
     GC::Ptr<DecodedImageData> m_image_data;
+    // An unavailable request must not be treated as a clean pixel source.
+    bool m_origin_clean { false };
 
     // https://html.spec.whatwg.org/multipage/images.html#current-pixel-density
     // Each image request has a current pixel density, which must initially be 1.

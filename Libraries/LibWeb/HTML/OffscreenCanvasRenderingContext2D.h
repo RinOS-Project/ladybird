@@ -127,6 +127,9 @@ public:
 
     [[nodiscard]] Gfx::Painter* painter();
 
+    bool is_origin_clean() const { return canvas_element().is_origin_clean(); }
+    void mark_as_origin_tainted() { canvas_element().mark_as_origin_tainted(); }
+
     void set_size(Gfx::IntSize const&);
 
 private:

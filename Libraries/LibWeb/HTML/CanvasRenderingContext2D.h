@@ -125,6 +125,9 @@ public:
 
     [[nodiscard]] Gfx::Painter* painter();
 
+    bool is_origin_clean() const { return canvas_element().is_origin_clean(); }
+    void mark_as_origin_tainted() { canvas_element().mark_as_origin_tainted(); }
+
     void set_size(Gfx::IntSize const&);
 
     RefPtr<Gfx::PaintingSurface> surface() { return m_surface; }
@@ -166,9 +169,6 @@ private:
 
     GC::Ref<HTMLCanvasElement> m_element;
     OwnPtr<Gfx::Painter> m_painter;
-
-    // https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-origin-clean
-    bool m_origin_clean { true };
 
     Gfx::IntSize m_size;
     RefPtr<Gfx::PaintingSurface> m_surface;

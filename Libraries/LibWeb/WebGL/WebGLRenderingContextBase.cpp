@@ -29,6 +29,7 @@ extern "C" {
 #include <LibWeb/HTML/HTMLVideoElement.h>
 #include <LibWeb/HTML/ImageBitmap.h>
 #include <LibWeb/HTML/ImageData.h>
+#include <LibWeb/HTML/OffscreenCanvas.h>
 #include <LibWeb/HTML/UniversalGlobalScope.h>
 #include <LibWeb/WebGL/Extensions/ANGLEInstancedArrays.h>
 #include <LibWeb/WebGL/Extensions/EXTBlendMinMax.h>
@@ -66,6 +67,7 @@ extern "C" {
 #endif
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
+#include <LibWeb/WebIDL/DOMException.h>
 
 #ifndef AK_OS_RINOS
 #include <core/SkCanvas.h>
@@ -702,17 +704,23 @@ ReadonlySpan<WebIDL::UnsignedLong> WebGLRenderingContextBase::enabled_compressed
     return m_enabled_compressed_texture_formats;
 }
 
-Optional<Gfx::BitmapExportResult> WebGLRenderingContextBase::read_and_pixel_convert_texture_image_source(TexImageSource const& source, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, Optional<int> destination_width, Optional<int> destination_height)
+WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase::read_and_pixel_convert_texture_image_source(TexImageSource const& source, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, Optional<int> destination_width, Optional<int> destination_height)
 {
     // FIXME: If this function is called with an ImageData whose data attribute has been neutered,
     //        an INVALID_VALUE error is generated.
     // FIXME: If this function is called with an ImageBitmap that has been neutered, an INVALID_VALUE
     //        error is generated.
-    // FIXME: If this function is called with an HTMLImageElement or HTMLVideoElement whose origin
-    //        differs from the origin of the containing Document, or with an HTMLCanvasElement,
-    //        ImageBitmap or OffscreenCanvas whose bitmap's origin-clean flag is set to false,
-    //        a SECURITY_ERR exception must be thrown. See Origin Restrictions.
     // FIXME: If source is null then an INVALID_VALUE error is generated.
+    auto source_is_origin_clean = source.visit(
+        [](GC::Root<HTML::HTMLImageElement> const& image) { return image->current_request().is_origin_clean(); },
+        [](GC::Root<HTML::HTMLCanvasElement> const& canvas) { return canvas->is_origin_clean(); },
+        [](GC::Root<HTML::OffscreenCanvas> const& canvas) { return canvas->is_origin_clean(); },
+        [](GC::Root<HTML::HTMLVideoElement> const& video) { return video->is_origin_clean(); },
+        [](GC::Root<HTML::ImageBitmap> const& bitmap) { return bitmap->is_origin_clean(); },
+        [](GC::Root<HTML::ImageData> const&) { return true; });
+    if (!source_is_origin_clean)
+        return WebIDL::SecurityError::create(realm(), "TexImageSource is not origin-clean"_utf16);
+
     auto bitmap = source.visit(
         [](GC::Root<HTML::HTMLImageElement> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
             return source->immutable_bitmap();
@@ -726,18 +734,25 @@ Optional<Gfx::BitmapExportResult> WebGLRenderingContextBase::read_and_pixel_conv
             if (auto bitmap = source->ensure_external_content_source().current_bitmap())
                 return bitmap;
             auto surface = source->surface();
-            if (!surface)
-                return Gfx::ImmutableBitmap::create(*source->get_bitmap_from_surface());
+            if (!surface) {
+                if (auto bitmap = source->get_bitmap_from_surface())
+                    return Gfx::ImmutableBitmap::create(*bitmap);
+                return RefPtr<Gfx::ImmutableBitmap> {};
+            }
             return Gfx::ImmutableBitmap::create_snapshot_from_painting_surface(*surface);
         },
         [](GC::Root<HTML::OffscreenCanvas> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
-            return Gfx::ImmutableBitmap::create(*source->bitmap());
+            if (auto bitmap = source->bitmap())
+                return Gfx::ImmutableBitmap::create(*bitmap);
+            return {};
         },
         [](GC::Root<HTML::HTMLVideoElement> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
             return source->bitmap();
         },
         [](GC::Root<HTML::ImageBitmap> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
-            return Gfx::ImmutableBitmap::create(*source->bitmap());
+            if (auto bitmap = source->bitmap())
+                return Gfx::ImmutableBitmap::create(*bitmap);
+            return {};
         },
         [](GC::Root<HTML::ImageData> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
             return Gfx::ImmutableBitmap::create(source->bitmap());

@@ -28,6 +28,7 @@
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
+#include <LibWeb/WebIDL/DOMException.h>
 
 #include <LibWeb/WebGL/WebGLRenderingContext.h>
 #if !defined(AK_OS_RINOS)
@@ -153,6 +154,9 @@ Painting::ExternalContentSource& HTMLCanvasElement::ensure_external_content_sour
 
 void HTMLCanvasElement::reset_context_to_default_state()
 {
+    // Replacing the backing bitmap by assigning width or height resets its
+    // origin-clean flag, independent of the context that happened to paint it.
+    m_origin_clean = true;
     if (m_external_content_source)
         m_external_content_source->clear();
     m_context.visit(
@@ -316,8 +320,13 @@ Gfx::IntSize HTMLCanvasElement::bitmap_size_for_canvas(size_t minimum_width, siz
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-todataurl
-String HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
+WebIDL::ExceptionOr<String> HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
 {
+    // 1. Do not permit a canvas tainted by a cross-origin source to expose
+    // its pixels through a data URL.
+    if (!m_origin_clean)
+        return WebIDL::SecurityError::create(realm(), "Canvas is not origin-clean"_utf16);
+
     // It is possible the canvas doesn't have an associated bitmap so create one
     allocate_painting_surface_if_needed();
     auto surface = this->surface();
@@ -326,8 +335,6 @@ String HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
         // If the context is not initialized yet, we need to allocate transparent surface for serialization
         surface = Gfx::PaintingSurface::create_with_size(size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
     }
-
-    // FIXME: 1. If this canvas element's bitmap's origin-clean flag is set to false, then throw a "SecurityError" DOMException.
 
     // 2. If this canvas element's bitmap has no pixels (i.e. either its horizontal dimension or its vertical dimension is zero),
     //    then return the string "data:,". (This is the shortest data: URL; it represents the empty string in a text/plain resource.)
@@ -357,7 +364,9 @@ String HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-toblob
 WebIDL::ExceptionOr<void> HTMLCanvasElement::to_blob(GC::Ref<WebIDL::CallbackType> callback, StringView type, JS::Value js_quality)
 {
-    // FIXME: 1. If this canvas element's bitmap's origin-clean flag is set to false, then throw a "SecurityError" DOMException.
+    // 1. If this canvas element's bitmap's origin-clean flag is set to false, then throw a "SecurityError" DOMException.
+    if (!m_origin_clean)
+        return WebIDL::SecurityError::create(realm(), "Canvas is not origin-clean"_utf16);
 
     // 2. Let result be null.
     // 3. If this canvas element's bitmap has pixels (i.e., neither its horizontal dimension nor its vertical dimension is zero),

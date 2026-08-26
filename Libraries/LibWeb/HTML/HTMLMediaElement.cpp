@@ -1031,6 +1031,7 @@ void HTMLMediaElement::select_resource()
 
 void HTMLMediaElement::fetch_resource(URL::URL const& url_record, Function<void(String)> failure_callback)
 {
+    m_media_origin_clean = false;
     m_fetch_data = make<FetchData>();
     m_fetch_data->url_record = url_record;
     m_fetch_data->stream = Media::IncrementallyPopulatedStream::create_empty();
@@ -1136,6 +1137,8 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
 
         fetch_algorithms_input.process_response = [self = GC::Ref(*this), byte_range = move(byte_range), fetch_generation](auto response) mutable {
             auto& fetch_data = self->m_fetch_data;
+            self->m_media_origin_clean = response->type() != Fetch::Infrastructure::Response::Type::Opaque
+                && response->type() != Fetch::Infrastructure::Response::Type::OpaqueRedirect;
             auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
             auto internal_response = rooted_responses->internal_response();
 
