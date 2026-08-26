@@ -20,7 +20,6 @@
 extern "C" {
 #    include <ringl/ringl.h>
 #    include <rin_webgl_ringl_bridge.h>
-#    include <ringl/ringl_aquamarine_surface.h>
 }
 #else
 #include <EGL/egl.h>
@@ -105,7 +104,7 @@ void OpenGLContext::free_surface_resources()
 
 void OpenGLContext::fail_rin_gl_surface(int result)
 {
-    bool const device_lost = result == RINGL_AQUAMARINE_SURFACE_DEVICE_LOST
+    bool const device_lost = result == RIN_WEBGL_RINGL_BRIDGE_DEVICE_LOST
         || (m_impl->bridge.context
             && ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE);
 
@@ -117,7 +116,7 @@ void OpenGLContext::fail_rin_gl_surface(int result)
     m_impl->allocation_failed = !device_lost;
     if (device_lost)
         m_impl->pending_error = RINGL_CONTEXT_LOST_WEBGL;
-    else if (result == RINGL_AQUAMARINE_SURFACE_NO_MEMORY)
+    else if (result == RIN_WEBGL_RINGL_BRIDGE_NO_MEMORY)
         m_impl->pending_error = RINGL_OUT_OF_MEMORY;
     else
         m_impl->pending_error = RINGL_INVALID_OPERATION;
@@ -142,7 +141,7 @@ void OpenGLContext::clear_buffer_to_default_values()
     // normal submission exclusively; a failure retires the drawing buffer
     // instead of bypassing RinGL through the Aquamarine embedding.
     auto result = rin_webgl_ringl_bridge_clear_default_framebuffer(&m_impl->bridge);
-    if (result != RINGL_AQUAMARINE_SURFACE_OK)
+    if (result != RIN_WEBGL_RINGL_BRIDGE_OK)
         fail_rin_gl_surface(result);
 }
 
@@ -152,19 +151,28 @@ void OpenGLContext::allocate_painting_surface_if_needed()
     auto const height = m_size.height();
     size_t pixel_count;
     int result;
-    RinGLAquamarineSurfaceTargetV1 target {};
+    RinWebGLRinGLDrawingBufferTargetV1 target {};
     auto* bitmap = static_cast<Gfx::Bitmap*>(nullptr);
 
     if (m_painting_surface || m_impl->allocation_failed || m_impl->device_lost)
         return;
-    if (width <= 0 || height <= 0 || width > static_cast<int>(RINGL_AQUAMARINE_SURFACE_MAX_DIMENSION) || height > static_cast<int>(RINGL_AQUAMARINE_SURFACE_MAX_DIMENSION)) {
+    if (width <= 0 || height <= 0 || width > static_cast<int>(RIN_WEBGL_RINGL_BRIDGE_MAX_DIMENSION) || height > static_cast<int>(RIN_WEBGL_RINGL_BRIDGE_MAX_DIMENSION)) {
         m_impl->allocation_failed = true;
         m_impl->pending_error = RINGL_OUT_OF_MEMORY;
         return;
     }
     pixel_count = static_cast<size_t>(width) * static_cast<size_t>(height);
 
-    auto painting_surface = Gfx::PaintingSurface::try_create_with_size(m_size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
+    // The physical image remains BGRA for RinGL's private embedding. Its
+    // alpha type tells the HTML compositor whether WebGL supplied premultiplied
+    // colors; an opaque drawing buffer always has alpha one, so either
+    // representation is equivalent and we retain the normal premultiplied
+    // bitmap convention.
+    auto const alpha_type = m_drawing_buffer_options.alpha
+            && !m_drawing_buffer_options.premultiplied_alpha
+        ? Gfx::AlphaType::Unpremultiplied
+        : Gfx::AlphaType::Premultiplied;
+    auto painting_surface = Gfx::PaintingSurface::try_create_with_size(m_size, Gfx::BitmapFormat::BGRA8888, alpha_type);
     if (painting_surface.is_error()) {
         m_impl->allocation_failed = true;
         m_impl->pending_error = RINGL_OUT_OF_MEMORY;
@@ -174,7 +182,7 @@ void OpenGLContext::allocate_painting_surface_if_needed()
     bitmap = m_painting_surface->bitmap();
     if (!bitmap || bitmap->format() != Gfx::BitmapFormat::BGRA8888
         || bitmap->pitch() < static_cast<size_t>(width) * sizeof(u32)
-        || bitmap->pitch() > RINGL_AQUAMARINE_SURFACE_MAX_PITCH_BYTES) {
+        || bitmap->pitch() > RIN_WEBGL_RINGL_BRIDGE_MAX_PITCH_BYTES) {
         m_impl->allocation_failed = true;
         m_impl->pending_error = RINGL_OUT_OF_MEMORY;
         free_surface_resources();
@@ -201,7 +209,7 @@ void OpenGLContext::allocate_painting_surface_if_needed()
     }
 
     target.struct_size = sizeof(target);
-    target.version = RINGL_AQUAMARINE_SURFACE_VERSION;
+    target.version = RIN_WEBGL_RINGL_DRAWING_BUFFER_TARGET_VERSION;
     target.pixels = reinterpret_cast<u8*>(bitmap->begin());
     target.width = static_cast<u32>(width);
     target.height = static_cast<u32>(height);
@@ -219,49 +227,49 @@ void OpenGLContext::allocate_painting_surface_if_needed()
         &target, m_drawing_buffer_options.alpha ? 1u : 0u,
         m_drawing_buffer_options.depth ? 1u : 0u,
         m_drawing_buffer_options.stencil ? 1u : 0u, &m_impl->bridge);
-    if (result == RINGL_AQUAMARINE_SURFACE_OK
+    if (result == RIN_WEBGL_RINGL_BRIDGE_OK
         && ringl_make_current(m_impl->bridge.context) != 0) {
         result = m_impl->bridge.context
                 && ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE
-            ? RINGL_AQUAMARINE_SURFACE_DEVICE_LOST
-            : RINGL_AQUAMARINE_SURFACE_STATE;
+            ? RIN_WEBGL_RINGL_BRIDGE_DEVICE_LOST
+            : RIN_WEBGL_RINGL_BRIDGE_STATE;
     }
-    if (result == RINGL_AQUAMARINE_SURFACE_OK
+    if (result == RIN_WEBGL_RINGL_BRIDGE_OK
         && m_impl->float_texture_linear_enabled
         && ringl_enable_webgl_float_texture_linear() != 0) {
-        result = RINGL_AQUAMARINE_SURFACE_STATE;
+        result = RIN_WEBGL_RINGL_BRIDGE_STATE;
     }
-    if (result == RINGL_AQUAMARINE_SURFACE_OK
+    if (result == RIN_WEBGL_RINGL_BRIDGE_OK
         && m_impl->half_float_texture_linear_enabled
         && ringl_enable_webgl_half_float_texture_linear() != 0) {
-        result = RINGL_AQUAMARINE_SURFACE_STATE;
+        result = RIN_WEBGL_RINGL_BRIDGE_STATE;
     }
-    if (result == RINGL_AQUAMARINE_SURFACE_OK
+    if (result == RIN_WEBGL_RINGL_BRIDGE_OK
         && m_impl->texture_filter_anisotropic_enabled
         && ringl_enable_webgl_texture_filter_anisotropic() != 0) {
-        result = RINGL_AQUAMARINE_SURFACE_STATE;
+        result = RIN_WEBGL_RINGL_BRIDGE_STATE;
     }
-    if (result == RINGL_AQUAMARINE_SURFACE_OK
+    if (result == RIN_WEBGL_RINGL_BRIDGE_OK
         && m_impl->float_color_buffer_enabled
         && ringl_enable_webgl_float_color_buffer() != 0) {
-        result = RINGL_AQUAMARINE_SURFACE_STATE;
+        result = RIN_WEBGL_RINGL_BRIDGE_STATE;
     }
-    if (result == RINGL_AQUAMARINE_SURFACE_OK
+    if (result == RIN_WEBGL_RINGL_BRIDGE_OK
         && m_impl->half_float_color_buffer_enabled
         && ringl_enable_webgl_half_float_color_buffer() != 0) {
-        result = RINGL_AQUAMARINE_SURFACE_STATE;
+        result = RIN_WEBGL_RINGL_BRIDGE_STATE;
     }
-    if (result == RINGL_AQUAMARINE_SURFACE_OK
+    if (result == RIN_WEBGL_RINGL_BRIDGE_OK
         && m_impl->blend_minmax_enabled
         && ringl_enable_webgl_blend_minmax() != 0) {
-        result = RINGL_AQUAMARINE_SURFACE_STATE;
+        result = RIN_WEBGL_RINGL_BRIDGE_STATE;
     }
-    if (result == RINGL_AQUAMARINE_SURFACE_OK
+    if (result == RIN_WEBGL_RINGL_BRIDGE_OK
         && m_impl->standard_derivatives_enabled
         && ringl_enable_webgl_standard_derivatives() != 0) {
-        result = RINGL_AQUAMARINE_SURFACE_STATE;
+        result = RIN_WEBGL_RINGL_BRIDGE_STATE;
     }
-    if (result != RINGL_AQUAMARINE_SURFACE_OK) {
+    if (result != RIN_WEBGL_RINGL_BRIDGE_OK) {
         fail_rin_gl_surface(result);
         return;
     }
@@ -270,7 +278,7 @@ void OpenGLContext::allocate_painting_surface_if_needed()
     // depth value of 1. Submit the default-framebuffer clear before any author
     // command can observe the BGRA, D32, or S8 surface state.
     result = rin_webgl_ringl_bridge_clear_default_framebuffer(&m_impl->bridge);
-    if (result != RINGL_AQUAMARINE_SURFACE_OK)
+    if (result != RIN_WEBGL_RINGL_BRIDGE_OK)
         fail_rin_gl_surface(result);
 }
 
@@ -292,8 +300,8 @@ void OpenGLContext::make_current()
     if (ringl_make_current(m_impl->bridge.context) != 0
         || ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE) {
         auto const result = ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE
-            ? RINGL_AQUAMARINE_SURFACE_DEVICE_LOST
-            : RINGL_AQUAMARINE_SURFACE_STATE;
+            ? RIN_WEBGL_RINGL_BRIDGE_DEVICE_LOST
+            : RIN_WEBGL_RINGL_BRIDGE_STATE;
         fail_rin_gl_surface(result);
     }
 }
@@ -323,7 +331,7 @@ void OpenGLContext::enable_rin_gl_float_texture_linear()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_float_texture_linear() != 0)
-        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+        fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
 }
 
 void OpenGLContext::enable_rin_gl_half_float_texture_linear()
@@ -332,7 +340,7 @@ void OpenGLContext::enable_rin_gl_half_float_texture_linear()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_half_float_texture_linear() != 0)
-        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+        fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
 }
 
 void OpenGLContext::enable_rin_gl_texture_filter_anisotropic()
@@ -341,7 +349,7 @@ void OpenGLContext::enable_rin_gl_texture_filter_anisotropic()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_texture_filter_anisotropic() != 0)
-        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+        fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
 }
 
 void OpenGLContext::enable_rin_gl_float_color_buffer()
@@ -350,7 +358,7 @@ void OpenGLContext::enable_rin_gl_float_color_buffer()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_float_color_buffer() != 0)
-        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+        fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
 }
 
 void OpenGLContext::enable_rin_gl_half_float_color_buffer()
@@ -359,7 +367,7 @@ void OpenGLContext::enable_rin_gl_half_float_color_buffer()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_half_float_color_buffer() != 0)
-        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+        fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
 }
 
 void OpenGLContext::enable_rin_gl_blend_minmax()
@@ -368,7 +376,7 @@ void OpenGLContext::enable_rin_gl_blend_minmax()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_blend_minmax() != 0)
-        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+        fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
 }
 
 void OpenGLContext::enable_rin_gl_standard_derivatives()
@@ -377,14 +385,14 @@ void OpenGLContext::enable_rin_gl_standard_derivatives()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_standard_derivatives() != 0)
-        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+        fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
 }
 
 void OpenGLContext::enable_rin_gl_frag_depth()
 {
     make_current();
     if (m_impl->bridge.context && ringl_enable_webgl_frag_depth() != 0)
-        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+        fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
 }
 
 void OpenGLContext::enable_rin_gl_draw_buffers()
@@ -392,7 +400,7 @@ void OpenGLContext::enable_rin_gl_draw_buffers()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_draw_buffers() != 0)
-        fail_rin_gl_surface(RINGL_AQUAMARINE_SURFACE_STATE);
+        fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
 }
 
 void OpenGLContext::rin_gl_draw_buffers(u32 count, u32 const* buffers)
@@ -444,10 +452,10 @@ void OpenGLContext::present(bool preserve_drawing_buffer)
         return;
 
     auto result = rin_webgl_ringl_bridge_present(&m_impl->bridge);
-    if (result != RINGL_AQUAMARINE_SURFACE_OK
+    if (result != RIN_WEBGL_RINGL_BRIDGE_OK
         || ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE) {
         if (ringl_context_is_lost(m_impl->bridge.context) == RINGL_TRUE)
-            result = RINGL_AQUAMARINE_SURFACE_DEVICE_LOST;
+            result = RIN_WEBGL_RINGL_BRIDGE_DEVICE_LOST;
         fail_rin_gl_surface(result);
         return;
     }
