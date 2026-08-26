@@ -13,10 +13,13 @@
 #include <LibWeb/HTML/AttributeNames.h>
 #include <LibWeb/HTML/HTMLAnchorElement.h>
 #include <LibWeb/HTML/HTMLImageElement.h>
+#include <LibWeb/HTML/Navigation.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/PixelUnits.h>
 #include <LibWeb/ReferrerPolicy/ReferrerPolicy.h>
 #include <LibWeb/UIEvents/MouseEvent.h>
+#include <LibURL/Parser.h>
 
 namespace Web::HTML {
 
@@ -111,9 +114,36 @@ void HTMLAnchorElement::activation_behavior(Web::DOM::Event const& event)
     if (has_download_preference())
         user_involvement = UserNavigationInvolvement::BrowserUI;
 
-    // FIXME: 6. If element has a download attribute, or if the user has expressed a preference to download the
-    //     hyperlink, then download the hyperlink created by element with hyperlinkSuffix set to hyperlinkSuffix and
-    //     userInvolvement set to userInvolvement.
+    // 6. If element has a download attribute, download the hyperlink created
+    // by element. The navigation event remains observable and cancellable by
+    // page script; only its accepted result reaches the browser process.
+    if (has_download_preference()) {
+        auto url_record = document().encoding_parse_url(get_attribute_value(AttributeNames::href));
+        if (!url_record.has_value())
+            return;
+
+        auto url_string = url_record->serialize();
+        if (hyperlink_suffix.has_value())
+            url_string = MUST(String::formatted("{}{}", url_string, *hyperlink_suffix));
+        auto url = URL::Parser::basic_parse(url_string);
+        if (!url.has_value())
+            return;
+
+        auto window = document().window();
+        if (!window)
+            return;
+        auto suggested_filename = attribute(AttributeNames::download).value_or({});
+        if (!window->navigation()->fire_a_download_request_navigate_event(
+                *url, user_involvement, this, suggested_filename))
+            return;
+
+        // The renderer passes URL and an untrusted display suggestion only.
+        // The browser process fetches the response and File Manager alone
+        // chooses the filesystem destination through the File Portal.
+        document().page().client().page_did_request_download(
+            *url, suggested_filename.to_byte_string());
+        return;
+    }
 
     // 7. Otherwise, follow the hyperlink created by element with hyperlinkSuffix set to hyperlinkSuffix and userInvolvement set to userInvolvement.
     follow_the_hyperlink(hyperlink_suffix, user_involvement);

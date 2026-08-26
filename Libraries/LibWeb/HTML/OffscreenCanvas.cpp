@@ -18,7 +18,6 @@
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
-
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContext.h>
 #if !defined(AK_OS_RINOS)
@@ -251,7 +250,7 @@ WebIDL::ExceptionOr<void> OffscreenCanvas::set_width(WebIDL::UnsignedLong value)
         return WebIDL::InvalidStateError::create(realm(), "OffscreenCanvas width exceeds the supported range"_utf16);
 
     Gfx::IntSize current_size = bitmap_size_for_canvas();
-    current_size.set_width(value);
+    current_size.set_width(static_cast<int>(value));
 
     TRY(set_new_bitmap_size(current_size));
     reset_context_to_default_state();
@@ -265,7 +264,7 @@ WebIDL::ExceptionOr<void> OffscreenCanvas::set_height(WebIDL::UnsignedLong value
         return WebIDL::InvalidStateError::create(realm(), "OffscreenCanvas height exceeds the supported range"_utf16);
 
     Gfx::IntSize current_size = bitmap_size_for_canvas();
-    current_size.set_height(value);
+    current_size.set_height(static_cast<int>(value));
 
     TRY(set_new_bitmap_size(current_size));
     reset_context_to_default_state();

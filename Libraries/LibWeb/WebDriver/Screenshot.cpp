@@ -74,7 +74,9 @@ ErrorOr<GC::Ref<HTML::HTMLCanvasElement>, WebDriver::Error> draw_bounding_box_fr
 // https://w3c.github.io/webdriver/#dfn-encoding-a-canvas-as-base64
 Response encode_canvas_element(HTML::HTMLCanvasElement& canvas)
 {
-    // FIXME: 1. If the canvas element’s bitmap’s origin-clean flag is set to false, return error with error code unable to capture screen.
+    // 1. If the canvas element’s bitmap’s origin-clean flag is set to false, return error with error code unable to capture screen.
+    if (!canvas.is_origin_clean())
+        return Error::from_code(ErrorCode::UnableToCaptureScreen, "Captured canvas is not origin-clean"sv);
 
     // 2. If the canvas element’s bitmap has no pixels (i.e. either its horizontal dimension or vertical dimension is zero) then return error with error code unable to capture screen.
     if (canvas.surface()->size().is_empty())

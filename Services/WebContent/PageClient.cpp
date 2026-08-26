@@ -752,6 +752,14 @@ void PageClient::page_did_request_activate_tab()
     client().async_did_request_activate_tab(m_id);
 }
 
+void PageClient::page_did_request_download(URL::URL const& url, ByteString const& suggested_filename)
+{
+    // This is a one-way renderer-to-browser notification. The browser process
+    // owns request credentials and the File Portal transfer; no file handle is
+    // ever exposed back to WebContent.
+    client().async_did_request_download(m_id, url, suggested_filename);
+}
+
 void PageClient::page_did_close_top_level_traversable()
 {
     // FIXME: Rename this IPC call
@@ -816,8 +824,11 @@ Web::PageClient::WorkerAgentResponse PageClient::request_worker_agent(Web::Bindi
 {
     auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::RequestWorkerAgent>(m_id, type);
     if (!response) {
-        dbgln("WebContent client disconnected during RequestWorkerAgent. Exiting peacefully.");
-        exit(0);
+        // WorkerAgentParent turns an empty transport into the worker's error
+        // event. Do not let one failed isolated-helper request terminate the
+        // entire WebContent process.
+        dbgln("WebContent client disconnected during RequestWorkerAgent.");
+        return {};
     }
 
     return { response->take_handle(), response->take_request_server_handle(), response->take_image_decoder_handle() };

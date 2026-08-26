@@ -52,6 +52,13 @@ else()
     )
 endif()
 
+# Native RinOS CTests execute on a POSIX host, so they cannot issue the target
+# kernel's shared-memory syscalls. Keep the production syscall ABI untouched
+# and provide the same named shared-memory ownership model for those tests.
+if (AK_OS_RINOS AND NOT CMAKE_CROSSCOMPILING)
+    list(APPEND SOURCES RinOSSharedMemoryHost.cpp)
+endif()
+
 include(CheckIncludeFile)
 
 check_include_file(sys/inotify.h HAVE_INOTIFY)

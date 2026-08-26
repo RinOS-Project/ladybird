@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
+#include <AK/Function.h>
 #include <AK/HashMap.h>
 #include <AK/LexicalPath.h>
 #include <AK/NonnullRefPtr.h>
@@ -20,7 +22,35 @@ public:
     FileDownloader();
     ~FileDownloader();
 
+#if defined(AK_OS_RINOS)
+    /* These values cross only the Browser/bridge trust boundary. They are
+     * deliberately not server text and there is no successful-completion
+     * value: File Manager alone can attest durable publication. */
+    enum class DownloadFailure : u8 {
+        Cancelled,
+        UnsafeURL,
+        UnsafeFilename,
+        SizeRejected,
+        FileManagerUnavailable,
+        DurabilityFailed,
+        TLSFailed,
+        NetworkFailed,
+        HttpFailed,
+        ResponseInvalid,
+        MemoryFailed,
+        TransferFailed,
+    };
+    using DownloadFailureCallback = Function<void(DownloadFailure)>;
+
+    /* RinOS never accepts a caller-selected pathname for a web download.
+     * File Manager owns the interactive destination selection and returns a
+     * short-lived write-only File Portal descriptor only after approval.
+     * `suggested_filename` is untrusted presentation data from WebContent;
+     * it is checked again by the Browser/File Manager portal contract. */
+    void download_file(URL::URL const&, ByteString suggested_filename = {}, DownloadFailureCallback = {});
+#else
     void download_file(URL::URL const&, LexicalPath);
+#endif
 
 private:
     HashMap<u64, NonnullRefPtr<Requests::Request>> m_requests;

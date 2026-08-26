@@ -12,6 +12,7 @@
 #include <AK/HashTable.h>
 #include <AK/QuickSort.h>
 #include <AK/Random.h>
+#include <AK/ScopeGuard.h>
 #include <AK/Tuple.h>
 #include <LibCrypto/ASN1/ASN1.h>
 #include <LibCrypto/ASN1/Constants.h>
@@ -45,8 +46,10 @@
 #include <LibWeb/WebIDL/AbstractOperations.h>
 
 #if defined(AK_OS_RINOS)
-extern "C" int rin_webcrypto_get_random_values(void*, size_t);
+extern "C" {
+#include "../../../../../src/webengine/rin_webcrypto_entropy.h"
 #include "../../../../rintls/crypto/modern.h"
+}
 #endif
 
 namespace Web::Crypto {
@@ -313,6 +316,56 @@ using EcGeneratedKeyPair = Tuple<::Crypto::UnsignedBigInteger, ::Crypto::Curves:
 
 static WebIDL::ExceptionOr<EcGeneratedKeyPair> generate_ec_key_pair(JS::Realm& realm, StringView named_curve)
 {
+#if defined(AK_OS_RINOS)
+    u32 rintls_curve;
+    size_t private_key_size;
+    size_t public_key_size;
+    Variant<Empty, ::Crypto::Curves::SECP256r1, ::Crypto::Curves::SECP384r1, ::Crypto::Curves::SECP521r1> rintls_curve_instance;
+
+    if (named_curve == "P-256"sv) {
+        rintls_curve = RINTLS_EC_P256;
+        private_key_size = RINTLS_P256_PRIVATE_KEY_SIZE;
+        public_key_size = RINTLS_P256_PUBLIC_KEY_SIZE;
+        rintls_curve_instance = ::Crypto::Curves::SECP256r1 {};
+    } else if (named_curve == "P-384"sv) {
+        rintls_curve = RINTLS_EC_P384;
+        private_key_size = RINTLS_P384_PRIVATE_KEY_SIZE;
+        public_key_size = RINTLS_P384_PUBLIC_KEY_SIZE;
+        rintls_curve_instance = ::Crypto::Curves::SECP384r1 {};
+    } else if (named_curve == "P-521"sv) {
+        rintls_curve = RINTLS_EC_P521;
+        private_key_size = RINTLS_P521_PRIVATE_KEY_SIZE;
+        public_key_size = RINTLS_P521_PUBLIC_KEY_SIZE;
+        rintls_curve_instance = ::Crypto::Curves::SECP521r1 {};
+    } else {
+        return WebIDL::NotSupportedError::create(realm, "Only 'P-256', 'P-384' and 'P-521' is supported"_utf16);
+    }
+
+    {
+        u8 private_key_bytes[RINTLS_P521_PRIVATE_KEY_SIZE] {};
+        u8 public_key_bytes[RINTLS_P521_PUBLIC_KEY_SIZE] {};
+        ScopeGuard clear_private_key = [&] {
+            rintls_secure_zero(private_key_bytes, sizeof(private_key_bytes));
+            rintls_secure_zero(public_key_bytes, sizeof(public_key_bytes));
+        };
+        if (rintls_nist_keygen(rintls_curve, private_key_bytes, public_key_bytes) != 0)
+            return WebIDL::OperationError::create(realm, "Secure randomness is unavailable"_utf16);
+
+        auto private_key = ::Crypto::UnsignedBigInteger::import_data(
+            ReadonlyBytes { private_key_bytes, private_key_size });
+        auto public_key = ::Crypto::Curves::SECPxxxr1Point::from_uncompressed(
+            ReadonlyBytes { public_key_bytes, public_key_size });
+        if (public_key.is_error())
+            return WebIDL::OperationError::create(realm, "Failed to create valid crypto instance"_utf16);
+        auto public_key_is_valid = rintls_curve_instance.visit(
+            [](Empty&) -> ErrorOr<bool> { VERIFY_NOT_REACHED(); },
+            [&](auto& curve) { return curve.is_valid_point(public_key.value()); });
+        if (public_key_is_valid.is_error() || !public_key_is_valid.value())
+            return WebIDL::OperationError::create(realm, "Failed to validate generated public key"_utf16);
+        return EcGeneratedKeyPair { move(private_key), public_key.release_value() };
+    }
+#endif
+
     Variant<Empty, ::Crypto::Curves::SECP256r1, ::Crypto::Curves::SECP384r1, ::Crypto::Curves::SECP521r1> curve;
     if (named_curve.is_one_of("P-256"sv, "P-384"sv, "P-521"sv)) {
         if (named_curve == "P-256")

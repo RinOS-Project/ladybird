@@ -6,8 +6,11 @@
  */
 
 #include "CanvasTextDrawingStyles.h"
+#include <AK/Math.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/FontComputer.h>
+#include <LibWeb/CSS/FontFace.h>
+#include <LibWeb/CSS/FontFaceSet.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/CSS/StyleValues/FontStyleStyleValue.h>
@@ -15,6 +18,7 @@
 #include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
 #include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ShorthandStyleValue.h>
+#include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Canvas/CanvasState.h>
 #include <LibWeb/HTML/CanvasRenderingContext2D.h>
@@ -22,8 +26,132 @@
 #include <LibWeb/HTML/OffscreenCanvasRenderingContext2D.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
+#include <LibWeb/Platform/FontPlugin.h>
+
+#include <LibGfx/Font/FontDatabase.h>
 
 namespace Web::HTML {
+
+static Optional<Platform::GenericFont> generic_font_for_keyword(CSS::Keyword keyword)
+{
+    switch (keyword) {
+    case CSS::Keyword::Monospace:
+    case CSS::Keyword::UiMonospace:
+        return Platform::GenericFont::Monospace;
+    case CSS::Keyword::Serif:
+        return Platform::GenericFont::Serif;
+    case CSS::Keyword::Fantasy:
+        return Platform::GenericFont::Fantasy;
+    case CSS::Keyword::SansSerif:
+        return Platform::GenericFont::SansSerif;
+    case CSS::Keyword::Cursive:
+        return Platform::GenericFont::Cursive;
+    case CSS::Keyword::UiSerif:
+        return Platform::GenericFont::UiSerif;
+    case CSS::Keyword::UiSansSerif:
+        return Platform::GenericFont::UiSansSerif;
+    case CSS::Keyword::UiRounded:
+        return Platform::GenericFont::UiRounded;
+    default:
+        return {};
+    }
+}
+
+static RefPtr<Gfx::FontCascadeList const> compute_font_for_worker_global_scope(HTML::WorkerGlobalScope& worker, HTML::OffscreenCanvas& canvas, CSS::StyleValue const& font_style, CSS::StyleValue const& font_weight, CSS::StyleValue const& font_width, CSS::StyleValue const& font_size, CSS::StyleValue const& font_family)
+{
+    // A worker does not have a Document FontComputer, but canvas text still
+    // has a well-defined font source: its WorkerGlobalScope. Resolve relative
+    // lengths against the canvas' initial 10px font and use the canvas bitmap
+    // as the viewport for viewport-relative values.
+    auto initial_font = Platform::FontPlugin::the().default_font(7.5f);
+    if (!initial_font)
+        return {};
+
+    auto const initial_font_size = CSSPixels::nearest_value_for(initial_font->pixel_size());
+    auto const initial_font_metrics = CSS::Length::FontMetrics {
+        initial_font_size,
+        initial_font->pixel_metrics(),
+        CSSPixels::nearest_value_for(initial_font->pixel_metrics().line_spacing()),
+    };
+    CSS::ComputationContext computation_context {
+        .length_resolution_context = CSS::Length::ResolutionContext {
+            .viewport_rect = CSSPixelRect { 0, 0, CSSPixels { canvas.width() }, CSSPixels { canvas.height() } },
+            .font_metrics = initial_font_metrics,
+            .root_font_metrics = initial_font_metrics,
+        },
+    };
+
+    auto const computed_font_size = CSS::StyleComputer::compute_font_size(font_size.absolutized(computation_context), 0, {});
+    auto const computed_font_weight = CSS::StyleComputer::compute_font_weight(font_weight.absolutized(computation_context), {});
+    auto const computed_font_width = CSS::StyleComputer::compute_font_width(font_width.absolutized(computation_context));
+    auto const computed_font_style = CSS::StyleComputer::compute_font_style(font_style.absolutized(computation_context));
+
+    auto const font_size_in_px = computed_font_size->as_length().length().absolute_length_to_px();
+    auto const font_size_in_pt = static_cast<float>(font_size_in_px.to_double() * 0.75);
+    auto const weight = round_to<int>(computed_font_weight->as_number().number());
+    auto const width = static_cast<unsigned>(round_to<int>(computed_font_width->as_percentage().percentage().value()));
+    auto const slope = computed_font_style->as_font_style().to_font_slope();
+
+    Gfx::FontVariationSettings variations;
+    variations.set_weight(weight);
+    variations.set_width(computed_font_width->as_percentage().percentage().value());
+    variations.set_optical_sizing(font_size_in_px.to_double());
+
+    auto font_list = Gfx::FontCascadeList::create();
+    auto append_system_font = [&](FlyString const& family) {
+        if (auto font = Gfx::FontDatabase::the().get(family, font_size_in_pt, weight, width, slope, variations))
+            font_list->add(font.release_nonnull());
+    };
+    auto append_worker_font_faces = [&](FlyString const& family) {
+        // Loaded FontFace objects are owned by the WorkerGlobalScope's
+        // FontFaceSet. Put them ahead of same-named system faces, matching the
+        // normal canvas font source ordering without borrowing a Document.
+        for (auto const& font_face : worker.fonts()->loaded_fonts()) {
+            if (!font_face->family().equals_ignoring_ascii_case(family))
+                continue;
+            auto typeface = font_face->typeface();
+            if (typeface)
+                font_list->add(typeface->font(font_size_in_pt, variations, {}));
+        }
+    };
+
+    for (auto const& family : font_family.as_value_list().values()) {
+        if (family->is_keyword()) {
+            auto generic_font = generic_font_for_keyword(family->to_keyword());
+            if (generic_font.has_value())
+                append_system_font(Platform::FontPlugin::the().generic_font_name(generic_font.value(), weight, slope));
+            continue;
+        }
+
+        auto family_name = CSS::string_from_style_value(family);
+        append_worker_font_faces(family_name);
+        append_system_font(family_name);
+    }
+
+    auto default_family = Platform::FontPlugin::the().generic_font_name(Platform::GenericFont::UiSansSerif, weight, slope);
+    if (font_list->is_empty())
+        append_system_font(default_family);
+    for (auto const& symbol_font : Platform::FontPlugin::the().symbol_font_names())
+        append_system_font(symbol_font);
+
+    if (auto last_resort = Gfx::FontDatabase::the().get(default_family, font_size_in_pt, weight, width, slope, variations))
+        font_list->set_last_resort_font(last_resort.release_nonnull());
+    else if (auto fallback_font = Platform::FontPlugin::the().default_font(font_size_in_pt, variations))
+        font_list->set_last_resort_font(fallback_font.release_nonnull());
+
+    if (font_list->is_empty())
+        return {};
+
+    font_list->set_system_font_fallback_callback([](u32 code_point, Gfx::Font const& reference_font) -> RefPtr<Gfx::Font const> {
+        return Gfx::FontDatabase::the().get_font_for_code_point(
+            code_point,
+            reference_font.point_size(),
+            reference_font.weight(),
+            reference_font.typeface().width(),
+            reference_font.slope());
+    });
+    return font_list;
+}
 
 template<typename IncludingClass, typename CanvasType>
 ByteString CanvasTextDrawingStyles<IncludingClass, CanvasType>::font() const
@@ -147,9 +275,10 @@ void CanvasTextDrawingStyles<IncludingClass, CanvasType>::set_font(StringView fo
                 {},
                 {});
         },
-        [](HTML::WorkerGlobalScope*) -> RefPtr<Gfx::FontCascadeList const> {
-            // FIXME: implement computing the font for HTML::WorkerGlobalScope
-            return {};
+        [&](HTML::WorkerGlobalScope* worker) -> RefPtr<Gfx::FontCascadeList const> {
+            if constexpr (SameAs<CanvasType, HTML::OffscreenCanvas>)
+                return compute_font_for_worker_global_scope(*worker, canvas_element, font_style, font_weight, font_width, font_size, font_family);
+            VERIFY_NOT_REACHED();
         });
 
     if (!font_list)

@@ -74,6 +74,13 @@ public:
     // mutually exclusive with `set_buffered_request_finished_callback`.
     void set_unbuffered_request_callbacks(HeadersReceived, DataReceived, RequestFinished);
 
+    /* Stop and restart delivery from the response descriptor without dropping
+     * bytes already held by the kernel. These calls are valid only for an
+     * unbuffered request and are intended for a consumer that has a bounded
+     * downstream sink. They must run on the Request event-loop thread. */
+    bool pause_receiving();
+    bool resume_receiving();
+
     Function<CertificateAndKey()> on_certificate_requested;
 
     void did_finish(Badge<RequestClient>, u64 total_size, RequestTimingInfo const& timing_info, Optional<NetworkError> const& network_error);
@@ -120,6 +127,7 @@ private:
         u32 total_size { 0 };
         Optional<NetworkError> network_error;
         bool request_done { false };
+        bool receiving_paused { false };
         RequestTimingInfo timing_info;
         Function<void()> on_finish {};
         bool user_finish_called { false };

@@ -987,11 +987,19 @@ void ViewImplementation::initialize_context_menus()
         load(m_context_menu_url);
     });
     m_save_image_action = Action::create("Save Image As..."sv, ActionID::SaveImage, [this]() {
+#if defined(AK_OS_RINOS)
+        /* File Manager is the only component permitted to select the save
+         * destination.  Do not invoke Ladybird's generic path dialog even as
+         * a suggestion: Browser will send only URL and display filename to
+         * the authenticated File Portal service. */
+        Application::the().file_downloader().download_file(m_context_menu_url);
+#else
         auto download_path = Application::the().path_for_downloaded_file(m_context_menu_url.basename());
         if (download_path.is_error())
             return;
 
         Application::the().file_downloader().download_file(m_context_menu_url, download_path.release_value());
+#endif
     });
     m_copy_image_action = Action::create("Copy Image"sv, ActionID::CopyImage, [this]() {
         if (!m_image_context_menu_bitmap.has_value())

@@ -701,6 +701,14 @@ void WebContentClient::did_request_file(u64 page_id, ByteString path, i32 reques
     }
 }
 
+void WebContentClient::did_request_download(u64 page_id, URL::URL url, ByteString suggested_filename)
+{
+    if (auto view = view_for_page_id(page_id); view.has_value()) {
+        if (view->on_request_download)
+            view->on_request_download(url, move(suggested_filename));
+    }
+}
+
 void WebContentClient::did_request_color_picker(u64 page_id, Color current_color)
 {
     if (auto view = view_for_page_id(page_id); view.has_value()) {

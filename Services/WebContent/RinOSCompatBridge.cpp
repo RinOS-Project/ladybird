@@ -20,22 +20,31 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/SystemTheme.h>
 #include <LibMain/Main.h>
+#include <LibRequests/NetworkError.h>
 #include <LibURL/Parser.h>
 #include <LibWeb/Page/InputEvent.h>
 #include <LibWeb/UIEvents/KeyCode.h>
 #include <LibWeb/UIEvents/MouseButton.h>
 #include <LibWebView/Application.h>
+#include <LibWebView/FileDownloader.h>
 #include <LibWebView/HeadlessWebView.h>
 #include <LibWebView/Utilities.h>
 
 #include "webcontent_service_abi.h"
 #include "webcontent_bridge_recovery_policy.h"
 #include "webcontent_service_policy.h"
+#include "rin_socket_abi.h"
+#include "webcontent_peer_identity_policy.h"
+#include "webcontent_network_failure_policy.h"
 
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <poll.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -49,7 +58,6 @@ void* rin_shm_at(int handle, void* addr_hint, u32 prot);
 int rin_shm_dt(int handle, void* addr);
 unsigned long rin_time(void);
 void rin_log(char const* msg);
-int fs_mkdir(char const* path);
 }
 
 class BridgeApplication;
@@ -180,43 +188,109 @@ static bool socket_should_retry()
     return errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK;
 }
 
-static bool send_all(int fd, void const* data, size_t len)
+static bool socket_set_nonblocking(int fd)
+{
+    auto flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0)
+        return false;
+    if ((flags & O_NONBLOCK) != 0)
+        return true;
+    return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+static bool client_rpc_deadline_create(u64* deadline_ms)
+{
+    auto now = monotonic_time_ms();
+    if (deadline_ms == nullptr ||
+        now > UINT64_MAX - static_cast<u64>(RIN_WEBCONTENT_RPC_TIMEOUT_MS)) {
+        errno = ETIMEDOUT;
+        return false;
+    }
+    *deadline_ms = now + static_cast<u64>(RIN_WEBCONTENT_RPC_TIMEOUT_MS);
+    return true;
+}
+
+static bool socket_wait_for_event(int fd, short events, u64 deadline_ms)
+{
+    for (;;) {
+        auto now = monotonic_time_ms();
+        if (now >= deadline_ms) {
+            errno = ETIMEDOUT;
+            return false;
+        }
+
+        pollfd descriptor {};
+        auto remaining_ms = deadline_ms - now;
+        descriptor.fd = fd;
+        descriptor.events = events;
+        auto timeout_ms = remaining_ms > static_cast<u64>(INT_MAX)
+            ? INT_MAX
+            : static_cast<int>(remaining_ms);
+        auto rc = ::poll(&descriptor, 1, timeout_ms);
+        if (rc > 0) {
+            if ((descriptor.revents & events) != 0)
+                return true;
+            if ((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+                errno = ECONNRESET;
+                return false;
+            }
+            errno = EPROTO;
+            return false;
+        }
+        if (rc == 0) {
+            errno = ETIMEDOUT;
+            return false;
+        }
+        if (errno != EINTR)
+            return false;
+    }
+}
+
+static bool send_all(int fd, void const* data, size_t len, u64 deadline_ms)
 {
     auto const* bytes = reinterpret_cast<u8 const*>(data);
     size_t offset = 0;
     while (offset < len) {
-        auto rc = ::send(fd, bytes + offset, len - offset, 0);
+        if (!socket_wait_for_event(fd, POLLOUT, deadline_ms))
+            return false;
+        auto rc = ::send(fd, bytes + offset, len - offset, MSG_NOSIGNAL);
         if (rc < 0) {
-            if (socket_should_retry())
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
                 continue;
             return false;
         }
-        if (rc == 0)
+        if (rc == 0) {
+            errno = EPIPE;
             return false;
+        }
         offset += static_cast<size_t>(rc);
     }
     return true;
 }
 
-static bool recv_all(int fd, void* data, size_t len)
+static bool recv_all(int fd, void* data, size_t len, u64 deadline_ms)
 {
     auto* bytes = reinterpret_cast<u8*>(data);
     size_t offset = 0;
     while (offset < len) {
+        if (!socket_wait_for_event(fd, POLLIN, deadline_ms))
+            return false;
         auto rc = ::recv(fd, bytes + offset, len - offset, 0);
         if (rc < 0) {
-            if (socket_should_retry())
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
                 continue;
             return false;
         }
-        if (rc == 0)
+        if (rc == 0) {
+            errno = ECONNRESET;
             return false;
+        }
         offset += static_cast<size_t>(rc);
     }
     return true;
 }
 
-static bool send_message(int fd, u32 command, i32 status, u32 page_id, void const* payload, u32 payload_len)
+static bool send_message(int fd, u32 command, i32 status, u32 page_id, void const* payload, u32 payload_len, u64 deadline_ms)
 {
     RinWebContentMsgHeader header {};
     header.magic = RIN_WEBCONTENT_MAGIC;
@@ -226,8 +300,8 @@ static bool send_message(int fd, u32 command, i32 status, u32 page_id, void cons
     header.page_id = page_id;
     header.payload_len = payload_len;
 
-    return send_all(fd, &header, sizeof(header))
-        && (payload_len == 0 || send_all(fd, payload, payload_len));
+    return send_all(fd, &header, sizeof(header), deadline_ms)
+        && (payload_len == 0 || send_all(fd, payload, payload_len, deadline_ms));
 }
 
 class BridgeApplication final : public WebView::Application {
@@ -380,6 +454,9 @@ struct PageSession {
             pending_url = serialized;
             crashed = false;
             crash_reason = {};
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_NONE;
+            download_status_revision = 0;
+            download_status_timestamp_ms = 0;
             waiting_for_first_paint_after_load_finish = false;
             metrics_dirty = true;
             // P5-2: load 開始時点で DNS→HTTP 段階に入ると仮定。
@@ -412,6 +489,7 @@ struct PageSession {
                 mark_dirty();
                 return;
             }
+            active_navigation_request_id = 0;
             RinWebContentBridgeLoadFinishPlanV1 plan {};
             VERIFY(rin_webcontent_bridge_load_finish_plan_v1(
                 has_first_paint_for_active_navigation() ? 1 : 0, &plan));
@@ -441,6 +519,31 @@ struct PageSession {
             mark_dirty();
         };
 
+        view->on_network_request_started = [this](u64 request_id, URL::URL const& url, ByteString const&, Vector<HTTP::Header> const&, ByteBuffer, Optional<String> initiator_type) {
+            auto serialized = remap_markup_internal_url(url.serialize().to_byte_string());
+            bool targets_pending_document = serialized == pending_url && !initiator_type.has_value();
+            if (!rin_webcontent_network_request_tracks_navigation(
+                    request_id, active_navigation_request_id, loading ? 1 : 0,
+                    targets_pending_document ? 1 : 0)) {
+                return;
+            }
+            active_navigation_request_id = request_id;
+        };
+
+        view->on_network_request_finished = [this](u64 request_id, u64, Requests::RequestTimingInfo const&, Optional<Requests::NetworkError> const& network_error) {
+            if (!rin_webcontent_network_failure_ends_navigation(
+                    request_id, active_navigation_request_id, loading ? 1 : 0,
+                    network_error.has_value() ? 1 : 0)) {
+                return;
+            }
+
+            auto reason = ByteString::formatted(
+                "Network request failed: {}",
+                Requests::network_error_to_string(*network_error));
+            active_navigation_request_id = 0;
+            fail_pending_load_request(reason.view());
+        };
+
         view->on_url_change = [this](URL::URL const& url) {
             auto serialized = remap_markup_internal_url(url.serialize().to_byte_string());
             if (loading)
@@ -454,6 +557,19 @@ struct PageSession {
             auto utf8 = new_title.to_utf8();
             title = utf8.is_empty() ? committed_url : utf8.to_byte_string();
             mark_dirty();
+        };
+
+        view->on_request_download = [page_id = page_id](URL::URL const& url, ByteString suggested_filename) {
+            // The BridgeApplication is the browser-process side of the
+            // isolated WebContent pair. FileDownloader owns authenticated
+            // request transport and then asks File Manager for a write-only
+            // destination; the renderer supplied neither file access nor a
+            // handle it can retain.
+            WebView::Application::the().file_downloader().download_file(
+                url, move(suggested_filename), [page_id](WebView::FileDownloader::DownloadFailure failure) {
+                    if (auto* page = find_page(page_id))
+                        page->note_download_failure(failure);
+                });
         };
 
         view->on_resource_status_change = [this](i32 count_waiting) {
@@ -542,6 +658,7 @@ struct PageSession {
                 pending_url = committed_url;
             if (plan.clear_first_paint_wait)
                 waiting_for_first_paint_after_load_finish = false;
+            active_navigation_request_id = 0;
             clear_pending_load_request();
             clear_first_frame_wait();
             auto message = ByteString::formatted(
@@ -573,6 +690,53 @@ struct PageSession {
     {
         dirty = true;
         ++state_revision;
+    }
+
+    void note_download_failure(WebView::FileDownloader::DownloadFailure failure)
+    {
+        switch (failure) {
+        case WebView::FileDownloader::DownloadFailure::Cancelled:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_CANCELLED;
+            break;
+        case WebView::FileDownloader::DownloadFailure::UnsafeURL:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_UNSAFE_URL;
+            break;
+        case WebView::FileDownloader::DownloadFailure::UnsafeFilename:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_UNSAFE_FILENAME;
+            break;
+        case WebView::FileDownloader::DownloadFailure::SizeRejected:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_SIZE_REJECTED;
+            break;
+        case WebView::FileDownloader::DownloadFailure::FileManagerUnavailable:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_FILE_MANAGER_UNAVAILABLE;
+            break;
+        case WebView::FileDownloader::DownloadFailure::DurabilityFailed:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_DURABILITY_FAILED;
+            break;
+        case WebView::FileDownloader::DownloadFailure::TLSFailed:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_TLS_FAILED;
+            break;
+        case WebView::FileDownloader::DownloadFailure::NetworkFailed:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_NETWORK_FAILED;
+            break;
+        case WebView::FileDownloader::DownloadFailure::HttpFailed:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_HTTP_FAILED;
+            break;
+        case WebView::FileDownloader::DownloadFailure::ResponseInvalid:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_RESPONSE_INVALID;
+            break;
+        case WebView::FileDownloader::DownloadFailure::MemoryFailed:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_MEMORY_FAILED;
+            break;
+        case WebView::FileDownloader::DownloadFailure::TransferFailed:
+            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_TRANSFER_FAILED;
+            break;
+        }
+        ++download_status_revision;
+        if (download_status_revision == 0)
+            ++download_status_revision;
+        download_status_timestamp_ms = monotonic_time_ms();
+        mark_dirty();
     }
 
     void close_paint_shm()
@@ -678,6 +842,7 @@ struct PageSession {
         crash_reason = ByteString { reason };
         metrics_dirty = true;
         waiting_for_first_paint_after_load_finish = false;
+        active_navigation_request_id = 0;
         clear_first_frame_wait();
         clear_pending_load_request();
 
@@ -1031,6 +1196,7 @@ struct PageSession {
     {
         crashed = false;
         crash_reason = {};
+        active_navigation_request_id = 0;
         builtin_shell_url = {};
         text_input_enabled = false;
         // Navigation has been accepted even if the cold WebContent view has not
@@ -1058,6 +1224,7 @@ struct PageSession {
     {
         crashed = false;
         crash_reason = {};
+        active_navigation_request_id = 0;
         text_input_enabled = false;
         auto shell_url = base_url.is_empty() ? ByteString { "about:blank" } : base_url;
         builtin_shell_url = is_browser_builtin_url(shell_url) ? shell_url : ByteString {};
@@ -1314,6 +1481,8 @@ struct PageSession {
             state.flags |= RIN_WEBCONTENT_STATE_FLAG_DIRTY;
         if (text_input_enabled)
             state.flags |= RIN_WEBCONTENT_STATE_FLAG_TEXT_INPUT_ENABLED;
+        if (download_status != RIN_WEBCONTENT_DOWNLOAD_STATUS_NONE)
+            state.flags |= RIN_WEBCONTENT_STATE_FLAG_HAS_DOWNLOAD_STATUS;
 
         state.progress_percent = static_cast<u32>(max(progress_percent, 0));
         state.state_revision = state_revision;
@@ -1352,6 +1521,9 @@ struct PageSession {
         state.text_input_y = text_input_y;
         state.text_input_width = text_input_width;
         state.text_input_height = text_input_height;
+        state.download_status = download_status;
+        state.download_status_revision = download_status_revision;
+        state.download_status_timestamp_ms = download_status_timestamp_ms;
     }
 
     u32 page_id { 0 };
@@ -1380,6 +1552,9 @@ struct PageSession {
     int load_resources_total { 0 };
     ByteString load_current_url_str;
     bool load_suspected_stall { false };
+    u32 download_status { RIN_WEBCONTENT_DOWNLOAD_STATUS_NONE };
+    u32 download_status_revision { 0 };
+    u64 download_status_timestamp_ms { 0 };
     int scroll_x { 0 };
     int scroll_y { 0 };
     int max_scroll_x { 0 };
@@ -1402,6 +1577,7 @@ struct PageSession {
     u64 last_first_frame_kick_ms { 0 };
     bool logged_missing_visible_bitmap { false };
     bool waiting_for_first_paint_after_load_finish { false };
+    u64 active_navigation_request_id { 0 };
     PendingLoadKind pending_load_kind { PendingLoadKind::None };
     ByteString pending_load_target_url;
     ByteString pending_load_markup;
@@ -1537,17 +1713,17 @@ static int handle_scroll(PageSession& page, ReadonlyBytes payload)
     return page.scroll_to(request.x, request.y) ? 0 : -EIO;
 }
 
-static int handle_get_state(PageSession& page, int client_fd, u32 command)
+static int handle_get_state(PageSession& page, int client_fd, u32 command, u64 deadline_ms)
 {
     page.drain_pending_bridge_events(false);
     RinWebContentPageState state {};
     page.fill_state(state);
-    auto sent = send_message(client_fd, command, 0, page.page_id, &state, sizeof(state));
+    auto sent = send_message(client_fd, command, 0, page.page_id, &state, sizeof(state), deadline_ms);
     page.dirty = false;
     return sent ? 1 : -EIO;
 }
 
-static int handle_paint(PageSession& page, int client_fd)
+static int handle_paint(PageSession& page, int client_fd, u64 deadline_ms)
 {
     page.drain_pending_bridge_events(true);
     page.refresh_metrics();
@@ -1585,7 +1761,7 @@ static int handle_paint(PageSession& page, int client_fd)
     response.pixel_region.size = static_cast<u32>(total_bytes);
     copy_c_string(response.pixel_region.name, sizeof(response.pixel_region.name), page.paint_shm_name);
 
-    return send_message(client_fd, RIN_WEBCONTENT_CMD_PAINT_V1, 0, page.page_id, &response, sizeof(response))
+    return send_message(client_fd, RIN_WEBCONTENT_CMD_PAINT_V1, 0, page.page_id, &response, sizeof(response), deadline_ms)
         ? 1
         : -EIO;
 }
@@ -1593,79 +1769,120 @@ static int handle_paint(PageSession& page, int client_fd)
 static void handle_client(int client_fd)
 {
     RinWebContentMsgHeader header {};
-    if (!recv_all(client_fd, &header, sizeof(header)))
+    u64 deadline_ms = 0;
+    if (!client_rpc_deadline_create(&deadline_ms) ||
+        !recv_all(client_fd, &header, sizeof(header), deadline_ms))
         return;
-    if (!rin_webcontent_service_request_header_valid(&header))
+    if (!rin_webcontent_service_request_payload_length_valid(&header))
         return;
-
-    if (header.command == RIN_WEBCONTENT_CMD_GET_CAPABILITIES_V1) {
-        RinWebContentCapabilitiesV1 capabilities {};
-        if (!rin_webcontent_service_capabilities_build(&header, &capabilities)) {
-            (void)send_message(client_fd, header.command, -EINVAL, header.page_id, nullptr, 0);
-            return;
-        }
-        (void)send_message(client_fd, header.command, 0, 0, &capabilities, sizeof(capabilities));
-        return;
-    }
 
     Vector<u8> payload;
     if (header.payload_len > 0) {
         payload.resize(header.payload_len);
-        if (!recv_all(client_fd, payload.data(), payload.size()))
+        if (!recv_all(client_fd, payload.data(), payload.size(), deadline_ms))
             return;
     }
+    if (!rin_webcontent_service_request_valid(
+            &header, payload.is_empty() ? nullptr : payload.data()))
+        return;
     ReadonlyBytes payload_bytes { payload.data(), payload.size() };
+
+    if (header.command == RIN_WEBCONTENT_CMD_GET_CAPABILITIES_V1) {
+        RinWebContentCapabilitiesV1 capabilities {};
+        if (!rin_webcontent_service_capabilities_build(&header, &capabilities)) {
+            (void)send_message(client_fd, header.command, -EINVAL, header.page_id, nullptr, 0, deadline_ms);
+            return;
+        }
+        (void)send_message(client_fd, header.command, 0, 0, &capabilities, sizeof(capabilities), deadline_ms);
+        return;
+    }
 
     if (header.command == RIN_WEBCONTENT_CMD_CREATE_PAGE_V1) {
         auto rc = handle_create_page(header.page_id, payload_bytes);
-        (void)send_message(client_fd, header.command, rc, header.page_id, nullptr, 0);
+        (void)send_message(client_fd, header.command, rc, header.page_id, nullptr, 0, deadline_ms);
         return;
     }
 
     if (header.command == RIN_WEBCONTENT_CMD_DESTROY_PAGE_V1) {
         destroy_page(header.page_id);
-        (void)send_message(client_fd, header.command, 0, header.page_id, nullptr, 0);
+        (void)send_message(client_fd, header.command, 0, header.page_id, nullptr, 0, deadline_ms);
         return;
     }
 
     auto* page = find_page(header.page_id);
     if (!page) {
-        (void)send_message(client_fd, header.command, -ENOENT, header.page_id, nullptr, 0);
+        (void)send_message(client_fd, header.command, -ENOENT, header.page_id, nullptr, 0, deadline_ms);
         return;
     }
 
     switch (header.command) {
     case RIN_WEBCONTENT_CMD_NAVIGATE_V1:
-        (void)send_message(client_fd, header.command, handle_navigate(*page, payload_bytes), header.page_id, nullptr, 0);
+        (void)send_message(client_fd, header.command, handle_navigate(*page, payload_bytes), header.page_id, nullptr, 0, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_LOAD_MARKUP_V1:
-        (void)send_message(client_fd, header.command, handle_load_markup(*page, payload_bytes), header.page_id, nullptr, 0);
+        (void)send_message(client_fd, header.command, handle_load_markup(*page, payload_bytes), header.page_id, nullptr, 0, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_RESIZE_V1:
-        (void)send_message(client_fd, header.command, handle_resize(*page, payload_bytes), header.page_id, nullptr, 0);
+        (void)send_message(client_fd, header.command, handle_resize(*page, payload_bytes), header.page_id, nullptr, 0, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_PUMP_EVENTS_V1:
-        (void)handle_get_state(*page, client_fd, header.command);
+        (void)handle_get_state(*page, client_fd, header.command, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_PAINT_V1:
-        (void)handle_paint(*page, client_fd);
+        (void)handle_paint(*page, client_fd, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_DISPATCH_POINTER_V1:
-        (void)send_message(client_fd, header.command, handle_pointer(*page, payload_bytes), header.page_id, nullptr, 0);
+        (void)send_message(client_fd, header.command, handle_pointer(*page, payload_bytes), header.page_id, nullptr, 0, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_DISPATCH_KEY_OR_TEXT_V1:
-        (void)send_message(client_fd, header.command, handle_key_or_text(*page, payload_bytes), header.page_id, nullptr, 0);
+        (void)send_message(client_fd, header.command, handle_key_or_text(*page, payload_bytes), header.page_id, nullptr, 0, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_SCROLL_TO_V1:
-        (void)send_message(client_fd, header.command, handle_scroll(*page, payload_bytes), header.page_id, nullptr, 0);
+        (void)send_message(client_fd, header.command, handle_scroll(*page, payload_bytes), header.page_id, nullptr, 0, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_GET_PAGE_STATE_V1:
-        (void)handle_get_state(*page, client_fd, header.command);
+        (void)handle_get_state(*page, client_fd, header.command, deadline_ms);
         return;
     default:
-        (void)send_message(client_fd, header.command, -EINVAL, header.page_id, nullptr, 0);
+        (void)send_message(client_fd, header.command, -EINVAL, header.page_id, nullptr, 0, deadline_ms);
         return;
     }
+}
+
+static bool client_peer_authenticated(int client_fd)
+{
+    rin_unix_peer_app_identity_v1 identity {};
+    socklen_t identity_size = sizeof(identity);
+
+    if (client_fd < 0) {
+        errno = EINVAL;
+        return false;
+    }
+    if (::getsockopt(client_fd, SOL_SOCKET, SO_RIN_UNIX_PEER_APP_IDENTITY,
+            &identity, &identity_size) != 0) {
+        return false;
+    }
+    if (identity_size != sizeof(identity) ||
+        !rin_webcontent_authenticated_client_peer_valid(&identity)) {
+        errno = EPROTO;
+        return false;
+    }
+    return true;
+}
+
+static bool ensure_system_runtime_directory(char const* path)
+{
+    struct stat status {};
+
+    if (::mkdir(path, 0755) < 0 && errno != EEXIST)
+        return false;
+    if (::stat(path, &status) < 0 || !S_ISDIR(status.st_mode) ||
+        status.st_uid != 0 ||
+        (status.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        errno = EPERM;
+        return false;
+    }
+    return true;
 }
 
 static ErrorOr<int> run_bridge()
@@ -1679,12 +1896,19 @@ static ErrorOr<int> run_bridge()
         .strings = argument_strings.span(),
     };
 
-    fs_mkdir("/tmp");
+    if (!ensure_system_runtime_directory("/run") ||
+        !ensure_system_runtime_directory("/run/rin"))
+        return Error::from_errno(errno);
     unlink(RIN_WEBCONTENT_SOCKET_PATH);
 
     int server_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd < 0)
         return Error::from_errno(errno);
+    if (!socket_set_nonblocking(server_fd)) {
+        auto socket_error = Error::from_errno(errno);
+        ::close(server_fd);
+        return socket_error;
+    }
 
     auto cleanup_server_socket = [&] {
         s_server_notifier = nullptr;
@@ -1705,12 +1929,14 @@ static ErrorOr<int> run_bridge()
         return bind_error;
     }
 
-#ifdef SO_RIN_UNIX_PUBLISH_SERVICE
     {
         int one = 1;
-        (void)::setsockopt(server_fd, SOL_SOCKET, SO_RIN_UNIX_PUBLISH_SERVICE, &one, sizeof(one));
+        if (::setsockopt(server_fd, SOL_SOCKET, SO_RIN_UNIX_PUBLISH_SERVICE, &one, sizeof(one)) < 0) {
+            auto publish_error = Error::from_errno(errno);
+            cleanup_server_socket();
+            return publish_error;
+        }
     }
-#endif
 
     if (::listen(server_fd, 16) < 0) {
         auto listen_error = Error::from_errno(errno);
@@ -1773,6 +1999,14 @@ static ErrorOr<int> run_bridge()
                 return;
             }
 
+            if (!socket_set_nonblocking(client_fd)) {
+                ::close(client_fd);
+                return;
+            }
+            if (!client_peer_authenticated(client_fd)) {
+                ::close(client_fd);
+                return;
+            }
             handle_client(client_fd);
             ::close(client_fd);
             return;

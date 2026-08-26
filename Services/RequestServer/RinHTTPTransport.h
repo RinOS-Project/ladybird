@@ -94,7 +94,7 @@ public:
 private:
     RinHTTPFetch();
 
-    void send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers, ReadonlyBytes request_body);
+    ErrorOr<void> send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers, ReadonlyBytes request_body);
     void on_socket_ready_to_read();
     void process_line_buffered(ReadonlyBytes data);
     void process_body_data(ReadonlyBytes data);

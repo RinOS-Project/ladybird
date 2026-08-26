@@ -31,6 +31,7 @@
 #    include <netinet/in.h>
 #    include <LibThreading/Mutex.h>
 #    include <unistd.h>
+#    include "rinos_http_transport_policy.h"
 static void rs_serial(char const* msg) { ::write(2, msg, __builtin_strlen(msg)); }
 #else
 static void rs_serial(char const*) { }
@@ -54,6 +55,20 @@ static HashMap<ByteString, RinDNSCacheEntry> s_rinos_dns_cache;
 static Threading::Mutex s_rinos_dns_cache_mutex;
 static constexpr i64 s_rinos_dns_cache_ttl_ms = 60'000;
 static constexpr size_t s_rinos_dns_cache_max_entries = 64;
+
+static Requests::NetworkError rinos_transport_result_to_network_error(
+    int result_code)
+{
+    switch (rin_http_transport_failure_classify(result_code)) {
+    case RIN_HTTP_TRANSPORT_FAILURE_TIMEOUT:
+        return Requests::NetworkError::TimeoutReached;
+    case RIN_HTTP_TRANSPORT_FAILURE_INCOMPLETE_RESPONSE:
+        return Requests::NetworkError::IncompleteContent;
+    case RIN_HTTP_TRANSPORT_FAILURE_UNKNOWN:
+        return Requests::NetworkError::Unknown;
+    }
+    VERIFY_NOT_REACHED();
+}
 
 static ErrorOr<NonnullRefPtr<DNS::LookupResult>> resolve_host_via_rinos(ByteString const& host)
 {
@@ -874,7 +889,8 @@ void Request::handle_complete_state()
         VERIFY(m_rin_result_code.has_value());
 
         if (*m_rin_result_code != 0) {
-            m_network_error = Requests::NetworkError::Unknown;
+            m_network_error =
+                rinos_transport_result_to_network_error(*m_rin_result_code);
             transition_to_state(State::Error);
             return;
         }

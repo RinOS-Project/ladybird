@@ -205,6 +205,9 @@ public:
     void remove_navigation_listener(u64 listener_id);
 
     Function<void(ByteString const& path, i32)> on_request_file;
+    // Browser-process download handoff. The filename is a display suggestion
+    // from untrusted web content, never a filesystem path.
+    Function<void(URL::URL const&, ByteString)> on_request_download;
     Function<void(Gfx::Bitmap const&)> on_favicon_change;
     Function<void(Gfx::Cursor const&)> on_cursor_change;
     Function<void(Gfx::IntPoint, ByteString const&)> on_request_tooltip_override;

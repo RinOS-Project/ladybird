@@ -24,9 +24,11 @@ public:
     };
 
     struct DrawingBufferOptions {
+        bool alpha;
         bool depth;
         bool stencil;
         bool antialias;
+        bool premultiplied_alpha;
     };
 
 #ifdef AK_OS_RINOS

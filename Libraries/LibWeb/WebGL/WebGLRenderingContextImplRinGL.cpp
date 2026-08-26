@@ -115,13 +115,20 @@ bool WebGLRenderingContextImpl::make_rin_gl_current()
     if (m_context->rin_gl_is_ready())
         return true;
 
-    if (m_context->is_context_lost())
+    if (m_context->is_context_lost()) {
         report_context_loss();
+        // WebGL exposes CONTEXT_LOST_WEBGL exactly once through getError().
+        // OpenGLContext owns that one pending error when it retires the RinGL
+        // context; fabricating another error here would make every later
+        // getError() call report a loss instead of NO_ERROR. Commands issued
+        // while lost remain no-ops through this false return.
+        return false;
+    }
 
-    // `rin_gl_get_error()` retains the exact allocation/loss reason while the
+    // `rin_gl_get_error()` retains the exact realization reason while the
     // backend surface is absent. `set_error()` consumes that reason before
-    // considering the fallback supplied here.
-    set_error(m_context->is_context_lost() ? RINGL_CONTEXT_LOST_WEBGL : RINGL_OUT_OF_MEMORY);
+    // considering this normal allocation fallback.
+    set_error(RINGL_OUT_OF_MEMORY);
     return false;
 }
 
@@ -2354,7 +2361,7 @@ void WebGLRenderingContextImpl::uniform1i(GC::Root<WebGLUniformLocation> locatio
         return;
 
     WebIDL::Long location_handle;
-    // WebGL permits uniform1i for either a scalar int or sampler uniform.
+    // WebGL permits uniform1i for scalar int, bool, or sampler uniforms.
     // RinGL performs the final narrow type check while selecting its linked
     // program-owned uniform storage.
     if (!validate_rin_gl_uniform_location(location, 0, location_handle))
@@ -2407,7 +2414,7 @@ void WebGLRenderingContextImpl::uniform2i(GC::Root<WebGLUniformLocation> locatio
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC2, location_handle, RINGL_BOOL_VEC2))
         return;
     ringl_uniform_2i(location_handle, x, y);
 }
@@ -2417,7 +2424,7 @@ void WebGLRenderingContextImpl::uniform3i(GC::Root<WebGLUniformLocation> locatio
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC3, location_handle, RINGL_BOOL_VEC3))
         return;
     ringl_uniform_3i(location_handle, x, y, z);
 }
@@ -2427,7 +2434,7 @@ void WebGLRenderingContextImpl::uniform4i(GC::Root<WebGLUniformLocation> locatio
     if (!make_rin_gl_current() || !location)
         return;
     WebIDL::Long location_handle;
-    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle))
+    if (!validate_rin_gl_uniform_location(location, RINGL_INT_VEC4, location_handle, RINGL_BOOL_VEC4))
         return;
     ringl_uniform_4i(location_handle, x, y, z, w);
 }
@@ -2685,6 +2692,13 @@ void WebGLRenderingContextImpl::pixel_storei(WebIDL::UnsignedLong pname, WebIDL:
         m_unpack_premultiply_alpha = param != 0;
         return;
     case UNPACK_COLORSPACE_CONVERSION_WEBGL:
+        // This WebGL pixel-store parameter has exactly two legal values.
+        // Do not retain an arbitrary value that later makes TexImageSource
+        // conversion silently depend on a non-WebGL state.
+        if (param != 0 && param != BROWSER_DEFAULT_WEBGL) {
+            set_error(RINGL_INVALID_VALUE);
+            return;
+        }
         m_unpack_colorspace_conversion = param;
         return;
     default:

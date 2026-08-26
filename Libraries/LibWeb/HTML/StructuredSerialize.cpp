@@ -1160,6 +1160,9 @@ static WebIDL::ExceptionOr<GC::Ref<Bindings::PlatformObject>> create_transferred
         return image_bitmap;
     }
     case TransferType::OffscreenCanvas: {
+        // The receiver fills in the transferred bitmap after it has validated
+        // the record. Constructing an empty canvas avoids allocating any
+        // attacker-controlled dimensions before those checks run.
         auto offscreen_canvas = OffscreenCanvas::create(target_realm, 0, 0);
         TRY(offscreen_canvas->transfer_receiving_steps(decoder));
         return offscreen_canvas;

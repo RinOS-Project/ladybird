@@ -11,6 +11,8 @@
 #include <RequestServer/Resolver.h>
 #include <RequestServer/RinHTTPTransport.h>
 
+#include "rinos_http_transport_policy.h"
+
 namespace RequestServer {
 
 // ============================================================
@@ -193,12 +195,12 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
 
     // Send request
     fetch->m_request_start_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
-    fetch->send_request(url, method, request_headers, request_body);
+    TRY(fetch->send_request(url, method, request_headers, request_body));
 
     // 接続確立タイマー: 相手のデータが届くまでを監視。最初の read で停止する。
     if (connect_timeout_seconds > 0) {
         fetch->m_timeout_timer = Core::Timer::create_single_shot(static_cast<int>(connect_timeout_seconds * 1000), [raw = fetch.ptr()] {
-            raw->finish_with_error(28); // CURLE_OPERATION_TIMEDOUT
+            raw->finish_with_error(RIN_HTTP_TRANSPORT_RESULT_TIMEOUT);
         });
         fetch->m_timeout_timer->start();
     }
@@ -207,8 +209,8 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     // 60 秒の連続無通信で切断する。データが流れるたびに restart する。
     // ハンドシェイク直後にサーバが黙るケースにも備えて create() 時点で start しておく。
     fetch->m_idle_timer = Core::Timer::create_single_shot(60 * 1000, [raw = fetch.ptr()] {
-        dbgln("[RinHTTP] idle_timer fired -> finish_with_error(28)");
-        raw->finish_with_error(28); // CURLE_OPERATION_TIMEDOUT
+        dbgln("[RinHTTP] idle_timer fired -> transport timeout");
+        raw->finish_with_error(RIN_HTTP_TRANSPORT_RESULT_TIMEOUT);
     });
     fetch->m_idle_timer->start();
     dbgln("[RinHTTP] fetch created, idle_timer armed (60s)");
@@ -221,7 +223,7 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     return fetch;
 }
 
-void RinHTTPFetch::send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers, ReadonlyBytes request_body)
+ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers, ReadonlyBytes request_body)
 {
     StringBuilder builder;
 
@@ -256,10 +258,18 @@ void RinHTTPFetch::send_request(URL::URL const& url, ByteString const& method, H
     builder.append("\r\n"sv);
 
     auto header_bytes = builder.to_byte_string();
-    (void)m_socket->write_until_depleted(header_bytes.bytes());
+    if (auto result = m_socket->write_until_depleted(header_bytes.bytes()); result.is_error()) {
+        dbgln("[RinHTTP] request header write failed: {}", result.error());
+        return result.release_error();
+    }
 
-    if (!request_body.is_empty())
-        (void)m_socket->write_until_depleted(request_body);
+    if (!request_body.is_empty()) {
+        if (auto result = m_socket->write_until_depleted(request_body); result.is_error()) {
+            dbgln("[RinHTTP] request body write failed: {}", result.error());
+            return result.release_error();
+        }
+    }
+    return {};
 }
 
 void RinHTTPFetch::on_socket_ready_to_read()
@@ -284,7 +294,7 @@ void RinHTTPFetch::on_socket_ready_to_read()
             finish_success();
             return;
         }
-        finish_with_error(56); // CURLE_RECV_ERROR
+        finish_with_error(RIN_HTTP_TRANSPORT_RESULT_INCOMPLETE_RESPONSE);
         return;
     }
 
@@ -309,7 +319,10 @@ void RinHTTPFetch::on_socket_ready_to_read()
             auto err = result.release_error();
             dbgln("[RinHTTP] read_some error at iter={}: {} (state={})",
                 iterations, err, (int)m_response_state);
-            break;
+            if (err.is_errno() && rin_http_transport_errno_is_retryable(err.code()))
+                break;
+            finish_with_error(RIN_HTTP_TRANSPORT_RESULT_INCOMPLETE_RESPONSE);
+            return;
         }
 
         auto bytes = result.value();
@@ -341,6 +354,11 @@ void RinHTTPFetch::process_line_buffered(ReadonlyBytes data)
     size_t offset = 0;
     while (offset < data.size()) {
         auto byte = data[offset++];
+        if (!rin_http_transport_line_byte_fits(m_line_buffer.size())) {
+            dbgln("[RinHTTP] response line exceeds limit");
+            finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+            return;
+        }
         m_line_buffer.append(byte);
 
         // Check for \r\n at the end of line buffer
@@ -428,6 +446,14 @@ void RinHTTPFetch::process_body_data(ReadonlyBytes data)
     if (data.is_empty())
         return;
 
+    if (m_has_content_length &&
+        !rin_http_transport_body_append_is_within_declared_length(
+            m_body_bytes_received, data.size(), m_content_length)) {
+        dbgln("[RinHTTP] response body exceeds declared Content-Length");
+        finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+        return;
+    }
+
     m_body_bytes_received += data.size();
 
     if (on_data_received)
@@ -444,6 +470,11 @@ void RinHTTPFetch::process_chunked_data(ReadonlyBytes data)
         if (m_response_state == ResponseState::ChunkedSize) {
             // Read chunk size line character by character
             auto byte = data[offset++];
+            if (!rin_http_transport_line_byte_fits(m_line_buffer.size())) {
+                dbgln("[RinHTTP] chunk-size line exceeds limit");
+                finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+                return;
+            }
             m_line_buffer.append(byte);
             if (m_line_buffer.size() >= 2 && m_line_buffer[m_line_buffer.size() - 2] == '\r' && m_line_buffer[m_line_buffer.size() - 1] == '\n') {
                 auto line = StringView { m_line_buffer.data(), m_line_buffer.size() - 2 };
@@ -451,16 +482,22 @@ void RinHTTPFetch::process_chunked_data(ReadonlyBytes data)
                 auto semicolon = line.find(';');
                 auto size_str = semicolon.has_value() ? line.substring_view(0, *semicolon) : line;
 
-                m_current_chunk_remaining = 0;
-                for (auto ch : size_str) {
-                    m_current_chunk_remaining <<= 4;
-                    if (ch >= '0' && ch <= '9')
-                        m_current_chunk_remaining += ch - '0';
-                    else if (ch >= 'a' && ch <= 'f')
-                        m_current_chunk_remaining += ch - 'a' + 10;
-                    else if (ch >= 'A' && ch <= 'F')
-                        m_current_chunk_remaining += ch - 'A' + 10;
+                if (size_str.is_empty()) {
+                    dbgln("[RinHTTP] empty chunk size");
+                    finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+                    return;
                 }
+
+                size_t chunk_size = 0;
+                for (auto ch : size_str) {
+                    if (!rin_http_transport_hex_size_append(chunk_size, ch,
+                            &chunk_size)) {
+                        dbgln("[RinHTTP] invalid or overflowing chunk size");
+                        finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+                        return;
+                    }
+                }
+                m_current_chunk_remaining = chunk_size;
 
                 m_line_buffer.clear();
 
@@ -493,7 +530,7 @@ void RinHTTPFetch::process_chunked_data(ReadonlyBytes data)
             while (offset < data.size() && m_chunk_data_terminator_bytes < sizeof(expected_terminator)) {
                 if (data[offset++] != expected_terminator[m_chunk_data_terminator_bytes]) {
                     dbgln("[RinHTTP] invalid chunk data terminator");
-                    finish_with_error(8); // CURLE_WEIRD_SERVER_REPLY
+                    finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
                     return;
                 }
                 ++m_chunk_data_terminator_bytes;
@@ -506,6 +543,11 @@ void RinHTTPFetch::process_chunked_data(ReadonlyBytes data)
         } else if (m_response_state == ResponseState::ChunkedTrailer) {
             // After the 0-length chunk, read trailer headers until we see an empty line (\r\n)
             auto byte = data[offset++];
+            if (!rin_http_transport_line_byte_fits(m_line_buffer.size())) {
+                dbgln("[RinHTTP] chunk trailer line exceeds limit");
+                finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+                return;
+            }
             m_line_buffer.append(byte);
             if (m_line_buffer.size() >= 2 && m_line_buffer[m_line_buffer.size() - 2] == '\r' && m_line_buffer[m_line_buffer.size() - 1] == '\n') {
                 auto line = StringView { m_line_buffer.data(), m_line_buffer.size() - 2 };

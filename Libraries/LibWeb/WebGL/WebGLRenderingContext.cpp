@@ -96,9 +96,11 @@ JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::cre
 #endif
 
     OpenGLContext::DrawingBufferOptions context_options {
+        .alpha = actual_context_attributes.alpha,
         .depth = actual_context_attributes.depth,
         .stencil = actual_context_attributes.stencil,
         .antialias = actual_context_attributes.antialias,
+        .premultiplied_alpha = actual_context_attributes.premultiplied_alpha,
     };
 #ifdef AK_OS_RINOS
     auto context = OpenGLContext::create(OpenGLContext::WebGLVersion::WebGL1, context_options);
@@ -291,9 +293,11 @@ void WebGLRenderingContext::queue_context_restore() const
 void WebGLRenderingContext::restore_context_after_loss()
 {
     OpenGLContext::DrawingBufferOptions context_options {
+        .alpha = m_actual_context_parameters.alpha,
         .depth = m_actual_context_parameters.depth,
         .stencil = m_actual_context_parameters.stencil,
         .antialias = m_actual_context_parameters.antialias,
+        .premultiplied_alpha = m_actual_context_parameters.premultiplied_alpha,
     };
     auto replacement = OpenGLContext::create(OpenGLContext::WebGLVersion::WebGL1, context_options);
 

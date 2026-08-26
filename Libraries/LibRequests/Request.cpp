@@ -55,6 +55,8 @@ void Request::set_request_fd(Badge<Requests::RequestClient>, int fd)
     auto read_stream = MUST(ReadStream::create(fd));
     auto notifier = read_stream->notifier();
     notifier->on_activation = move(m_internal_stream_data->read_notifier->on_activation);
+    if (m_internal_stream_data->receiving_paused)
+        notifier->set_enabled(false);
     m_internal_stream_data->read_notifier = notifier;
     m_internal_stream_data->read_stream = move(read_stream);
 }
@@ -101,6 +103,28 @@ void Request::set_unbuffered_request_callbacks(HeadersReceived on_headers_receiv
     this->on_finish = move(on_finish);
 
     set_up_internal_stream_data(move(on_data_received));
+}
+
+bool Request::pause_receiving()
+{
+    if (m_mode != Mode::Unbuffered || !m_internal_stream_data ||
+        m_internal_stream_data->receiving_paused)
+        return false;
+    m_internal_stream_data->receiving_paused = true;
+    if (m_internal_stream_data->read_notifier)
+        m_internal_stream_data->read_notifier->set_enabled(false);
+    return true;
+}
+
+bool Request::resume_receiving()
+{
+    if (m_mode != Mode::Unbuffered || !m_internal_stream_data ||
+        !m_internal_stream_data->receiving_paused)
+        return false;
+    m_internal_stream_data->receiving_paused = false;
+    if (m_internal_stream_data->read_notifier)
+        m_internal_stream_data->read_notifier->set_enabled(true);
+    return true;
 }
 
 void Request::did_finish(Badge<RequestClient>, u64 total_size, RequestTimingInfo const& timing_info, Optional<NetworkError> const& network_error)
@@ -163,7 +187,7 @@ void Request::set_up_internal_stream_data(DataReceived on_data_available)
         static char buffer[buffer_size];
 
         // If the request was stopped while this IPC was in-flight, just bail.
-        if (!m_internal_stream_data)
+        if (!m_internal_stream_data || m_internal_stream_data->receiving_paused)
             return;
 
         do {
@@ -178,7 +202,16 @@ void Request::set_up_internal_stream_data(DataReceived on_data_available)
                 break;
 
             on_data_available(read_bytes);
+            /* The consumer may stop the request or synchronously pause it
+             * from its callback. Do not dereference replaced stream state or
+             * drain beyond the consumer's bounded handoff. */
+            if (!m_internal_stream_data ||
+                m_internal_stream_data->receiving_paused)
+                return;
         } while (true);
+
+        if (!m_internal_stream_data)
+            return;
 
         if (m_internal_stream_data->read_stream->is_eof())
             m_internal_stream_data->read_notifier->close();
