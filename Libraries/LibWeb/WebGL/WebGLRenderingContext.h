@@ -22,6 +22,9 @@ class WebGLRenderingContext final : public WebGLRenderingContextOverloads {
 
 public:
     static JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> create(JS::Realm&, HTML::HTMLCanvasElement& canvas_element, JS::Value options);
+#ifdef AK_OS_RINOS
+    static JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> create(JS::Realm&, HTML::OffscreenCanvas& canvas, JS::Value options);
+#endif
 
     virtual ~WebGLRenderingContext() override;
 
@@ -34,7 +37,7 @@ public:
     void release_drawing_buffer_after_compositing();
 #endif
 
-    GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const;
+    JS::Object const* canvas_for_binding() const;
 
     bool is_context_lost() const;
     Optional<WebGLContextAttributes> get_context_attributes();
@@ -51,7 +54,12 @@ public:
 private:
     virtual void initialize(JS::Realm&) override;
 
-    WebGLRenderingContext(JS::Realm&, HTML::HTMLCanvasElement&, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters);
+    static JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> create_impl(JS::Realm&, WebGLCanvas, JS::Value options);
+
+    WebGLRenderingContext(JS::Realm&, WebGLCanvas, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters);
+
+    Gfx::IntSize canvas_size() const;
+    void notify_canvas_needs_present();
 
 #ifdef AK_OS_RINOS
     void queue_context_restore() const;
@@ -60,7 +68,7 @@ private:
 
     virtual void visit_edges(Cell::Visitor&) override;
 
-    GC::Ref<HTML::HTMLCanvasElement> m_canvas_element;
+    WebGLCanvas m_canvas;
 
     // https://www.khronos.org/registry/webgl/specs/latest/1.0/#context-creation-parameters
     // Each WebGLRenderingContext has context creation parameters, set upon creation, in a WebGLContextAttributes object.
@@ -87,7 +95,7 @@ private:
 // Returns false only when a requested cancelable event was cancelled by
 // script. `webglcontextlost` is the only event in this embedding that permits
 // context restoration.
-bool fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, FlyString const& type, bool cancelable = false);
-void fire_webgl_context_creation_error(HTML::HTMLCanvasElement& canvas_element);
+bool fire_webgl_context_event(DOM::EventTarget&, FlyString const& type, bool cancelable = false);
+void fire_webgl_context_creation_error(DOM::EventTarget&);
 
 }

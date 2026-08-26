@@ -85,9 +85,9 @@ void WebGL2RenderingContext::present()
     context().present(m_context_creation_parameters.preserve_drawing_buffer);
 }
 
-GC::Ref<HTML::HTMLCanvasElement> WebGL2RenderingContext::canvas_for_binding() const
+JS::Object const* WebGL2RenderingContext::canvas_for_binding() const
 {
-    return *m_canvas_element;
+    return m_canvas_element.ptr();
 }
 
 void WebGL2RenderingContext::needs_to_present()
@@ -134,13 +134,13 @@ void WebGL2RenderingContext::allocate_painting_surface_if_needed()
 
 WebIDL::Long WebGL2RenderingContext::drawing_buffer_width() const
 {
-    auto size = canvas_for_binding()->bitmap_size_for_canvas();
+    auto size = m_canvas_element->bitmap_size_for_canvas();
     return size.width();
 }
 
 WebIDL::Long WebGL2RenderingContext::drawing_buffer_height() const
 {
-    auto size = canvas_for_binding()->bitmap_size_for_canvas();
+    auto size = m_canvas_element->bitmap_size_for_canvas();
     return size.height();
 }
 

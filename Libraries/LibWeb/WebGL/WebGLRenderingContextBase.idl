@@ -30,8 +30,10 @@ interface mixin WebGLRenderingContextBase {
     //       IDL code generator. This also allows us to handle the return type ourselves instead of adding the complexity of the
     //       code generator working out the return type and returning the appropriate value to return on context loss.
 
-    // FIXME: The type should be (HTMLCanvasElement or OffscreenCanvas).
-    [ImplementedAs=canvas_for_binding] readonly attribute HTMLCanvasElement canvas;
+    // Keep this an object rather than importing OffscreenCanvas here: the
+    // bindings generator rejects circular IDL imports, while OffscreenCanvas
+    // itself needs to import WebGLRenderingContext for getContext().
+    [ImplementedAs=canvas_for_binding] readonly attribute object canvas;
     readonly attribute GLsizei drawingBufferWidth;
     readonly attribute GLsizei drawingBufferHeight;
     [FIXME] readonly attribute GLenum drawingBufferFormat;

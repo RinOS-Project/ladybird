@@ -7,6 +7,7 @@
 #include <AK/Tuple.h>
 #include <AK/NumericLimits.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/PaintingSurface.h>
 #include <LibWeb/Bindings/OffscreenCanvasPrototype.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Canvas/SerializeBitmap.h>
@@ -18,9 +19,10 @@
 #include <LibWeb/HTML/WorkerGlobalScope.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 
+#include <LibWeb/WebGL/OpenGLContext.h>
+#include <LibWeb/WebGL/WebGLRenderingContext.h>
 #if !defined(AK_OS_RINOS)
 #    include <LibWeb/WebGL/WebGL2RenderingContext.h>
-#    include <LibWeb/WebGL/WebGLRenderingContext.h>
 #endif
 
 namespace Web::HTML {
@@ -163,10 +165,10 @@ void OffscreenCanvas::reset_context_to_default_state()
         [](GC::Ref<OffscreenCanvasRenderingContext2D>& context) {
             context->reset_to_default_state();
         },
-#if !defined(AK_OS_RINOS)
         [](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             context->reset_to_default_state();
         },
+#if !defined(AK_OS_RINOS)
         [](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             context->reset_to_default_state();
         },
@@ -179,7 +181,12 @@ void OffscreenCanvas::reset_context_to_default_state()
 WebIDL::ExceptionOr<void> OffscreenCanvas::set_new_bitmap_size(Gfx::IntSize new_size)
 {
     RefPtr<Gfx::Bitmap> bitmap;
+#if defined(AK_OS_RINOS)
+    auto const has_webgl_context = m_context.has<GC::Ref<WebGL::WebGLRenderingContext>>();
+    if (!new_size.is_empty() && !has_webgl_context) {
+#else
     if (!new_size.is_empty()) {
+#endif
         // FIXME: Other browsers appear to not throw for unreasonable sizes being set. We could consider deferring allocation of the bitmap until it is used,
         //        but for now, lets just allocate it here and throw if it fails instead of crashing.
         auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::RGBA8888, Gfx::IntSize { new_size.width(), new_size.height() });
@@ -196,10 +203,10 @@ WebIDL::ExceptionOr<void> OffscreenCanvas::set_new_bitmap_size(Gfx::IntSize new_
         [&](GC::Ref<OffscreenCanvasRenderingContext2D>& context) {
             context->set_size(new_size);
         },
-#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             context->set_size(new_size);
         },
+#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             context->set_size(new_size);
         },
@@ -214,6 +221,20 @@ RefPtr<Gfx::Bitmap> OffscreenCanvas::bitmap() const
 {
     if (is_detached())
         return nullptr;
+#if defined(AK_OS_RINOS)
+    if (m_context.has<GC::Ref<WebGL::WebGLRenderingContext>>()) {
+        if (m_size.is_empty())
+            return nullptr;
+        auto surface = m_context.get<GC::Ref<WebGL::WebGLRenderingContext>>()->surface();
+        if (!surface || !surface->bitmap())
+            return nullptr;
+        surface->flush();
+        auto bitmap_or_error = surface->bitmap()->clone();
+        if (bitmap_or_error.is_error())
+            return nullptr;
+        return bitmap_or_error.release_value();
+    }
+#endif
     return m_bitmap;
 }
 
@@ -276,22 +297,35 @@ JS::ThrowCompletionOr<OffscreenRenderingContext> OffscreenCanvas::get_context(Bi
             return GC::make_root(*m_context.get<GC::Ref<HTML::OffscreenCanvasRenderingContext2D>>());
 #endif
 
-        return nullptr;
+        return Empty {};
     }
 
     if (contextId == Bindings::OffscreenRenderingContextId::Webgl) {
-        dbgln("(STUBBED) OffscreenCanvas::get_context(Webgl)");
+#if defined(AK_OS_RINOS)
+        if (!m_context.has<Empty>()) {
+            if (m_context.has<GC::Ref<WebGL::WebGLRenderingContext>>())
+                return m_context.get<GC::Ref<WebGL::WebGLRenderingContext>>();
+            return Empty {};
+        }
 
-        return nullptr;
+        auto context = TRY(WebGL::WebGLRenderingContext::create(realm(), *this, options));
+        if (!context)
+            return Empty {};
+        m_bitmap = nullptr;
+        m_context = GC::Ref<WebGL::WebGLRenderingContext> { *context };
+        return context;
+#else
+        return Empty {};
+#endif
     }
 
     if (contextId == Bindings::OffscreenRenderingContextId::Webgl2) {
-        dbgln("(STUBBED) OffscreenCanvas::get_context(Webgl2)");
+        dbgln("OffscreenCanvas::get_context(Webgl2) is unavailable in this profile");
 
-        return nullptr;
+        return Empty {};
     }
 
-    return nullptr;
+    return Empty {};
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-offscreencanvas-transfertoimagebitmap
@@ -309,6 +343,27 @@ WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> OffscreenCanvas::transfer_to_image_bit
 
     // 3. Let image be a newly created ImageBitmap object that references the same underlying bitmap data as this OffscreenCanvas object's bitmap.
     auto image = ImageBitmap::create(realm());
+#if defined(AK_OS_RINOS)
+    if (m_context.has<GC::Ref<WebGL::WebGLRenderingContext>>()) {
+        auto& context = *m_context.get<GC::Ref<WebGL::WebGLRenderingContext>>();
+        // The RinGL target is caller-owned BGRA storage. Snapshot before the
+        // maintenance clear, then clear through RinGL so ImageBitmap never
+        // aliases the continued WebGL drawing buffer.
+        context.context().present(true);
+        if (context.is_context_lost())
+            return WebIDL::InvalidStateError::create(realm(), "OffscreenCanvas WebGL context is lost"_utf16);
+        if (!m_size.is_empty()) {
+            auto snapshot = bitmap();
+            if (!snapshot)
+                return WebIDL::InvalidStateError::create(realm(), "Unable to snapshot OffscreenCanvas WebGL bitmap"_utf16);
+            image->set_bitmap(move(snapshot));
+        }
+        image->set_origin_clean(m_origin_clean);
+        context.context().clear_buffer_to_default_values();
+        m_origin_clean = true;
+        return image;
+    }
+#endif
     image->set_bitmap(m_bitmap);
     image->set_origin_clean(m_origin_clean);
 
@@ -329,10 +384,10 @@ WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> OffscreenCanvas::transfer_to_image_bit
             context->set_size(size);
             context->initialize_new_bitmap_to_context_defaults();
         },
-#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             context->set_size(size);
         },
+#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             context->set_size(size);
         },
@@ -378,9 +433,17 @@ GC::Ref<WebIDL::Promise> OffscreenCanvas::convert_to_blob(Optional<ImageEncodeOp
     }
 
     // 4. Let bitmap be a copy of this's bitmap.
-    RefPtr<Gfx::Bitmap> bitmap;
-    if (m_bitmap)
-        bitmap = MUST(m_bitmap->clone());
+    auto source_bitmap = bitmap();
+    if (!source_bitmap) {
+        auto error = WebIDL::EncodingError::create(realm(), "Unable to snapshot OffscreenCanvas bitmap"_utf16);
+        return WebIDL::create_rejected_promise_from_exception(realm(), error);
+    }
+    auto bitmap_or_error = source_bitmap->clone();
+    if (bitmap_or_error.is_error()) {
+        auto error = WebIDL::EncodingError::create(realm(), "Unable to copy OffscreenCanvas bitmap"_utf16);
+        return WebIDL::create_rejected_promise_from_exception(realm(), error);
+    }
+    auto bitmap = bitmap_or_error.release_value();
 
     // 5. Let result be a new promise object.
     auto result_promise = WebIDL::create_promise(realm());
@@ -450,10 +513,10 @@ void OffscreenCanvas::visit_edges(Cell::Visitor& visitor)
         [&](GC::Ref<OffscreenCanvasRenderingContext2D>& context) {
             visitor.visit(context);
         },
-#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             visitor.visit(context);
         },
+#if !defined(AK_OS_RINOS)
         [&](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
             visitor.visit(context);
         },
