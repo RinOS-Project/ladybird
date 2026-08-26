@@ -1882,7 +1882,14 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
-        if (active_location != location_handle)
+        // Reflection coalesces an active array as `name[0]`, but every
+        // element has a valid contiguous WebGL location. Consult RinGL for
+        // the requested element instead of treating the base location as the
+        // only queryable value.
+        auto active_location_begin = static_cast<u64>(active_location);
+        auto active_location_end = active_location_begin + active_uniform.size;
+        auto requested_location = static_cast<u64>(location_handle);
+        if (active_uniform.size == 0 || requested_location < active_location_begin || requested_location >= active_location_end)
             continue;
 
         switch (active_uniform.type) {
