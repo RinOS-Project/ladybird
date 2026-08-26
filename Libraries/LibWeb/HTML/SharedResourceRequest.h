@@ -12,7 +12,6 @@
 #include <LibURL/URL.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/Forward.h>
-#include <LibWeb/HTML/CORSSettingAttribute.h>
 
 namespace Web::HTML {
 
@@ -23,15 +22,18 @@ class SharedResourceRequest final : public JS::Cell {
 public:
     static constexpr bool OVERRIDES_FINALIZE = true;
 
-    [[nodiscard]] static GC::Ref<SharedResourceRequest> get_or_create(JS::Realm&, GC::Ref<Page>, URL::URL const&, CORSSettingAttribute = CORSSettingAttribute::NoCORS);
+    [[nodiscard]] static GC::Ref<SharedResourceRequest> get_or_create(JS::Realm&, GC::Ref<Page>, URL::URL const&);
+    // Image requests carry a CORS mode and origin in addition to their URL.
+    // They must not reuse the document's URL-only resource cache, since doing
+    // so can incorrectly turn an opaque fetch into an origin-clean image.
+    [[nodiscard]] static GC::Ref<SharedResourceRequest> create_uncached(JS::Realm&, GC::Ref<Page>, URL::URL const&);
 
     virtual ~SharedResourceRequest() override;
 
     URL::URL const& url() const { return m_url; }
-    CORSSettingAttribute cors_setting() const { return m_cors_setting; }
-    bool is_cors_cross_origin() const { return m_is_cors_cross_origin; }
 
     [[nodiscard]] GC::Ptr<DecodedImageData> image_data() const;
+    bool is_origin_clean() const { return m_origin_clean; }
 
     [[nodiscard]] GC::Ptr<Fetch::Infrastructure::FetchController> fetch_controller();
     void set_fetch_controller(GC::Ptr<Fetch::Infrastructure::FetchController>);
@@ -44,7 +46,7 @@ public:
     bool needs_fetching() const;
 
 private:
-    explicit SharedResourceRequest(GC::Ref<Page>, URL::URL, GC::Ref<DOM::Document>, CORSSettingAttribute);
+    explicit SharedResourceRequest(GC::Ref<Page>, URL::URL, GC::Ref<DOM::Document>, bool is_document_cached);
 
     virtual void finalize() override;
     virtual void visit_edges(JS::Cell::Visitor&) override;
@@ -71,12 +73,12 @@ private:
     Vector<Callbacks> m_callbacks;
 
     URL::URL m_url;
-    CORSSettingAttribute m_cors_setting;
-    bool m_is_cors_cross_origin { false };
     GC::Ptr<DecodedImageData> m_image_data;
+    bool m_origin_clean { false };
     GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
 
     GC::Ptr<DOM::Document> m_document;
+    bool m_is_document_cached { false };
 
     Optional<DOM::DocumentLoadEventDelayer> m_load_event_delayer;
 };

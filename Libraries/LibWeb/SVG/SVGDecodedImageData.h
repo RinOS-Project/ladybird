@@ -34,9 +34,9 @@ public:
 
     DOM::Document const& svg_document() const { return *m_document; }
 
-    // An SVG image inherits the embedding document's origin. All image-bearing
-    // descendants must remain readable from that origin before the SVG is a
-    // valid canvas or WebGL pixel source.
+    // An SVG image inherits the origin of the document that decoded it. Its
+    // embedded image-bearing elements must remain origin-clean as well before
+    // the SVG can be used as a canvas or WebGL pixel source.
     bool is_origin_clean() const;
 
     virtual void visit_edges(Cell::Visitor& visitor) override;

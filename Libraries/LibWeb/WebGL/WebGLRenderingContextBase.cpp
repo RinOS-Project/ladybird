@@ -21,7 +21,6 @@ extern "C" {
 #include <AK/Checked.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImmutableBitmap.h>
-#include <LibJS/Runtime/TypedArray.h>
 #ifndef AK_OS_RINOS
 #include <LibGfx/SkiaUtils.h>
 #endif
@@ -705,17 +704,6 @@ ReadonlySpan<WebIDL::UnsignedLong> WebGLRenderingContextBase::enabled_compressed
     return m_enabled_compressed_texture_formats;
 }
 
-static bool tex_image_source_is_origin_clean(TexImageSource const& source)
-{
-    return source.visit(
-        [](GC::Root<HTML::HTMLImageElement> const& image) { return image->is_origin_clean(); },
-        [](GC::Root<HTML::HTMLCanvasElement> const& canvas) { return canvas->is_origin_clean(); },
-        [](GC::Root<HTML::OffscreenCanvas> const& canvas) { return canvas->is_origin_clean(); },
-        [](GC::Root<HTML::HTMLVideoElement> const& video) { return video->is_origin_clean(); },
-        [](GC::Root<HTML::ImageBitmap> const& image_bitmap) { return image_bitmap->is_origin_clean(); },
-        [](GC::Root<HTML::ImageData> const&) { return true; });
-}
-
 static bool tex_image_source_is_usable(TexImageSource const& source)
 {
     return source.visit(
@@ -723,20 +711,20 @@ static bool tex_image_source_is_usable(TexImageSource const& source)
         [](GC::Root<HTML::HTMLCanvasElement> const&) { return true; },
         [](GC::Root<HTML::OffscreenCanvas> const& canvas) { return !canvas->is_detached() && canvas->bitmap(); },
         [](GC::Root<HTML::HTMLVideoElement> const&) { return true; },
-        [](GC::Root<HTML::ImageBitmap> const& image_bitmap) { return !image_bitmap->is_detached() && image_bitmap->bitmap(); },
+        [](GC::Root<HTML::ImageBitmap> const& bitmap) { return !bitmap->is_detached() && bitmap->bitmap(); },
         [](GC::Root<HTML::ImageData> const& image_data) {
-            auto* data = image_data->data();
-            auto* buffer = data ? data->viewed_array_buffer() : nullptr;
+            auto const* data = image_data->data();
+            auto const* buffer = data ? data->viewed_array_buffer() : nullptr;
             return buffer && !buffer->is_detached();
         });
 }
 
 WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase::read_and_pixel_convert_texture_image_source(TexImageSource const& source, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, Optional<int> destination_width, Optional<int> destination_height)
 {
-    // A detached ImageBitmap, an OffscreenCanvas whose bitmap has been unset,
-    // or an ImageData whose typed-array buffer was detached cannot be exported.
-    // Reject before source presentation or RinGL import, leaving the existing
-    // texture definition unchanged.
+    // FIXME: If source is null then an INVALID_VALUE error is generated.
+    // Detached transferable objects and a detached ImageData buffer have no
+    // pixels that WebGL may read. Reject before canvas presentation, byte
+    // export, or the RinGL upload so the existing texture stays unchanged.
     if (!tex_image_source_is_usable(source)) {
 #ifdef AK_OS_RINOS
         set_error(RINGL_INVALID_VALUE);
@@ -746,21 +734,15 @@ WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase
         return OptionalNone {};
     }
 
-    // The check intentionally precedes canvas presentation and immutable bitmap
-    // export. A rejected upload must neither expose tainted pixels nor mutate
-    // the current texture definition.
-    if (!tex_image_source_is_origin_clean(source))
+    auto source_is_origin_clean = source.visit(
+        [](GC::Root<HTML::HTMLImageElement> const& image) { return image->is_origin_clean(); },
+        [](GC::Root<HTML::HTMLCanvasElement> const& canvas) { return canvas->is_origin_clean(); },
+        [](GC::Root<HTML::OffscreenCanvas> const& canvas) { return canvas->is_origin_clean(); },
+        [](GC::Root<HTML::HTMLVideoElement> const& video) { return video->is_origin_clean(); },
+        [](GC::Root<HTML::ImageBitmap> const& bitmap) { return bitmap->is_origin_clean(); },
+        [](GC::Root<HTML::ImageData> const&) { return true; });
+    if (!source_is_origin_clean)
         return WebIDL::SecurityError::create(realm(), "TexImageSource is not origin-clean"_utf16);
-
-    bool const source_is_display_p3 = source.visit(
-        [](GC::Root<HTML::HTMLImageElement> const&) { return false; },
-        [](GC::Root<HTML::HTMLCanvasElement> const&) { return false; },
-        [](GC::Root<HTML::OffscreenCanvas> const&) { return false; },
-        [](GC::Root<HTML::HTMLVideoElement> const&) { return false; },
-        [](GC::Root<HTML::ImageBitmap> const&) { return false; },
-        [](GC::Root<HTML::ImageData> const& source) {
-            return source->color_space() == Bindings::PredefinedColorSpace::DisplayP3;
-        });
 
     auto bitmap = source.visit(
         [](GC::Root<HTML::HTMLImageElement> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
@@ -775,20 +757,25 @@ WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase
             if (auto bitmap = source->ensure_external_content_source().current_bitmap())
                 return bitmap;
             auto surface = source->surface();
-            if (!surface)
-                return Gfx::ImmutableBitmap::create(*source->get_bitmap_from_surface());
+            if (!surface) {
+                if (auto bitmap = source->get_bitmap_from_surface())
+                    return Gfx::ImmutableBitmap::create(*bitmap);
+                return RefPtr<Gfx::ImmutableBitmap> {};
+            }
             return Gfx::ImmutableBitmap::create_snapshot_from_painting_surface(*surface);
         },
         [](GC::Root<HTML::OffscreenCanvas> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
-            auto bitmap = source->bitmap();
-            return bitmap ? Gfx::ImmutableBitmap::create(*bitmap) : nullptr;
+            if (auto bitmap = source->bitmap())
+                return Gfx::ImmutableBitmap::create(*bitmap);
+            return {};
         },
         [](GC::Root<HTML::HTMLVideoElement> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
             return source->bitmap();
         },
         [](GC::Root<HTML::ImageBitmap> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
-            auto* bitmap = source->bitmap();
-            return bitmap ? Gfx::ImmutableBitmap::create(*bitmap) : nullptr;
+            if (auto bitmap = source->bitmap())
+                return Gfx::ImmutableBitmap::create(*bitmap);
+            return {};
         },
         [](GC::Root<HTML::ImageData> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
             return Gfx::ImmutableBitmap::create(source->bitmap());
@@ -796,6 +783,7 @@ WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase
     if (!bitmap)
         return OptionalNone {};
 
+    // FIXME: Respect unpackColorSpace
     auto export_flags = 0;
     if (m_unpack_flip_y && !source.has<GC::Root<HTML::ImageBitmap>>())
         // The first pixel transferred from the source to the WebGL implementation corresponds to the upper left corner of
@@ -804,10 +792,6 @@ WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase
         export_flags |= Gfx::ExportFlags::FlipY;
     if (m_unpack_premultiply_alpha)
         export_flags |= Gfx::ExportFlags::PremultiplyAlpha;
-#ifdef AK_OS_RINOS
-    if (source_is_display_p3 && m_unpack_colorspace_conversion == BROWSER_DEFAULT_WEBGL)
-        export_flags |= Gfx::ExportFlags::ConvertDisplayP3ToSRGB;
-#endif
 
 #ifdef AK_OS_RINOS
     if (type == webgl_float || type == webgl_half_float_oes)

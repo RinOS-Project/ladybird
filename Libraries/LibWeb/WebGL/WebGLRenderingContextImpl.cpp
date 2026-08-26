@@ -665,6 +665,9 @@ void WebGLRenderingContextImpl::framebuffer_renderbuffer(WebIDL::UnsignedLong ta
         renderbuffer_handle = handle_or_error.release_value();
     }
     glFramebufferRenderbuffer(target, attachment, renderbuffertarget, renderbuffer_handle);
+
+    if (target == GL_FRAMEBUFFER && renderbuffertarget == GL_RENDERBUFFER && m_framebuffer_binding)
+        m_framebuffer_binding->set_attachment(attachment, renderbuffer ? GC::Ptr<WebGLObject> { static_cast<WebGLObject*>(renderbuffer.ptr()) } : GC::Ptr<WebGLObject> {}, 0);
 }
 
 void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong textarget, GC::Root<WebGLTexture> texture, WebIDL::Long level)
@@ -681,6 +684,12 @@ void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong targe
         texture_handle = handle_or_error.release_value();
     }
     glFramebufferTexture2D(target, attachment, textarget, texture_handle, level);
+
+    if (target == GL_FRAMEBUFFER
+        && (textarget == GL_TEXTURE_2D
+            || (textarget >= GL_TEXTURE_CUBE_MAP_POSITIVE_X && textarget <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z))
+        && m_framebuffer_binding)
+        m_framebuffer_binding->set_attachment(attachment, texture ? GC::Ptr<WebGLObject> { static_cast<WebGLObject*>(texture.ptr()) } : GC::Ptr<WebGLObject> {}, level);
 }
 
 void WebGLRenderingContextImpl::front_face(WebIDL::UnsignedLong mode)
@@ -1817,6 +1826,71 @@ JS::Value WebGLRenderingContextImpl::get_tex_parameter(WebIDL::UnsignedLong targ
 
     set_error(GL_INVALID_ENUM);
     return JS::js_null();
+}
+
+JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong pname)
+{
+    m_context->make_current();
+
+    bool const is_color_attachment = attachment >= GL_COLOR_ATTACHMENT0
+        && attachment < GL_COLOR_ATTACHMENT0 + 16;
+    bool const is_draw_buffers_attachment = is_color_attachment
+        && attachment != GL_COLOR_ATTACHMENT0;
+    bool const draw_buffers_enabled = extension_enabled("WEBGL_draw_buffers"sv)
+        || m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2;
+    if (target != GL_FRAMEBUFFER
+        || (!is_color_attachment
+            && attachment != GL_DEPTH_ATTACHMENT
+            && attachment != GL_STENCIL_ATTACHMENT
+            && attachment != GL_DEPTH_STENCIL_ATTACHMENT)
+        || (is_draw_buffers_attachment && !draw_buffers_enabled)) {
+        set_error(GL_INVALID_ENUM);
+        return JS::js_null();
+    }
+    if (!m_framebuffer_binding) {
+        set_error(GL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    if (is_draw_buffers_attachment) {
+        GLint max_color_attachments { 0 };
+        glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &max_color_attachments);
+        if (attachment - GL_COLOR_ATTACHMENT0 >= static_cast<GLenum>(max_color_attachments)) {
+            set_error(GL_INVALID_ENUM);
+            return JS::js_null();
+        }
+    }
+
+    switch (pname) {
+    case GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE:
+    case GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME:
+    case GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL:
+    case GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE:
+        break;
+    default:
+        set_error(GL_INVALID_ENUM);
+        return JS::js_null();
+    }
+
+    GLint value { 0 };
+    glGetFramebufferAttachmentParameteriv(target, attachment, pname, &value);
+
+    if (pname != GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME)
+        return JS::Value(value);
+    if (value == 0)
+        return JS::js_null();
+
+    auto object = m_framebuffer_binding->attachment_object(attachment);
+    if (!object) {
+        set_error(GL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+    auto handle_or_error = object->handle(this);
+    if (handle_or_error.is_error() || handle_or_error.release_value() != static_cast<GLuint>(value)) {
+        set_error(GL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+    return JS::Value(object);
 }
 
 JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram>, GC::Root<WebGLUniformLocation>)

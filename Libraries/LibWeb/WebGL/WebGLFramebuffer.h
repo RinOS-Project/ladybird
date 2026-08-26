@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/Array.h>
 #include <LibWeb/WebGL/WebGLObject.h>
 
 namespace Web::WebGL {
@@ -20,14 +21,14 @@ public:
 
     virtual ~WebGLFramebuffer();
 
-#ifdef AK_OS_RINOS
-    // RinGL owns attachment state. Retain the script-visible objects so a
-    // backend attachment query can return the original wrapper safely.
-    void set_rin_gl_attachment(GLenum attachment, GC::Ptr<WebGLObject> object, GLint level);
-    GC::Ptr<WebGLObject> rin_gl_attachment_object(GLenum attachment) const;
-    GLint rin_gl_attachment_level(GLenum attachment) const;
-    bool rin_gl_uses_separate_depth_stencil_attachments() const;
-#endif
+    // The native API reports attachment handles, while WebGL must return the
+    // original script-visible object for OBJECT_NAME queries. Keep that
+    // association at the WebGL object boundary instead of reconstructing a
+    // wrapper from an untrusted native handle.
+    void set_attachment(GLenum attachment, GC::Ptr<WebGLObject> object, GLint level);
+    GC::Ptr<WebGLObject> attachment_object(GLenum attachment) const;
+    GLint attachment_level(GLenum attachment) const;
+    bool uses_separate_depth_stencil_attachments() const;
 
 protected:
     explicit WebGLFramebuffer(JS::Realm&, GC::Ref<WebGLRenderingContextBase>, GLuint handle);
@@ -35,18 +36,19 @@ protected:
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Visitor&) override;
 
-#ifdef AK_OS_RINOS
 private:
-    struct RinGLAttachment {
+    struct Attachment {
         GC::Ptr<WebGLObject> object;
         GLint level { 0 };
     };
 
-    RinGLAttachment m_rin_gl_color_attachment;
-    RinGLAttachment m_rin_gl_depth_attachment;
-    RinGLAttachment m_rin_gl_stencil_attachment;
-    bool m_rin_gl_uses_separate_depth_stencil_attachments { false };
-#endif
+    // WebGL 2 defines sixteen color attachment tokens. RinGL's WebGL 1 MRT
+    // profile currently uses the first four, while the generic backend can
+    // retain wrapper identity for all standard tokens.
+    Array<Attachment, 16> m_color_attachments;
+    Attachment m_depth_attachment;
+    Attachment m_stencil_attachment;
+    bool m_uses_separate_depth_stencil_attachments { false };
 };
 
 }

@@ -405,12 +405,11 @@ void WebGLRenderingContextOverloads::uniform1fv(GC::Root<WebGLUniformLocation> l
     auto view = values_or_error.release_value();
     if (view.is_empty())
         return;
-    // RSH1 has one scalar declaration per location and no uniform arrays.
-    if (view.size() != 1) {
+    if (view.size() > NumericLimits<u32>::max()) {
         set_error(RINGL_INVALID_OPERATION);
         return;
     }
-    ringl_uniform_1f(location_handle, view[0]);
+    ringl_uniform_1fv(location_handle, static_cast<u32>(view.size()), view.data());
 }
 
 void WebGLRenderingContextOverloads::uniform2fv(GC::Root<WebGLUniformLocation> location, Float32List values)
@@ -433,12 +432,11 @@ void WebGLRenderingContextOverloads::uniform2fv(GC::Root<WebGLUniformLocation> l
     }
     if (view.is_empty())
         return;
-    // RSH1 has one vec2 declaration per location and no uniform arrays.
-    if (view.size() != 2) {
-        set_error(RINGL_INVALID_OPERATION);
+    if (view.size() / 2 > NumericLimits<u32>::max()) {
+        set_error(RINGL_INVALID_VALUE);
         return;
     }
-    ringl_uniform_2f(location_handle, view[0], view[1]);
+    ringl_uniform_2fv(location_handle, static_cast<u32>(view.size() / 2), view.data());
 }
 
 void WebGLRenderingContextOverloads::uniform3fv(GC::Root<WebGLUniformLocation> location, Float32List values)
@@ -461,12 +459,11 @@ void WebGLRenderingContextOverloads::uniform3fv(GC::Root<WebGLUniformLocation> l
     }
     if (view.is_empty())
         return;
-    // RSH1 has one vec3 declaration per location and no uniform arrays.
-    if (view.size() != 3) {
-        set_error(RINGL_INVALID_OPERATION);
+    if (view.size() / 3 > NumericLimits<u32>::max()) {
+        set_error(RINGL_INVALID_VALUE);
         return;
     }
-    ringl_uniform_3f(location_handle, view[0], view[1], view[2]);
+    ringl_uniform_3fv(location_handle, static_cast<u32>(view.size() / 3), view.data());
 }
 
 void WebGLRenderingContextOverloads::uniform4fv(GC::Root<WebGLUniformLocation> location, Float32List values)
@@ -489,13 +486,11 @@ void WebGLRenderingContextOverloads::uniform4fv(GC::Root<WebGLUniformLocation> l
     }
     if (view.is_empty())
         return;
-    // RSH1 exposes a single vec4 declaration, never a uniform array. Reject
-    // surplus values before the backend mutates the linked executable.
-    if (view.size() != 4) {
-        set_error(RINGL_INVALID_OPERATION);
+    if (view.size() / 4 > NumericLimits<u32>::max()) {
+        set_error(RINGL_INVALID_VALUE);
         return;
     }
-    ringl_uniform_4f(location_handle, view[0], view[1], view[2], view[3]);
+    ringl_uniform_4fv(location_handle, static_cast<u32>(view.size() / 4), view.data());
 }
 
 void WebGLRenderingContextOverloads::uniform1iv(GC::Root<WebGLUniformLocation> location, Int32List v)
@@ -539,11 +534,11 @@ void WebGLRenderingContextOverloads::uniform2iv(GC::Root<WebGLUniformLocation> l
     auto span = span_or_error.release_value();
     if (span.is_empty())
         return;
-    if (span.size() != 2) {
-        set_error(RINGL_INVALID_OPERATION);
+    if (span.size() % 2 != 0 || span.size() / 2 > NumericLimits<u32>::max()) {
+        set_error(RINGL_INVALID_VALUE);
         return;
     }
-    ringl_uniform_2i(location_handle, span[0], span[1]);
+    ringl_uniform_2iv(location_handle, static_cast<u32>(span.size() / 2), span.data());
 }
 
 void WebGLRenderingContextOverloads::uniform3iv(GC::Root<WebGLUniformLocation> location, Int32List v)
@@ -561,11 +556,11 @@ void WebGLRenderingContextOverloads::uniform3iv(GC::Root<WebGLUniformLocation> l
     auto span = span_or_error.release_value();
     if (span.is_empty())
         return;
-    if (span.size() != 3) {
-        set_error(RINGL_INVALID_OPERATION);
+    if (span.size() % 3 != 0 || span.size() / 3 > NumericLimits<u32>::max()) {
+        set_error(RINGL_INVALID_VALUE);
         return;
     }
-    ringl_uniform_3i(location_handle, span[0], span[1], span[2]);
+    ringl_uniform_3iv(location_handle, static_cast<u32>(span.size() / 3), span.data());
 }
 
 void WebGLRenderingContextOverloads::uniform4iv(GC::Root<WebGLUniformLocation> location, Int32List v)
@@ -583,11 +578,11 @@ void WebGLRenderingContextOverloads::uniform4iv(GC::Root<WebGLUniformLocation> l
     auto span = span_or_error.release_value();
     if (span.is_empty())
         return;
-    if (span.size() != 4) {
-        set_error(RINGL_INVALID_OPERATION);
+    if (span.size() % 4 != 0 || span.size() / 4 > NumericLimits<u32>::max()) {
+        set_error(RINGL_INVALID_VALUE);
         return;
     }
-    ringl_uniform_4i(location_handle, span[0], span[1], span[2], span[3]);
+    ringl_uniform_4iv(location_handle, static_cast<u32>(span.size() / 4), span.data());
 }
 
 void WebGLRenderingContextOverloads::uniform_matrix2fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List values)
@@ -613,12 +608,11 @@ void WebGLRenderingContextOverloads::uniform_matrix2fv(GC::Root<WebGLUniformLoca
     }
     if (view.is_empty())
         return;
-    // RinGL exposes one mat2 declaration per location and no uniform arrays.
-    if (view.size() != 4) {
-        set_error(RINGL_INVALID_OPERATION);
+    if (view.size() / 4 > NumericLimits<u32>::max()) {
+        set_error(RINGL_INVALID_VALUE);
         return;
     }
-    ringl_uniform_matrix2fv(location_handle, 0u, view.data());
+    ringl_uniform_matrix2fv_array(location_handle, static_cast<u32>(view.size() / 4), 0u, view.data());
 }
 
 void WebGLRenderingContextOverloads::uniform_matrix3fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List values)
@@ -644,12 +638,11 @@ void WebGLRenderingContextOverloads::uniform_matrix3fv(GC::Root<WebGLUniformLoca
     }
     if (view.is_empty())
         return;
-    // RinGL exposes one mat3 declaration per location and no uniform arrays.
-    if (view.size() != 9) {
-        set_error(RINGL_INVALID_OPERATION);
+    if (view.size() / 9 > NumericLimits<u32>::max()) {
+        set_error(RINGL_INVALID_VALUE);
         return;
     }
-    ringl_uniform_matrix3fv(location_handle, 0u, view.data());
+    ringl_uniform_matrix3fv_array(location_handle, static_cast<u32>(view.size() / 9), 0u, view.data());
 }
 
 void WebGLRenderingContextOverloads::uniform_matrix4fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List values)
@@ -676,12 +669,11 @@ void WebGLRenderingContextOverloads::uniform_matrix4fv(GC::Root<WebGLUniformLoca
     }
     if (view.is_empty())
         return;
-    // RinGL exposes one mat4 declaration per location and no uniform arrays.
-    if (view.size() != 16) {
-        set_error(RINGL_INVALID_OPERATION);
+    if (view.size() / 16 > NumericLimits<u32>::max()) {
+        set_error(RINGL_INVALID_VALUE);
         return;
     }
-    ringl_uniform_matrix4fv(location_handle, 0u, view.data());
+    ringl_uniform_matrix4fv_array(location_handle, static_cast<u32>(view.size() / 16), 0u, view.data());
 }
 
 }

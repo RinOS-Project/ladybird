@@ -209,7 +209,7 @@ RefPtr<Gfx::ImmutableBitmap> HTMLImageElement::immutable_bitmap() const
 
 bool HTMLImageElement::is_origin_clean() const
 {
-    if (current_request().is_cors_cross_origin())
+    if (!current_request().is_origin_clean())
         return false;
 
     auto image_data = current_request().image_data();
@@ -700,7 +700,7 @@ void HTMLImageElement::update_the_image_data_impl(bool restart_animations, bool 
                     restart_the_animation();
 
                 // 2. Set the current request's current URL to urlString.
-                m_current_request->set_current_url(realm(), *url_string, m_cors_setting);
+                m_current_request->set_current_url(realm(), *url_string);
 
                 // 3. If maybe omit events is not set or previousURL is not equal to urlString, then fire an event named load at the img element.
                 if (!maybe_omit_events || previous_url != url_string)
@@ -755,7 +755,7 @@ after_step_7:
                 }
 
                 // 1. Change the current request's current URL to the empty string.
-                m_current_request->set_current_url(realm(), String {}, m_cors_setting);
+                m_current_request->set_current_url(realm(), String {});
 
                 // 2. If all of the following conditions are true:
                 //    - the element has a src attribute or it uses srcset or picture; and
@@ -796,7 +796,7 @@ after_step_7:
                 }
 
                 // 1. Change the current request's current URL to selected source.
-                m_current_request->set_current_url(realm(), selected_source.value().url, m_cors_setting);
+                m_current_request->set_current_url(realm(), selected_source.value().url);
 
                 // 2. If maybe omit events is not set or previousURL is not equal to selected source, then fire an event named error at the img element.
                 if (!maybe_omit_events || previous_url != selected_source.value().url)
@@ -833,7 +833,7 @@ after_step_7:
 
         // 17. Set image request to a new image request whose current URL is urlString.
         auto image_request = ImageRequest::create(realm(), document().page());
-        image_request->set_current_url(realm(), *url_string, m_cors_setting);
+        image_request->set_current_url(realm(), *url_string);
 
         // 18. If the current request's state is unavailable or broken, then set the current request to image request.
         //     Otherwise, set the pending request to image request.
@@ -915,8 +915,10 @@ void HTMLImageElement::add_callbacks_to_image_request(GC::Ref<ImageRequest> imag
                 }
 
                 VERIFY(image_request->shared_resource_request());
-                auto image_data = image_request->shared_resource_request()->image_data();
+                auto shared_resource_request = image_request->shared_resource_request();
+                auto image_data = shared_resource_request->image_data();
                 image_request->set_image_data(image_data);
+                image_request->set_origin_clean(shared_resource_request->is_origin_clean());
 
                 ListOfAvailableImages::Key key;
                 key.url = url_string;
@@ -936,7 +938,7 @@ void HTMLImageElement::add_callbacks_to_image_request(GC::Ref<ImageRequest> imag
                 image_request->set_state(ImageRequest::State::CompletelyAvailable);
 
                 // 3. Add the image to the list of available images using the key key, with the ignore higher-layer caching flag set.
-                document().list_of_available_images().add(key, *image_data, true);
+                document().list_of_available_images().add(key, *image_data, true, image_request->is_origin_clean());
 
                 set_needs_style_update(true);
                 set_needs_layout_update(DOM::SetNeedsLayoutReason::HTMLImageElementUpdateTheImageData);
@@ -1062,7 +1064,7 @@ void HTMLImageElement::react_to_changes_in_the_environment()
 
     // 12. ⌛ Let image request be a new image request whose current URL is urlString
     auto image_request = ImageRequest::create(realm(), document().page());
-    image_request->set_current_url(realm(), *url_string, m_cors_setting);
+    image_request->set_current_url(realm(), *url_string);
 
     // 13. ⌛ Set the element's pending request to image request.
     m_pending_request = image_request;
@@ -1086,7 +1088,7 @@ void HTMLImageElement::react_to_changes_in_the_environment()
             image_request->set_state(ImageRequest::State::CompletelyAvailable);
 
             // 4. Add the image to the list of available images using the key key, with the ignore higher-layer caching flag set.
-            document().list_of_available_images().add(key, image_data, true);
+            document().list_of_available_images().add(key, image_data, true, image_request->is_origin_clean());
 
             // 5. Upgrade the pending request to the current request.
             upgrade_pending_request_to_current_request();
@@ -1106,6 +1108,7 @@ void HTMLImageElement::react_to_changes_in_the_environment()
     //     Continue to the next step.
     if (auto* entry = document().list_of_available_images().get(key)) {
         image_request->set_image_data(entry->image_data);
+        image_request->set_origin_clean(entry->origin_clean);
         step_16(selected_source.value(), *image_request, key, entry->image_data);
     }
     // Otherwise:
@@ -1146,8 +1149,10 @@ void HTMLImageElement::react_to_changes_in_the_environment()
                     // 7. Otherwise, response's unsafe response is image request's image data. It can be either CORS-same-origin
                     //    or CORS-cross-origin; this affects the image's interaction with other APIs (e.g., when used on a canvas).
                     VERIFY(image_request->shared_resource_request());
-                    auto image_data = image_request->shared_resource_request()->image_data();
+                    auto shared_resource_request = image_request->shared_resource_request();
+                    auto image_data = shared_resource_request->image_data();
                     image_request->set_image_data(image_data);
+                    image_request->set_origin_clean(shared_resource_request->is_origin_clean());
                     step_16(selected_source, image_request, key, *image_data);
                 }));
             },

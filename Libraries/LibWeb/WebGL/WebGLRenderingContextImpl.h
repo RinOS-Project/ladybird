@@ -112,9 +112,7 @@ public:
     JS::Value get_buffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname);
     WebIDL::ExceptionOr<JS::Value> get_parameter(WebIDL::UnsignedLong pname);
     WebIDL::UnsignedLong get_error();
-#ifdef AK_OS_RINOS
     JS::Value get_framebuffer_attachment_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong pname);
-#endif
     JS::Value get_program_parameter(GC::Root<WebGLProgram> program, WebIDL::UnsignedLong pname);
     Optional<String> get_program_info_log(GC::Root<WebGLProgram> program);
     JS::Value get_renderbuffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname);
@@ -189,9 +187,10 @@ protected:
     bool make_rin_gl_current();
 
     // Resolve a WebGL uniform location against the currently linked RinGL
-    // program. This checks ownership, range, and reflection type before an
-    // entry point mutates native per-program uniform state.
-    bool validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out);
+    // program. This checks ownership, full reflected array range, and one of
+    // the accepted reflection types before an entry point mutates native
+    // per-program uniform state.
+    bool validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out, GLenum accepted_alternate_type = 0);
     bool validate_rin_gl_sampler_uniform_location(GC::Root<WebGLUniformLocation> location, WebIDL::Long& location_out);
 
     // RinGL intentionally supports native, separate depth/stencil FBO
@@ -202,7 +201,12 @@ protected:
     // its declared RINGL component type. This distinguishes binary16 uploads
     // from Float32 storage so an unrelated extension cannot make them FBO
     // renderable at the WebGL boundary.
-    int rin_gl_bound_framebuffer_color_attachment_component_type();
+    int rin_gl_bound_framebuffer_color_attachment_component_type(GLenum attachment);
+    // A WEBGL_draw_buffers FBO may have four native color attachments. Check
+    // every exposed slot before a draw, clear, copy, or readback; inspecting
+    // COLOR_ATTACHMENT0 alone would let an extension-gated attachment in a
+    // later slot bypass the WebGL 1 framebuffer rules.
+    bool rin_gl_bound_framebuffer_color_attachments_are_webgl1_compatible();
     bool rin_gl_bound_framebuffer_is_webgl1_compatible();
 
     // RinGL exposes eight independently bound WebGL 1 texture units. Keep

@@ -208,16 +208,16 @@ void SVGImageElement::fetch_the_document(URL::URL const& url)
 
 bool SVGImageElement::is_origin_clean() const
 {
-    // An image that has not produced pixels yet cannot taint a canvas. Once
-    // decoded, a filtered cross-origin response and every nested SVG resource
-    // are both part of the source's origin-clean state.
+    // A pending or failed image does not contribute pixels to a rendered SVG.
+    // Once image data is available, it is safe only if the fetch was readable
+    // by the embedding origin and a nested SVG has no tainted resources.
     if (!m_resource_request)
         return true;
 
     auto image_data = m_resource_request->image_data();
     if (!image_data)
         return true;
-    if (m_resource_request->is_cors_cross_origin())
+    if (!m_resource_request->is_origin_clean())
         return false;
     if (is<SVGDecodedImageData>(*image_data))
         return as<SVGDecodedImageData>(*image_data).is_origin_clean();

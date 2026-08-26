@@ -11,8 +11,10 @@
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/Bindings/WebGLRenderingContextPrototype.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
+#include <LibWeb/HTML/OffscreenCanvas.h>
 #include <LibWeb/HTML/EventLoop/Task.h>
 #include <LibWeb/Infra/Strings.h>
 #include <LibWeb/Painting/Paintable.h>
@@ -37,35 +39,51 @@ namespace Web::WebGL {
 GC_DEFINE_ALLOCATOR(WebGLRenderingContext);
 
 // https://www.khronos.org/registry/webgl/specs/latest/1.0/#fire-a-webgl-context-event
-bool fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, FlyString const& type, bool cancelable)
+bool fire_webgl_context_event(DOM::EventTarget& canvas, FlyString const& type, bool cancelable)
 {
     // `webglcontextlost` is cancelable so script may opt in to recovery;
     // creation-error and restored notifications are observations only.
     // FIXME: Consider setting a status message.
-    auto event = WebGLContextEvent::create(canvas_element.realm(), type, WebGLContextEventInit {});
+    auto event = WebGLContextEvent::create(canvas.realm(), type, WebGLContextEventInit {});
     event->set_is_trusted(true);
     event->set_cancelable(cancelable);
-    return canvas_element.dispatch_event(*event);
+    return canvas.dispatch_event(*event);
 }
 
 // https://www.khronos.org/registry/webgl/specs/latest/1.0/#fire-a-webgl-context-creation-error
-void fire_webgl_context_creation_error(HTML::HTMLCanvasElement& canvas_element)
+void fire_webgl_context_creation_error(DOM::EventTarget& canvas)
 {
     // 1. Fire a WebGL context event named "webglcontextcreationerror" at canvas, optionally with its statusMessage attribute set to a platform dependent string about the nature of the failure.
-    fire_webgl_context_event(canvas_element, EventNames::webglcontextcreationerror);
+    fire_webgl_context_event(canvas, EventNames::webglcontextcreationerror);
 }
 
 JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::create(JS::Realm& realm, HTML::HTMLCanvasElement& canvas_element, JS::Value options)
 {
-    // We should be coming here from getContext being called on a wrapped <canvas> element.
-    auto context_attributes = TRY(convert_value_to_context_attributes_dictionary(canvas_element.vm(), options));
+    return create_impl(realm, WebGLCanvas { canvas_element }, options);
+}
+
+#ifdef AK_OS_RINOS
+JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::create(JS::Realm& realm, HTML::OffscreenCanvas& canvas, JS::Value options)
+{
+    return create_impl(realm, WebGLCanvas { canvas }, options);
+}
+#endif
+
+JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::create_impl(JS::Realm& realm, WebGLCanvas canvas, JS::Value options)
+{
+    auto context_attributes = TRY(convert_value_to_context_attributes_dictionary(realm.vm(), options));
+    auto fire_creation_error = [&] {
+        canvas.visit([](auto const& canvas) {
+            fire_webgl_context_creation_error(*canvas);
+        });
+    };
 #ifdef AK_OS_RINOS
     // RinGPU currently supplies a synchronous software BGRA target. Do not
     // claim multisampling, an opaque backing store, or desynchronized
     // presentation until those paths exist. A caller that explicitly rejects
     // a major performance caveat must not receive this software context.
     if (context_attributes.fail_if_major_performance_caveat) {
-        fire_webgl_context_creation_error(canvas_element);
+        fire_creation_error();
         return GC::Ptr<WebGLRenderingContext> { nullptr };
     }
     auto actual_context_attributes = context_attributes;
@@ -87,24 +105,43 @@ JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::cre
 #else
     auto skia_backend_context = Gfx::SkiaBackendContext::the();
     if (!skia_backend_context) {
-        fire_webgl_context_creation_error(canvas_element);
+        fire_creation_error();
         return GC::Ptr<WebGLRenderingContext> { nullptr };
     }
     auto context = OpenGLContext::create(*skia_backend_context, OpenGLContext::WebGLVersion::WebGL1, context_options);
 #endif
     if (!context) {
-        fire_webgl_context_creation_error(canvas_element);
+        fire_creation_error();
         return GC::Ptr<WebGLRenderingContext> { nullptr };
     }
 
-    context->set_size(canvas_element.bitmap_size_for_canvas(1, 1));
+    auto size = canvas.visit(
+        [](GC::Ref<HTML::HTMLCanvasElement> const& canvas) { return canvas->bitmap_size_for_canvas(1, 1); },
+        [](GC::Ref<HTML::OffscreenCanvas> const& canvas) { return canvas->bitmap_size_for_canvas(); });
+    // RinGL's caller-owned drawing target has no zero-sized representation.
+    // Keep a 1x1 physical target for zero-sized OffscreenCanvas instances;
+    // canvas_size() continues to expose the original logical dimensions and
+    // OffscreenCanvas refuses to snapshot the physical padding.
+    context->set_size({ max(size.width(), 1), max(size.height(), 1) });
+#ifdef AK_OS_RINOS
+    if (canvas.has<GC::Ref<HTML::OffscreenCanvas>>()) {
+        // Unlike a DOM canvas, an OffscreenCanvas has no compositor callback
+        // to lazily realize its drawing buffer. Materialize the RinGL surface
+        // now so bitmap consumers observe initialized transparent pixels.
+        context->make_current();
+        if (!context->rin_gl_is_ready()) {
+            fire_creation_error();
+            return GC::Ptr<WebGLRenderingContext> { nullptr };
+        }
+    }
+#endif
 
-    return realm.create<WebGLRenderingContext>(realm, canvas_element, context.release_nonnull(), context_attributes, actual_context_attributes);
+    return realm.create<WebGLRenderingContext>(realm, move(canvas), context.release_nonnull(), context_attributes, actual_context_attributes);
 }
 
-WebGLRenderingContext::WebGLRenderingContext(JS::Realm& realm, HTML::HTMLCanvasElement& canvas_element, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters)
+WebGLRenderingContext::WebGLRenderingContext(JS::Realm& realm, WebGLCanvas canvas, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters)
     : WebGLRenderingContextOverloads(realm, move(context))
-    , m_canvas_element(canvas_element)
+    , m_canvas(move(canvas))
     , m_context_creation_parameters(context_creation_parameters)
     , m_actual_context_parameters(actual_context_parameters)
 {
@@ -122,7 +159,9 @@ void WebGLRenderingContext::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     WebGLRenderingContextImpl::visit_edges(visitor);
-    visitor.visit(m_canvas_element);
+    m_canvas.visit([&](auto const& canvas) {
+        visitor.visit(canvas);
+    });
 }
 
 void WebGLRenderingContext::present()
@@ -134,16 +173,36 @@ void WebGLRenderingContext::present()
 #endif
 }
 
-GC::Ref<HTML::HTMLCanvasElement> WebGLRenderingContext::canvas_for_binding() const
+JS::Object const* WebGLRenderingContext::canvas_for_binding() const
 {
-    return *m_canvas_element;
+    return m_canvas.visit([](auto const& canvas) -> JS::Object const* {
+        return canvas.ptr();
+    });
+}
+
+Gfx::IntSize WebGLRenderingContext::canvas_size() const
+{
+    return m_canvas.visit(
+        [](GC::Ref<HTML::HTMLCanvasElement> const& canvas) { return canvas->bitmap_size_for_canvas(1, 1); },
+        [](GC::Ref<HTML::OffscreenCanvas> const& canvas) { return canvas->bitmap_size_for_canvas(); });
+}
+
+void WebGLRenderingContext::notify_canvas_needs_present()
+{
+    m_canvas.visit(
+        [](GC::Ref<HTML::HTMLCanvasElement> const& canvas) {
+            canvas->set_canvas_content_dirty();
+            canvas->set_needs_repaint();
+        },
+        [](GC::Ref<HTML::OffscreenCanvas> const&) {
+            // OffscreenCanvas has no compositor. Its RinGL surface is snapped
+            // only by its explicit bitmap-consuming APIs.
+        });
 }
 
 void WebGLRenderingContext::needs_to_present()
 {
-    m_canvas_element->set_canvas_content_dirty();
-
-    m_canvas_element->set_needs_repaint();
+    notify_canvas_needs_present();
 }
 
 #ifdef AK_OS_RINOS
@@ -166,7 +225,9 @@ void WebGLRenderingContext::report_context_loss() const
     // A cancelled event is the sole condition that makes this context
     // restorable. WEBGL_lose_context additionally requires an explicit
     // restoreContext() after event dispatch has completed.
-    m_context_restore_eligible = !fire_webgl_context_event(*m_canvas_element, EventNames::webglcontextlost, true);
+    m_context_restore_eligible = !m_canvas.visit([](auto const& canvas) {
+        return fire_webgl_context_event(*canvas, EventNames::webglcontextlost, true);
+    });
     if (m_context_restore_eligible && !m_context_lost_by_extension)
         queue_context_restore();
 }
@@ -214,9 +275,17 @@ void WebGLRenderingContext::queue_context_restore() const
     if (m_context_restore_pending)
         return;
     m_context_restore_pending = true;
-    m_canvas_element->queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
-        const_cast<WebGLRenderingContext*>(this)->restore_context_after_loss();
-    });
+    m_canvas.visit(
+        [this](GC::Ref<HTML::HTMLCanvasElement> const& canvas) {
+            canvas->queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
+                const_cast<WebGLRenderingContext*>(this)->restore_context_after_loss();
+            });
+        },
+        [this](GC::Ref<HTML::OffscreenCanvas> const& canvas) {
+            HTML::queue_global_task(HTML::Task::Source::DOMManipulation, HTML::relevant_global_object(*canvas), GC::create_function(heap(), [this] {
+                const_cast<WebGLRenderingContext*>(this)->restore_context_after_loss();
+            }));
+        });
 }
 
 void WebGLRenderingContext::restore_context_after_loss()
@@ -234,7 +303,7 @@ void WebGLRenderingContext::restore_context_after_loss()
         return;
     }
 
-    replacement->set_size(m_canvas_element->bitmap_size_for_canvas(1, 1));
+    replacement->set_size(canvas_size());
     replacement->make_current();
     if (!replacement->rin_gl_is_ready()) {
         m_context_restore_requested = false;
@@ -249,9 +318,10 @@ void WebGLRenderingContext::restore_context_after_loss()
     m_context_lost_by_extension = false;
     m_context_restore_eligible = false;
     m_context_restore_requested = false;
-    m_canvas_element->set_canvas_content_dirty();
-    m_canvas_element->set_needs_repaint();
-    fire_webgl_context_event(*m_canvas_element, EventNames::webglcontextrestored);
+    notify_canvas_needs_present();
+    m_canvas.visit([](auto const& canvas) {
+        fire_webgl_context_event(*canvas, EventNames::webglcontextrestored);
+    });
 }
 #endif
 
@@ -301,14 +371,22 @@ void WebGLRenderingContext::allocate_painting_surface_if_needed()
 
 WebIDL::Long WebGLRenderingContext::drawing_buffer_width() const
 {
-    auto size = canvas_for_binding()->bitmap_size_for_canvas();
+    auto size = canvas_size();
     return size.width();
 }
 
 WebIDL::Long WebGLRenderingContext::drawing_buffer_height() const
 {
-    auto size = canvas_for_binding()->bitmap_size_for_canvas();
+    auto size = canvas_size();
     return size.height();
+}
+
+WebIDL::UnsignedLong WebGLRenderingContext::drawing_buffer_format() const
+{
+    // The return value describes the actual drawing buffer. On RinOS the
+    // RinGL creation path deliberately forces alpha on, so a request for an
+    // opaque buffer still reports RGBA8 instead of claiming RGB8.
+    return m_actual_context_parameters.alpha ? 0x8058 : 0x8051;
 }
 
 }

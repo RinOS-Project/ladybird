@@ -34,20 +34,22 @@ public:
     };
 
     struct Entry {
-        Entry(GC::Ref<DecodedImageData> image_data, bool ignore_higher_layer_caching)
+        Entry(GC::Ref<DecodedImageData> image_data, bool ignore_higher_layer_caching, bool origin_clean)
             : image_data(move(image_data))
             , ignore_higher_layer_caching(ignore_higher_layer_caching)
+            , origin_clean(origin_clean)
         {
         }
 
         GC::Ref<DecodedImageData> image_data;
         bool ignore_higher_layer_caching { false };
+        bool origin_clean { false };
     };
 
     ListOfAvailableImages();
     ~ListOfAvailableImages();
 
-    void add(Key const&, GC::Ref<DecodedImageData>, bool ignore_higher_layer_caching);
+    void add(Key const&, GC::Ref<DecodedImageData>, bool ignore_higher_layer_caching, bool origin_clean);
     void remove(Key const&);
     [[nodiscard]] Entry* get(Key const&);
 

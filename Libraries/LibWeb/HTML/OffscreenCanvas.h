@@ -19,7 +19,7 @@ namespace Web::HTML {
 // https://html.spec.whatwg.org/multipage/canvas.html#offscreenrenderingcontext
 // NOTE: This is the Variant created by the IDL wrapper generator, and needs to be updated accordingly.
 #if defined(AK_OS_RINOS)
-using OffscreenRenderingContext = GC::Ptr<OffscreenCanvasRenderingContext2D>;
+using OffscreenRenderingContext = Variant<GC::Ptr<OffscreenCanvasRenderingContext2D>, GC::Ptr<WebGL::WebGLRenderingContext>, Empty>;
 #else
 using OffscreenRenderingContext = Variant<GC::Root<OffscreenCanvasRenderingContext2D>, GC::Root<WebGL::WebGLRenderingContext>, GC::Root<WebGL::WebGL2RenderingContext>, Empty>;
 #endif
@@ -55,6 +55,9 @@ public:
     WebIDL::UnsignedLong height() const;
 
     RefPtr<Gfx::Bitmap> bitmap() const;
+    bool is_origin_clean() const { return m_origin_clean; }
+    void set_origin_clean(bool origin_clean) { m_origin_clean = origin_clean; }
+    void mark_as_origin_tainted() { m_origin_clean = false; }
 
     WebIDL::ExceptionOr<void> set_width(WebIDL::UnsignedLong);
     WebIDL::ExceptionOr<void> set_height(WebIDL::UnsignedLong);
@@ -65,9 +68,6 @@ public:
 
     WebIDL::ExceptionOr<GC::Ref<ImageBitmap>> transfer_to_image_bitmap();
 
-    bool is_origin_clean() const { return m_origin_clean; }
-    void set_origin_clean(bool origin_clean) { m_origin_clean = origin_clean; }
-
     GC::Ref<WebIDL::Promise> convert_to_blob(Optional<ImageEncodeOptions> options);
 
     void set_oncontextlost(GC::Ptr<WebIDL::CallbackType>);
@@ -76,7 +76,7 @@ public:
     GC::Ptr<WebIDL::CallbackType> oncontextrestored();
 
 private:
-    OffscreenCanvas(JS::Realm&, RefPtr<Gfx::Bitmap> bitmap, Gfx::IntSize size);
+    OffscreenCanvas(JS::Realm&, RefPtr<Gfx::Bitmap>, Gfx::IntSize);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
@@ -91,7 +91,7 @@ private:
     WebIDL::ExceptionOr<void> set_new_bitmap_size(Gfx::IntSize new_size);
 
 #if defined(AK_OS_RINOS)
-    Variant<GC::Ref<HTML::OffscreenCanvasRenderingContext2D>, Empty> m_context;
+    Variant<GC::Ref<HTML::OffscreenCanvasRenderingContext2D>, GC::Ref<WebGL::WebGLRenderingContext>, Empty> m_context;
 #else
     Variant<GC::Ref<HTML::OffscreenCanvasRenderingContext2D>, GC::Ref<WebGL::WebGLRenderingContext>, GC::Ref<WebGL::WebGL2RenderingContext>, Empty> m_context;
 #endif

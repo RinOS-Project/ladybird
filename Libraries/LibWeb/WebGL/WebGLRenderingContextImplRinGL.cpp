@@ -39,9 +39,21 @@ static constexpr GLenum webgl_framebuffer_attachment_color_encoding_ext = 0x8210
 static constexpr GLenum webgl_framebuffer_attachment_component_type_ext = 0x8211;
 static constexpr GLenum webgl_unsigned_normalized_ext = 0x8c17;
 
+static bool rin_gl_color_attachment_valid(GLenum attachment)
+{
+    return attachment >= RINGL_COLOR_ATTACHMENT0
+        && attachment < RINGL_COLOR_ATTACHMENT0 + RINGL_MAX_COLOR_ATTACHMENTS;
+}
+
+static bool rin_gl_draw_buffers_attachment(GLenum attachment)
+{
+    return rin_gl_color_attachment_valid(attachment)
+        && attachment != RINGL_COLOR_ATTACHMENT0;
+}
+
 static bool rin_gl_framebuffer_attachment_valid(GLenum attachment)
 {
-    return attachment == RINGL_COLOR_ATTACHMENT0
+    return rin_gl_color_attachment_valid(attachment)
         || attachment == RINGL_DEPTH_ATTACHMENT
         || attachment == RINGL_STENCIL_ATTACHMENT
         || attachment == RINGL_DEPTH_STENCIL_ATTACHMENT;
@@ -113,7 +125,7 @@ bool WebGLRenderingContextImpl::make_rin_gl_current()
     return false;
 }
 
-bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out)
+bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLUniformLocation> location, GLenum expected_type, WebIDL::Long& location_out, GLenum accepted_alternate_type)
 {
     if (!m_current_program) {
         set_error(RINGL_INVALID_OPERATION);
@@ -162,10 +174,16 @@ bool WebGLRenderingContextImpl::validate_rin_gl_uniform_location(GC::Root<WebGLU
             set_error(RINGL_INVALID_OPERATION);
             return false;
         }
-        if (active_location != requested_location)
+        // Active uniform reflection represents an array by its `[0]` name and
+        // base location. WebGL locations for the remaining elements are valid
+        // only inside this linked, contiguous range.
+        auto active_location_begin = static_cast<u64>(active_location);
+        auto active_location_end = active_location_begin + active_uniform.size;
+        auto requested_location_unsigned = static_cast<u64>(requested_location);
+        if (active_uniform.size == 0 || requested_location_unsigned < active_location_begin || requested_location_unsigned >= active_location_end)
             continue;
 
-        if (expected_type != 0 && active_uniform.type != expected_type) {
+        if (expected_type != 0 && active_uniform.type != expected_type && active_uniform.type != accepted_alternate_type) {
             set_error(RINGL_INVALID_OPERATION);
             return false;
         }
@@ -209,7 +227,7 @@ bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_has_distinct_depth_sten
         || depth_attachment.level != stencil_attachment.level;
 }
 
-int WebGLRenderingContextImpl::rin_gl_bound_framebuffer_color_attachment_component_type()
+int WebGLRenderingContextImpl::rin_gl_bound_framebuffer_color_attachment_component_type(GLenum attachment)
 {
     uint32_t component_type = RINGL_UNSIGNED_BYTE;
 
@@ -217,9 +235,36 @@ int WebGLRenderingContextImpl::rin_gl_bound_framebuffer_color_attachment_compone
     // in Ladybird. Preserve a query failure separately so enabling an
     // unrelated extension cannot turn a stale/invalid native attachment
     // renderable.
-    if (ringl_framebuffer_color_attachment_component_type(&component_type) != 0)
+    if (ringl_framebuffer_color_attachment_component_type_at(attachment, &component_type) != 0)
         return -1;
     return static_cast<int>(component_type);
+}
+
+bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_color_attachments_are_webgl1_compatible()
+{
+    // Nonzero color slots cannot be attached before WEBGL_draw_buffers is
+    // enabled. Once it is, all four slots are part of the bound FBO's native
+    // state and each must satisfy the WebGL color-renderability extension
+    // gate, even when the current draw-buffer mask does not select it.
+    auto const attachment_count = m_framebuffer_binding && extension_enabled("WEBGL_draw_buffers"sv)
+        ? RINGL_MAX_COLOR_ATTACHMENTS
+        : 1u;
+
+    for (uint32_t attachment_index = 0; attachment_index < attachment_count; ++attachment_index) {
+        auto const color_component_type = rin_gl_bound_framebuffer_color_attachment_component_type(
+            RINGL_COLOR_ATTACHMENT0 + attachment_index);
+        if (color_component_type < 0)
+            return false;
+        if (color_component_type == static_cast<int>(RINGL_FLOAT)
+            && !extension_enabled("WEBGL_color_buffer_float"sv)) {
+            return false;
+        }
+        if (color_component_type == static_cast<int>(RINGL_HALF_FLOAT_OES)
+            && !extension_enabled("EXT_color_buffer_half_float"sv)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_is_webgl1_compatible()
@@ -232,21 +277,7 @@ bool WebGLRenderingContextImpl::rin_gl_bound_framebuffer_is_webgl1_compatible()
         set_error(webgl_invalid_framebuffer_operation);
         return false;
     }
-    auto const color_component_type =
-        rin_gl_bound_framebuffer_color_attachment_component_type();
-    if (color_component_type < 0) {
-        set_error(webgl_invalid_framebuffer_operation);
-        return false;
-    }
-    if (color_component_type == static_cast<int>(RINGL_FLOAT)
-        && !extension_enabled("WEBGL_color_buffer_float"sv)) {
-        // Float texture storage comes from OES_texture_float, but it is not
-        // color-renderable in WebGL 1 until the separate FBO extension is on.
-        set_error(webgl_invalid_framebuffer_operation);
-        return false;
-    }
-    if (color_component_type == static_cast<int>(RINGL_HALF_FLOAT_OES)
-        && !extension_enabled("EXT_color_buffer_half_float"sv)) {
+    if (!rin_gl_bound_framebuffer_color_attachments_are_webgl1_compatible()) {
         set_error(webgl_invalid_framebuffer_operation);
         return false;
     }
@@ -1864,7 +1895,14 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
-        if (active_location != location_handle)
+        // Reflection coalesces an active array as `name[0]`, but every
+        // element has a valid contiguous WebGL location. Consult RinGL for
+        // the requested element instead of treating the base location as the
+        // only queryable value.
+        auto active_location_begin = static_cast<u64>(active_location);
+        auto active_location_end = active_location_begin + active_uniform.size;
+        auto requested_location = static_cast<u64>(location_handle);
+        if (active_uniform.size == 0 || requested_location < active_location_begin || requested_location >= active_location_end)
             continue;
 
         switch (active_uniform.type) {
@@ -1883,6 +1921,34 @@ JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program,
                 return JS::js_null();
             }
             return JS::Value(value);
+        }
+        case RINGL_BOOL: {
+            int32_t value = 0;
+            if (ringl_get_uniform_1i(program_handle, location_handle, &value) != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            return JS::Value(value != 0);
+        }
+        case RINGL_BOOL_VEC2:
+        case RINGL_BOOL_VEC3:
+        case RINGL_BOOL_VEC4: {
+            Array<int32_t, 4> values {};
+            size_t value_count = active_uniform.type == RINGL_BOOL_VEC2 ? 2
+                : active_uniform.type == RINGL_BOOL_VEC3 ? 3
+                                                        : 4;
+            int result = value_count == 2 ? ringl_get_uniform_2i(program_handle, location_handle, values.data())
+                : value_count == 3 ? ringl_get_uniform_3i(program_handle, location_handle, values.data())
+                                   : ringl_get_uniform_4i(program_handle, location_handle, values.data());
+            if (result != 0) {
+                set_error(RINGL_INVALID_OPERATION);
+                return JS::js_null();
+            }
+            Array<JS::Value, 4> boolean_values {};
+            for (size_t value_index = 0; value_index < value_count; ++value_index)
+                boolean_values[value_index] = JS::Value(values[value_index] != 0);
+            return JS::Value(JS::Array::create_from(
+                realm(), boolean_values.span().slice(0, value_count)));
         }
         case RINGL_FLOAT: {
             float value = 0.0f;
@@ -2634,6 +2700,12 @@ void WebGLRenderingContextImpl::framebuffer_renderbuffer(WebIDL::UnsignedLong ta
     if (!make_rin_gl_current())
         return;
 
+    if (rin_gl_draw_buffers_attachment(attachment)
+        && !extension_enabled("WEBGL_draw_buffers"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
+
     GLuint handle = 0;
     if (renderbuffer) {
         auto handle_or_error = renderbuffer->handle(this);
@@ -2659,13 +2731,19 @@ void WebGLRenderingContextImpl::framebuffer_renderbuffer(WebIDL::UnsignedLong ta
     auto attached_object = renderbuffer
         ? GC::Ptr<WebGLObject> { static_cast<WebGLObject*>(renderbuffer.ptr()) }
         : GC::Ptr<WebGLObject> {};
-    m_framebuffer_binding->set_rin_gl_attachment(attachment, attached_object, 0);
+    m_framebuffer_binding->set_attachment(attachment, attached_object, 0);
 }
 
 void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong textarget, GC::Root<WebGLTexture> texture, WebIDL::Long level)
 {
     if (!make_rin_gl_current())
         return;
+
+    if (rin_gl_draw_buffers_attachment(attachment)
+        && !extension_enabled("WEBGL_draw_buffers"sv)) {
+        set_error(RINGL_INVALID_ENUM);
+        return;
+    }
 
     // WebGL 1 admits only level zero until OES_fbo_render_mipmap is enabled.
     // Reject before resolving an object handle or touching the RinGL FBO so a
@@ -2700,14 +2778,16 @@ void WebGLRenderingContextImpl::framebuffer_texture2d(WebIDL::UnsignedLong targe
     auto attached_object = texture
         ? GC::Ptr<WebGLObject> { static_cast<WebGLObject*>(texture.ptr()) }
         : GC::Ptr<WebGLObject> {};
-    m_framebuffer_binding->set_rin_gl_attachment(attachment, attached_object, level);
+    m_framebuffer_binding->set_attachment(attachment, attached_object, level);
 }
 
 JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong attachment, WebIDL::UnsignedLong pname)
 {
     if (!make_rin_gl_current())
         return JS::js_null();
-    if (target != RINGL_FRAMEBUFFER || !rin_gl_framebuffer_attachment_valid(attachment)) {
+    if (target != RINGL_FRAMEBUFFER || !rin_gl_framebuffer_attachment_valid(attachment)
+        || (rin_gl_draw_buffers_attachment(attachment)
+            && !extension_enabled("WEBGL_draw_buffers"sv))) {
         set_error(RINGL_INVALID_ENUM);
         return JS::js_null();
     }
@@ -2738,12 +2818,10 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
             return JS::js_null();
         }
     case RINGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME: {
-        if (info.kind == RINGL_FRAMEBUFFER_ATTACHMENT_NONE) {
-            set_error(RINGL_INVALID_OPERATION);
+        if (info.kind == RINGL_FRAMEBUFFER_ATTACHMENT_NONE)
             return JS::js_null();
-        }
-        auto object = m_framebuffer_binding->rin_gl_attachment_object(attachment);
-        if (!object || m_framebuffer_binding->rin_gl_attachment_level(attachment) != info.level) {
+        auto object = m_framebuffer_binding->attachment_object(attachment);
+        if (!object || m_framebuffer_binding->attachment_level(attachment) != info.level) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
@@ -2764,13 +2842,13 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
             set_error(RINGL_INVALID_ENUM);
             return JS::js_null();
         }
-        if (attachment != RINGL_COLOR_ATTACHMENT0
+        if (!rin_gl_color_attachment_valid(attachment)
             || info.kind == RINGL_FRAMEBUFFER_ATTACHMENT_NONE) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
         uint32_t is_srgb = RINGL_FALSE;
-        if (ringl_framebuffer_color_attachment_is_srgb(&is_srgb) != 0) {
+        if (ringl_framebuffer_color_attachment_is_srgb_at(attachment, &is_srgb) != 0) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
@@ -2798,8 +2876,8 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
             return JS::Value(RINGL_UNSIGNED_INT);
         uint32_t component_type = RINGL_UNSIGNED_BYTE;
 
-        if (attachment != RINGL_COLOR_ATTACHMENT0
-            || ringl_framebuffer_color_attachment_component_type(&component_type) != 0) {
+        if (!rin_gl_color_attachment_valid(attachment)
+            || ringl_framebuffer_color_attachment_component_type_at(attachment, &component_type) != 0) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
@@ -2820,15 +2898,7 @@ WebIDL::UnsignedLong WebGLRenderingContextImpl::check_framebuffer_status(WebIDL:
     if (target == RINGL_FRAMEBUFFER) {
         if (rin_gl_bound_framebuffer_has_distinct_depth_stencil_attachments())
             return webgl_framebuffer_unsupported;
-        auto const color_component_type =
-            rin_gl_bound_framebuffer_color_attachment_component_type();
-        if (color_component_type < 0)
-            return webgl_framebuffer_unsupported;
-        if (color_component_type == static_cast<int>(RINGL_FLOAT)
-            && !extension_enabled("WEBGL_color_buffer_float"sv))
-            return webgl_framebuffer_unsupported;
-        if (color_component_type == static_cast<int>(RINGL_HALF_FLOAT_OES)
-            && !extension_enabled("EXT_color_buffer_half_float"sv))
+        if (!rin_gl_bound_framebuffer_color_attachments_are_webgl1_compatible())
             return webgl_framebuffer_unsupported;
     }
     return ringl_check_framebuffer_status(target);

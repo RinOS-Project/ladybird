@@ -38,9 +38,9 @@ void ListOfAvailableImages::visit_edges(JS::Cell::Visitor& visitor)
         visitor.visit(it.value->image_data);
 }
 
-void ListOfAvailableImages::add(Key const& key, GC::Ref<DecodedImageData> image_data, bool ignore_higher_layer_caching)
+void ListOfAvailableImages::add(Key const& key, GC::Ref<DecodedImageData> image_data, bool ignore_higher_layer_caching, bool origin_clean)
 {
-    m_images.set(key, make<Entry>(image_data, ignore_higher_layer_caching));
+    m_images.set(key, make<Entry>(image_data, ignore_higher_layer_caching, origin_clean));
 }
 
 void ListOfAvailableImages::remove(Key const& key)

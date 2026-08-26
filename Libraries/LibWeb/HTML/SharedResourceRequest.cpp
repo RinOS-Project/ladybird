@@ -28,28 +28,30 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(SharedResourceRequest);
 
-GC::Ref<SharedResourceRequest> SharedResourceRequest::get_or_create(JS::Realm& realm, GC::Ref<Page> page, URL::URL const& url, CORSSettingAttribute cors_setting)
+GC::Ref<SharedResourceRequest> SharedResourceRequest::get_or_create(JS::Realm& realm, GC::Ref<Page> page, URL::URL const& url)
 {
     auto document = Bindings::principal_host_defined_environment_settings_object(realm).responsible_document();
     VERIFY(document);
     auto& shared_resource_requests = document->shared_resource_requests();
-    if (auto it = shared_resource_requests.find(url); it != shared_resource_requests.end() && it->value->cors_setting() == cors_setting)
+    if (auto it = shared_resource_requests.find(url); it != shared_resource_requests.end())
         return *it->value;
-
-    // The cache key predates CORS-aware image fetching and only contains the
-    // URL. Never let a request made under one CORS setting provide decoded
-    // pixels to a request made under another one. Replacing the map entry is
-    // safe: active ImageRequests retain their own strong reference.
-    auto request = realm.create<SharedResourceRequest>(page, url, *document, cors_setting);
+    auto request = realm.create<SharedResourceRequest>(page, url, *document, true);
     shared_resource_requests.set(url, request);
     return request;
 }
 
-SharedResourceRequest::SharedResourceRequest(GC::Ref<Page> page, URL::URL url, GC::Ref<DOM::Document> document, CORSSettingAttribute cors_setting)
+GC::Ref<SharedResourceRequest> SharedResourceRequest::create_uncached(JS::Realm& realm, GC::Ref<Page> page, URL::URL const& url)
+{
+    auto document = Bindings::principal_host_defined_environment_settings_object(realm).responsible_document();
+    VERIFY(document);
+    return realm.create<SharedResourceRequest>(page, url, *document, false);
+}
+
+SharedResourceRequest::SharedResourceRequest(GC::Ref<Page> page, URL::URL url, GC::Ref<DOM::Document> document, bool is_document_cached)
     : m_page(page)
     , m_url(move(url))
-    , m_cors_setting(cors_setting)
     , m_document(document)
+    , m_is_document_cached(is_document_cached)
 {
 }
 
@@ -58,9 +60,10 @@ SharedResourceRequest::~SharedResourceRequest() = default;
 void SharedResourceRequest::finalize()
 {
     Base::finalize();
-    auto& shared_resource_requests = m_document->shared_resource_requests();
-    if (auto it = shared_resource_requests.find(m_url); it != shared_resource_requests.end() && it->value.ptr() == this)
+    if (m_is_document_cached) {
+        auto& shared_resource_requests = m_document->shared_resource_requests();
         shared_resource_requests.remove(m_url);
+    }
 }
 
 void SharedResourceRequest::visit_edges(JS::Cell::Visitor& visitor)
@@ -94,28 +97,34 @@ void SharedResourceRequest::set_fetch_controller(GC::Ptr<Fetch::Infrastructure::
 void SharedResourceRequest::fetch_resource(JS::Realm& realm, GC::Ref<Fetch::Infrastructure::Request> request)
 {
     Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
-    fetch_algorithms_input.process_response = [this, &realm, request](GC::Ref<Fetch::Infrastructure::Response> response) {
-        // This must be read from the filtered response. Its opaque type is the
-        // Fetch-layer proof that a no-CORS cross-origin image is tainted;
-        // successful CORS responses remain origin-clean.
-        m_is_cors_cross_origin = response->is_cors_cross_origin();
+    // Uncached image requests are intentionally not owned by the document's
+    // URL-only resource map. Keep this request alive through every fetch
+    // callback so a source replacement cannot collect it mid-response.
+    auto self = GC::Ref(*this);
+    fetch_algorithms_input.process_response = [self, &realm, request](GC::Ref<Fetch::Infrastructure::Response> response) {
+        // CORS and basic filtered responses are readable by the document.
+        // Opaque responses may still be decoded for presentation, but must
+        // never become a clean canvas/WebGL pixel source.
+        self->m_origin_clean = request->response_tainting() != Fetch::Infrastructure::Request::ResponseTainting::Opaque
+            && response->type() != Fetch::Infrastructure::Response::Type::Opaque
+            && response->type() != Fetch::Infrastructure::Response::Type::OpaqueRedirect;
         auto rooted_responses = Fetch::Infrastructure::root_response_references(response);
         auto internal_response = rooted_responses->internal_response();
 
-        auto process_body = GC::create_function(heap(), [this, request, rooted_responses](ByteBuffer data) {
+        auto process_body = GC::create_function(self->heap(), [self, request, rooted_responses](ByteBuffer data) {
             auto response = rooted_responses->internal_response();
             auto extracted_mime_type = Fetch::Infrastructure::extract_mime_type(response->header_list());
             auto mime_type = extracted_mime_type.has_value() ? extracted_mime_type.value().essence().bytes_as_string_view() : StringView {};
-            handle_successful_fetch(request->url(), mime_type, move(data));
+            self->handle_successful_fetch(request->url(), mime_type, move(data));
         });
-        auto process_body_error = GC::create_function(heap(), [this, rooted_responses](JS::Value) {
+        auto process_body_error = GC::create_function(self->heap(), [self, rooted_responses](JS::Value) {
             (void)rooted_responses;
-            handle_failed_fetch();
+            self->handle_failed_fetch();
         });
 
         // Check for failed fetch response
         if (!Fetch::Infrastructure::is_ok_status(internal_response->status()) || !internal_response->body()) {
-            handle_failed_fetch();
+            self->handle_failed_fetch();
             return;
         }
 

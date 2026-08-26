@@ -47,9 +47,10 @@ ErrorOr<GC::Ref<SVGDecodedImageData>> SVGDecodedImageData::create(JS::Realm& rea
     GC::Ref<HTML::Navigable> navigable = page->top_level_traversable();
     auto response = Fetch::Infrastructure::Response::create(navigable->vm());
     response->url_list().append(url);
-    // The SVG document remains script-isolated, but its image fetches need the
-    // embedding document's origin. Using a fresh opaque origin here would mark
-    // every same-origin SVG subresource as cross-origin.
+    // SVGs loaded as images run in an isolated document, but their resource
+    // fetches must use the embedding document's origin. An opaque origin here
+    // would incorrectly taint a same-origin subresource (or make it impossible
+    // to distinguish it from an opaque cross-origin response).
     auto origin = as<HTML::Window>(realm.global_object()).associated_document().origin();
     auto navigation_params = navigable->heap().allocate<HTML::NavigationParams>(OptionalNone {},
         navigable,
@@ -105,8 +106,8 @@ SVGDecodedImageData::~SVGDecodedImageData() = default;
 
 bool SVGDecodedImageData::is_origin_clean() const
 {
-    // A recursive SVG resource graph without a finite clean result is not safe
-    // to expose through canvas or WebGL.
+    // A cyclic chain of nested SVG image resources must not be treated as
+    // clean merely because a recursive inspection has no finite result.
     if (m_is_checking_origin_clean)
         return false;
 
@@ -125,9 +126,11 @@ bool SVGDecodedImageData::is_origin_clean() const
     m_document->for_each_in_subtree_of_type<SVGImageElement>(check_resource);
     if (!clean)
         return false;
+
     m_document->for_each_in_subtree_of_type<SVGFEImageElement>(check_resource);
     if (!clean)
         return false;
+
     m_document->for_each_in_subtree_of_type<SVGUseElement>(check_resource);
     return clean;
 }

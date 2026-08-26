@@ -90,6 +90,7 @@ WebIDL::ExceptionOr<void> ImageBitmap::deserialization_steps(HTML::TransferDataD
 {
     // 1. Set value's bitmap data to serialized.[[BitmapData]].
     set_bitmap(TRY(deserialize_bitmap(this->realm(), serialized)));
+    m_origin_clean = true;
 
     return {};
 }
@@ -115,6 +116,7 @@ WebIDL::ExceptionOr<void> ImageBitmap::transfer_receiving_steps(HTML::TransferDa
 {
     // 1. Set value's bitmap data to dataHolder.[[BitmapData]].
     set_bitmap(TRY(deserialize_bitmap(this->realm(), data_holder)));
+    m_origin_clean = true;
 
     return {};
 }

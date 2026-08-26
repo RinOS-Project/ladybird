@@ -60,10 +60,9 @@ public:
 private:
     explicit ImageBitmap(JS::Realm&);
 
-    // An ImageBitmap object's bitmap has an origin-clean flag, which indicates whether the bitmap is tainted by content
-    // from a different origin. The flag is initially set to true and may be changed to false by the steps of
-    // createImageBitmap().
-    bool m_origin_clean { true };
+    // An ImageBitmap's origin-clean state belongs to the web object rather
+    // than its Gfx::Bitmap storage: the same pixels can be observed through
+    // a clean or a tainted source object.
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
@@ -72,6 +71,7 @@ private:
     WebIDL::UnsignedLong m_height = 0;
 
     RefPtr<Gfx::Bitmap> m_bitmap;
+    bool m_origin_clean { true };
 };
 
 }

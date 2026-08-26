@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    test(() => {
+        const sender = new OffscreenCanvas(2, 2);
+        const receiver = structuredClone({ canvas: sender }, { transfer: [sender] }).canvas;
+
+        println(`${sender.width},${sender.height}`);
+        println(`${receiver.width},${receiver.height}`);
+        try {
+            sender.getContext("2d");
+        } catch (error) {
+            println(error.name);
+        }
+
+        const receiver_context = receiver.getContext("2d");
+        println(Array.from(receiver_context.getImageData(0, 0, 1, 1).data).join(","));
+
+        const zero_sized_sender = new OffscreenCanvas(0, 3);
+        const zero_sized_receiver = structuredClone(zero_sized_sender, { transfer: [zero_sized_sender] });
+        println(`${zero_sized_sender.width},${zero_sized_sender.height}`);
+        println(`${zero_sized_receiver.width},${zero_sized_receiver.height}`);
+    });
+</script>

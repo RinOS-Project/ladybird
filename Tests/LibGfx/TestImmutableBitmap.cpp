@@ -126,6 +126,32 @@ TEST_CASE(export_to_byte_buffer)
             { Premultiplied::No },
             { 0x23, 0x01, 0x67, 0x45, 0xAB, 0x89, 0xEF, 0xCD },
         },
+#ifdef AK_OS_RINOS
+        {
+            non_alpha_bitmap_formats,
+            { Premultiplied::No, Premultiplied::Yes },
+            { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFF00FF },
+            Gfx::ExportFormat::RGBA5551,
+            { Premultiplied::No, Premultiplied::Yes },
+            { 0x01, 0xF8, 0xC1, 0x07, 0x3F, 0x00, 0x3F, 0xF8 },
+        },
+        {
+            alpha_bitmap_formats,
+            { Premultiplied::No },
+            { 0x33001122, 0x77445566, 0xBB8899AA, 0xFFCCDDEE },
+            Gfx::ExportFormat::RGBA5551,
+            { Premultiplied::No },
+            { 0x88, 0x00, 0x98, 0x42, 0xEB, 0x8C, 0xFB, 0xCE },
+        },
+        {
+            alpha_bitmap_formats,
+            { Premultiplied::No },
+            { 0x3355AAFF, 0x6655AAFF, 0x9955AAFF, 0xCC55AAFF },
+            Gfx::ExportFormat::RGBA5551,
+            { Premultiplied::Yes },
+            { 0x0C, 0x11, 0x18, 0x22, 0x27, 0x33, 0x73, 0x44 },
+        },
+#endif
         {
             alpha_bitmap_formats,
             { Premultiplied::No },

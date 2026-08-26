@@ -5,6 +5,8 @@
         const opaque_canvas = new OffscreenCanvas(1, 1);
         const opaque_context = opaque_canvas.getContext("2d", { alpha: false });
         println(Array.from(opaque_context.getImageData(0, 0, 1, 1).data).join(","));
+        opaque_context.fillStyle = "red";
+        opaque_context.fillRect(0, 0, 1, 1);
         opaque_canvas.transferToImageBitmap();
         println(Array.from(opaque_context.getImageData(0, 0, 1, 1).data).join(","));
 

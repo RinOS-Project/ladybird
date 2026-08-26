@@ -28,6 +28,7 @@
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
+#include <LibWeb/WebIDL/DOMException.h>
 
 #include <LibWeb/WebGL/WebGLRenderingContext.h>
 #if !defined(AK_OS_RINOS)
@@ -153,6 +154,9 @@ Painting::ExternalContentSource& HTMLCanvasElement::ensure_external_content_sour
 
 void HTMLCanvasElement::reset_context_to_default_state()
 {
+    // Replacing the backing bitmap by assigning width or height resets its
+    // origin-clean flag, independent of the context that happened to paint it.
+    m_origin_clean = true;
     if (m_external_content_source)
         m_external_content_source->clear();
     m_context.visit(
@@ -318,7 +322,9 @@ Gfx::IntSize HTMLCanvasElement::bitmap_size_for_canvas(size_t minimum_width, siz
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-todataurl
 WebIDL::ExceptionOr<String> HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
 {
-    if (!is_origin_clean())
+    // 1. Do not permit a canvas tainted by a cross-origin source to expose
+    // its pixels through a data URL.
+    if (!m_origin_clean)
         return WebIDL::SecurityError::create(realm(), "Canvas is not origin-clean"_utf16);
 
     // It is possible the canvas doesn't have an associated bitmap so create one
@@ -359,7 +365,7 @@ WebIDL::ExceptionOr<String> HTMLCanvasElement::to_data_url(StringView type, JS::
 WebIDL::ExceptionOr<void> HTMLCanvasElement::to_blob(GC::Ref<WebIDL::CallbackType> callback, StringView type, JS::Value js_quality)
 {
     // 1. If this canvas element's bitmap's origin-clean flag is set to false, then throw a "SecurityError" DOMException.
-    if (!is_origin_clean())
+    if (!m_origin_clean)
         return WebIDL::SecurityError::create(realm(), "Canvas is not origin-clean"_utf16);
 
     // 2. Let result be null.
@@ -419,25 +425,6 @@ RefPtr<Gfx::Bitmap> HTMLCanvasElement::get_bitmap_from_surface()
 void HTMLCanvasElement::set_canvas_content_dirty()
 {
     m_canvas_content_dirty = true;
-}
-
-bool HTMLCanvasElement::is_origin_clean() const
-{
-    return m_context.visit(
-        [](GC::Ref<CanvasRenderingContext2D> const& context) {
-            return context->is_origin_clean();
-        },
-        [](GC::Ref<WebGL::WebGLRenderingContext> const&) {
-            return true;
-        },
-#if !defined(AK_OS_RINOS)
-        [](GC::Ref<WebGL::WebGL2RenderingContext> const&) {
-            return true;
-        },
-#endif
-        [](Empty) {
-            return true;
-        });
 }
 
 void HTMLCanvasElement::present()

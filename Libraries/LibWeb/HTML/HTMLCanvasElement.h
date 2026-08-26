@@ -52,6 +52,10 @@ public:
     RefPtr<Gfx::Bitmap> get_bitmap_from_surface();
     bool is_origin_clean() const;
 
+    bool is_origin_clean() const { return m_origin_clean; }
+    void set_origin_clean(bool origin_clean) { m_origin_clean = origin_clean; }
+    void mark_as_origin_tainted() { m_origin_clean = false; }
+
     void present();
     void set_canvas_content_dirty();
 
@@ -85,6 +89,7 @@ private:
 #endif
     RefPtr<Painting::ExternalContentSource> m_external_content_source;
     bool m_canvas_content_dirty { false };
+    bool m_origin_clean { true };
 };
 
 }

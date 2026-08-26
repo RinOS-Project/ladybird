@@ -30,11 +30,13 @@ interface mixin WebGLRenderingContextBase {
     //       IDL code generator. This also allows us to handle the return type ourselves instead of adding the complexity of the
     //       code generator working out the return type and returning the appropriate value to return on context loss.
 
-    // FIXME: The type should be (HTMLCanvasElement or OffscreenCanvas).
-    [ImplementedAs=canvas_for_binding] readonly attribute HTMLCanvasElement canvas;
+    // Keep this an object rather than importing OffscreenCanvas here: the
+    // bindings generator rejects circular IDL imports, while OffscreenCanvas
+    // itself needs to import WebGLRenderingContext for getContext().
+    [ImplementedAs=canvas_for_binding] readonly attribute object canvas;
     readonly attribute GLsizei drawingBufferWidth;
     readonly attribute GLsizei drawingBufferHeight;
-    [FIXME] readonly attribute GLenum drawingBufferFormat;
+    readonly attribute GLenum drawingBufferFormat;
 
     [FIXME] attribute PredefinedColorSpace drawingBufferColorSpace;
     [FIXME] attribute PredefinedColorSpace unpackColorSpace;
@@ -115,7 +117,7 @@ interface mixin WebGLRenderingContextBase {
 
     GLenum getError();
 
-    [FIXME] any getFramebufferAttachmentParameter(GLenum target, GLenum attachment, GLenum pname);
+    any getFramebufferAttachmentParameter(GLenum target, GLenum attachment, GLenum pname);
     any getProgramParameter(WebGLProgram program, GLenum pname);
     DOMString? getProgramInfoLog(WebGLProgram program);
     any getRenderbufferParameter(GLenum target, GLenum pname);
@@ -527,6 +529,7 @@ interface mixin WebGLRenderingContextBase {
 
     const GLenum RGBA4 = 0x8056;
     const GLenum RGB5_A1 = 0x8057;
+    const GLenum RGB8 = 0x8051;
     const GLenum RGBA8 = 0x8058;
     const GLenum RGB565 = 0x8D62;
     const GLenum DEPTH_COMPONENT16 = 0x81A5;

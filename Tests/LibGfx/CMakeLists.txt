@@ -11,7 +11,10 @@ set(TEST_SOURCES
 )
 
 if (AK_OS_RINOS)
-    list(APPEND TEST_SOURCES TestPathAquamarine.cpp)
+    list(APPEND TEST_SOURCES
+        TestPainterAquamarine.cpp
+        TestPathAquamarine.cpp
+    )
 endif()
 
 foreach(source IN LISTS TEST_SOURCES)

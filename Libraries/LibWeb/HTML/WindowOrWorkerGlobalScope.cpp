@@ -30,6 +30,7 @@
 #include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/HTML/HTMLVideoElement.h>
 #include <LibWeb/HTML/ImageBitmap.h>
+#include <LibWeb/HTML/OffscreenCanvas.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
@@ -396,6 +397,7 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                 return;
             }
             image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
+            image_bitmap->set_origin_clean(true);
 
             // 4. Queue a global task, using the bitmap task source, to resolve promise with imageBitmap.
             queue_global_task(Task::Source::BitmapTask, image_bitmap, GC::create_function(realm.heap(), [p, image_bitmap] {
@@ -424,8 +426,6 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                         return;
                     }
                     image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
-
-                    // 2. Preserve the origin-clean flag of the source canvas.
                     image_bitmap->set_origin_clean(canvas_element->is_origin_clean());
 
                     // 3. Queue a global task, using the bitmap task source, to resolve promise with imageBitmap.
@@ -446,8 +446,6 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                         return;
                     }
                     image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
-
-                    // 2. Preserve the origin-clean flag of the source bitmap.
                     image_bitmap->set_origin_clean(source_image_bitmap->is_origin_clean());
 
                     // 3. Queue a global task, using the bitmap task source, to resolve promise with imageBitmap.
@@ -458,21 +456,16 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                     }));
                 },
                 [&](GC::Root<OffscreenCanvas> const& offscreen_canvas) {
-                    // Copy the current bitmap just as the HTMLCanvasElement branch does.
-                    // The source stays usable even when it is tainted; its origin-clean state
-                    // travels with the ImageBitmap and is enforced by the consuming API.
-                    auto offscreen_bitmap = offscreen_canvas->bitmap();
-                    if (!offscreen_bitmap) {
+                    auto canvas_bitmap = offscreen_canvas->bitmap();
+                    if (!canvas_bitmap) {
                         WebIDL::reject_promise(realm, *p, WebIDL::InvalidStateError::create(image_bitmap->realm(), "Image size is invalid"_utf16));
                         return;
                     }
-
-                    auto cropped_bitmap_or_error = crop_to_the_source_rectangle_with_formatting(offscreen_bitmap, sx, sy, sw, sh, options);
+                    auto cropped_bitmap_or_error = crop_to_the_source_rectangle_with_formatting(canvas_bitmap, sx, sy, sw, sh, options);
                     if (cropped_bitmap_or_error.is_error()) {
                         WebIDL::reject_promise(realm, *p, WebIDL::InvalidStateError::create(image_bitmap->realm(), "Image size is invalid"_utf16));
                         return;
                     }
-
                     image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
                     image_bitmap->set_origin_clean(offscreen_canvas->is_origin_clean());
 
@@ -486,16 +479,14 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                 [&](GC::Root<HTMLVideoElement> const& video_element) {
                     auto video_bitmap = video_element->bitmap();
                     if (!video_bitmap) {
-                        WebIDL::reject_promise(realm, *p, WebIDL::InvalidStateError::create(image_bitmap->realm(), "Video frame is unavailable"_utf16));
+                        WebIDL::reject_promise(realm, *p, WebIDL::InvalidStateError::create(image_bitmap->realm(), "Video frame is not available"_utf16));
                         return;
                     }
-
                     auto cropped_bitmap_or_error = crop_to_the_source_rectangle_with_formatting(video_bitmap->bitmap(), sx, sy, sw, sh, options);
                     if (cropped_bitmap_or_error.is_error()) {
                         WebIDL::reject_promise(realm, *p, WebIDL::InvalidStateError::create(image_bitmap->realm(), "Image size is invalid"_utf16));
                         return;
                     }
-
                     image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
                     image_bitmap->set_origin_clean(video_element->is_origin_clean());
 
@@ -531,9 +522,7 @@ GC::Ref<WebIDL::Promise> WindowOrWorkerGlobalScopeMixin::create_image_bitmap_imp
                         return;
                     }
                     image_bitmap->set_bitmap(cropped_bitmap_or_error.release_value());
-
-                    // 4. Preserve the image source's origin-clean state.
-                    image_bitmap->set_origin_clean(!image_is_not_origin_clean(image_source));
+                    image_bitmap->set_origin_clean(image_element->is_origin_clean());
 
                     // 5. Queue a global task, using the bitmap task source, to resolve promise with imageBitmap.
                     queue_global_task(Task::Source::BitmapTask, image_bitmap, GC::create_function(realm.heap(), [p, image_bitmap] {

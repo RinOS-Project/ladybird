@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    test(() => {
+        const canvas = document.createElement("canvas");
+        const gl = canvas.getContext("webgl");
+        if (!gl) {
+            println("SKIP: WebGL backend is unavailable");
+            return;
+        }
+
+        const framebuffer = gl.createFramebuffer();
+        const texture = gl.createTexture();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+        println(`object type: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE)}`);
+        println(`object identity: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME) === texture}`);
+        println(`texture level: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL)}`);
+
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, null, 0);
+        println(`detached object: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME) === null}`);
+
+        const drawBuffers = gl.getExtension("WEBGL_draw_buffers");
+        const srgb = gl.getExtension("EXT_sRGB");
+        const colorBufferFloat = gl.getExtension("WEBGL_color_buffer_float");
+        if (drawBuffers && srgb && colorBufferFloat) {
+            const secondTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, secondTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, srgb.SRGB_ALPHA_EXT, 1, 1, 0, srgb.SRGB_ALPHA_EXT, gl.UNSIGNED_BYTE, null);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, gl.TEXTURE_2D, secondTexture, 0);
+            println(`mrt object identity: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME) === secondTexture}`);
+            println(`mrt sRGB encoding: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, srgb.FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING_EXT) === srgb.SRGB_EXT}`);
+            println(`mrt component type: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, colorBufferFloat.FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE_EXT) === colorBufferFloat.UNSIGNED_NORMALIZED_EXT}`);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, gl.TEXTURE_2D, null, 0);
+            println(`mrt detached object: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME) === null}`);
+
+            const floatRenderbuffer = gl.createRenderbuffer();
+            gl.bindRenderbuffer(gl.RENDERBUFFER, floatRenderbuffer);
+            gl.renderbufferStorage(gl.RENDERBUFFER, colorBufferFloat.RGBA32F_EXT, 1, 1);
+            gl.framebufferRenderbuffer(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, gl.RENDERBUFFER, floatRenderbuffer);
+            println(`mrt float component type: ${gl.getFramebufferAttachmentParameter(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, colorBufferFloat.FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE_EXT) === gl.FLOAT}`);
+            println(`mrt float status: ${gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE}`);
+            gl.framebufferRenderbuffer(gl.FRAMEBUFFER, drawBuffers.COLOR_ATTACHMENT1_WEBGL, gl.RENDERBUFFER, null);
+        }
+        println(`error: ${gl.getError()}`);
+    });
+</script>

@@ -98,7 +98,7 @@ bool SVGFEImageElement::is_origin_clean() const
     auto image_data = m_resource_request->image_data();
     if (!image_data)
         return true;
-    if (m_resource_request->is_cors_cross_origin())
+    if (!m_resource_request->is_origin_clean())
         return false;
     if (is<SVGDecodedImageData>(*image_data))
         return as<SVGDecodedImageData>(*image_data).is_origin_clean();
