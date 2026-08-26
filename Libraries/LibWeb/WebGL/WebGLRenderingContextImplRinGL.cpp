@@ -2829,13 +2829,13 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
             set_error(RINGL_INVALID_ENUM);
             return JS::js_null();
         }
-        if (attachment != RINGL_COLOR_ATTACHMENT0
+        if (!rin_gl_color_attachment_valid(attachment)
             || info.kind == RINGL_FRAMEBUFFER_ATTACHMENT_NONE) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
         uint32_t is_srgb = RINGL_FALSE;
-        if (ringl_framebuffer_color_attachment_is_srgb(&is_srgb) != 0) {
+        if (ringl_framebuffer_color_attachment_is_srgb_at(attachment, &is_srgb) != 0) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
@@ -2863,8 +2863,8 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
             return JS::Value(RINGL_UNSIGNED_INT);
         uint32_t component_type = RINGL_UNSIGNED_BYTE;
 
-        if (attachment != RINGL_COLOR_ATTACHMENT0
-            || ringl_framebuffer_color_attachment_component_type(&component_type) != 0) {
+        if (!rin_gl_color_attachment_valid(attachment)
+            || ringl_framebuffer_color_attachment_component_type_at(attachment, &component_type) != 0) {
             set_error(RINGL_INVALID_OPERATION);
             return JS::js_null();
         }
