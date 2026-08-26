@@ -752,6 +752,16 @@ WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase
     if (!tex_image_source_is_origin_clean(source))
         return WebIDL::SecurityError::create(realm(), "TexImageSource is not origin-clean"_utf16);
 
+    bool const source_is_display_p3 = source.visit(
+        [](GC::Root<HTML::HTMLImageElement> const&) { return false; },
+        [](GC::Root<HTML::HTMLCanvasElement> const&) { return false; },
+        [](GC::Root<HTML::OffscreenCanvas> const&) { return false; },
+        [](GC::Root<HTML::HTMLVideoElement> const&) { return false; },
+        [](GC::Root<HTML::ImageBitmap> const&) { return false; },
+        [](GC::Root<HTML::ImageData> const& source) {
+            return source->color_space() == Bindings::PredefinedColorSpace::DisplayP3;
+        });
+
     auto bitmap = source.visit(
         [](GC::Root<HTML::HTMLImageElement> const& source) -> RefPtr<Gfx::ImmutableBitmap> {
             return source->immutable_bitmap();
@@ -786,7 +796,6 @@ WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase
     if (!bitmap)
         return OptionalNone {};
 
-    // FIXME: Respect unpackColorSpace
     auto export_flags = 0;
     if (m_unpack_flip_y && !source.has<GC::Root<HTML::ImageBitmap>>())
         // The first pixel transferred from the source to the WebGL implementation corresponds to the upper left corner of
@@ -795,6 +804,10 @@ WebIDL::ExceptionOr<Optional<Gfx::BitmapExportResult>> WebGLRenderingContextBase
         export_flags |= Gfx::ExportFlags::FlipY;
     if (m_unpack_premultiply_alpha)
         export_flags |= Gfx::ExportFlags::PremultiplyAlpha;
+#ifdef AK_OS_RINOS
+    if (source_is_display_p3 && m_unpack_colorspace_conversion == BROWSER_DEFAULT_WEBGL)
+        export_flags |= Gfx::ExportFlags::ConvertDisplayP3ToSRGB;
+#endif
 
 #ifdef AK_OS_RINOS
     if (type == webgl_float || type == webgl_half_float_oes)

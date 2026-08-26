@@ -95,19 +95,119 @@ static u8 export_packed_component(u8 component, u32 maximum)
     return static_cast<u8>((static_cast<u32>(component) * maximum + 127u) / 255u);
 }
 
+// ImageData's Display-P3 values use the sRGB transfer function. Store its
+// 8-bit decode curve as Q0.16 values so WebGL image uploads do not need a
+// hosted libm dependency in the freestanding build.
+static constexpr u16 srgb_to_linear_q16[] = {
+    0, 20, 40, 60, 80, 99, 119, 139,
+    159, 179, 199, 219, 241, 264, 288, 313,
+    340, 367, 396, 427, 458, 491, 526, 562,
+    599, 637, 677, 718, 761, 805, 851, 898,
+    947, 997, 1048, 1101, 1156, 1212, 1270, 1330,
+    1391, 1453, 1517, 1583, 1651, 1720, 1790, 1863,
+    1937, 2013, 2090, 2170, 2250, 2333, 2418, 2504,
+    2592, 2681, 2773, 2866, 2961, 3058, 3157, 3258,
+    3360, 3464, 3570, 3678, 3788, 3900, 4014, 4129,
+    4247, 4366, 4488, 4611, 4736, 4864, 4993, 5124,
+    5257, 5392, 5530, 5669, 5810, 5953, 6099, 6246,
+    6395, 6547, 6700, 6856, 7014, 7174, 7335, 7500,
+    7666, 7834, 8004, 8177, 8352, 8528, 8708, 8889,
+    9072, 9258, 9445, 9635, 9828, 10022, 10219, 10417,
+    10619, 10822, 11028, 11235, 11446, 11658, 11873, 12090,
+    12309, 12530, 12754, 12980, 13209, 13440, 13673, 13909,
+    14146, 14387, 14629, 14874, 15122, 15371, 15623, 15878,
+    16135, 16394, 16656, 16920, 17187, 17456, 17727, 18001,
+    18277, 18556, 18837, 19121, 19407, 19696, 19987, 20281,
+    20577, 20876, 21177, 21481, 21787, 22096, 22407, 22721,
+    23038, 23357, 23678, 24002, 24329, 24658, 24990, 25325,
+    25662, 26001, 26344, 26688, 27036, 27386, 27739, 28094,
+    28452, 28813, 29176, 29542, 29911, 30282, 30656, 31033,
+    31412, 31794, 32179, 32567, 32957, 33350, 33745, 34143,
+    34544, 34948, 35355, 35764, 36176, 36591, 37008, 37429,
+    37852, 38278, 38706, 39138, 39572, 40009, 40449, 40891,
+    41337, 41785, 42236, 42690, 43147, 43606, 44069, 44534,
+    45002, 45473, 45947, 46423, 46903, 47385, 47871, 48359,
+    48850, 49344, 49841, 50341, 50844, 51349, 51858, 52369,
+    52884, 53401, 53921, 54445, 54971, 55500, 56032, 56567,
+    57105, 57646, 58190, 58737, 59287, 59840, 60396, 60955,
+    61517, 62082, 62650, 63221, 63795, 64372, 64952, 65535,
+};
+static_assert(sizeof(srgb_to_linear_q16) / sizeof(srgb_to_linear_q16[0]) == 256);
+
+static u8 linear_q16_to_srgb(u16 linear)
+{
+    if (linear == 0)
+        return 0;
+    if (linear == 65535)
+        return 255;
+
+    size_t lower = 0;
+    size_t upper = 255;
+    while (lower < upper) {
+        auto middle = (lower + upper) / 2;
+        if (srgb_to_linear_q16[middle] < linear)
+            lower = middle + 1;
+        else
+            upper = middle;
+    }
+
+    auto previous = srgb_to_linear_q16[lower - 1];
+    auto next = srgb_to_linear_q16[lower];
+    if (linear - previous <= next - linear)
+        return static_cast<u8>(lower - 1);
+    return static_cast<u8>(lower);
+}
+
+static u16 clamp_linear_q16(i64 component)
+{
+    if (component <= 0)
+        return 0;
+
+    component = (component + 32768) >> 16;
+    if (component >= 65535)
+        return 65535;
+    return static_cast<u16>(component);
+}
+
+static void convert_display_p3_to_srgb(u8& red, u8& green, u8& blue)
+{
+    auto linear_red = srgb_to_linear_q16[red];
+    auto linear_green = srgb_to_linear_q16[green];
+    auto linear_blue = srgb_to_linear_q16[blue];
+
+    // Display-P3 (D65) to sRGB (D65), Q16.16. Clamp only after the gamut
+    // conversion: input P3 primaries may lie outside the sRGB gamut.
+    auto converted_red = clamp_linear_q16(
+        static_cast<i64>(linear_red) * 80265 - static_cast<i64>(linear_green) * 14739);
+    auto converted_green = clamp_linear_q16(
+        -static_cast<i64>(linear_red) * 2756 + static_cast<i64>(linear_green) * 68294);
+    auto converted_blue = clamp_linear_q16(
+        -static_cast<i64>(linear_red) * 1287 - static_cast<i64>(linear_green) * 5155
+        + static_cast<i64>(linear_blue) * 71994);
+
+    red = linear_q16_to_srgb(converted_red);
+    green = linear_q16_to_srgb(converted_green);
+    blue = linear_q16_to_srgb(converted_blue);
+}
+
 static void export_pixel_components(Color source, AlphaType source_alpha_type,
-    bool destination_is_premultiplied, u8& red, u8& green, u8& blue, u8& alpha)
+    bool destination_is_premultiplied, bool convert_display_p3, u8& red, u8& green, u8& blue, u8& alpha)
 {
     red = source.red();
     green = source.green();
     blue = source.blue();
     alpha = source.alpha();
 
-    if (source_alpha_type == AlphaType::Premultiplied && !destination_is_premultiplied) {
+    if (source_alpha_type == AlphaType::Premultiplied) {
         red = export_unpremultiplied_component(red, alpha);
         green = export_unpremultiplied_component(green, alpha);
         blue = export_unpremultiplied_component(blue, alpha);
-    } else if (source_alpha_type == AlphaType::Unpremultiplied && destination_is_premultiplied) {
+    }
+
+    if (convert_display_p3)
+        convert_display_p3_to_srgb(red, green, blue);
+
+    if (destination_is_premultiplied) {
         red = export_premultiplied_component(red, alpha);
         green = export_premultiplied_component(green, alpha);
         blue = export_premultiplied_component(blue, alpha);
@@ -144,6 +244,7 @@ ErrorOr<BitmapExportResult> ImmutableBitmap::export_to_byte_buffer(ExportFormat 
     auto buffer = TRY(ByteBuffer::create_zeroed(buffer_pitch.value() * h));
     auto* raw = buffer.data();
     bool const destination_is_premultiplied = (flags & ExportFlags::PremultiplyAlpha) != 0;
+    bool const convert_display_p3 = (flags & ExportFlags::ConvertDisplayP3ToSRGB) != 0;
 
     for (int y = 0; y < h; ++y) {
         auto target_y = (flags & ExportFlags::FlipY) ? h - y - 1 : y;
@@ -159,7 +260,7 @@ ErrorOr<BitmapExportResult> ImmutableBitmap::export_to_byte_buffer(ExportFormat 
             // UNPACK_PREMULTIPLY_ALPHA_WEBGL. The bitmap's alpha metadata is
             // the source representation; do the conversion before packing so
             // RGBA8 and all packed WebGL texture types agree.
-            export_pixel_components(pixel, alpha_type(), destination_is_premultiplied,
+            export_pixel_components(pixel, alpha_type(), destination_is_premultiplied, convert_display_p3,
                 red, green, blue, alpha);
             switch (format) {
             case ExportFormat::RGBA8888:

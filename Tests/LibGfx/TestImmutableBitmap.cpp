@@ -283,4 +283,22 @@ TEST_CASE(rinos_export_to_byte_buffer_honors_webgl_packed_uploads)
         ->export_to_byte_buffer(Gfx::ExportFormat::RGBA8888, 0, 1, 1));
     EXPECT_EQ(unpremultiplied.buffer.bytes(), (Vector<u8> { 255, 127, 63, 128 }));
 }
+
+TEST_CASE(rinos_export_to_byte_buffer_converts_display_p3_before_webgl_upload)
+{
+    auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888,
+        Gfx::AlphaType::Unpremultiplied, { 1, 1 }));
+    bitmap->set_pixel(0, 0, Gfx::Color { 128, 255, 128, 128 });
+    auto immutable_bitmap = Gfx::ImmutableBitmap::create(bitmap);
+
+    auto converted = MUST(immutable_bitmap->export_to_byte_buffer(
+        Gfx::ExportFormat::RGBA8888, Gfx::ExportFlags::ConvertDisplayP3ToSRGB, 1, 1));
+    EXPECT_EQ(converted.buffer.bytes(), (Vector<u8> { 56, 255, 109, 128 }));
+
+    auto premultiplied = MUST(immutable_bitmap->export_to_byte_buffer(
+        Gfx::ExportFormat::RGBA8888,
+        Gfx::ExportFlags::ConvertDisplayP3ToSRGB | Gfx::ExportFlags::PremultiplyAlpha,
+        1, 1));
+    EXPECT_EQ(premultiplied.buffer.bytes(), (Vector<u8> { 28, 128, 54, 128 }));
+}
 #endif

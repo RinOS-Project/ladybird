@@ -2667,6 +2667,13 @@ void WebGLRenderingContextImpl::pixel_storei(WebIDL::UnsignedLong pname, WebIDL:
         m_unpack_premultiply_alpha = param != 0;
         return;
     case UNPACK_COLORSPACE_CONVERSION_WEBGL:
+        // This WebGL pixel-store parameter has exactly two legal values.
+        // Do not retain an arbitrary value that later makes TexImageSource
+        // conversion silently depend on a non-WebGL state.
+        if (param != 0 && param != BROWSER_DEFAULT_WEBGL) {
+            set_error(RINGL_INVALID_VALUE);
+            return;
+        }
         m_unpack_colorspace_conversion = param;
         return;
     default:
