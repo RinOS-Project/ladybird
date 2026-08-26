@@ -144,4 +144,9 @@ WebIDL::Long WebGL2RenderingContext::drawing_buffer_height() const
     return size.height();
 }
 
+WebIDL::UnsignedLong WebGL2RenderingContext::drawing_buffer_format() const
+{
+    return m_actual_context_parameters.alpha ? 0x8058 : 0x8051;
+}
+
 }

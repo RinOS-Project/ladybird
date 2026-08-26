@@ -381,4 +381,12 @@ WebIDL::Long WebGLRenderingContext::drawing_buffer_height() const
     return size.height();
 }
 
+WebIDL::UnsignedLong WebGLRenderingContext::drawing_buffer_format() const
+{
+    // The return value describes the actual drawing buffer. On RinOS the
+    // RinGL creation path deliberately forces alpha on, so a request for an
+    // opaque buffer still reports RGBA8 instead of claiming RGB8.
+    return m_actual_context_parameters.alpha ? 0x8058 : 0x8051;
+}
+
 }

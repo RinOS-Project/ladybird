@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    test(() => {
+        const canvas = document.createElement("canvas");
+        const gl = canvas.getContext("webgl");
+        if (!gl) {
+            println("SKIP: WebGL backend is unavailable");
+            return;
+        }
+
+        const attributes = gl.getContextAttributes();
+        const expectedFormat = attributes.alpha ? gl.RGBA8 : gl.RGB8;
+        println(`format reflects actual alpha: ${gl.drawingBufferFormat === expectedFormat}`);
+        println(`rgba8 constant: ${gl.RGBA8 === 0x8058}`);
+        println(`rgb8 constant: ${gl.RGB8 === 0x8051}`);
+    });
+</script>
