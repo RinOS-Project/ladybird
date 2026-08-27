@@ -42,7 +42,6 @@ public:
 
     String const& current_url() const { return m_current_url; }
     void set_current_url(JS::Realm&, String, CORSSettingAttribute = CORSSettingAttribute::NoCORS);
-
     [[nodiscard]] GC::Ptr<DecodedImageData> image_data() const;
     void set_image_data(GC::Ptr<DecodedImageData>);
     bool is_origin_clean() const { return m_origin_clean; }
