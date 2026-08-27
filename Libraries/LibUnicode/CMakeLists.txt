@@ -45,7 +45,10 @@ if (AK_OS_RINOS)
             ${LIBUNICODE_ROOT}/core.c
             ${LIBUNICODE_ROOT}/locale_adapter.c
         )
-        target_include_directories(libunicode PRIVATE ${LIBUNICODE_ROOT})
+        target_include_directories(libunicode PRIVATE
+            ${LIBUNICODE_ROOT}
+            ${RINOS_GENERATED_ROOT}
+        )
         target_compile_options(libunicode PRIVATE -Wno-cast-qual)
     endif()
 endif()
