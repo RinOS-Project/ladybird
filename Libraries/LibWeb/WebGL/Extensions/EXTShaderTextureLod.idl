@@ -1,0 +1,7 @@
+#import <WebGL/Types.idl>
+
+// https://registry.khronos.org/webgl/extensions/EXT_shader_texture_lod/
+// The extension only enables GLSL builtins and has no JavaScript constants.
+[Exposed=(Window,Worker), LegacyNoInterfaceObject]
+interface EXTShaderTextureLod {
+};

@@ -1240,6 +1240,7 @@ if (AK_OS_RINOS)
         WebGL/Extensions/EXTBlendMinMax.cpp
         WebGL/Extensions/EXTColorBufferHalfFloat.cpp
         WebGL/Extensions/EXTFragDepth.cpp
+        WebGL/Extensions/EXTShaderTextureLod.cpp
         WebGL/Extensions/EXTSrgb.cpp
         WebGL/Extensions/EXTTextureFilterAnisotropic.cpp
         WebGL/Extensions/OESElementIndexUint.cpp

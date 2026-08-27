@@ -58,6 +58,7 @@ struct OpenGLContext::Impl {
     bool half_float_color_buffer_enabled { false };
     bool blend_minmax_enabled { false };
     bool standard_derivatives_enabled { false };
+    bool shader_texture_lod_enabled { false };
     // `preserveDrawingBuffer: false` clears only after HTMLCanvasElement has
     // copied the caller-owned BGRA drawing buffer into its compositor image.
     bool clear_after_compositing { false };
@@ -269,6 +270,11 @@ void OpenGLContext::allocate_painting_surface_if_needed()
         && ringl_enable_webgl_standard_derivatives() != 0) {
         result = RIN_WEBGL_RINGL_BRIDGE_STATE;
     }
+    if (result == RIN_WEBGL_RINGL_BRIDGE_OK
+        && m_impl->shader_texture_lod_enabled
+        && ringl_enable_webgl_shader_texture_lod() != 0) {
+        result = RIN_WEBGL_RINGL_BRIDGE_STATE;
+    }
     if (result != RIN_WEBGL_RINGL_BRIDGE_OK) {
         fail_rin_gl_surface(result);
         return;
@@ -385,6 +391,15 @@ void OpenGLContext::enable_rin_gl_standard_derivatives()
     make_current();
     if (m_impl->bridge.context
         && ringl_enable_webgl_standard_derivatives() != 0)
+        fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
+}
+
+void OpenGLContext::enable_rin_gl_shader_texture_lod()
+{
+    m_impl->shader_texture_lod_enabled = true;
+    make_current();
+    if (m_impl->bridge.context
+        && ringl_enable_webgl_shader_texture_lod() != 0)
         fail_rin_gl_surface(RIN_WEBGL_RINGL_BRIDGE_STATE);
 }
 

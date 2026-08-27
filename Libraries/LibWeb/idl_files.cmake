@@ -522,6 +522,7 @@ if (AK_OS_RINOS)
     libweb_js_bindings(WebGL/Extensions/EXTBlendMinMax)
     libweb_js_bindings(WebGL/Extensions/EXTColorBufferHalfFloat)
     libweb_js_bindings(WebGL/Extensions/EXTFragDepth)
+    libweb_js_bindings(WebGL/Extensions/EXTShaderTextureLod)
     libweb_js_bindings(WebGL/Extensions/EXTSrgb)
     # The RinGL sampler gate instantiates this WebGL extension object. Keep
     # its generated prototype in the same RinOS product graph as the source.

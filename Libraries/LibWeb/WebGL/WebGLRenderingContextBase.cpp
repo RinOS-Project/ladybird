@@ -48,6 +48,7 @@ extern "C" {
 #ifdef AK_OS_RINOS
 #include <LibWeb/WebGL/Extensions/EXTColorBufferHalfFloat.h>
 #include <LibWeb/WebGL/Extensions/EXTFragDepth.h>
+#include <LibWeb/WebGL/Extensions/EXTShaderTextureLod.h>
 #include <LibWeb/WebGL/Extensions/EXTSrgb.h>
 #include <LibWeb/WebGL/Extensions/EXTTextureFilterAnisotropic.h>
 #include <LibWeb/WebGL/Extensions/OESFboRenderMipmap.h>
@@ -369,6 +370,7 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
         webgl_extensions.append("ANGLE_instanced_arrays"_string);
         webgl_extensions.append("EXT_blend_minmax"_string);
         webgl_extensions.append("EXT_frag_depth"_string);
+        webgl_extensions.append("EXT_shader_texture_lod"_string);
         webgl_extensions.append("EXT_sRGB"_string);
         webgl_extensions.append("EXT_texture_filter_anisotropic"_string);
         webgl_extensions.append("OES_fbo_render_mipmap"_string);
@@ -428,6 +430,7 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
     bool const is_instanced_arrays_extension = name.equals_ignoring_ascii_case("ANGLE_instanced_arrays"sv);
     bool const is_blend_minmax_extension = name.equals_ignoring_ascii_case("EXT_blend_minmax"sv);
     bool const is_frag_depth_extension = name.equals_ignoring_ascii_case("EXT_frag_depth"sv);
+    bool const is_shader_texture_lod_extension = name.equals_ignoring_ascii_case("EXT_shader_texture_lod"sv);
     bool const is_srgb_extension = name.equals_ignoring_ascii_case("EXT_sRGB"sv);
     bool const is_texture_filter_anisotropic_extension = name.equals_ignoring_ascii_case("EXT_texture_filter_anisotropic"sv);
     bool const is_fbo_render_mipmap_extension = name.equals_ignoring_ascii_case("OES_fbo_render_mipmap"sv);
@@ -462,6 +465,8 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         cache_key = "EXT_blend_minmax"_string;
     else if (is_frag_depth_extension)
         cache_key = "EXT_frag_depth"_string;
+    else if (is_shader_texture_lod_extension)
+        cache_key = "EXT_shader_texture_lod"_string;
     else if (is_srgb_extension)
         cache_key = "EXT_sRGB"_string;
     else if (is_texture_filter_anisotropic_extension)
@@ -523,6 +528,14 @@ JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
         // shader output to participate in the real depth-test path.
         context().enable_rin_gl_frag_depth();
         auto extension = MUST(Extensions::EXTFragDepth::create(realm(), *this));
+        m_enabled_extensions.set(cache_key, extension);
+        return extension;
+    }
+    if (is_shader_texture_lod_extension) {
+        // This empty object gates the real RinGL RSH1 explicit-LOD lowering;
+        // texture sampling remains on the normal RinGL -> RinGPU route.
+        context().enable_rin_gl_shader_texture_lod();
+        auto extension = MUST(Extensions::EXTShaderTextureLod::create(realm(), *this));
         m_enabled_extensions.set(cache_key, extension);
         return extension;
     }
