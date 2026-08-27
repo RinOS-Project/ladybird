@@ -307,7 +307,13 @@ void WebGLRenderingContext::restore_context_after_loss()
         return;
     }
 
-    replacement->set_size(canvas_size());
+    // RinGL's caller-owned target has no zero-sized representation. This is
+    // the same physical-size normalization used while initially creating an
+    // OffscreenCanvas WebGL context; keep the canvas' logical 0×N/N×0 size
+    // observable, but do not make a cancelled loss permanently unrestorable
+    // merely because restoration happens while it has a zero dimension.
+    auto replacement_size = canvas_size();
+    replacement->set_size({ max(replacement_size.width(), 1), max(replacement_size.height(), 1) });
     replacement->make_current();
     if (!replacement->rin_gl_is_ready()) {
         m_context_restore_requested = false;
