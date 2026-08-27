@@ -71,10 +71,16 @@ void ImageRequest::set_state(State state)
 void ImageRequest::set_current_url(JS::Realm& realm, String url, CORSSettingAttribute cors_setting)
 {
     m_current_url = move(url);
+    m_cors_setting = cors_setting;
     m_origin_clean = false;
 
     if (auto parsed_url = DOMURL::parse(m_current_url); parsed_url.has_value())
         m_shared_resource_request = SharedResourceRequest::create_uncached(realm, m_page, parsed_url.release_value());
+}
+
+bool ImageRequest::is_cors_cross_origin() const
+{
+    return m_cors_setting != CORSSettingAttribute::NoCORS;
 }
 
 // https://html.spec.whatwg.org/multipage/images.html#abort-the-image-request

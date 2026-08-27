@@ -700,7 +700,7 @@ void HTMLImageElement::update_the_image_data_impl(bool restart_animations, bool 
                     restart_the_animation();
 
                 // 2. Set the current request's current URL to urlString.
-                m_current_request->set_current_url(realm(), *url_string);
+                m_current_request->set_current_url(realm(), *url_string, m_cors_setting);
 
                 // 3. If maybe omit events is not set or previousURL is not equal to urlString, then fire an event named load at the img element.
                 if (!maybe_omit_events || previous_url != url_string)
@@ -755,7 +755,7 @@ after_step_7:
                 }
 
                 // 1. Change the current request's current URL to the empty string.
-                m_current_request->set_current_url(realm(), String {});
+                m_current_request->set_current_url(realm(), String {}, m_cors_setting);
 
                 // 2. If all of the following conditions are true:
                 //    - the element has a src attribute or it uses srcset or picture; and
@@ -796,7 +796,7 @@ after_step_7:
                 }
 
                 // 1. Change the current request's current URL to selected source.
-                m_current_request->set_current_url(realm(), selected_source.value().url);
+                m_current_request->set_current_url(realm(), selected_source.value().url, m_cors_setting);
 
                 // 2. If maybe omit events is not set or previousURL is not equal to selected source, then fire an event named error at the img element.
                 if (!maybe_omit_events || previous_url != selected_source.value().url)
@@ -833,7 +833,7 @@ after_step_7:
 
         // 17. Set image request to a new image request whose current URL is urlString.
         auto image_request = ImageRequest::create(realm(), document().page());
-        image_request->set_current_url(realm(), *url_string);
+        image_request->set_current_url(realm(), *url_string, m_cors_setting);
 
         // 18. If the current request's state is unavailable or broken, then set the current request to image request.
         //     Otherwise, set the pending request to image request.
@@ -1064,7 +1064,7 @@ void HTMLImageElement::react_to_changes_in_the_environment()
 
     // 12. ⌛ Let image request be a new image request whose current URL is urlString
     auto image_request = ImageRequest::create(realm(), document().page());
-    image_request->set_current_url(realm(), *url_string);
+    image_request->set_current_url(realm(), *url_string, m_cors_setting);
 
     // 13. ⌛ Set the element's pending request to image request.
     m_pending_request = image_request;

@@ -60,6 +60,8 @@ public:
     void add_callbacks(Function<void()> on_finish, Function<void()> on_fail);
 
     GC::Ptr<SharedResourceRequest const> shared_resource_request() const { return m_shared_resource_request; }
+    CORSSettingAttribute cors_setting() const { return m_cors_setting; }
+    void set_cors_setting(CORSSettingAttribute cors_setting) { m_cors_setting = cors_setting; }
     bool is_cors_cross_origin() const;
 
     virtual void visit_edges(JS::Cell::Visitor&) override;
@@ -76,6 +78,9 @@ private:
     // https://html.spec.whatwg.org/multipage/images.html#img-req-url
     // An image request's current URL is initially the empty string.
     String m_current_url;
+
+    // The CORS setting attribute associated with this image request.
+    CORSSettingAttribute m_cors_setting { CORSSettingAttribute::NoCORS };
 
     // https://html.spec.whatwg.org/multipage/images.html#img-req-data
     GC::Ptr<DecodedImageData> m_image_data;
