@@ -79,8 +79,8 @@ public:
     // OES_standard_derivatives exposes derivative builtins and its advisory
     // hint only after JavaScript has acquired the extension object.
     void enable_rin_gl_standard_derivatives();
-    // EXT_shader_texture_lod enables RinGL's explicit, finite-literal mip
-    // lookup lowering only after its WebGL extension object is acquired.
+    // EXT_shader_texture_lod enables RinGL's explicit scalar-Float mip lookup
+    // lowering only after its WebGL extension object is acquired.
     void enable_rin_gl_shader_texture_lod();
     // EXT_frag_depth permits the dedicated RinGL shader output only after the
     // browser has returned the extension object.
