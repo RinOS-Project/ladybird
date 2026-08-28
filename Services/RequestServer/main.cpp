@@ -55,6 +55,14 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     if (wait_for_debugger)
         Core::Process::wait_for_debugger_and_break();
 
+#if defined(AK_OS_RINOS)
+    // RinOS production transports must use the platform RCA bundle. Ignore
+    // caller-provided certificate paths so a browser helper cannot silently
+    // replace the system trust policy with an ad-hoc bundle.
+    certificates.clear();
+    certificates.append("/System/Trust/roots.rinca"sv);
+#endif
+
     // FIXME: Update RequestServer to support multiple custom root certificates.
     if (!certificates.is_empty())
         RequestServer::set_default_certificate_path(certificates.first());
