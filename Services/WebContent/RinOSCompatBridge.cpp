@@ -491,6 +491,17 @@ ErrorOr<JsonObject> BridgeView::inspect_accessibility_json(int timeout_ms)
 }
 
 struct PageSession {
+    struct DownloadEventRecord {
+        u32 event { RIN_WEBCONTENT_DOWNLOAD_EVENT_NONE };
+        u32 revision { 0 };
+        u64 transfer_id { 0 };
+        u64 timestamp_ms { 0 };
+        u64 size_bytes { 0 };
+        u32 failure_status { RIN_WEBCONTENT_DOWNLOAD_STATUS_NONE };
+        ByteString url;
+        ByteString filename;
+    };
+
     explicit PageSession(u32 id, Core::AnonymousBuffer theme, int width, int height)
         : page_id(id)
         , requested_viewport_width(max(width, 1))
@@ -621,9 +632,16 @@ struct PageSession {
             // destination; the renderer supplied neither file access nor a
             // handle it can retain.
             WebView::Application::the().file_downloader().download_file(
-                url, move(suggested_filename), [page_id](WebView::FileDownloader::DownloadFailure failure) {
+                url, move(suggested_filename), [page_id](u64 transfer_id,
+                    WebView::FileDownloader::DownloadFailure failure) {
                     if (auto* page = find_page(page_id))
-                        page->note_download_failure(failure);
+                        page->note_download_failure(transfer_id, failure);
+                }, [page_id](u64 transfer_id, WebView::FileDownloader::DownloadEvent event,
+                             ByteString event_url, ByteString filename,
+                             u64 size) {
+                    if (auto* page = find_page(page_id))
+                        page->note_download_event(transfer_id, event,
+                                                  move(event_url), move(filename), size);
                 });
         };
 
@@ -808,50 +826,147 @@ struct PageSession {
         return true;
     }
 
-    void note_download_failure(WebView::FileDownloader::DownloadFailure failure)
+    void note_download_event(u64 transfer_id,
+                             WebView::FileDownloader::DownloadEvent event,
+                             ByteString url, ByteString filename, u64 size)
     {
+        if (transfer_id == 0u || url.is_empty() || filename.is_empty() ||
+            url.length() >= RIN_WEBCONTENT_URL_MAX ||
+            filename.length() >= RIN_WEBCONTENT_FILE_PICKER_NAME_MAX ||
+            download_events.size() >= 16u) {
+            if (event == WebView::FileDownloader::DownloadEvent::Completed) {
+                for (size_t index = 0u; index < active_downloads.size(); ++index) {
+                    if (active_downloads[index].transfer_id == transfer_id) {
+                        active_downloads.remove(index);
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        DownloadEventRecord record;
+        record.event = event == WebView::FileDownloader::DownloadEvent::Started
+            ? RIN_WEBCONTENT_DOWNLOAD_EVENT_STARTED
+            : RIN_WEBCONTENT_DOWNLOAD_EVENT_COMPLETED;
+        record.revision = next_download_event_revision++;
+        if (record.revision == 0u)
+            record.revision = next_download_event_revision++;
+        record.transfer_id = transfer_id;
+        record.timestamp_ms = monotonic_time_ms();
+        record.size_bytes = size;
+        record.url = move(url);
+        record.filename = move(filename);
+        if (record.event == RIN_WEBCONTENT_DOWNLOAD_EVENT_STARTED)
+            active_downloads.append(record);
+        else {
+            for (size_t index = 0u; index < active_downloads.size(); ++index) {
+                if (active_downloads[index].transfer_id == transfer_id) {
+                    record.url = active_downloads[index].url;
+                    record.filename = active_downloads[index].filename;
+                    active_downloads.remove(index);
+                    break;
+                }
+            }
+        }
+        download_events.append(move(record));
+        mark_dirty();
+    }
+
+    void note_download_failure(u64 transfer_id,
+                               WebView::FileDownloader::DownloadFailure failure)
+    {
+        u32 status = RIN_WEBCONTENT_DOWNLOAD_STATUS_TRANSFER_FAILED;
         switch (failure) {
         case WebView::FileDownloader::DownloadFailure::Cancelled:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_CANCELLED;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_CANCELLED;
             break;
         case WebView::FileDownloader::DownloadFailure::UnsafeURL:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_UNSAFE_URL;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_UNSAFE_URL;
             break;
         case WebView::FileDownloader::DownloadFailure::UnsafeFilename:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_UNSAFE_FILENAME;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_UNSAFE_FILENAME;
             break;
         case WebView::FileDownloader::DownloadFailure::SizeRejected:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_SIZE_REJECTED;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_SIZE_REJECTED;
             break;
         case WebView::FileDownloader::DownloadFailure::FileManagerUnavailable:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_FILE_MANAGER_UNAVAILABLE;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_FILE_MANAGER_UNAVAILABLE;
             break;
         case WebView::FileDownloader::DownloadFailure::DurabilityFailed:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_DURABILITY_FAILED;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_DURABILITY_FAILED;
             break;
         case WebView::FileDownloader::DownloadFailure::TLSFailed:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_TLS_FAILED;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_TLS_FAILED;
             break;
         case WebView::FileDownloader::DownloadFailure::NetworkFailed:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_NETWORK_FAILED;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_NETWORK_FAILED;
             break;
         case WebView::FileDownloader::DownloadFailure::HttpFailed:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_HTTP_FAILED;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_HTTP_FAILED;
             break;
         case WebView::FileDownloader::DownloadFailure::ResponseInvalid:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_RESPONSE_INVALID;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_RESPONSE_INVALID;
             break;
         case WebView::FileDownloader::DownloadFailure::MemoryFailed:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_MEMORY_FAILED;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_MEMORY_FAILED;
             break;
         case WebView::FileDownloader::DownloadFailure::TransferFailed:
-            download_status = RIN_WEBCONTENT_DOWNLOAD_STATUS_TRANSFER_FAILED;
+            status = RIN_WEBCONTENT_DOWNLOAD_STATUS_TRANSFER_FAILED;
             break;
         }
+        download_status = status;
         ++download_status_revision;
         if (download_status_revision == 0)
             ++download_status_revision;
         download_status_timestamp_ms = monotonic_time_ms();
+        size_t started_index = active_downloads.size();
+        for (size_t index = 0u; index < active_downloads.size(); ++index) {
+            if (active_downloads[index].transfer_id == transfer_id) {
+                started_index = index;
+                break;
+            }
+        }
+        if (started_index < active_downloads.size()) {
+            DownloadEventRecord failed = active_downloads[started_index];
+            active_downloads.remove(started_index);
+            failed.event = RIN_WEBCONTENT_DOWNLOAD_EVENT_FAILED;
+            failed.revision = next_download_event_revision++;
+            if (failed.revision == 0u)
+                failed.revision = next_download_event_revision++;
+            failed.timestamp_ms = download_status_timestamp_ms;
+            failed.size_bytes = 0u;
+            failed.failure_status = status;
+            if (download_events.size() < 16u)
+                download_events.append(move(failed));
+        }
+        mark_dirty();
+    }
+
+    void fill_download_event(u32 after_revision,
+                             RinWebContentDownloadEventV1& output)
+    {
+        __builtin_memset(&output, 0, sizeof(output));
+        output.struct_size = sizeof(output);
+        output.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        size_t selected = download_events.size();
+        for (size_t index = 0u; index < download_events.size(); ++index) {
+            if (download_events[index].revision > after_revision) {
+                selected = index;
+                break;
+            }
+        }
+        if (selected == download_events.size())
+            return;
+        const auto& event = download_events[selected];
+        output.event = event.event;
+        output.revision = event.revision;
+        output.transfer_id = event.transfer_id;
+        output.timestamp_ms = event.timestamp_ms;
+        output.size_bytes = event.size_bytes;
+        output.failure_status = event.failure_status;
+        copy_c_string(output.url, sizeof(output.url), event.url);
+        copy_c_string(output.filename, sizeof(output.filename), event.filename);
+        download_events.remove(0u, selected + 1u);
         mark_dirty();
     }
 
@@ -1678,6 +1793,9 @@ struct PageSession {
     u32 download_status { RIN_WEBCONTENT_DOWNLOAD_STATUS_NONE };
     u32 download_status_revision { 0 };
     u64 download_status_timestamp_ms { 0 };
+    Vector<DownloadEventRecord> download_events;
+    Vector<DownloadEventRecord> active_downloads;
+    u32 next_download_event_revision { 1 };
     u64 file_picker_request_id { 0 };
     u64 next_file_picker_request_id { 0 };
     bool file_picker_allow_multiple { false };
@@ -2068,6 +2186,24 @@ static int handle_get_state(PageSession& page, int client_fd, u32 command, u64 d
     return sent ? 1 : -EIO;
 }
 
+static int handle_get_download_event(PageSession& page, int client_fd,
+                                     ReadonlyBytes payload, u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentDownloadEventRequestV1))
+        return -EINVAL;
+    RinWebContentDownloadEventRequestV1 request {};
+    __builtin_memcpy(&request, payload.data(), sizeof(request));
+    if (!rin_webcontent_client_download_event_request_valid(&request))
+        return -EINVAL;
+    RinWebContentDownloadEventV1 event {};
+    page.fill_download_event(request.after_revision, event);
+    if (!rin_webcontent_client_download_event_valid(&event))
+        return -EPROTO;
+    return send_message(client_fd, RIN_WEBCONTENT_CMD_GET_DOWNLOAD_EVENT_V1,
+                        0, page.page_id, &event, sizeof(event), deadline_ms)
+        ? 1 : -EIO;
+}
+
 static int handle_get_accessibility_tree(PageSession& page, int client_fd,
                                           ReadonlyBytes payload,
                                           u64 deadline_ms)
@@ -2310,6 +2446,10 @@ static void handle_client(int client_fd)
         return;
     case RIN_WEBCONTENT_CMD_GET_PAGE_STATE_V1:
         (void)handle_get_state(*page, client_fd, header.command, deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_GET_DOWNLOAD_EVENT_V1:
+        (void)handle_get_download_event(*page, client_fd, payload_bytes,
+                                        deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_GET_ACCESSIBILITY_TREE_V1:
         (void)handle_get_accessibility_tree(*page, client_fd, payload_bytes,

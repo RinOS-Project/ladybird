@@ -93,14 +93,32 @@ public:
     {
     }
 
-    void report(FileDownloader::DownloadFailure failure)
+    void report(u64 transfer_id, FileDownloader::DownloadFailure failure)
     {
         if (m_callback)
-            m_callback(failure);
+            m_callback(transfer_id, failure);
     }
 
 private:
     FileDownloader::DownloadFailureCallback m_callback;
+};
+
+class RinDownloadEventReporter final : public RefCounted<RinDownloadEventReporter> {
+public:
+    explicit RinDownloadEventReporter(FileDownloader::DownloadEventCallback callback)
+        : m_callback(move(callback))
+    {
+    }
+
+    void report(u64 transfer_id, FileDownloader::DownloadEvent event,
+                ByteString url, ByteString filename, u64 size)
+    {
+        if (m_callback)
+            m_callback(transfer_id, event, move(url), move(filename), size);
+    }
+
+private:
+    FileDownloader::DownloadEventCallback m_callback;
 };
 
 class RinPortalStreamingTransfer final : public RefCounted<RinPortalStreamingTransfer> {
@@ -113,10 +131,14 @@ public:
 
     RinPortalStreamingTransfer(WeakPtr<Requests::Request> request,
         NonnullRefPtr<Core::WeakEventLoopReference> browser_event_loop,
-        NonnullRefPtr<RinDownloadFailureReporter> failure_reporter)
+        NonnullRefPtr<RinDownloadFailureReporter> failure_reporter,
+        NonnullRefPtr<RinDownloadEventReporter> event_reporter,
+        u64 transfer_id)
         : m_request(move(request))
         , m_browser_event_loop(move(browser_event_loop))
         , m_failure_reporter(move(failure_reporter))
+        , m_event_reporter(move(event_reporter))
+        , m_transfer_id(transfer_id)
         , m_changed(m_mutex)
     {
     }
@@ -248,8 +270,22 @@ public:
             }
             RinBrowserDownloadPortalClientReceiptV1 receipt {};
             result = rin_browser_download_portal_session_finish(&session, &receipt);
-            if (result != RIN_BROWSER_DOWNLOAD_POLICY_OK)
+            if (result != RIN_BROWSER_DOWNLOAD_POLICY_OK) {
                 fail(rinos_download_failure(result), rinos_download_portal_error(result));
+            } else {
+                auto event_loop = m_browser_event_loop->take();
+                if (event_loop.is_alive()) {
+                    event_loop->deferred_invoke([
+                        event_reporter = m_event_reporter,
+                        transfer_id = m_transfer_id,
+                        url = move(url), filename = move(filename),
+                        size = receipt.written_length]() mutable {
+                        event_reporter->report(
+                            transfer_id, FileDownloader::DownloadEvent::Completed,
+                            move(url), move(filename), size);
+                    });
+                }
+            }
             return;
         }
     }
@@ -266,12 +302,13 @@ public:
         auto event_loop = m_browser_event_loop->take();
         if (!event_loop.is_alive())
             return;
+        auto transfer_id = m_transfer_id;
         event_loop->deferred_invoke([request = m_request,
                                      failure_reporter = m_failure_reporter,
-                                     failure, message] {
+                                     failure, message, transfer_id] {
             if (auto strong_request = request.strong_ref())
                 (void)strong_request->stop();
-            failure_reporter->report(failure);
+            failure_reporter->report(transfer_id, failure);
             Application::the().display_error_dialog(message);
         });
     }
@@ -280,6 +317,8 @@ private:
     WeakPtr<Requests::Request> m_request;
     NonnullRefPtr<Core::WeakEventLoopReference> m_browser_event_loop;
     NonnullRefPtr<RinDownloadFailureReporter> m_failure_reporter;
+    NonnullRefPtr<RinDownloadEventReporter> m_event_reporter;
+    u64 m_transfer_id { 0 };
     Threading::Mutex m_mutex;
     Threading::ConditionVariable m_changed;
     ByteBuffer m_chunk;
@@ -293,12 +332,14 @@ private:
 #endif
 
 #if defined(AK_OS_RINOS)
-void FileDownloader::download_file(URL::URL const& url, ByteString suggested_filename, DownloadFailureCallback on_failure)
+void FileDownloader::download_file(URL::URL const& url, ByteString suggested_filename,
+                                    DownloadFailureCallback on_failure,
+                                    DownloadEventCallback on_event)
 #else
 void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
 #endif
 {
-    static u64 next_request_id = 0;
+    static u64 next_request_id = 1;
 
     // FIXME: What other request headers should be set? Perhaps we want to use exactly the same request headers used to
     //        originally fetch the image in WebContent.
@@ -307,25 +348,32 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
 
 #if defined(AK_OS_RINOS)
     auto failure_reporter = adopt_ref(*new RinDownloadFailureReporter(move(on_failure)));
+    auto event_reporter = adopt_ref(*new RinDownloadEventReporter(move(on_event)));
 #endif
     auto request = Application::request_server_client().start_request("GET"sv, url, *request_headers);
     if (!request) {
 #if defined(AK_OS_RINOS)
-        failure_reporter->report(DownloadFailure::TransferFailed);
+        failure_reporter->report(0u, DownloadFailure::TransferFailed);
 #endif
         Application::the().display_error_dialog("Unable to start request to download file"sv);
         return;
     }
 
     auto request_id = next_request_id++;
+    if (request_id == 0)
+        request_id = next_request_id++;
 
 #if defined(AK_OS_RINOS)
     auto browser_event_loop = Core::EventLoop::current_weak();
     WeakPtr<Requests::Request> request_weak = request;
     auto stream = adopt_ref(*new RinPortalStreamingTransfer(
-        request_weak, move(browser_event_loop), failure_reporter));
+        request_weak, move(browser_event_loop), failure_reporter,
+        event_reporter, request_id));
     request->set_unbuffered_request_callbacks(
-        [url, suggested_filename = move(suggested_filename), stream](NonnullRefPtr<HTTP::HeaderList> response_headers, Optional<u32> response_code, Optional<String> const&) mutable {
+        [url, suggested_filename = move(suggested_filename), stream,
+            event_reporter, request_id](NonnullRefPtr<HTTP::HeaderList> response_headers,
+                            Optional<u32> response_code,
+                            Optional<String> const&) mutable {
             if (response_code.has_value() && *response_code >= 400) {
                 stream->fail(DownloadFailure::HttpFailed,
                     "Download server returned an error response"sv);
@@ -371,6 +419,11 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
                     "Secure download transfer could not start"sv);
                 return;
             }
+
+            event_reporter->report(
+                request_id, FileDownloader::DownloadEvent::Started,
+                url.serialize().to_byte_string(), suggested_filename,
+                declared_length);
 
             auto worker = Threading::Thread::try_create("rin-download"sv,
                 [stream,

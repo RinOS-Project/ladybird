@@ -42,14 +42,21 @@ public:
         MemoryFailed,
         TransferFailed,
     };
-    using DownloadFailureCallback = Function<void(DownloadFailure)>;
+    using DownloadFailureCallback = Function<void(u64, DownloadFailure)>;
+    enum class DownloadEvent : u8 {
+        Started,
+        Completed,
+    };
+    using DownloadEventCallback = Function<void(u64, DownloadEvent,
+                                                ByteString, ByteString, u64)>;
 
     /* RinOS never accepts a caller-selected pathname for a web download.
      * File Manager owns the interactive destination selection and returns a
      * short-lived write-only File Portal descriptor only after approval.
      * `suggested_filename` is untrusted presentation data from WebContent;
      * it is checked again by the Browser/File Manager portal contract. */
-    void download_file(URL::URL const&, ByteString suggested_filename = {}, DownloadFailureCallback = {});
+    void download_file(URL::URL const&, ByteString suggested_filename = {},
+                       DownloadFailureCallback = {}, DownloadEventCallback = {});
 #else
     void download_file(URL::URL const&, LexicalPath);
 #endif
