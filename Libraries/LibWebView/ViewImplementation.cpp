@@ -893,6 +893,12 @@ void ViewImplementation::did_receive_internal_page_info(Badge<WebContentClient>,
 
 ErrorOr<LexicalPath> ViewImplementation::dump_gc_graph()
 {
+#if defined(AK_OS_RINOS)
+    /* GC graph dumps are host-path debug artifacts.  RinOS WebContent and
+     * Browser processes must not materialize an ambient pathname; a future
+     * diagnostic export can use an authenticated File Portal destination. */
+    return Error::from_string_literal("GC graph export requires a RinOS File Portal");
+#else
     auto promise = request_internal_page_info(PageInfoType::GCGraph);
     auto gc_graph_json = TRY(promise->await());
 
@@ -906,6 +912,7 @@ ErrorOr<LexicalPath> ViewImplementation::dump_gc_graph()
     TRY(dump_file->write_until_depleted(";\n"sv.bytes()));
 
     return path;
+#endif
 }
 
 void ViewImplementation::set_user_style_sheet(String const& source)
