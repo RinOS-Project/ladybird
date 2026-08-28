@@ -19,10 +19,12 @@
 #include <LibCore/Timer.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/SystemTheme.h>
+#include <LibIPC/File.h>
 #include <LibMain/Main.h>
 #include <LibRequests/NetworkError.h>
 #include <LibURL/Parser.h>
 #include <LibWeb/Page/InputEvent.h>
+#include <LibWeb/HTML/SelectedFile.h>
 #include <LibWeb/UIEvents/KeyCode.h>
 #include <LibWeb/UIEvents/MouseButton.h>
 #include <LibWebView/Application.h>
@@ -387,11 +389,13 @@ public:
             client().async_handle_file_return(page_id(), EPERM, {}, request_id);
         };
 
-        /* Until the authenticated Browser/File Portal chooser event is
-         * transported across the bridge, complete the request as an explicit
-         * empty selection rather than leaving HTMLInputElement waiting. */
-        on_request_file_picker = [this](auto const&, auto) {
-            file_picker_closed({});
+        /* The Browser owns the chooser and returns one authenticated
+         * descriptor through the page-state/completion bridge. */
+        on_request_file_picker = [this](auto const& accepted_file_types,
+                                        auto allow_multiple) {
+            if (on_file_picker_request_bridge)
+                on_file_picker_request_bridge(accepted_file_types,
+                                              allow_multiple);
         };
     }
 
@@ -422,6 +426,9 @@ public:
     }
 
     ErrorOr<JsonValue> evaluate_json(StringView source, int timeout_ms = 250);
+
+    Function<void(Web::HTML::FileFilter const&, Web::HTML::AllowMultipleFiles)>
+        on_file_picker_request_bridge;
 };
 
 ErrorOr<JsonValue> BridgeView::evaluate_json(StringView source, int timeout_ms)
@@ -588,6 +595,11 @@ struct PageSession {
                 });
         };
 
+        view->on_file_picker_request_bridge =
+            [this](Web::HTML::FileFilter const&, Web::HTML::AllowMultipleFiles allow_multiple) {
+                request_file_picker(allow_multiple);
+            };
+
         view->on_resource_status_change = [this](i32 count_waiting) {
             if (!loading)
                 return;
@@ -675,6 +687,7 @@ struct PageSession {
             if (plan.clear_first_paint_wait)
                 waiting_for_first_paint_after_load_finish = false;
             active_navigation_request_id = 0;
+            clear_file_picker_request(true);
             clear_pending_load_request();
             clear_first_frame_wait();
             auto message = ByteString::formatted(
@@ -706,6 +719,61 @@ struct PageSession {
     {
         dirty = true;
         ++state_revision;
+    }
+
+    void request_file_picker(Web::HTML::AllowMultipleFiles allow_multiple)
+    {
+        /* HTMLInputElement must not have more than one outstanding chooser.
+         * A second request is completed as an empty selection by the caller
+         * that owns the first request. */
+        if (file_picker_request_id != 0u)
+            return;
+        ++next_file_picker_request_id;
+        if (next_file_picker_request_id == 0u)
+            ++next_file_picker_request_id;
+        file_picker_request_id = next_file_picker_request_id;
+        file_picker_allow_multiple =
+            allow_multiple == Web::HTML::AllowMultipleFiles::Yes;
+        mark_dirty();
+    }
+
+    void clear_file_picker_request(bool notify_webcontent)
+    {
+        if (file_picker_request_id == 0u)
+            return;
+        file_picker_request_id = 0u;
+        file_picker_allow_multiple = false;
+        if (notify_webcontent)
+            view->file_picker_closed({});
+        mark_dirty();
+    }
+
+    bool complete_file_picker(RinWebContentFilePickerCompleteV1 const& completion,
+                              int descriptor)
+    {
+        if (file_picker_request_id == 0u ||
+            completion.request_id != file_picker_request_id)
+            return false;
+        if (completion.result == RIN_WEBCONTENT_FILE_PICKER_RESULT_OK &&
+            file_picker_allow_multiple)
+            return false;
+
+        if (completion.result == RIN_WEBCONTENT_FILE_PICKER_RESULT_OK) {
+            auto name = ByteString { StringView { completion.display_name,
+                                                   completion.display_name_size } };
+            Vector<Web::HTML::SelectedFile> files;
+            files.append(Web::HTML::SelectedFile {
+                move(name), IPC::File::adopt_fd(descriptor) });
+            view->file_picker_closed(move(files));
+        } else {
+            if (descriptor >= 0)
+                ::close(descriptor);
+            view->file_picker_closed({});
+        }
+        file_picker_request_id = 0u;
+        file_picker_allow_multiple = false;
+        mark_dirty();
+        return true;
     }
 
     void note_download_failure(WebView::FileDownloader::DownloadFailure failure)
@@ -1210,6 +1278,7 @@ struct PageSession {
 
     bool navigate(ByteString const& url)
     {
+        clear_file_picker_request(true);
         crashed = false;
         crash_reason = {};
         active_navigation_request_id = 0;
@@ -1238,6 +1307,7 @@ struct PageSession {
 
     bool load_markup(ByteString const& base_url, ByteString const& markup)
     {
+        clear_file_picker_request(true);
         crashed = false;
         crash_reason = {};
         active_navigation_request_id = 0;
@@ -1499,6 +1569,8 @@ struct PageSession {
             state.flags |= RIN_WEBCONTENT_STATE_FLAG_TEXT_INPUT_ENABLED;
         if (download_status != RIN_WEBCONTENT_DOWNLOAD_STATUS_NONE)
             state.flags |= RIN_WEBCONTENT_STATE_FLAG_HAS_DOWNLOAD_STATUS;
+        if (file_picker_request_id != 0u)
+            state.flags |= RIN_WEBCONTENT_STATE_FLAG_HAS_FILE_PICKER_REQUEST;
 
         state.progress_percent = static_cast<u32>(max(progress_percent, 0));
         state.state_revision = state_revision;
@@ -1540,6 +1612,9 @@ struct PageSession {
         state.download_status = download_status;
         state.download_status_revision = download_status_revision;
         state.download_status_timestamp_ms = download_status_timestamp_ms;
+        state.file_picker_request_id = file_picker_request_id;
+        state.file_picker_allow_multiple = file_picker_allow_multiple ? 1u : 0u;
+        state.file_picker_reserved0 = 0u;
     }
 
     u32 page_id { 0 };
@@ -1571,6 +1646,9 @@ struct PageSession {
     u32 download_status { RIN_WEBCONTENT_DOWNLOAD_STATUS_NONE };
     u32 download_status_revision { 0 };
     u64 download_status_timestamp_ms { 0 };
+    u64 file_picker_request_id { 0 };
+    u64 next_file_picker_request_id { 0 };
+    bool file_picker_allow_multiple { false };
     int scroll_x { 0 };
     int scroll_y { 0 };
     int max_scroll_x { 0 };
@@ -1729,6 +1807,109 @@ static int handle_scroll(PageSession& page, ReadonlyBytes payload)
     return page.scroll_to(request.x, request.y) ? 0 : -EIO;
 }
 
+static void close_received_descriptors(msghdr const& message)
+{
+    auto const* base = static_cast<u8 const*>(message.msg_control);
+    size_t offset = 0u;
+    if (!base || message.msg_controllen < sizeof(cmsghdr))
+        return;
+    while (offset <= message.msg_controllen - sizeof(cmsghdr)) {
+        auto const* cmsg = reinterpret_cast<cmsghdr const*>(base + offset);
+        if (cmsg->cmsg_len < CMSG_LEN(0u) ||
+            cmsg->cmsg_len > message.msg_controllen - offset)
+            return;
+        auto payload_size = cmsg->cmsg_len - CMSG_LEN(0u);
+        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS &&
+            payload_size % sizeof(int) == 0u) {
+            for (size_t index = 0u; index < payload_size / sizeof(int); ++index) {
+                int received = -1;
+                __builtin_memcpy(&received,
+                    CMSG_DATA(const_cast<cmsghdr*>(cmsg)) + index * sizeof(int),
+                    sizeof(received));
+                if (received >= 0)
+                    (void)::close(received);
+            }
+        }
+        auto step = CMSG_ALIGN(cmsg->cmsg_len);
+        if (step == 0u || step > message.msg_controllen - offset)
+            return;
+        offset += step;
+    }
+}
+
+static bool receive_file_picker_payload(int client_fd, void* output,
+                                        size_t output_size, int& descriptor,
+                                        u64 deadline_ms)
+{
+    iovec iov {};
+    alignas(struct cmsghdr) u8 control[CMSG_SPACE(sizeof(int) * 2u)] {};
+    msghdr message {};
+    descriptor = -1;
+    iov.iov_base = output;
+    iov.iov_len = output_size;
+    message.msg_iov = &iov;
+    message.msg_iovlen = 1u;
+    message.msg_control = control;
+    message.msg_controllen = sizeof(control);
+    ssize_t received = recvmsg(client_fd, &message, 0);
+    if (received < 0 || static_cast<size_t>(received) > output_size ||
+        (message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0) {
+        close_received_descriptors(message);
+        return false;
+    }
+    auto* cmsg = CMSG_FIRSTHDR(&message);
+    if (cmsg) {
+        if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS ||
+            cmsg->cmsg_len != CMSG_LEN(sizeof(int)) ||
+            CMSG_NXTHDR(&message, cmsg) != nullptr) {
+            close_received_descriptors(message);
+            return false;
+        }
+        __builtin_memcpy(&descriptor, CMSG_DATA(cmsg), sizeof(descriptor));
+        if (descriptor < 0) {
+            close_received_descriptors(message);
+            descriptor = -1;
+            return false;
+        }
+    }
+    if (static_cast<size_t>(received) < output_size &&
+        !recv_all(client_fd,
+                  static_cast<u8*>(output) + received,
+                  output_size - static_cast<size_t>(received), deadline_ms)) {
+        if (descriptor >= 0)
+            (void)::close(descriptor);
+        descriptor = -1;
+        return false;
+    }
+    return true;
+}
+
+static int handle_complete_file_picker(PageSession& page, ReadonlyBytes payload,
+                                       int descriptor)
+{
+    if (payload.size() != sizeof(RinWebContentFilePickerCompleteV1)) {
+        if (descriptor >= 0)
+            (void)::close(descriptor);
+        return -EINVAL;
+    }
+    RinWebContentFilePickerCompleteV1 completion {};
+    __builtin_memcpy(&completion, payload.data(), sizeof(completion));
+    if (!rin_webcontent_client_file_picker_complete_valid(&completion) ||
+        (completion.result == RIN_WEBCONTENT_FILE_PICKER_RESULT_OK
+             ? descriptor < 0
+             : descriptor >= 0)) {
+        if (descriptor >= 0)
+            (void)::close(descriptor);
+        return -EINVAL;
+    }
+    if (!page.complete_file_picker(completion, descriptor)) {
+        if (descriptor >= 0)
+            (void)::close(descriptor);
+        return -EINVAL;
+    }
+    return 0;
+}
+
 static int handle_get_state(PageSession& page, int client_fd, u32 command, u64 deadline_ms)
 {
     page.drain_pending_bridge_events(false);
@@ -1793,14 +1974,24 @@ static void handle_client(int client_fd)
         return;
 
     Vector<u8> payload;
+    int received_descriptor = -1;
     if (header.payload_len > 0) {
         payload.resize(header.payload_len);
-        if (!recv_all(client_fd, payload.data(), payload.size(), deadline_ms))
+        if (header.command == RIN_WEBCONTENT_CMD_COMPLETE_FILE_PICKER_V1) {
+            if (!receive_file_picker_payload(client_fd, payload.data(),
+                                              payload.size(), received_descriptor,
+                                              deadline_ms))
+                return;
+        } else if (!recv_all(client_fd, payload.data(), payload.size(), deadline_ms)) {
             return;
+        }
     }
     if (!rin_webcontent_service_request_valid(
-            &header, payload.is_empty() ? nullptr : payload.data()))
+            &header, payload.is_empty() ? nullptr : payload.data())) {
+        if (received_descriptor >= 0)
+            (void)::close(received_descriptor);
         return;
+    }
     ReadonlyBytes payload_bytes { payload.data(), payload.size() };
 
     if (header.command == RIN_WEBCONTENT_CMD_GET_CAPABILITIES_V1) {
@@ -1859,6 +2050,13 @@ static void handle_client(int client_fd)
     case RIN_WEBCONTENT_CMD_GET_PAGE_STATE_V1:
         (void)handle_get_state(*page, client_fd, header.command, deadline_ms);
         return;
+    case RIN_WEBCONTENT_CMD_COMPLETE_FILE_PICKER_V1: {
+        auto rc = handle_complete_file_picker(*page, payload_bytes,
+                                              received_descriptor);
+        (void)send_message(client_fd, header.command, rc, header.page_id,
+                           nullptr, 0, deadline_ms);
+        return;
+    }
     default:
         (void)send_message(client_fd, header.command, -EINVAL, header.page_id, nullptr, 0, deadline_ms);
         return;
