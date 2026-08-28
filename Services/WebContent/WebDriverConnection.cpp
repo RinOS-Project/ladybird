@@ -10,10 +10,12 @@
 
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
-#include <AK/LexicalPath.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
-#include <LibCore/File.h>
+#if !defined(AK_OS_RINOS)
+#    include <AK/LexicalPath.h>
+#    include <LibCore/File.h>
+#endif
 #if !defined(AK_OS_MACOS)
 #    include <LibCore/Socket.h>
 #else
