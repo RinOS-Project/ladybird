@@ -39,14 +39,13 @@ static ErrorOr<ByteBuffer> read_portal_file_contents(Core::File& file)
         TRY(contents.try_append(bytes));
     }
 
-    /* A regular file can grow after fstat. Probe one byte so that the size
-     * ceiling remains fail-closed instead of silently truncating the upload. */
-    if (contents.size() == max_portal_file_bytes) {
-        u8 extra_byte;
-        auto extra = TRY(file.read_some(Bytes { &extra_byte, 1 }));
-        if (!extra.is_empty())
-            return Error::from_string_literal("File Portal object exceeds upload limit");
-    }
+    /* A regular file can grow after fstat. Probe one byte for every declared
+     * size so that a descriptor handoff never silently truncates a changed
+     * object, including objects that were below the upload ceiling at fstat. */
+    u8 extra_byte;
+    auto extra = TRY(file.read_some(Bytes { &extra_byte, 1 }));
+    if (!extra.is_empty())
+        return Error::from_string_literal("File Portal object changed while reading");
     return contents;
 }
 
