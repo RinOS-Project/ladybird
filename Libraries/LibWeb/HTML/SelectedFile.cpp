@@ -24,7 +24,7 @@ static ErrorOr<ByteBuffer> read_portal_file_contents(Core::File& file)
     auto declared_size = TRY(file.size());
     if (declared_size > max_portal_file_bytes)
         return Error::from_string_literal("File Portal object exceeds upload limit");
-    TRY(file.seek(0, SeekableStream::SeekMode::SetPosition));
+    TRY(file.seek(0, SeekMode::SetPosition));
 
     ByteBuffer contents;
     contents.ensure_capacity(declared_size);
@@ -99,7 +99,7 @@ ErrorOr<Web::HTML::SelectedFile> IPC::decode(Decoder& decoder)
 
     if (file_or_contents.has<IPC::File>()) {
         auto file = TRY(Core::File::adopt_fd(file_or_contents.get<IPC::File>().take_fd(), Core::File::OpenMode::Read));
-        contents = TRY(read_portal_file_contents(*file));
+        contents = TRY(Web::HTML::read_portal_file_contents(*file));
     } else {
         contents = move(file_or_contents.get<ByteBuffer>());
     }
