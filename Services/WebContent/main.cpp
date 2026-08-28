@@ -214,6 +214,13 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 
     args_parser.parse(arguments);
 
+#if defined(AK_OS_RINOS)
+    // Hardware GPU access is not inherited by the renderer. Until a
+    // brokered RinGPU capability is explicitly negotiated, keep this helper
+    // on the CPU painter even if an external launcher supplied GPU options.
+    force_cpu_painting = true;
+#endif
+
     if (wait_for_debugger) {
         Core::Process::wait_for_debugger_and_break();
     }
