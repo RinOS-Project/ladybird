@@ -8,6 +8,7 @@
 #include <AK/String.h>
 #include <AK/TemporaryChange.h>
 #include <AK/Time.h>
+#include <errno.h>
 #include <LibCore/StandardPaths.h>
 #include <LibCore/Timer.h>
 #include <LibGfx/ImageFormats/PNGWriter.h>
@@ -61,6 +62,14 @@ ViewImplementation::ViewImplementation()
         this->m_crash_count = 0;
     });
 
+#if defined(AK_OS_RINOS)
+    on_request_file = [this](auto const&, auto request_id) {
+        /* A generic ViewImplementation must be safe even when it is created
+         * outside BridgeApplication.  RinOS file URLs require an authenticated
+         * File Portal descriptor and never reach a host-path open. */
+        client().async_handle_file_return(page_id(), EPERM, {}, request_id);
+    };
+#else
     on_request_file = [this](auto const& path, auto request_id) {
         auto file = Core::File::open(path, Core::File::OpenMode::Read);
 
@@ -69,6 +78,7 @@ ViewImplementation::ViewImplementation()
         else
             client().async_handle_file_return(page_id(), 0, IPC::File::adopt_file(file.release_value()), request_id);
     };
+#endif
 }
 
 ViewImplementation::~ViewImplementation()
