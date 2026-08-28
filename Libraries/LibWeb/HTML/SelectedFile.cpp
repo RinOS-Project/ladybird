@@ -18,6 +18,19 @@ namespace Web::HTML {
  * ceiling as the browser upload transaction. */
 static constexpr size_t max_portal_file_bytes = 128u * 1024u * 1024u;
 static constexpr size_t portal_read_chunk_bytes = 64u * 1024u;
+static constexpr size_t max_portal_file_name_bytes = 255u;
+
+static bool portal_file_name_valid(ByteString const& name)
+{
+    if (name.is_empty() || name.length() > max_portal_file_name_bytes)
+        return false;
+    for (auto byte : name.bytes()) {
+        if (byte == 0u || byte < 0x20u || byte == 0x7fu || byte == '/' ||
+            byte == '\\')
+            return false;
+    }
+    return true;
+}
 
 static ErrorOr<ByteBuffer> read_portal_file_contents(Core::File& file)
 {
@@ -96,12 +109,17 @@ ErrorOr<Web::HTML::SelectedFile> IPC::decode(Decoder& decoder)
     auto name = TRY(decoder.decode<ByteString>());
     auto file_or_contents = TRY((decoder.decode<Variant<IPC::File, ByteBuffer>>()));
 
+    if (!Web::HTML::portal_file_name_valid(name))
+        return Error::from_string_literal("File Portal object has an invalid display name");
+
     ByteBuffer contents;
 
     if (file_or_contents.has<IPC::File>()) {
         auto file = TRY(Core::File::adopt_fd(file_or_contents.get<IPC::File>().take_fd(), Core::File::OpenMode::Read));
         contents = TRY(Web::HTML::read_portal_file_contents(*file));
     } else {
+        if (file_or_contents.get<ByteBuffer>().size() > Web::HTML::max_portal_file_bytes)
+            return Error::from_string_literal("File Portal object exceeds upload limit");
         contents = move(file_or_contents.get<ByteBuffer>());
     }
 
