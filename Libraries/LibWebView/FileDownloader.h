@@ -9,7 +9,9 @@
 #include <AK/ByteString.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
+#if !defined(AK_OS_RINOS)
 #include <AK/LexicalPath.h>
+#endif
 #include <AK/NonnullRefPtr.h>
 #include <LibRequests/Forward.h>
 #include <LibURL/Forward.h>
