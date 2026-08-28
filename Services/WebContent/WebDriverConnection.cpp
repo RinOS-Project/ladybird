@@ -1931,6 +1931,13 @@ Web::WebDriver::Response WebDriverConnection::element_send_keys_impl(StringView 
 
     // -> file is true
     if (file) {
+#if defined(AK_OS_RINOS)
+        // WebDriver receives a pathname from an external automation client.
+        // RinOS upload authority is a File Portal descriptor, so do not let
+        // the WebContent helper open that path directly.
+        return Web::WebDriver::Error::from_code(Web::WebDriver::ErrorCode::InvalidArgument,
+            "File upload requires a RinOS File Portal descriptor"sv);
+#else
         auto& input_element = static_cast<Web::HTML::HTMLInputElement&>(*element);
 
         // 1. Let files be the result of splitting text on the newline (\n) character.
@@ -1981,6 +1988,7 @@ Web::WebDriver::Response WebDriverConnection::element_send_keys_impl(StringView 
 
         // 8. Return success with data null.
         return JsonValue {};
+#endif
     }
     // -> element is a non-typeable form control
     else if (Web::WebDriver::is_element_non_typeable_form_control(*element)) {

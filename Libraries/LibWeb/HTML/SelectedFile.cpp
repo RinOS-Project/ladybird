@@ -50,6 +50,7 @@ static ErrorOr<ByteBuffer> read_portal_file_contents(Core::File& file)
     return contents;
 }
 
+#if !defined(AK_OS_RINOS)
 ErrorOr<SelectedFile> SelectedFile::from_file_path(ByteString const& file_path)
 {
     // https://html.spec.whatwg.org/multipage/input.html#file-upload-state-(type=file):concept-input-file-path
@@ -60,6 +61,7 @@ ErrorOr<SelectedFile> SelectedFile::from_file_path(ByteString const& file_path)
     auto file = TRY(Core::File::open(file_path, Core::File::OpenMode::Read));
     return SelectedFile { move(name), IPC::File::adopt_file(move(file)) };
 }
+#endif
 
 SelectedFile::SelectedFile(ByteString name, ByteBuffer contents)
     : m_name(move(name))
