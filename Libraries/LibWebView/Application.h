@@ -8,7 +8,9 @@
 
 #include <AK/ByteString.h>
 #include <AK/Function.h>
+#if !defined(AK_OS_RINOS)
 #include <AK/LexicalPath.h>
+#endif
 #include <AK/Optional.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Forward.h>
@@ -92,9 +94,11 @@ public:
 
     virtual bool should_capture_web_content_output() const { return false; }
 
+#if !defined(AK_OS_RINOS)
     ErrorOr<LexicalPath> path_for_downloaded_file(StringView file) const;
 
     virtual void display_download_confirmation_dialog(StringView download_name, LexicalPath const& path) const;
+#endif
     virtual void display_error_dialog(StringView error_message) const;
 
     // FIXME: We should implement UI-agnostic platform APIs to interact with the system clipboard.

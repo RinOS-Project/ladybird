@@ -736,6 +736,7 @@ void Application::process_did_exit(Process&& process)
     }
 }
 
+#if !defined(AK_OS_RINOS)
 ErrorOr<LexicalPath> Application::path_for_downloaded_file(StringView file) const
 {
     if (browser_options().headless_mode.has_value()) {
@@ -760,6 +761,7 @@ void Application::display_download_confirmation_dialog(StringView download_name,
 {
     outln("{} saved to: {}", download_name, path);
 }
+#endif
 
 void Application::display_error_dialog(StringView error_message) const
 {
