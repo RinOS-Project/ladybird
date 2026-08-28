@@ -574,6 +574,7 @@ ErrorOr<void> Application::launch_devtools_server()
     return {};
 }
 
+#if !defined(AK_OS_RINOS)
 static NonnullRefPtr<Core::Timer> load_page_for_screenshot_and_exit(Core::EventLoop& event_loop, HeadlessWebView& view, URL::URL const& url, int screenshot_timeout)
 {
     outln("Taking screenshot after {} seconds", screenshot_timeout);
@@ -597,6 +598,7 @@ static NonnullRefPtr<Core::Timer> load_page_for_screenshot_and_exit(Core::EventL
 
     return timer;
 }
+#endif
 
 static void load_page_for_info_and_exit(Core::EventLoop& event_loop, HeadlessWebView& view, URL::URL const& url, WebView::PageInfoType type)
 {
@@ -625,7 +627,9 @@ static void load_page_and_exit_on_close(Core::EventLoop& event_loop, HeadlessWeb
 ErrorOr<int> Application::execute()
 {
     OwnPtr<HeadlessWebView> view;
+#if !defined(AK_OS_RINOS)
     RefPtr<Core::Timer> screenshot_timer;
+#endif
 
     bool should_create_implicit_headless_bootstrap_view;
 #if defined(AK_OS_RINOS)
@@ -651,7 +655,11 @@ ErrorOr<int> Application::execute()
 
             switch (*m_browser_options.headless_mode) {
             case HeadlessMode::Screenshot:
+#if !defined(AK_OS_RINOS)
                 screenshot_timer = load_page_for_screenshot_and_exit(*m_event_loop, *view, m_browser_options.urls.first(), 1);
+#else
+                return Error::from_string_literal("Headless screenshots require a File Portal destination");
+#endif
                 break;
             case HeadlessMode::LayoutTree:
                 load_page_for_info_and_exit(*m_event_loop, *view, m_browser_options.urls.first(), WebView::PageInfoType::LayoutTree | WebView::PageInfoType::PaintTree);
@@ -1017,6 +1025,7 @@ void Application::initialize_actions()
     m_debug_menu->add_action(Action::create("Dump CSS Errors"sv, ActionID::DumpCSSErrors, debug_request("dump-all-css-errors"sv)));
     m_debug_menu->add_action(Action::create("Dump Cookies"sv, ActionID::DumpCookies, [this]() { m_cookie_jar->dump_cookies(); }));
     m_debug_menu->add_action(Action::create("Dump Local Storage"sv, ActionID::DumpLocalStorage, debug_request("dump-local-storage"sv)));
+#if !defined(AK_OS_RINOS)
     m_debug_menu->add_action(Action::create("Dump GC graph"sv, ActionID::DumpGCGraph, [this]() {
         if (auto view = active_web_view(); view.has_value()) {
             auto gc_graph_path = view->dump_gc_graph();
@@ -1029,6 +1038,7 @@ void Application::initialize_actions()
             }
         }
     }));
+#endif
     m_debug_menu->add_separator();
 
     m_show_line_box_borders_action = Action::create_checkable("Show Line Box Borders"sv, ActionID::ShowLineBoxBorders, check(m_show_line_box_borders_action, "set-line-box-borders"sv));

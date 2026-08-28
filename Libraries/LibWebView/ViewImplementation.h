@@ -10,7 +10,9 @@
 #include <AK/Forward.h>
 #include <AK/Function.h>
 #include <AK/JsonObject.h>
-#include <AK/LexicalPath.h>
+#if !defined(AK_OS_RINOS)
+#    include <AK/LexicalPath.h>
+#endif
 #include <AK/Queue.h>
 #include <AK/String.h>
 #include <AK/Utf16String.h>
@@ -170,14 +172,18 @@ public:
         Visible,
         Full,
     };
+#if !defined(AK_OS_RINOS)
     NonnullRefPtr<Core::Promise<LexicalPath>> take_screenshot(ScreenshotType);
     NonnullRefPtr<Core::Promise<LexicalPath>> take_dom_node_screenshot(Web::UniqueNodeID);
     virtual void did_receive_screenshot(Badge<WebContentClient>, Gfx::ShareableBitmap const&);
+#endif
 
     NonnullRefPtr<Core::Promise<String>> request_internal_page_info(PageInfoType);
     void did_receive_internal_page_info(Badge<WebContentClient>, PageInfoType, Optional<Core::AnonymousBuffer> const&);
 
+#if !defined(AK_OS_RINOS)
     ErrorOr<LexicalPath> dump_gc_graph();
+#endif
 
     void set_user_style_sheet(String const& source);
     // Load Native.css as the User style sheet, which attempts to make WebView content look as close to
@@ -391,7 +397,9 @@ protected:
     size_t m_crash_count = 0;
     RefPtr<Core::Timer> m_repeated_crash_timer;
 
+#if !defined(AK_OS_RINOS)
     RefPtr<Core::Promise<LexicalPath>> m_pending_screenshot;
+#endif
     RefPtr<Core::Promise<String>> m_pending_info_request;
 
     Web::HTML::VisibilityState m_system_visibility_state { Web::HTML::VisibilityState::Hidden };

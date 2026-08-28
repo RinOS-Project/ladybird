@@ -790,16 +790,12 @@ void ViewImplementation::update_bookmark_action()
     m_toggle_bookmark_action->set_engaged(is_bookmarked);
 }
 
+#if !defined(AK_OS_RINOS)
 static ErrorOr<LexicalPath> save_screenshot(Gfx::Bitmap const* bitmap)
 {
     if (!bitmap)
         return Error::from_string_literal("Failed to take a screenshot");
 
-#if defined(AK_OS_RINOS)
-    // RinOS screenshots require a File Portal destination; never open a
-    // generic downloads path from the WebContent helper.
-    return Error::from_string_literal("Screenshot export requires a RinOS File Portal");
-#else
     auto file = AK::UnixDateTime::now().to_byte_string("screenshot-%Y-%m-%d-%H-%M-%S.png"sv);
     auto path = TRY(Application::the().path_for_downloaded_file(file));
 
@@ -809,7 +805,6 @@ static ErrorOr<LexicalPath> save_screenshot(Gfx::Bitmap const* bitmap)
     TRY(dump_file->write_until_depleted(encoded));
 
     return path;
-#endif
 }
 
 NonnullRefPtr<Core::Promise<LexicalPath>> ViewImplementation::take_screenshot(ScreenshotType type)
@@ -870,6 +865,7 @@ void ViewImplementation::did_receive_screenshot(Badge<WebContentClient>, Gfx::Sh
 
     m_pending_screenshot = nullptr;
 }
+#endif
 
 NonnullRefPtr<Core::Promise<String>> ViewImplementation::request_internal_page_info(PageInfoType type)
 {
@@ -901,14 +897,9 @@ void ViewImplementation::did_receive_internal_page_info(Badge<WebContentClient>,
     m_pending_info_request = nullptr;
 }
 
+#if !defined(AK_OS_RINOS)
 ErrorOr<LexicalPath> ViewImplementation::dump_gc_graph()
 {
-#if defined(AK_OS_RINOS)
-    /* GC graph dumps are host-path debug artifacts.  RinOS WebContent and
-     * Browser processes must not materialize an ambient pathname; a future
-     * diagnostic export can use an authenticated File Portal destination. */
-    return Error::from_string_literal("GC graph export requires a RinOS File Portal");
-#else
     auto promise = request_internal_page_info(PageInfoType::GCGraph);
     auto gc_graph_json = TRY(promise->await());
 
@@ -922,8 +913,8 @@ ErrorOr<LexicalPath> ViewImplementation::dump_gc_graph()
     TRY(dump_file->write_until_depleted(";\n"sv.bytes()));
 
     return path;
-#endif
 }
+#endif
 
 void ViewImplementation::set_user_style_sheet(String const& source)
 {

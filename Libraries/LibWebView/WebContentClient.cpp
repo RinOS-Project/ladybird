@@ -410,8 +410,13 @@ void WebContentClient::did_get_style_sheet_source(u64 page_id, Web::CSS::StyleSh
 
 void WebContentClient::did_take_screenshot(u64 page_id, Gfx::ShareableBitmap screenshot)
 {
+#if !defined(AK_OS_RINOS)
     if (auto view = view_for_page_id(page_id); view.has_value())
         view->did_receive_screenshot({}, screenshot);
+#else
+    (void)page_id;
+    (void)screenshot;
+#endif
 }
 
 void WebContentClient::did_get_internal_page_info(u64 page_id, WebView::PageInfoType type, Optional<Core::AnonymousBuffer> info)
