@@ -426,6 +426,7 @@ public:
     }
 
     ErrorOr<JsonValue> evaluate_json(StringView source, int timeout_ms = 250);
+    ErrorOr<JsonObject> inspect_accessibility_json(int timeout_ms = 250);
 
     Function<void(Web::HTML::FileFilter const&, Web::HTML::AllowMultipleFiles)>
         on_file_picker_request_bridge;
@@ -452,6 +453,32 @@ ErrorOr<JsonValue> BridgeView::evaluate_json(StringView source, int timeout_ms)
     auto result = promise->await();
     timeout->stop();
     on_received_js_console_result = move(previous_callback);
+
+    if (result.is_error())
+        return result.release_error();
+    return result.release_value();
+}
+
+ErrorOr<JsonObject> BridgeView::inspect_accessibility_json(int timeout_ms)
+{
+    auto promise = Core::Promise<JsonObject>::construct();
+    auto weak_promise = promise->template make_weak_ptr<Core::Promise<JsonObject>>();
+    auto previous_callback = move(on_received_accessibility_tree);
+
+    auto timeout = Core::Timer::create_single_shot(timeout_ms, [weak_promise] {
+        if (!weak_promise || weak_promise->is_resolved() || weak_promise->is_rejected())
+            return;
+        weak_promise->reject(Error::from_string_literal("Timed out waiting for accessibility tree"));
+    });
+
+    on_received_accessibility_tree = [promise](JsonObject value) mutable {
+        promise->resolve(move(value));
+    };
+    WebView::ViewImplementation::inspect_accessibility_tree();
+    timeout->start();
+    auto result = promise->await();
+    timeout->stop();
+    on_received_accessibility_tree = move(previous_callback);
 
     if (result.is_error())
         return result.release_error();
@@ -1690,6 +1717,119 @@ struct PageSession {
     char paint_shm_name[RIN_SHM_NAME_MAX] {};
 };
 
+static u16 accessibility_role_for(StringView role)
+{
+    if (role == "button"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_BUTTON;
+    if (role == "checkbox"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_CHECK_BOX;
+    if (role == "combobox"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_COMBO_BOX;
+    if (role == "dialog"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_DIALOG;
+    if (role == "group"sv || role == "document"sv || role == "generic"sv)
+        return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_GROUP;
+    if (role == "heading"sv || role == "text leaf"sv)
+        return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_LABEL;
+    if (role == "list"sv || role == "listbox"sv)
+        return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_LIST;
+    if (role == "menu"sv || role == "menubar"sv)
+        return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_MENU;
+    if (role == "menuitem"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_MENU_ITEM;
+    if (role == "progressbar"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_PROGRESS_BAR;
+    if (role == "radio"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_RADIO_BUTTON;
+    if (role == "scrollbar"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_SCROLL_VIEW;
+    if (role == "slider"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_SLIDER;
+    if (role == "tablist"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_TAB_LIST;
+    if (role == "table"sv || role == "grid"sv)
+        return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_TABLE;
+    if (role == "textbox"sv || role == "input"sv)
+        return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_TEXT_FIELD;
+    if (role == "tree"sv) return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_TREE;
+    return RIN_WEBCONTENT_ACCESSIBILITY_ROLE_GROUP;
+}
+
+static bool copy_accessibility_json_text(
+    JsonObject const& object, StringView key,
+    RinWebContentAccessibilityTextV1& destination)
+{
+    auto value = object.get_string(key);
+    if (!value.has_value()) return true;
+    auto bytes = value->bytes();
+    if (bytes.size() > RIN_WEBCONTENT_ACCESSIBILITY_MAX_TEXT_BYTES)
+        return false;
+    destination.size = static_cast<u16>(bytes.size());
+    if (!bytes.is_empty())
+        __builtin_memcpy(destination.bytes, bytes.data(), bytes.size());
+    return rin_webcontent_accessibility_text_valid(&destination);
+}
+
+static bool append_accessibility_json_node(
+    JsonObject const& object, RinWebContentAccessibilitySnapshotV1& snapshot,
+    u64 parent_id, u64& next_id)
+{
+    if (snapshot.node_count >= RIN_WEBCONTENT_ACCESSIBILITY_MAX_NODES ||
+        next_id == 0u || next_id == UINT64_MAX)
+        return false;
+
+    auto& node = snapshot.nodes[snapshot.node_count++];
+    node.id = next_id++;
+    node.parent_id = parent_id;
+    auto role = object.get_string("role"sv);
+    node.role = role.has_value() ? accessibility_role_for(*role)
+                                 : RIN_WEBCONTENT_ACCESSIBILITY_ROLE_GROUP;
+    node.state = RIN_WEBCONTENT_ACCESSIBILITY_STATE_VISIBLE |
+                 RIN_WEBCONTENT_ACCESSIBILITY_STATE_ENABLED;
+    if (node.role == RIN_WEBCONTENT_ACCESSIBILITY_ROLE_BUTTON ||
+        node.role == RIN_WEBCONTENT_ACCESSIBILITY_ROLE_MENU_ITEM)
+        node.actions = RIN_WEBCONTENT_ACCESSIBILITY_ACTION_ACTIVATE;
+    if (!copy_accessibility_json_text(object, "name"sv, node.name) ||
+        !copy_accessibility_json_text(object, "description"sv, node.description))
+        return false;
+
+    auto children = object.get_array("children"sv);
+    if (!children.has_value()) return true;
+    for (auto const& child : children->values()) {
+        if (!child.is_object() ||
+            !append_accessibility_json_node(child.as_object(), snapshot,
+                                            node.id, next_id))
+            return false;
+    }
+    return true;
+}
+
+static bool build_accessibility_snapshot(
+    PageSession& page, u64 window,
+    RinWebContentAccessibilitySnapshotV1& snapshot)
+{
+    __builtin_memset(&snapshot, 0, sizeof(snapshot));
+    if (window == 0u) return false;
+    auto json_or_error = page.view->inspect_accessibility_json();
+    if (json_or_error.is_error()) return false;
+
+    snapshot.struct_size = sizeof(snapshot);
+    snapshot.version = RIN_WEBCONTENT_VERSION;
+    snapshot.window = window;
+    snapshot.generation = page.state_revision == 0u ? 1u : page.state_revision;
+    auto& root = snapshot.nodes[snapshot.node_count++];
+    root.id = 1u;
+    root.role = RIN_WEBCONTENT_ACCESSIBILITY_ROLE_WINDOW;
+    root.state = RIN_WEBCONTENT_ACCESSIBILITY_STATE_VISIBLE |
+                 RIN_WEBCONTENT_ACCESSIBILITY_STATE_ENABLED;
+    root.width = page.reported_viewport_width;
+    root.height = page.reported_viewport_height;
+    auto title = page.title;
+    if (title.is_empty()) title = "WebContent";
+    auto title_bytes = title.bytes();
+    if (title_bytes.size() > RIN_WEBCONTENT_ACCESSIBILITY_MAX_TEXT_BYTES)
+        return false;
+    root.name.size = static_cast<u16>(title_bytes.size());
+    if (!title_bytes.is_empty())
+        __builtin_memcpy(root.name.bytes, title_bytes.data(), title_bytes.size());
+
+    u64 next_id = 2u;
+    if (!append_accessibility_json_node(json_or_error.value(), snapshot,
+                                        root.id, next_id))
+        return false;
+    return rin_webcontent_client_accessibility_snapshot_valid(&snapshot, window);
+}
+
 static HashMap<u32, NonnullOwnPtr<PageSession>> s_pages;
 static OwnPtr<BridgeApplication> s_app;
 static Core::AnonymousBuffer s_theme;
@@ -1920,6 +2060,29 @@ static int handle_get_state(PageSession& page, int client_fd, u32 command, u64 d
     return sent ? 1 : -EIO;
 }
 
+static int handle_get_accessibility_tree(PageSession& page, int client_fd,
+                                          ReadonlyBytes payload,
+                                          u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentAccessibilityRequestV1))
+        return -EINVAL;
+    RinWebContentAccessibilityRequestV1 request {};
+    __builtin_memcpy(&request, payload.data(), sizeof(request));
+    RinWebContentAccessibilitySnapshotV1 snapshot {};
+    page.drain_pending_bridge_events(false);
+    if (!build_accessibility_snapshot(page, request.window, snapshot))
+        return send_message(client_fd,
+                            RIN_WEBCONTENT_CMD_GET_ACCESSIBILITY_TREE_V1,
+                            -EIO, page.page_id, nullptr, 0, deadline_ms)
+            ? 1
+            : -EIO;
+    return send_message(client_fd,
+                        RIN_WEBCONTENT_CMD_GET_ACCESSIBILITY_TREE_V1, 0,
+                        page.page_id, &snapshot, sizeof(snapshot), deadline_ms)
+        ? 1
+        : -EIO;
+}
+
 static int handle_paint(PageSession& page, int client_fd, u64 deadline_ms)
 {
     page.drain_pending_bridge_events(true);
@@ -2049,6 +2212,10 @@ static void handle_client(int client_fd)
         return;
     case RIN_WEBCONTENT_CMD_GET_PAGE_STATE_V1:
         (void)handle_get_state(*page, client_fd, header.command, deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_GET_ACCESSIBILITY_TREE_V1:
+        (void)handle_get_accessibility_tree(*page, client_fd, payload_bytes,
+                                            deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_COMPLETE_FILE_PICKER_V1: {
         auto rc = handle_complete_file_picker(*page, payload_bytes,
