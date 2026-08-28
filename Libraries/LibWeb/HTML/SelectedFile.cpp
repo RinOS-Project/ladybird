@@ -24,10 +24,44 @@ static bool portal_file_name_valid(ByteString const& name)
 {
     if (name.is_empty() || name.length() > max_portal_file_name_bytes)
         return false;
-    for (auto byte : name.bytes()) {
-        if (byte == 0u || byte < 0x20u || byte == 0x7fu || byte == '/' ||
-            byte == '\\')
+    auto bytes = name.bytes();
+    size_t index = 0;
+    while (index < bytes.size()) {
+        u8 first = bytes[index];
+        u32 codepoint;
+        size_t count;
+        if (first < 0x80u) {
+            codepoint = first;
+            count = 1;
+        } else if (first >= 0xc2u && first <= 0xdfu) {
+            codepoint = first & 0x1fu;
+            count = 2;
+        } else if (first >= 0xe0u && first <= 0xefu) {
+            codepoint = first & 0x0fu;
+            count = 3;
+        } else if (first >= 0xf0u && first <= 0xf4u) {
+            codepoint = first & 0x07u;
+            count = 4;
+        } else {
             return false;
+        }
+        if (count > bytes.size() - index)
+            return false;
+        for (size_t continuation = 1; continuation < count; ++continuation) {
+            u8 byte = bytes[index + continuation];
+            if ((byte & 0xc0u) != 0x80u)
+                return false;
+            codepoint = (codepoint << 6u) | (byte & 0x3fu);
+        }
+        if ((count == 3 && codepoint < 0x800u) ||
+            (count == 4 && codepoint < 0x10000u) ||
+            codepoint > 0x10ffffu ||
+            (codepoint >= 0xd800u && codepoint <= 0xdfffu) ||
+            codepoint < 0x20u || (codepoint >= 0x7fu && codepoint <= 0x9fu) ||
+            codepoint == '/' || codepoint == '\\')
+            return false;
+        ++index;
+        index += count - 1;
     }
     return true;
 }
