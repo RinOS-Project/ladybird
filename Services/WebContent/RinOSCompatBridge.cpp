@@ -377,6 +377,22 @@ public:
     explicit BridgeView(Core::AnonymousBuffer theme, Web::DevicePixelSize size)
         : WebView::HeadlessWebView(move(theme), size)
     {
+        /* RinOS WebContent is a renderer, not a filesystem authority.  The
+         * generic Ladybird ViewImplementation fallback opens the path passed
+         * by WebContent directly; keep that host-only behavior out of the
+         * RinOS bridge and report a capability denial instead.  Browser
+         * process upload wiring must provide a File Portal descriptor before
+         * this callback can be relaxed. */
+        on_request_file = [this](ByteString const&, i32 request_id) {
+            client().async_handle_file_return(page_id(), EPERM, {}, request_id);
+        };
+
+        /* Until the authenticated Browser/File Portal chooser event is
+         * transported across the bridge, complete the request as an explicit
+         * empty selection rather than leaving HTMLInputElement waiting. */
+        on_request_file_picker = [this](auto const&, auto) {
+            file_picker_closed({});
+        };
     }
 
     RefPtr<Gfx::Bitmap const> visible_bitmap() const
