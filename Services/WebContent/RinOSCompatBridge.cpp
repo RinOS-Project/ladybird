@@ -24,6 +24,11 @@
 #include <LibRequests/NetworkError.h>
 #include <LibURL/Parser.h>
 #include <LibWeb/Page/InputEvent.h>
+#include <LibWeb/DOM/Node.h>
+#include <LibWeb/HTML/HTMLElement.h>
+#include <LibWeb/HTML/HTMLInputElement.h>
+#include <LibWeb/HTML/HTMLSelectElement.h>
+#include <LibWeb/HTML/HTMLTextAreaElement.h>
 #include <LibWeb/HTML/SelectedFile.h>
 #include <LibWeb/UIEvents/KeyCode.h>
 #include <LibWeb/UIEvents/MouseButton.h>
@@ -1762,14 +1767,17 @@ static bool copy_accessibility_json_text(
 
 static bool append_accessibility_json_node(
     JsonObject const& object, RinWebContentAccessibilitySnapshotV1& snapshot,
-    u64 parent_id, u64& next_id)
+    u64 parent_id)
 {
-    if (snapshot.node_count >= RIN_WEBCONTENT_ACCESSIBILITY_MAX_NODES ||
-        next_id == 0u || next_id == UINT64_MAX)
+    if (snapshot.node_count >= RIN_WEBCONTENT_ACCESSIBILITY_MAX_NODES)
         return false;
 
+    auto node_id = object.get_u64("id"sv);
+    if (!node_id.has_value() || *node_id == 0u || *node_id == UINT64_MAX ||
+        *node_id == UINT64_MAX - 1u)
+        return false;
     auto& node = snapshot.nodes[snapshot.node_count++];
-    node.id = next_id++;
+    node.id = *node_id;
     node.parent_id = parent_id;
     auto role = object.get_string("role"sv);
     node.role = role.has_value() ? accessibility_role_for(*role)
@@ -1788,7 +1796,7 @@ static bool append_accessibility_json_node(
     for (auto const& child : children->values()) {
         if (!child.is_object() ||
             !append_accessibility_json_node(child.as_object(), snapshot,
-                                            node.id, next_id))
+                                            node.id))
             return false;
     }
     return true;
@@ -1808,7 +1816,7 @@ static bool build_accessibility_snapshot(
     snapshot.window = window;
     snapshot.generation = page.state_revision == 0u ? 1u : page.state_revision;
     auto& root = snapshot.nodes[snapshot.node_count++];
-    root.id = 1u;
+    root.id = UINT64_MAX - 1u;
     root.role = RIN_WEBCONTENT_ACCESSIBILITY_ROLE_WINDOW;
     root.state = RIN_WEBCONTENT_ACCESSIBILITY_STATE_VISIBLE |
                  RIN_WEBCONTENT_ACCESSIBILITY_STATE_ENABLED;
@@ -1823,9 +1831,9 @@ static bool build_accessibility_snapshot(
     if (!title_bytes.is_empty())
         __builtin_memcpy(root.name.bytes, title_bytes.data(), title_bytes.size());
 
-    u64 next_id = 2u;
-    if (!append_accessibility_json_node(json_or_error.value(), snapshot,
-                                        root.id, next_id))
+    auto json_root = json_or_error.value();
+    if (json_root.get_u64("id"sv).has_value() &&
+        !append_accessibility_json_node(json_root, snapshot, root.id))
         return false;
     return rin_webcontent_client_accessibility_snapshot_valid(&snapshot, window);
 }
@@ -2083,6 +2091,96 @@ static int handle_get_accessibility_tree(PageSession& page, int client_fd,
         : -EIO;
 }
 
+static int handle_perform_accessibility_action(
+    PageSession& page, ReadonlyBytes payload)
+{
+    if (payload.size() != sizeof(RinWebContentAccessibilityActionV1))
+        return -EINVAL;
+
+    RinWebContentAccessibilityActionV1 request {};
+    __builtin_memcpy(&request, payload.data(), sizeof(request));
+    if (!rin_webcontent_client_accessibility_action_valid(&request))
+        return -EINVAL;
+
+    page.drain_pending_bridge_events(false);
+    RinWebContentAccessibilitySnapshotV1 snapshot {};
+    if (!build_accessibility_snapshot(page, request.window, snapshot))
+        return -EIO;
+    if (snapshot.generation != request.generation)
+        return -ESTALE;
+
+    RinWebContentAccessibilityNodeV1 const* wire_node = nullptr;
+    for (u32 index = 0u; index < snapshot.node_count; ++index) {
+        if (snapshot.nodes[index].id == request.node_id) {
+            wire_node = &snapshot.nodes[index];
+            break;
+        }
+    }
+    if (!wire_node ||
+        (wire_node->actions & request.action) != request.action)
+        return -EINVAL;
+
+    if (request.action == RIN_WEBCONTENT_ACCESSIBILITY_ACTION_SCROLL_FORWARD ||
+        request.action == RIN_WEBCONTENT_ACCESSIBILITY_ACTION_SCROLL_BACKWARD) {
+        auto delta = max(page.reported_viewport_height, 1);
+        auto target = request.action ==
+                RIN_WEBCONTENT_ACCESSIBILITY_ACTION_SCROLL_FORWARD
+            ? page.scroll_y + delta
+            : page.scroll_y - delta;
+        return page.scroll_to(page.scroll_x, target) ? 0 : -EIO;
+    }
+
+    auto* dom_node = Web::DOM::Node::from_unique_id(
+        Web::UniqueNodeID(request.node_id));
+    auto* element = dom_node ? as_if<Web::HTML::HTMLElement>(dom_node) : nullptr;
+    if (!element)
+        return -EINVAL;
+
+    if (request.action == RIN_WEBCONTENT_ACCESSIBILITY_ACTION_FOCUS) {
+        element->focus();
+    } else if (request.action ==
+               RIN_WEBCONTENT_ACCESSIBILITY_ACTION_ACTIVATE) {
+        element->click();
+    } else if (request.action ==
+               RIN_WEBCONTENT_ACCESSIBILITY_ACTION_SET_VALUE) {
+        auto value = Utf16String::from_utf8(StringView {
+            reinterpret_cast<char const*>(request.value.bytes),
+            request.value.size });
+        if (auto* input = as_if<Web::HTML::HTMLInputElement>(dom_node)) {
+            if (input->set_value(value).is_throw_completion())
+                return -EINVAL;
+        } else if (auto* textarea =
+                       as_if<Web::HTML::HTMLTextAreaElement>(dom_node)) {
+            textarea->set_value(value);
+        } else if (auto* select =
+                       as_if<Web::HTML::HTMLSelectElement>(dom_node)) {
+            if (select->set_value(value).is_throw_completion())
+                return -EINVAL;
+        } else {
+            return -EINVAL;
+        }
+    } else if (request.action ==
+               RIN_WEBCONTENT_ACCESSIBILITY_ACTION_INCREMENT ||
+               request.action ==
+                   RIN_WEBCONTENT_ACCESSIBILITY_ACTION_DECREMENT) {
+        auto* input = as_if<Web::HTML::HTMLInputElement>(dom_node);
+        if (!input)
+            return -EINVAL;
+        auto result = request.action ==
+                RIN_WEBCONTENT_ACCESSIBILITY_ACTION_INCREMENT
+            ? input->step_up()
+            : input->step_down();
+        if (result.is_throw_completion())
+            return -EINVAL;
+    } else {
+        return -EINVAL;
+    }
+
+    page.metrics_dirty = true;
+    page.mark_dirty();
+    return 0;
+}
+
 static int handle_paint(PageSession& page, int client_fd, u64 deadline_ms)
 {
     page.drain_pending_bridge_events(true);
@@ -2217,6 +2315,12 @@ static void handle_client(int client_fd)
         (void)handle_get_accessibility_tree(*page, client_fd, payload_bytes,
                                             deadline_ms);
         return;
+    case RIN_WEBCONTENT_CMD_PERFORM_ACCESSIBILITY_ACTION_V1: {
+        auto rc = handle_perform_accessibility_action(*page, payload_bytes);
+        (void)send_message(client_fd, header.command, rc, header.page_id,
+                           nullptr, 0, deadline_ms);
+        return;
+    }
     case RIN_WEBCONTENT_CMD_COMPLETE_FILE_PICKER_V1: {
         auto rc = handle_complete_file_picker(*page, payload_bytes,
                                               received_descriptor);
