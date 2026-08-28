@@ -785,6 +785,11 @@ static ErrorOr<LexicalPath> save_screenshot(Gfx::Bitmap const* bitmap)
     if (!bitmap)
         return Error::from_string_literal("Failed to take a screenshot");
 
+#if defined(AK_OS_RINOS)
+    // RinOS screenshots require a File Portal destination; never open a
+    // generic downloads path from the WebContent helper.
+    return Error::from_string_literal("Screenshot export requires a RinOS File Portal");
+#else
     auto file = AK::UnixDateTime::now().to_byte_string("screenshot-%Y-%m-%d-%H-%M-%S.png"sv);
     auto path = TRY(Application::the().path_for_downloaded_file(file));
 
@@ -794,6 +799,7 @@ static ErrorOr<LexicalPath> save_screenshot(Gfx::Bitmap const* bitmap)
     TRY(dump_file->write_until_depleted(encoded));
 
     return path;
+#endif
 }
 
 NonnullRefPtr<Core::Promise<LexicalPath>> ViewImplementation::take_screenshot(ScreenshotType type)
@@ -956,6 +962,10 @@ void ViewImplementation::initialize_context_menus()
     m_search_selected_text_action->set_visible(false);
 
     auto take_and_save_screenshot = [this](auto type) {
+#if defined(AK_OS_RINOS)
+        (void)type;
+        Application::the().display_error_dialog("Screenshot export requires a RinOS File Portal"sv);
+#else
         take_screenshot(type)
             ->when_resolved([](auto const& path) {
                 Application::the().display_download_confirmation_dialog("Screenshot"sv, path);
@@ -967,6 +977,7 @@ void ViewImplementation::initialize_context_menus()
                 auto error_message = MUST(String::formatted("{}", error));
                 Application::the().display_error_dialog(error_message);
             });
+#endif
     };
 
     m_take_visible_screenshot_action = Action::create("Take Visible Screenshot"sv, ActionID::TakeVisibleScreenshot, [take_and_save_screenshot]() {
