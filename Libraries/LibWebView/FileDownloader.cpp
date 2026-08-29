@@ -279,7 +279,7 @@ public:
                         event_reporter = m_event_reporter,
                         transfer_id = m_transfer_id,
                         url = move(url), filename = move(filename),
-                        size = receipt.written_length]() mutable {
+                        size = receipt.content_length]() mutable {
                         event_reporter->report(
                             transfer_id, FileDownloader::DownloadEvent::Completed,
                             move(url), move(filename), size);

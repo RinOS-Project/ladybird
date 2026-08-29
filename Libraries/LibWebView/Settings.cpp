@@ -37,8 +37,10 @@ static constexpr auto search_engine_url_key = "url"sv;
 static constexpr auto autocomplete_engine_key = "autocompleteEngine"sv;
 static constexpr auto autocomplete_engine_name_key = "name"sv;
 
+#if !defined(AK_OS_RINOS)
 static constexpr auto site_setting_enabled_globally_key = "enabledGlobally"sv;
 static constexpr auto site_setting_site_filters_key = "siteFilters"sv;
+#endif
 
 static constexpr auto autoplay_key = "autoplay"sv;
 

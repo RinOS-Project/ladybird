@@ -969,7 +969,7 @@ void ViewImplementation::initialize_context_menus()
     });
     m_search_selected_text_action->set_visible(false);
 
-    auto take_and_save_screenshot = [this](auto type) {
+    auto take_and_save_screenshot = [](auto type) {
 #if defined(AK_OS_RINOS)
         (void)type;
         Application::the().display_error_dialog("Screenshot export requires a RinOS File Portal"sv);
