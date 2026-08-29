@@ -455,6 +455,12 @@ ErrorOr<void> Application::launch_services()
         process_did_exit(move(process));
     };
 
+#if defined(AK_OS_RINOS)
+    // RinOS WebContent has no host-path authority. Cookies/storage are
+    // renderer-lifetime state; durable browser data belongs to Browser and is
+    // accessed through its authenticated service boundary.
+    m_browser_options.disable_sql_database = DisableSQLDatabase::Yes;
+#endif
     if (m_browser_options.disable_sql_database == DisableSQLDatabase::No) {
         // FIXME: Move this to a generic "Ladybird data directory" helper.
         auto database_path = ByteString::formatted("{}/Ladybird", Core::StandardPaths::user_data_directory());

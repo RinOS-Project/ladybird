@@ -117,6 +117,11 @@ static JsonObject serialize_bookmark_item(BookmarkItem const& item)
 
 BookmarkStore BookmarkStore::create(Badge<Application>)
 {
+#if defined(AK_OS_RINOS)
+    // Bookmarks are Browser-owned state. The renderer keeps an in-memory
+    // empty store and must not derive a host pathname from StandardPaths.
+    return BookmarkStore { ByteString {} };
+#else
     auto bookmarks_directory = ByteString::formatted("{}/Ladybird", Core::StandardPaths::config_directory());
     auto bookmarks_path = ByteString::formatted("{}/Bookmarks.json", bookmarks_directory);
 
@@ -132,6 +137,7 @@ BookmarkStore BookmarkStore::create(Badge<Application>)
         store.m_items = parse_bookmark_items(*items);
 
     return store;
+#endif
 }
 
 BookmarkStore::BookmarkStore(ByteString bookmarks_path)
@@ -241,6 +247,9 @@ Optional<Vector<BookmarkItem>&> BookmarkStore::find_containing_item_list(StringV
 
 void BookmarkStore::persist_bookmarks()
 {
+    if (m_bookmarks_path.is_empty())
+        return;
+
     JsonObject root;
     root.set(VERSION_KEY, 1);
 

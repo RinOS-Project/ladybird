@@ -52,6 +52,12 @@ static constexpr auto dns_settings_key = "dnsSettings"sv;
 
 Settings Settings::create(Badge<Application>)
 {
+#if defined(AK_OS_RINOS)
+    // RinOS WebContent is a renderer service, not the Browser data owner.
+    // Never resolve host StandardPaths here; durable browser settings are
+    // owned by the Browser process and reach WebContent through IPC.
+    return Settings { ByteString {} };
+#else
     // FIXME: Move this to a generic "Ladybird config directory" helper.
     auto settings_directory = ByteString::formatted("{}/Ladybird", Core::StandardPaths::config_directory());
     auto settings_path = ByteString::formatted("{}/Settings.json", settings_directory);
@@ -130,6 +136,7 @@ Settings Settings::create(Badge<Application>)
         settings.m_dns_settings = parse_dns_settings(*dns_settings);
 
     return settings;
+#endif
 }
 
 Settings::Settings(ByteString settings_path)
@@ -489,6 +496,9 @@ void Settings::set_dns_settings(DNSSettings const& dns_settings, bool override_b
 
 void Settings::persist_settings()
 {
+    if (m_settings_path.is_empty())
+        return;
+
     auto settings = serialize_json();
 
     if (auto result = write_json_file(m_settings_path, settings); result.is_error())
