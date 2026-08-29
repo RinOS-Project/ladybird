@@ -6,6 +6,7 @@
  */
 
 #include <AK/ByteBuffer.h>
+#include <AK/Time.h>
 #include <AK/Vector.h>
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/File.h>
@@ -218,6 +219,13 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPS
 
     if (rintls_set_trust_store(ctx, trust_store) != RINTLS_OK)
         return Error::from_string_literal("Failed to configure RinOS TLS trust store");
+
+    auto trusted_unix_time = UnixDateTime::now().seconds_since_epoch();
+    if (trusted_unix_time <= 0 ||
+        static_cast<u64>(trusted_unix_time) > 253402300799u)
+        return Error::from_string_literal("RinOS trusted time is unavailable or invalid");
+    if (rintls_set_trusted_time(ctx, static_cast<u64>(trusted_unix_time)) != RINTLS_OK)
+        return Error::from_string_literal("Failed to configure RinOS trusted time");
 
     if (rintls_set_hostname(ctx, host.characters()) != RINTLS_OK)
         return Error::from_string_literal("Failed to set TLS hostname");
