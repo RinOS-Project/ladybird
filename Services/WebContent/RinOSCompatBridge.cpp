@@ -872,6 +872,49 @@ struct PageSession {
         return true;
     }
 
+    bool complete_file_picker_multiple(
+        RinWebContentFilePickerCompleteV2 const& completion,
+        int* descriptors, size_t descriptor_count)
+    {
+        if (descriptor_count > RIN_WEBCONTENT_FILE_PICKER_MAX_SELECTIONS ||
+            file_picker_request_id == 0u ||
+            completion.request_id != file_picker_request_id ||
+            !file_picker_allow_multiple ||
+            completion.selection_count != descriptor_count ||
+            (completion.result == RIN_WEBCONTENT_FILE_PICKER_RESULT_OK &&
+             (descriptors == nullptr || descriptor_count == 0u)) ||
+            (completion.result != RIN_WEBCONTENT_FILE_PICKER_RESULT_OK &&
+             descriptor_count != 0u))
+            return false;
+        if (completion.result != RIN_WEBCONTENT_FILE_PICKER_RESULT_OK) {
+            view->file_picker_closed({});
+            file_picker_request_id = 0u;
+            file_picker_allow_multiple = false;
+            picker_for_file_request = false;
+            pending_file_request_id = -1;
+            mark_dirty();
+            return true;
+        }
+        Vector<Web::HTML::SelectedFile> files;
+        files.ensure_capacity(descriptor_count);
+        for (size_t index = 0u; index < descriptor_count; ++index) {
+            if (descriptors[index] < 0) return false;
+            auto name = ByteString { StringView {
+                completion.selections[index].display_name,
+                completion.selections[index].display_name_size } };
+            files.append(Web::HTML::SelectedFile {
+                move(name), IPC::File::adopt_fd(descriptors[index]) });
+            descriptors[index] = -1;
+        }
+        view->file_picker_closed(move(files));
+        file_picker_request_id = 0u;
+        file_picker_allow_multiple = false;
+        picker_for_file_request = false;
+        pending_file_request_id = -1;
+        mark_dirty();
+        return true;
+    }
+
     void note_download_event(u64 transfer_id,
                              WebView::FileDownloader::DownloadEvent event,
                              ByteString url, ByteString filename, u64 size)
@@ -2255,6 +2298,73 @@ static bool receive_file_picker_payload(int client_fd, void* output,
     return true;
 }
 
+static bool receive_file_picker_payload_multiple(
+    int client_fd, void* output, size_t output_size, int* descriptors,
+    size_t descriptor_capacity, size_t& descriptor_count, u64 deadline_ms)
+{
+    iovec iov {};
+    alignas(struct cmsghdr)
+        u8 control[CMSG_SPACE(sizeof(int) * RIN_WEBCONTENT_FILE_PICKER_MAX_SELECTIONS)] {};
+    msghdr message {};
+    descriptor_count = 0u;
+    for (size_t index = 0u; index < descriptor_capacity; ++index)
+        descriptors[index] = -1;
+    iov.iov_base = output;
+    iov.iov_len = output_size;
+    message.msg_iov = &iov;
+    message.msg_iovlen = 1u;
+    message.msg_control = control;
+    message.msg_controllen = sizeof(control);
+    ssize_t received = recvmsg(client_fd, &message, 0);
+    if (received < 0 || static_cast<size_t>(received) > output_size ||
+        (message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0) {
+        close_received_descriptors(message);
+        return false;
+    }
+    auto* cmsg = CMSG_FIRSTHDR(&message);
+    if (!cmsg) {
+        if (static_cast<size_t>(received) < output_size &&
+            !recv_all(client_fd, static_cast<u8*>(output) + received,
+                      output_size - static_cast<size_t>(received), deadline_ms))
+            return false;
+        return true;
+    }
+    if (cmsg->cmsg_level != SOL_SOCKET ||
+        cmsg->cmsg_type != SCM_RIGHTS ||
+        cmsg->cmsg_len < CMSG_LEN(sizeof(int)) ||
+        CMSG_NXTHDR(&message, cmsg) != nullptr) {
+        close_received_descriptors(message);
+        return false;
+    }
+    size_t bytes = cmsg->cmsg_len - CMSG_LEN(0);
+    if (bytes == 0u || bytes % sizeof(int) != 0u) {
+        close_received_descriptors(message);
+        return false;
+    }
+    descriptor_count = bytes / sizeof(int);
+    if (descriptor_count > descriptor_capacity) {
+        close_received_descriptors(message);
+        descriptor_count = 0u;
+        return false;
+    }
+    __builtin_memcpy(descriptors, CMSG_DATA(cmsg), bytes);
+    for (size_t index = 0u; index < descriptor_count; ++index)
+        if (descriptors[index] < 0) {
+            close_received_descriptors(message);
+            descriptor_count = 0u;
+            return false;
+        }
+    if (static_cast<size_t>(received) < output_size &&
+        !recv_all(client_fd, static_cast<u8*>(output) + received,
+                  output_size - static_cast<size_t>(received), deadline_ms)) {
+        for (size_t index = 0u; index < descriptor_count; ++index)
+            (void)::close(descriptors[index]);
+        descriptor_count = 0u;
+        return false;
+    }
+    return true;
+}
+
 static int handle_complete_file_picker(PageSession& page, ReadonlyBytes payload,
                                        int descriptor)
 {
@@ -2276,6 +2386,33 @@ static int handle_complete_file_picker(PageSession& page, ReadonlyBytes payload,
     if (!page.complete_file_picker(completion, descriptor)) {
         if (descriptor >= 0)
             (void)::close(descriptor);
+        return -EINVAL;
+    }
+    return 0;
+}
+
+static int handle_complete_file_picker_multiple(
+    PageSession& page, ReadonlyBytes payload, int* descriptors,
+    size_t descriptor_count)
+{
+    if (payload.size() != sizeof(RinWebContentFilePickerCompleteV2) ||
+        !rin_webcontent_client_file_picker_complete_multiple_valid(
+            reinterpret_cast<const RinWebContentFilePickerCompleteV2*>(
+                payload.data())) ||
+        descriptor_count > RIN_WEBCONTENT_FILE_PICKER_MAX_SELECTIONS ||
+        (descriptor_count == 0u &&
+         reinterpret_cast<const RinWebContentFilePickerCompleteV2*>(
+             payload.data())->result == RIN_WEBCONTENT_FILE_PICKER_RESULT_OK)) {
+        for (size_t index = 0u; index < descriptor_count; ++index)
+            if (descriptors[index] >= 0) (void)::close(descriptors[index]);
+        return -EINVAL;
+    }
+    auto const& completion = *reinterpret_cast<
+        const RinWebContentFilePickerCompleteV2*>(payload.data());
+    if (!page.complete_file_picker_multiple(completion, descriptors,
+                                            descriptor_count)) {
+        for (size_t index = 0u; index < descriptor_count; ++index)
+            if (descriptors[index] >= 0) (void)::close(descriptors[index]);
         return -EINVAL;
     }
     return 0;
@@ -2491,12 +2628,21 @@ static void handle_client(int client_fd)
 
     Vector<u8> payload;
     int received_descriptor = -1;
+    int received_descriptors[RIN_WEBCONTENT_FILE_PICKER_MAX_SELECTIONS] {};
+    size_t received_descriptor_count = 0u;
     if (header.payload_len > 0) {
         payload.resize(header.payload_len);
         if (header.command == RIN_WEBCONTENT_CMD_COMPLETE_FILE_PICKER_V1) {
             if (!receive_file_picker_payload(client_fd, payload.data(),
                                               payload.size(), received_descriptor,
                                               deadline_ms))
+                return;
+        } else if (header.command == RIN_WEBCONTENT_CMD_COMPLETE_FILE_PICKER_V2) {
+            if (!receive_file_picker_payload_multiple(
+                    client_fd, payload.data(), payload.size(),
+                    received_descriptors,
+                    RIN_WEBCONTENT_FILE_PICKER_MAX_SELECTIONS,
+                    received_descriptor_count, deadline_ms))
                 return;
         } else if (!recv_all(client_fd, payload.data(), payload.size(), deadline_ms)) {
             return;
@@ -2506,6 +2652,9 @@ static void handle_client(int client_fd)
             &header, payload.is_empty() ? nullptr : payload.data())) {
         if (received_descriptor >= 0)
             (void)::close(received_descriptor);
+        for (size_t index = 0u; index < received_descriptor_count; ++index)
+            if (received_descriptors[index] >= 0)
+                (void)::close(received_descriptors[index]);
         return;
     }
     ReadonlyBytes payload_bytes { payload.data(), payload.size() };
@@ -2593,6 +2742,13 @@ static void handle_client(int client_fd)
     case RIN_WEBCONTENT_CMD_COMPLETE_FILE_PICKER_V1: {
         auto rc = handle_complete_file_picker(*page, payload_bytes,
                                               received_descriptor);
+        (void)send_message(client_fd, header.command, rc, header.page_id,
+                           nullptr, 0, deadline_ms);
+        return;
+    }
+    case RIN_WEBCONTENT_CMD_COMPLETE_FILE_PICKER_V2: {
+        auto rc = handle_complete_file_picker_multiple(
+            *page, payload_bytes, received_descriptors, received_descriptor_count);
         (void)send_message(client_fd, header.command, rc, header.page_id,
                            nullptr, 0, deadline_ms);
         return;
