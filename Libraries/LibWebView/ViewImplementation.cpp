@@ -374,6 +374,11 @@ void ViewImplementation::get_source()
     client().async_get_source(page_id());
 }
 
+void ViewImplementation::async_handle_file_return(int error, IPC::File file, i32 request_id)
+{
+    client().async_handle_file_return(page_id(), error, move(file), request_id);
+}
+
 void ViewImplementation::inspect_dom_tree()
 {
     client().async_inspect_dom_tree(page_id());

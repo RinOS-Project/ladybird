@@ -110,6 +110,8 @@ public:
 
     void get_source();
 
+    void async_handle_file_return(int error, IPC::File file, i32 request_id);
+
     void inspect_dom_tree();
     void inspect_accessibility_tree();
     void get_hovered_node_id();

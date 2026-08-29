@@ -822,8 +822,7 @@ struct PageSession {
         picker_for_file_request = false;
         pending_file_request_id = -1;
         if (notify_webcontent && is_file_request && file_request_id >= 0)
-            view->client().async_handle_file_return(
-                page_id, EPERM, {}, file_request_id);
+            view->async_handle_file_return(EPERM, {}, file_request_id);
         else if (notify_webcontent)
             view->file_picker_closed({});
         mark_dirty();
@@ -846,9 +845,8 @@ struct PageSession {
                                                    completion.display_name_size } };
             if (is_file_request && file_request_id >= 0) {
                 (void)name;
-                view->client().async_handle_file_return(
-                    page_id, 0, IPC::File::adopt_fd(descriptor),
-                    file_request_id);
+                view->async_handle_file_return(
+                    0, IPC::File::adopt_fd(descriptor), file_request_id);
             } else {
                 Vector<Web::HTML::SelectedFile> files;
                 files.append(Web::HTML::SelectedFile {
@@ -859,8 +857,7 @@ struct PageSession {
             if (descriptor >= 0)
                 ::close(descriptor);
             if (is_file_request && file_request_id >= 0)
-                view->client().async_handle_file_return(
-                    page_id, EPERM, {}, file_request_id);
+                view->async_handle_file_return(EPERM, {}, file_request_id);
             else
                 view->file_picker_closed({});
         }
@@ -2539,14 +2536,14 @@ static int handle_perform_accessibility_action(
             reinterpret_cast<char const*>(request.value.bytes),
             request.value.size });
         if (auto* input = as_if<Web::HTML::HTMLInputElement>(dom_node)) {
-            if (input->set_value(value).is_throw_completion())
+            if (input->set_value(value).is_exception())
                 return -EINVAL;
         } else if (auto* textarea =
                        as_if<Web::HTML::HTMLTextAreaElement>(dom_node)) {
             textarea->set_value(value);
         } else if (auto* select =
                        as_if<Web::HTML::HTMLSelectElement>(dom_node)) {
-            if (select->set_value(value).is_throw_completion())
+            if (select->set_value(value).is_exception())
                 return -EINVAL;
         } else {
             return -EINVAL;
@@ -2562,7 +2559,7 @@ static int handle_perform_accessibility_action(
                 RIN_WEBCONTENT_ACCESSIBILITY_ACTION_INCREMENT
             ? input->step_up()
             : input->step_down();
-        if (result.is_throw_completion())
+        if (result.is_exception())
             return -EINVAL;
     } else {
         return -EINVAL;
