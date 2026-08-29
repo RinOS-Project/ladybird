@@ -629,6 +629,14 @@ struct PageSession {
             start_download(url, move(suggested_filename));
         };
 
+        /* Worker/file:// resource requests use the same authenticated Open
+         * picker as an HTML file input. The requested pathname is deliberately
+         * ignored; only the opaque request id is retained until Browser sends
+         * back a File Portal descriptor. */
+        view->on_request_file = [this](ByteString const&, i32 request_id) {
+            request_file(request_id);
+        };
+
         view->on_file_picker_request_bridge =
             [this](Web::HTML::FileFilter const&, Web::HTML::AllowMultipleFiles allow_multiple) {
                 request_file_picker(allow_multiple);
@@ -793,13 +801,30 @@ struct PageSession {
         mark_dirty();
     }
 
+    void request_file(i32 request_id)
+    {
+        if (request_id < 0 || file_picker_request_id != 0u ||
+            pending_file_request_id >= 0)
+            return;
+        pending_file_request_id = request_id;
+        picker_for_file_request = true;
+        request_file_picker(Web::HTML::AllowMultipleFiles::No);
+    }
+
     void clear_file_picker_request(bool notify_webcontent)
     {
         if (file_picker_request_id == 0u)
             return;
+        const bool is_file_request = picker_for_file_request;
+        const i32 file_request_id = pending_file_request_id;
         file_picker_request_id = 0u;
         file_picker_allow_multiple = false;
-        if (notify_webcontent)
+        picker_for_file_request = false;
+        pending_file_request_id = -1;
+        if (notify_webcontent && is_file_request && file_request_id >= 0)
+            view->client().async_handle_file_return(
+                page_id, EPERM, {}, file_request_id);
+        else if (notify_webcontent)
             view->file_picker_closed({});
         mark_dirty();
     }
@@ -814,20 +839,35 @@ struct PageSession {
             file_picker_allow_multiple)
             return false;
 
+        const bool is_file_request = picker_for_file_request;
+        const i32 file_request_id = pending_file_request_id;
         if (completion.result == RIN_WEBCONTENT_FILE_PICKER_RESULT_OK) {
             auto name = ByteString { StringView { completion.display_name,
                                                    completion.display_name_size } };
-            Vector<Web::HTML::SelectedFile> files;
-            files.append(Web::HTML::SelectedFile {
-                move(name), IPC::File::adopt_fd(descriptor) });
-            view->file_picker_closed(move(files));
+            if (is_file_request && file_request_id >= 0) {
+                (void)name;
+                view->client().async_handle_file_return(
+                    page_id, 0, IPC::File::adopt_fd(descriptor),
+                    file_request_id);
+            } else {
+                Vector<Web::HTML::SelectedFile> files;
+                files.append(Web::HTML::SelectedFile {
+                    move(name), IPC::File::adopt_fd(descriptor) });
+                view->file_picker_closed(move(files));
+            }
         } else {
             if (descriptor >= 0)
                 ::close(descriptor);
-            view->file_picker_closed({});
+            if (is_file_request && file_request_id >= 0)
+                view->client().async_handle_file_return(
+                    page_id, EPERM, {}, file_request_id);
+            else
+                view->file_picker_closed({});
         }
         file_picker_request_id = 0u;
         file_picker_allow_multiple = false;
+        picker_for_file_request = false;
+        pending_file_request_id = -1;
         mark_dirty();
         return true;
     }
@@ -1862,6 +1902,8 @@ struct PageSession {
     u64 file_picker_request_id { 0 };
     u64 next_file_picker_request_id { 0 };
     bool file_picker_allow_multiple { false };
+    bool picker_for_file_request { false };
+    i32 pending_file_request_id { -1 };
     int scroll_x { 0 };
     int scroll_y { 0 };
     int max_scroll_x { 0 };
