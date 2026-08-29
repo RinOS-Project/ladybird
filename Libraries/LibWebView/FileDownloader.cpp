@@ -313,6 +313,12 @@ public:
         });
     }
 
+    void cancel()
+    {
+        fail(FileDownloader::DownloadFailure::Cancelled,
+             "Download cancelled"sv);
+    }
+
 private:
     WeakPtr<Requests::Request> m_request;
     NonnullRefPtr<Core::WeakEventLoopReference> m_browser_event_loop;
@@ -334,7 +340,8 @@ private:
 #if defined(AK_OS_RINOS)
 void FileDownloader::download_file(URL::URL const& url, ByteString suggested_filename,
                                     DownloadFailureCallback on_failure,
-                                    DownloadEventCallback on_event)
+                                    DownloadEventCallback on_event,
+                                    u64 requested_transfer_id)
 #else
 void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
 #endif
@@ -362,13 +369,15 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
     auto request_id = next_request_id++;
     if (request_id == 0)
         request_id = next_request_id++;
+    auto transfer_id = requested_transfer_id != 0 ? requested_transfer_id : request_id;
 
 #if defined(AK_OS_RINOS)
     auto browser_event_loop = Core::EventLoop::current_weak();
     WeakPtr<Requests::Request> request_weak = request;
     auto stream = adopt_ref(*new RinPortalStreamingTransfer(
         request_weak, move(browser_event_loop), failure_reporter,
-        event_reporter, request_id));
+        event_reporter, transfer_id));
+    m_cancel_callbacks.set(transfer_id, [stream] { stream->cancel(); });
     request->set_unbuffered_request_callbacks(
         [url, suggested_filename = move(suggested_filename), stream,
             event_reporter, request_id](NonnullRefPtr<HTTP::HeaderList> response_headers,
@@ -463,8 +472,11 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
             }
             VERIFY_NOT_REACHED();
         },
-        [this, request_id, stream](u64 total_size, Requests::RequestTimingInfo const&, Optional<Requests::NetworkError> network_error) {
-            Core::deferred_invoke([this, request_id] { m_requests.remove(request_id); });
+        [this, request_id, transfer_id, stream](u64 total_size, Requests::RequestTimingInfo const&, Optional<Requests::NetworkError> network_error) {
+            Core::deferred_invoke([this, request_id, transfer_id] {
+                m_requests.remove(request_id);
+                m_cancel_callbacks.remove(transfer_id);
+            });
             stream->response_finished(total_size, move(network_error));
         });
 #else
@@ -492,6 +504,17 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
 #endif
 
     m_requests.set(request_id, request.release_nonnull());
+}
+
+bool FileDownloader::cancel_download(u64 transfer_id)
+{
+    if (transfer_id == 0)
+        return false;
+    auto callback = m_cancel_callbacks.take(transfer_id);
+    if (!callback.has_value())
+        return false;
+    (*callback)();
+    return true;
 }
 
 }

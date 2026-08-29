@@ -56,13 +56,20 @@ public:
      * `suggested_filename` is untrusted presentation data from WebContent;
      * it is checked again by the Browser/File Manager portal contract. */
     void download_file(URL::URL const&, ByteString suggested_filename = {},
-                       DownloadFailureCallback = {}, DownloadEventCallback = {});
+                       DownloadFailureCallback = {},
+                       DownloadEventCallback = {}, u64 transfer_id = 0);
+    /* Stop a live request by its opaque transfer identity. The transfer
+     * object owns the portal abort and emits a single Cancelled event. */
+    bool cancel_download(u64 transfer_id);
 #else
     void download_file(URL::URL const&, LexicalPath);
 #endif
 
 private:
     HashMap<u64, NonnullRefPtr<Requests::Request>> m_requests;
+#if defined(AK_OS_RINOS)
+    HashMap<u64, Function<void()>> m_cancel_callbacks;
+#endif
 };
 
 }

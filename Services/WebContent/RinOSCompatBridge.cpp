@@ -625,24 +625,8 @@ struct PageSession {
             mark_dirty();
         };
 
-        view->on_request_download = [page_id = page_id](URL::URL const& url, ByteString suggested_filename) {
-            // The BridgeApplication is the browser-process side of the
-            // isolated WebContent pair. FileDownloader owns authenticated
-            // request transport and then asks File Manager for a write-only
-            // destination; the renderer supplied neither file access nor a
-            // handle it can retain.
-            WebView::Application::the().file_downloader().download_file(
-                url, move(suggested_filename), [page_id](u64 transfer_id,
-                    WebView::FileDownloader::DownloadFailure failure) {
-                    if (auto* page = find_page(page_id))
-                        page->note_download_failure(transfer_id, failure);
-                }, [page_id](u64 transfer_id, WebView::FileDownloader::DownloadEvent event,
-                             ByteString event_url, ByteString filename,
-                             u64 size) {
-                    if (auto* page = find_page(page_id))
-                        page->note_download_event(transfer_id, event,
-                                                  move(event_url), move(filename), size);
-                });
+        view->on_request_download = [this](URL::URL const& url, ByteString suggested_filename) {
+            start_download(url, move(suggested_filename));
         };
 
         view->on_file_picker_request_bridge =
@@ -771,6 +755,28 @@ struct PageSession {
         ++state_revision;
     }
 
+    void start_download(URL::URL const& url, ByteString suggested_filename,
+                        u64 transfer_id = 0u)
+    {
+        // The BridgeApplication is the browser-process side of the isolated
+        // WebContent pair. FileDownloader owns authenticated request
+        // transport and the File Manager destination; the renderer supplied
+        // neither file access nor a handle it can retain.
+        auto page_id_value = page_id;
+        WebView::Application::the().file_downloader().download_file(
+            url, move(suggested_filename), [page_id_value](u64 id,
+                WebView::FileDownloader::DownloadFailure failure) {
+                if (auto* page = find_page(page_id_value))
+                    page->note_download_failure(id, failure);
+            }, [page_id_value](u64 id, WebView::FileDownloader::DownloadEvent event,
+                               ByteString event_url, ByteString filename,
+                               u64 size) {
+                if (auto* page = find_page(page_id_value))
+                    page->note_download_event(id, event, move(event_url),
+                                              move(filename), size);
+            }, transfer_id);
+    }
+
     void request_file_picker(Web::HTML::AllowMultipleFiles allow_multiple)
     {
         /* HTMLInputElement must not have more than one outstanding chooser.
@@ -867,6 +873,12 @@ struct PageSession {
                     break;
                 }
             }
+            for (size_t index = 0u; index < retryable_downloads.size(); ++index) {
+                if (retryable_downloads[index].transfer_id == transfer_id) {
+                    retryable_downloads.remove(index);
+                    break;
+                }
+            }
         }
         download_events.append(move(record));
         mark_dirty();
@@ -936,10 +948,60 @@ struct PageSession {
             failed.timestamp_ms = download_status_timestamp_ms;
             failed.size_bytes = 0u;
             failed.failure_status = status;
+            for (size_t index = 0u; index < retryable_downloads.size(); ++index) {
+                if (retryable_downloads[index].transfer_id == transfer_id) {
+                    retryable_downloads.remove(index);
+                    break;
+                }
+            }
+            if (retryable_downloads.size() >= 16u)
+                retryable_downloads.remove(0u);
+            retryable_downloads.append(failed);
             if (download_events.size() < 16u)
                 download_events.append(move(failed));
         }
         mark_dirty();
+    }
+
+    bool cancel_download(u64 transfer_id)
+    {
+        if (transfer_id == 0u)
+            return false;
+        return WebView::Application::the().file_downloader().cancel_download(
+            transfer_id);
+    }
+
+    bool retry_download(u64 transfer_id)
+    {
+        if (transfer_id == 0u)
+            return false;
+        size_t found = retryable_downloads.size();
+        for (size_t index = 0u; index < retryable_downloads.size(); ++index) {
+            if (retryable_downloads[index].transfer_id == transfer_id) {
+                found = index;
+                break;
+            }
+        }
+        if (found == retryable_downloads.size())
+            return false;
+
+        auto record = retryable_downloads[found];
+        retryable_downloads.remove(found);
+        auto parsed_url = URL::Parser::basic_parse(record.url);
+        if (!parsed_url.has_value() || record.filename.is_empty())
+            return false;
+        /* An unconsumed failure event must not be replayed ahead of the new
+         * STARTED event. The transfer identity is stable, so the Browser can
+         * keep the same row while the underlying request is fresh. */
+        for (size_t index = 0u; index < download_events.size();) {
+            if (download_events[index].transfer_id == transfer_id)
+                download_events.remove(index);
+            else
+                ++index;
+        }
+        start_download(parsed_url.value(), move(record.filename), transfer_id);
+        mark_dirty();
+        return true;
     }
 
     void fill_download_event(u32 after_revision,
@@ -1795,6 +1857,7 @@ struct PageSession {
     u64 download_status_timestamp_ms { 0 };
     Vector<DownloadEventRecord> download_events;
     Vector<DownloadEventRecord> active_downloads;
+    Vector<DownloadEventRecord> retryable_downloads;
     u32 next_download_event_revision { 1 };
     u64 file_picker_request_id { 0 };
     u64 next_file_picker_request_id { 0 };
@@ -2204,6 +2267,20 @@ static int handle_get_download_event(PageSession& page, int client_fd,
         ? 1 : -EIO;
 }
 
+static int handle_download_control(PageSession& page, ReadonlyBytes payload,
+                                    bool retry)
+{
+    if (payload.size() != sizeof(RinWebContentDownloadControlV1))
+        return -EINVAL;
+    RinWebContentDownloadControlV1 request {};
+    __builtin_memcpy(&request, payload.data(), sizeof(request));
+    if (!rin_webcontent_client_download_control_valid(&request))
+        return -EINVAL;
+    bool accepted = retry ? page.retry_download(request.transfer_id)
+                          : page.cancel_download(request.transfer_id);
+    return accepted ? 0 : -ENOENT;
+}
+
 static int handle_get_accessibility_tree(PageSession& page, int client_fd,
                                           ReadonlyBytes payload,
                                           u64 deadline_ms)
@@ -2450,6 +2527,16 @@ static void handle_client(int client_fd)
     case RIN_WEBCONTENT_CMD_GET_DOWNLOAD_EVENT_V1:
         (void)handle_get_download_event(*page, client_fd, payload_bytes,
                                         deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_CANCEL_DOWNLOAD_V1:
+        (void)send_message(client_fd, header.command,
+                           handle_download_control(*page, payload_bytes, false),
+                           header.page_id, nullptr, 0, deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_RETRY_DOWNLOAD_V1:
+        (void)send_message(client_fd, header.command,
+                           handle_download_control(*page, payload_bytes, true),
+                           header.page_id, nullptr, 0, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_GET_ACCESSIBILITY_TREE_V1:
         (void)handle_get_accessibility_tree(*page, client_fd, payload_bytes,
