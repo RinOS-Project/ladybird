@@ -731,9 +731,17 @@ void Request::handle_fetch_state()
             return;
     }
 
-    ByteBuffer body_copy;
-    if (!m_request_body.is_empty())
-        body_copy = MUST(ByteBuffer::copy(m_request_body));
+    RinHTTPFetch::RequestBodySource body_source;
+    body_source.expected_length = m_request_body.size();
+    body_source.read = [body = m_request_body.bytes(), offset = size_t { 0 }](
+                            u8* buffer, size_t capacity) mutable -> ErrorOr<size_t> {
+        if (!buffer || capacity == 0u || offset >= body.size())
+            return size_t { 0 };
+        auto count = min(capacity, body.size() - offset);
+        __builtin_memcpy(buffer, body.data() + offset, count);
+        offset += count;
+        return count;
+    };
 
     // Build revalidation headers into request_headers if needed
     auto headers_for_fetch = HTTP::HeaderList::create(m_request_headers->headers());
@@ -748,7 +756,9 @@ void Request::handle_fetch_state()
     }
 
     VERIFY(m_dns_result);
-    auto fetch_or_error = RinHTTPFetch::create(m_url, m_method, *headers_for_fetch, body_copy, m_dns_result, s_connect_timeout_seconds);
+    auto fetch_or_error = RinHTTPFetch::create(
+        m_url, m_method, *headers_for_fetch, move(body_source), m_dns_result,
+        s_connect_timeout_seconds);
     if (fetch_or_error.is_error()) {
         dbgln("Request::handle_fetch_state: Failed to create RinHTTPFetch: {}", fetch_or_error.error());
         m_network_error = Requests::NetworkError::UnableToConnect;

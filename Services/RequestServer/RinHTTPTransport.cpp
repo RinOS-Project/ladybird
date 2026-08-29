@@ -148,7 +148,37 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     RefPtr<DNS::LookupResult const> dns_result,
     long connect_timeout_seconds)
 {
+    RequestBodySource source;
+    source.expected_length = request_body.size();
+    source.read = [request_body, offset = size_t { 0 }](u8* buffer,
+                                                         size_t capacity) mutable
+        -> ErrorOr<size_t> {
+        if (!buffer || capacity == 0 || offset >= request_body.size())
+            return size_t { 0 };
+        auto count = min(capacity, request_body.size() - offset);
+        __builtin_memcpy(buffer, request_body.data() + offset, count);
+        offset += count;
+        return count;
+    };
+    return create(url, method, request_headers, move(source), dns_result,
+                  connect_timeout_seconds);
+}
+
+ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
+    URL::URL const& url,
+    ByteString const& method,
+    HTTP::HeaderList const& request_headers,
+    RequestBodySource request_body,
+    RefPtr<DNS::LookupResult const> dns_result,
+    long connect_timeout_seconds)
+{
     auto fetch = adopt_own(*new RinHTTPFetch());
+
+    if (request_body.expected_length > 128u * 1024u * 1024u ||
+        (request_body.expected_length != 0u && !request_body.read))
+        return Error::from_string_literal("Request body exceeds RinOS limit");
+    fetch->m_request_body_length = request_body.expected_length;
+    fetch->m_request_body_read = move(request_body.read);
 
     if (!dns_result || dns_result->is_empty() || !dns_result->has_cached_addresses())
         return Error::from_string_literal("No DNS result for HTTP fetch");
@@ -195,7 +225,7 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
 
     // Send request
     fetch->m_request_start_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
-    TRY(fetch->send_request(url, method, request_headers, request_body));
+    TRY(fetch->send_request(url, method, request_headers));
 
     // 接続確立タイマー: 相手のデータが届くまでを監視。最初の read で停止する。
     if (connect_timeout_seconds > 0) {
@@ -223,7 +253,7 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     return fetch;
 }
 
-ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers, ReadonlyBytes request_body)
+ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers)
 {
     StringBuilder builder;
 
@@ -252,8 +282,8 @@ ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url, ByteString const& 
     if (!request_headers.contains("Accept-Encoding"sv))
         builder.append("Accept-Encoding: identity\r\n"sv);
 
-    if (!request_body.is_empty())
-        builder.appendff("Content-Length: {}\r\n", request_body.size());
+    if (m_request_body_length != 0u)
+        builder.appendff("Content-Length: {}\r\n", m_request_body_length);
 
     builder.append("\r\n"sv);
 
@@ -263,10 +293,30 @@ ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url, ByteString const& 
         return result.release_error();
     }
 
-    if (!request_body.is_empty()) {
-        if (auto result = m_socket->write_until_depleted(request_body); result.is_error()) {
-            dbgln("[RinHTTP] request body write failed: {}", result.error());
-            return result.release_error();
+    if (m_request_body_length != 0u) {
+        constexpr size_t body_chunk_bytes = 64u * 1024u;
+        u8 body_chunk[body_chunk_bytes];
+        size_t body_written = 0u;
+        while (body_written < m_request_body_length) {
+            auto remaining = m_request_body_length - body_written;
+            auto requested = static_cast<size_t>(min(
+                remaining, static_cast<u64>(body_chunk_bytes)));
+            auto read_result = m_request_body_read(body_chunk, requested);
+            if (read_result.is_error()) {
+                dbgln("[RinHTTP] request body source failed: {}", read_result.error());
+                return read_result.release_error();
+            }
+            auto count = read_result.value();
+            if (count == 0u || count > requested) {
+                dbgln("[RinHTTP] request body source returned invalid count {}", count);
+                return Error::from_string_literal("Request body source was incomplete");
+            }
+            if (auto result = m_socket->write_until_depleted(
+                    ReadonlyBytes { body_chunk, count }); result.is_error()) {
+                dbgln("[RinHTTP] request body write failed: {}", result.error());
+                return result.release_error();
+            }
+            body_written += count;
         }
     }
     return {};

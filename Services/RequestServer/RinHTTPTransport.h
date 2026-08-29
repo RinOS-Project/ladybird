@@ -76,11 +76,30 @@ public:
 
     void* callback_user_data { nullptr };
 
+    /* A bounded request-body producer. The producer is called with a
+     * caller-owned scratch buffer and must return no more than the requested
+     * bytes. RequestServer can use the same source contract for in-memory
+     * bodies and future File Portal-backed uploads without a pathname or a
+     * second unbounded body copy. */
+    using RequestBodyReadFunction = Function<ErrorOr<size_t>(u8*, size_t)>;
+    struct RequestBodySource {
+        RequestBodyReadFunction read;
+        u64 expected_length { 0 };
+    };
+
     static ErrorOr<NonnullOwnPtr<RinHTTPFetch>> create(
         URL::URL const& url,
         ByteString const& method,
         HTTP::HeaderList const& request_headers,
         ReadonlyBytes request_body,
+        RefPtr<DNS::LookupResult const> dns_result,
+        long connect_timeout_seconds);
+
+    static ErrorOr<NonnullOwnPtr<RinHTTPFetch>> create(
+        URL::URL const& url,
+        ByteString const& method,
+        HTTP::HeaderList const& request_headers,
+        RequestBodySource request_body,
         RefPtr<DNS::LookupResult const> dns_result,
         long connect_timeout_seconds);
 
@@ -94,7 +113,7 @@ public:
 private:
     RinHTTPFetch();
 
-    ErrorOr<void> send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers, ReadonlyBytes request_body);
+    ErrorOr<void> send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers);
     void on_socket_ready_to_read();
     void process_line_buffered(ReadonlyBytes data);
     void process_body_data(ReadonlyBytes data);
@@ -143,6 +162,8 @@ private:
     ByteString m_pool_key;                // \u30d7\u30fc\u30eb\u30ad\u30fc (\u7a7a\u306a\u3089\u5bfe\u8c61\u5916)
     bool m_reused_from_pool { false };    // \u30d7\u30fc\u30eb\u304b\u3089\u8d77\u3053\u3057\u305f socket \u304b
     bool m_response_connection_close { false }; // \u30b5\u30fc\u30d0\u304c Connection: close \u3092\u8fd4\u3057\u305f\u304b
+    RequestBodyReadFunction m_request_body_read;
+    u64 m_request_body_length { 0 };
 };
 
 }
