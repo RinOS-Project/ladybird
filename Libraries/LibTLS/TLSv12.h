@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/ByteBuffer.h>
 #include <LibCore/Socket.h>
 #include <LibCrypto/Certificate/Certificate.h>
 #ifdef AK_OS_RINOS
@@ -21,6 +22,14 @@ namespace TLS {
 
 struct Options {
     Optional<ByteString> root_certificates_path;
+#ifdef AK_OS_RINOS
+    /* Wire-format TLS certificate_list (3-byte total length followed by DER
+     * entries) and a capability callback for CertificateVerify.  The private
+     * key is never copied into LibTLS or rintls. */
+    Optional<ByteBuffer> client_certificate_list;
+    rintls_client_certificate_sign_func client_certificate_sign { nullptr };
+    void* client_certificate_sign_opaque { nullptr };
+#endif
 };
 
 class TLSv12 final : public Core::Socket {

@@ -227,6 +227,17 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPS
     if (rintls_set_trusted_time(ctx, static_cast<u64>(trusted_unix_time)) != RINTLS_OK)
         return Error::from_string_literal("Failed to configure RinOS trusted time");
 
+    if (options.client_certificate_list.has_value()) {
+        if (!options.client_certificate_sign)
+            return Error::from_string_literal("RinOS client certificate signer is not configured");
+        auto const& certificate_list = *options.client_certificate_list;
+        if (rintls_set_client_certificate(
+                ctx, certificate_list.data(), certificate_list.size(),
+                options.client_certificate_sign,
+                options.client_certificate_sign_opaque) != RINTLS_OK)
+            return Error::from_string_literal("Invalid RinOS client certificate list");
+    }
+
     if (rintls_set_hostname(ctx, host.characters()) != RINTLS_OK)
         return Error::from_string_literal("Failed to set TLS hostname");
 
