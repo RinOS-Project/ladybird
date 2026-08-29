@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Function.h>
 #include <AK/HashMap.h>
 #include <LibHTTP/Cache/CacheMode.h>
 #include <LibHTTP/Cookie/IncludeCredentials.h>
@@ -33,7 +34,10 @@ public:
     explicit RequestClient(NonnullOwnPtr<IPC::Transport>);
     virtual ~RequestClient() override;
 
+    using RequestBodySource = Function<ErrorOr<size_t>(u8*, size_t)>;
+
     RefPtr<Request> start_request(ByteString const& method, URL::URL const&, Optional<HTTP::HeaderList const&> request_headers = {}, ReadonlyBytes request_body = {}, HTTP::CacheMode = HTTP::CacheMode::Default, HTTP::Cookie::IncludeCredentials = HTTP::Cookie::IncludeCredentials::Yes, Core::ProxyData const& = {});
+    RefPtr<Request> start_streaming_request(ByteString const& method, URL::URL const&, Optional<HTTP::HeaderList const&> request_headers, u64 request_body_length, RequestBodySource, HTTP::CacheMode = HTTP::CacheMode::Default, HTTP::Cookie::IncludeCredentials = HTTP::Cookie::IncludeCredentials::Yes, Core::ProxyData const& = {});
     bool stop_request(Badge<Request>, Request&);
     void ensure_connection(URL::URL const&, RequestServer::CacheLevel);
 
@@ -50,6 +54,7 @@ private:
     virtual void die() override;
 
     virtual void request_started(u64 request_id, IPC::File) override;
+    virtual Messages::RequestClient::RequestBodyChunkResponse request_body_chunk(u64 request_id, u32 maximum_bytes) override;
     virtual void request_finished(u64 request_id, u64, RequestTimingInfo, Optional<NetworkError>) override;
     virtual void headers_became_available(u64 request_id, Vector<HTTP::Header>, Optional<u32>, Optional<String>) override;
 
@@ -69,6 +74,15 @@ private:
 
     HashMap<u64, RefPtr<Request>> m_requests;
     u64 m_next_request_id { 0 };
+
+    struct StreamingRequestBody {
+        RequestBodySource source;
+        u64 expected_length { 0 };
+        u64 delivered { 0 };
+        bool eof { false };
+        bool failed { false };
+    };
+    HashMap<u64, StreamingRequestBody> m_streaming_request_bodies;
 
     HashMap<u64, NonnullRefPtr<WebSocket>> m_websockets;
     u64 m_next_websocket_id { 0 };

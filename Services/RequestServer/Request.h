@@ -49,6 +49,23 @@ public:
         ByteString alt_svc_cache_path,
         Core::ProxyData proxy_data);
 
+#if defined(AK_OS_RINOS)
+    static NonnullOwnPtr<Request> fetch_streaming(
+        u64 request_id,
+        Optional<HTTP::DiskCache&> disk_cache,
+        HTTP::CacheMode cache_mode,
+        ConnectionFromClient& client,
+        void* curl_multi,
+        Resolver& resolver,
+        URL::URL url,
+        ByteString method,
+        NonnullRefPtr<HTTP::HeaderList> request_headers,
+        RinHTTPFetch::RequestBodySource request_body,
+        HTTP::Cookie::IncludeCredentials include_credentials,
+        ByteString alt_svc_cache_path,
+        Core::ProxyData proxy_data);
+#endif
+
     static NonnullOwnPtr<Request> connect(
         u64 request_id,
         ConnectionFromClient& client,
@@ -202,6 +219,7 @@ private:
 #if defined(AK_OS_RINOS)
     OwnPtr<RinHTTPFetch> m_rin_fetch;
     Optional<int> m_rin_result_code;
+    Optional<RinHTTPFetch::RequestBodySource> m_request_body_source;
 #else
     void* m_curl_easy_handle { nullptr };
     Vector<curl_slist*> m_curl_string_lists;

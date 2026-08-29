@@ -476,7 +476,32 @@ RefPtr<Requests::Request> ResourceLoader::start_network_request(LoadRequest cons
         return nullptr;
     }
 
-    auto protocol_request = m_request_client->start_request(request.method(), request.url().value(), request.headers(), request.body(), request.cache_mode(), request.include_credentials(), proxy);
+    RefPtr<Requests::Request> protocol_request;
+#if defined(AK_OS_RINOS)
+    if (!request.body().is_empty()) {
+        auto body_copy = ByteBuffer::copy(request.body());
+        if (body_copy.is_error()) {
+            log_failure(request, "Failed to retain bounded request body"sv);
+            return nullptr;
+        }
+        protocol_request = m_request_client->start_streaming_request(
+            request.method(), request.url().value(), request.headers(),
+            body_copy.value().size(),
+            [body = body_copy.release_value(), offset = size_t { 0 }](u8* buffer, size_t capacity) mutable -> ErrorOr<size_t> {
+                if (!buffer || capacity == 0u || offset >= body.size())
+                    return size_t { 0 };
+                auto count = min(capacity, body.size() - offset);
+                __builtin_memcpy(buffer, body.data() + offset, count);
+                offset += count;
+                return count;
+            },
+            request.cache_mode(), request.include_credentials(), proxy);
+    } else {
+        protocol_request = m_request_client->start_request(request.method(), request.url().value(), request.headers(), request.body(), request.cache_mode(), request.include_credentials(), proxy);
+    }
+#else
+    protocol_request = m_request_client->start_request(request.method(), request.url().value(), request.headers(), request.body(), request.cache_mode(), request.include_credentials(), proxy);
+#endif
     if (!protocol_request) {
         log_failure(request, "Failed to initiate load"sv);
         return nullptr;

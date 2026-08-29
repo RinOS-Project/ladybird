@@ -32,6 +32,7 @@ void RequestClient::die()
         promise->reject(Error::from_string_literal("RequestServer process died"));
 
     m_requests.clear();
+    m_streaming_request_bodies.clear();
     m_pending_cache_size_estimations.clear();
 }
 
@@ -41,6 +42,23 @@ RefPtr<Request> RequestClient::start_request(ByteString const& method, URL::URL 
     auto headers = request_headers.map([](auto const& headers) { return headers.headers().span(); }).value_or({});
 
     IPCProxy::async_start_request(request_id, method, url, headers, request_body, cache_mode, include_credentials, proxy_data);
+    auto request = Request::create_from_id({}, *this, request_id);
+    m_requests.set(request_id, request);
+    return request;
+}
+
+RefPtr<Request> RequestClient::start_streaming_request(ByteString const& method, URL::URL const& url, Optional<HTTP::HeaderList const&> request_headers, u64 request_body_length, RequestBodySource source, HTTP::CacheMode cache_mode, HTTP::Cookie::IncludeCredentials include_credentials, Core::ProxyData const& proxy_data)
+{
+    static constexpr u64 max_request_body_bytes = 128u * 1024u * 1024u;
+    if (request_body_length > max_request_body_bytes ||
+        (request_body_length != 0u && !source))
+        return nullptr;
+
+    auto request_id = m_next_request_id++;
+    auto headers = request_headers.map([](auto const& headers) { return headers.headers().span(); }).value_or({});
+    m_streaming_request_bodies.set(request_id, StreamingRequestBody { move(source), request_body_length });
+    IPCProxy::async_start_streaming_request(request_id, method, url, headers, request_body_length, cache_mode, include_credentials, proxy_data);
+
     auto request = Request::create_from_id({}, *this, request_id);
     m_requests.set(request_id, request);
     return request;
@@ -96,12 +114,53 @@ void RequestClient::request_started(u64 request_id, IPC::File response_file)
     request.value()->set_request_fd({}, response_fd);
 }
 
+Messages::RequestClient::RequestBodyChunkResponse RequestClient::request_body_chunk(u64 request_id, u32 maximum_bytes)
+{
+    static constexpr u32 max_request_body_chunk_bytes = 64u * 1024u;
+    auto body = m_streaming_request_bodies.get(request_id);
+    if (!body.has_value() || maximum_bytes == 0u || maximum_bytes > max_request_body_chunk_bytes)
+        return { ByteBuffer {}, false };
+
+    auto& state = body.value();
+    if (state.failed)
+        return { ByteBuffer {}, false };
+    if (state.eof)
+        return { ByteBuffer {}, state.delivered == state.expected_length };
+
+    u8 buffer[max_request_body_chunk_bytes];
+    auto result = state.source(buffer, maximum_bytes);
+    if (result.is_error()) {
+        state.failed = true;
+        dbgln("RequestClient: streaming request-body source failed: {}", result.error());
+        return { ByteBuffer {}, false };
+    }
+
+    auto count = result.value();
+    if (count > maximum_bytes || count > state.expected_length - min(state.delivered, state.expected_length)) {
+        state.failed = true;
+        return { ByteBuffer {}, false };
+    }
+    if (count == 0u) {
+        state.eof = true;
+        return { ByteBuffer {}, state.delivered == state.expected_length };
+    }
+
+    state.delivered += count;
+    auto data = ByteBuffer::copy({ buffer, count });
+    if (data.is_error()) {
+        state.failed = true;
+        return { ByteBuffer {}, false };
+    }
+    return { data.release_value(), false };
+}
+
 void RequestClient::request_finished(u64 request_id, u64 total_size, RequestTimingInfo timing_info, Optional<NetworkError> network_error)
 {
     if (RefPtr<Request> request = m_requests.get(request_id).value_or(nullptr)) {
         request->did_finish({}, total_size, timing_info, network_error);
         m_requests.remove(request_id);
     }
+    m_streaming_request_bodies.remove(request_id);
 }
 
 void RequestClient::headers_became_available(u64 request_id, Vector<HTTP::Header> response_headers, Optional<u32> status_code, Optional<String> reason_phrase)

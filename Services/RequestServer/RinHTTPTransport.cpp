@@ -293,7 +293,7 @@ ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url, ByteString const& 
         return result.release_error();
     }
 
-    if (m_request_body_length != 0u) {
+    if (m_request_body_read) {
         constexpr size_t body_chunk_bytes = 64u * 1024u;
         u8 body_chunk[body_chunk_bytes];
         size_t body_written = 0u;
@@ -317,6 +317,20 @@ ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url, ByteString const& 
                 return result.release_error();
             }
             body_written += count;
+        }
+
+        // A declared Content-Length is not enough on its own: the producer
+        // must also prove that the source reached EOF at exactly that
+        // boundary. This catches a portal object that grew after its initial
+        // size check instead of silently truncating the upload.
+        auto eof_probe = m_request_body_read(body_chunk, 1u);
+        if (eof_probe.is_error()) {
+            dbgln("[RinHTTP] request body EOF probe failed: {}", eof_probe.error());
+            return eof_probe.release_error();
+        }
+        if (eof_probe.value() != 0u) {
+            dbgln("[RinHTTP] request body source has bytes beyond Content-Length");
+            return Error::from_string_literal("Request body source has trailing bytes");
         }
     }
     return {};

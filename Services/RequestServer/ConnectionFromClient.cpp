@@ -221,6 +221,49 @@ void ConnectionFromClient::start_request(u64 request_id, ByteString method, URL:
     m_active_requests.set(request_id, move(request));
 }
 
+void ConnectionFromClient::start_streaming_request(u64 request_id, ByteString method, URL::URL url, Vector<HTTP::Header> request_headers, u64 request_body_length, HTTP::CacheMode cache_mode, HTTP::Cookie::IncludeCredentials include_credentials, Core::ProxyData proxy_data)
+{
+    dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: start_streaming_request({}, {}, {} bytes)", request_id, url, request_body_length);
+
+#if defined(AK_OS_RINOS)
+    static constexpr u64 max_request_body_bytes = 128u * 1024u * 1024u;
+    static constexpr size_t max_request_body_chunk_bytes = 64u * 1024u;
+    if (request_body_length > max_request_body_bytes) {
+        dbgln("RequestServer: rejecting oversized streaming request body");
+        return;
+    }
+
+    RinHTTPFetch::RequestBodySource body_source;
+    body_source.expected_length = request_body_length;
+    body_source.read = [this, request_id](u8* buffer, size_t capacity) -> ErrorOr<size_t> {
+        if (!buffer || capacity == 0u || capacity > max_request_body_chunk_bytes)
+            return Error::from_string_literal("Invalid streaming request-body read");
+
+        auto response = send_sync<Messages::RequestClient::RequestBodyChunk>(request_id, static_cast<u32>(capacity));
+        auto data = response->take_data();
+        if (data.size() > capacity || (response->eof() && !data.is_empty()))
+            return Error::from_string_literal("Invalid streaming request-body response");
+        if (data.is_empty())
+            return size_t { 0 };
+
+        __builtin_memcpy(buffer, data.data(), data.size());
+        return data.size();
+    };
+
+    auto request = Request::fetch_streaming(request_id, m_disk_cache, cache_mode, *this, nullptr, m_resolver, move(url), move(method), HTTP::HeaderList::create(move(request_headers)), move(body_source), include_credentials, m_alt_svc_cache_path, proxy_data);
+    m_active_requests.set(request_id, move(request));
+#else
+    (void)request_id;
+    (void)method;
+    (void)url;
+    (void)request_headers;
+    (void)request_body_length;
+    (void)cache_mode;
+    (void)include_credentials;
+    (void)proxy_data;
+#endif
+}
+
 void ConnectionFromClient::start_revalidation_request(Badge<Request>, ByteString method, URL::URL url, NonnullRefPtr<HTTP::HeaderList> request_headers, ByteBuffer request_body, HTTP::Cookie::IncludeCredentials include_credentials, Core::ProxyData proxy_data)
 {
     auto request_id = m_next_revalidation_request_id++;

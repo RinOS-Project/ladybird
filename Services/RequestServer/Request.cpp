@@ -144,6 +144,30 @@ NonnullOwnPtr<Request> Request::fetch(
     return request;
 }
 
+#if defined(AK_OS_RINOS)
+NonnullOwnPtr<Request> Request::fetch_streaming(
+    u64 request_id,
+    Optional<HTTP::DiskCache&> disk_cache,
+    HTTP::CacheMode cache_mode,
+    ConnectionFromClient& client,
+    void* curl_multi,
+    Resolver& resolver,
+    URL::URL url,
+    ByteString method,
+    NonnullRefPtr<HTTP::HeaderList> request_headers,
+    RinHTTPFetch::RequestBodySource request_body,
+    HTTP::Cookie::IncludeCredentials include_credentials,
+    ByteString alt_svc_cache_path,
+    Core::ProxyData proxy_data)
+{
+    auto request = adopt_own(*new Request { request_id, Type::Fetch, disk_cache, cache_mode, client, curl_multi, resolver, move(url), move(method), move(request_headers), {}, include_credentials, move(alt_svc_cache_path), proxy_data });
+    request->m_request_body_source = move(request_body);
+    request->process();
+
+    return request;
+}
+#endif
+
 NonnullOwnPtr<Request> Request::connect(
     u64 request_id,
     ConnectionFromClient& client,
@@ -732,16 +756,20 @@ void Request::handle_fetch_state()
     }
 
     RinHTTPFetch::RequestBodySource body_source;
-    body_source.expected_length = m_request_body.size();
-    body_source.read = [body = m_request_body.bytes(), offset = size_t { 0 }](
-                            u8* buffer, size_t capacity) mutable -> ErrorOr<size_t> {
-        if (!buffer || capacity == 0u || offset >= body.size())
-            return size_t { 0 };
-        auto count = min(capacity, body.size() - offset);
-        __builtin_memcpy(buffer, body.data() + offset, count);
-        offset += count;
-        return count;
-    };
+    if (m_request_body_source.has_value()) {
+        body_source = m_request_body_source.release_value();
+    } else {
+        body_source.expected_length = m_request_body.size();
+        body_source.read = [body = m_request_body.bytes(), offset = size_t { 0 }](
+                                u8* buffer, size_t capacity) mutable -> ErrorOr<size_t> {
+            if (!buffer || capacity == 0u || offset >= body.size())
+                return size_t { 0 };
+            auto count = min(capacity, body.size() - offset);
+            __builtin_memcpy(buffer, body.data() + offset, count);
+            offset += count;
+            return count;
+        };
+    }
 
     // Build revalidation headers into request_headers if needed
     auto headers_for_fetch = HTTP::HeaderList::create(m_request_headers->headers());
