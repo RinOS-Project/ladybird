@@ -458,9 +458,12 @@ ErrorOr<void> Application::launch_services()
 #if defined(AK_OS_RINOS)
     // RinOS WebContent has no host-path authority. Cookies/storage are
     // renderer-lifetime state; durable browser data belongs to Browser and is
-    // accessed through its authenticated service boundary.
+    // accessed through its authenticated service boundary. Keep the SQL path
+    // out of the RinOS compile surface as well as the runtime branch.
     m_browser_options.disable_sql_database = DisableSQLDatabase::Yes;
-#endif
+    m_cookie_jar = CookieJar::create();
+    m_storage_jar = StorageJar::create();
+#else
     if (m_browser_options.disable_sql_database == DisableSQLDatabase::No) {
         // FIXME: Move this to a generic "Ladybird data directory" helper.
         auto database_path = ByteString::formatted("{}/Ladybird", Core::StandardPaths::user_data_directory());
@@ -472,6 +475,7 @@ ErrorOr<void> Application::launch_services()
         m_cookie_jar = CookieJar::create();
         m_storage_jar = StorageJar::create();
     }
+#endif
 
     // No need to monitor the system time zone if the TZ environment variable is set, as it overrides system preferences.
     if (!Core::Environment::has("TZ"sv)) {
