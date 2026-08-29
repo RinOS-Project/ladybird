@@ -336,10 +336,13 @@ Messages::RequestServer::StopRequestResponse ConnectionFromClient::stop_request(
 
 Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certificate(u64 request_id, ByteString certificate, ByteString key)
 {
-    (void)request_id;
+    /* RinHTTPFetch/rinTLS currently implement server certificate
+     * authentication only. Do not claim success for a client-certificate
+     * challenge; callers must surface the authentication failure. */
+    dbgln("SetCertificate: client certificates are unsupported (request {})", request_id);
     (void)certificate;
     (void)key;
-    TODO();
+    return false;
 }
 
 void ConnectionFromClient::ensure_connection(u64 request_id, URL::URL url, ::RequestServer::CacheLevel cache_level)
@@ -442,15 +445,16 @@ void ConnectionFromClient::websocket_close(u64 websocket_id, u16 code, ByteStrin
         connection->close(code, reason);
 }
 
-Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::websocket_set_certificate(u64 websocket_id, ByteString, ByteString)
+Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::websocket_set_certificate(u64 websocket_id, ByteString certificate, ByteString key)
 {
-    auto success = false;
-    if (auto* connection = m_websockets.get(websocket_id).value_or({}); connection) {
-        // NO OP here
-        // connection->set_certificate(certificate, key);
-        success = true;
-    }
-    return success;
+    /* WebSocket::ConnectionInfo has no RinTLS client-certificate hook yet.
+     * Returning true here used to turn an unhandled challenge into a false
+     * success. Keep the connection fail-closed until the transport grows a
+     * bounded, authenticated client-key API. */
+    dbgln("WebSocketSetCertificate: client certificates are unsupported (websocket {})", websocket_id);
+    (void)certificate;
+    (void)key;
+    return false;
 }
 
 }
