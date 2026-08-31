@@ -143,7 +143,9 @@ void Request::did_request_certificates(Badge<RequestClient>)
 {
     if (on_certificate_requested) {
         auto result = on_certificate_requested();
-        if (!m_client->set_certificate({}, *this, result.certificate, result.key)) {
+        if (!m_client->set_certificate({}, *this, result.connection_generation,
+                                       move(result.certificate_list),
+                                       move(result.signer_capability))) {
             dbgln("Request: set_certificate failed");
         }
     }

@@ -77,11 +77,16 @@ void RequestClient::ensure_connection(URL::URL const& url, RequestServer::CacheL
     async_ensure_connection(request_id, url, cache_level);
 }
 
-bool RequestClient::set_certificate(Badge<Request>, Request& request, ByteString certificate, ByteString key)
+bool RequestClient::set_certificate(Badge<Request>, Request& request,
+                                    u64 connection_generation,
+                                    ByteBuffer certificate_list,
+                                    ByteBuffer signer_capability)
 {
     if (!m_requests.contains(request.id()))
         return false;
-    return IPCProxy::set_certificate(request.id(), move(certificate), move(key));
+    return IPCProxy::set_certificate(request.id(), connection_generation,
+                                     move(certificate_list),
+                                     move(signer_capability));
 }
 
 NonnullRefPtr<Core::Promise<CacheSizes>> RequestClient::estimate_cache_size_accessed_since(UnixDateTime since)

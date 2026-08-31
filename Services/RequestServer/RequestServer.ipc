@@ -25,7 +25,9 @@ endpoint RequestServer
     start_request(u64 request_id, ByteString method, URL::URL url, Vector<HTTP::Header> request_headers, ByteBuffer request_body, HTTP::CacheMode cache_mode, HTTP::Cookie::IncludeCredentials include_credentials, Core::ProxyData proxy_data) =|
     start_streaming_request(u64 request_id, ByteString method, URL::URL url, Vector<HTTP::Header> request_headers, u64 request_body_length, HTTP::CacheMode cache_mode, HTTP::Cookie::IncludeCredentials include_credentials, Core::ProxyData proxy_data) =|
     stop_request(u64 request_id) => (bool success)
-    set_certificate(u64 request_id, ByteString certificate, ByteString key) => (bool success)
+    // Client authentication carries only a TLS wire certificate_list and an
+    // opaque signer capability. Private key material must never cross IPC.
+    set_certificate(u64 request_id, u64 connection_generation, ByteBuffer certificate_list, ByteBuffer signer_capability) => (bool success)
 
     ensure_connection(u64 request_id, URL::URL url, ::RequestServer::CacheLevel cache_level) =|
 
@@ -38,6 +40,6 @@ endpoint RequestServer
     websocket_connect(u64 websocket_id, URL::URL url, ByteString origin, Vector<ByteString> protocols, Vector<ByteString> extensions, Vector<HTTP::Header> additional_request_headers) =|
     websocket_send(u64 websocket_id, bool is_text, ByteBuffer data) =|
     websocket_close(u64 websocket_id, u16 code, ByteString reason) =|
-    websocket_set_certificate(u64 request_id, ByteString certificate, ByteString key) => (bool success)
+    websocket_set_certificate(u64 request_id, u64 connection_generation, ByteBuffer certificate_list, ByteBuffer signer_capability) => (bool success)
 
 }

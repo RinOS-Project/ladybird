@@ -55,7 +55,9 @@ private:
     virtual void start_request(u64 request_id, ByteString, URL::URL, Vector<HTTP::Header>, ByteBuffer, HTTP::CacheMode, HTTP::Cookie::IncludeCredentials, Core::ProxyData) override;
     virtual void start_streaming_request(u64 request_id, ByteString, URL::URL, Vector<HTTP::Header>, u64 request_body_length, HTTP::CacheMode, HTTP::Cookie::IncludeCredentials, Core::ProxyData) override;
     virtual Messages::RequestServer::StopRequestResponse stop_request(u64 request_id) override;
-    virtual Messages::RequestServer::SetCertificateResponse set_certificate(u64 request_id, ByteString, ByteString) override;
+    virtual Messages::RequestServer::SetCertificateResponse set_certificate(
+        u64 request_id, u64 connection_generation, ByteBuffer certificate_list,
+        ByteBuffer signer_capability) override;
     virtual void ensure_connection(u64 request_id, URL::URL url, ::RequestServer::CacheLevel cache_level) override;
 
     virtual void retrieved_http_cookie(int client_id, u64 request_id, String cookie) override;
@@ -66,7 +68,9 @@ private:
     virtual void websocket_connect(u64 websocket_id, URL::URL, ByteString, Vector<ByteString>, Vector<ByteString>, Vector<HTTP::Header>) override;
     virtual void websocket_send(u64 websocket_id, bool, ByteBuffer) override;
     virtual void websocket_close(u64 websocket_id, u16, ByteString) override;
-    virtual Messages::RequestServer::WebsocketSetCertificateResponse websocket_set_certificate(u64, ByteString, ByteString) override;
+    virtual Messages::RequestServer::WebsocketSetCertificateResponse websocket_set_certificate(
+        u64 websocket_id, u64 connection_generation, ByteBuffer certificate_list,
+        ByteBuffer signer_capability) override;
 
 #if !defined(AK_OS_RINOS)
     static int on_socket_callback(void*, int sockfd, int what, void* user_data, void*);

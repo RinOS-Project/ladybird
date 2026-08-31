@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/ByteBuffer.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
 #include <LibHTTP/Cache/CacheMode.h>
@@ -41,7 +42,9 @@ public:
     bool stop_request(Badge<Request>, Request&);
     void ensure_connection(URL::URL const&, RequestServer::CacheLevel);
 
-    bool set_certificate(Badge<Request>, Request&, ByteString, ByteString);
+    bool set_certificate(Badge<Request>, Request&, u64 connection_generation,
+                         ByteBuffer certificate_list,
+                         ByteBuffer signer_capability);
 
     RefPtr<WebSocket> websocket_connect(URL::URL const&, ByteString const& origin, Vector<ByteString> const& protocols, Vector<ByteString> const& extensions, HTTP::HeaderList const& request_headers);
 

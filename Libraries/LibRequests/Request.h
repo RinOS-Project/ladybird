@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Badge.h>
+#include <AK/ByteBuffer.h>
 #include <AK/ByteString.h>
 #include <AK/Function.h>
 #include <AK/MemoryStream.h>
@@ -46,9 +47,13 @@ private:
 class Request : public RefCounted<Request>
     , public Weakable<Request> {
 public:
-    struct CertificateAndKey {
-        ByteString certificate;
-        ByteString key;
+    struct CertificateAndSignerCapability {
+        /* The certificate_list is public TLS wire data. The signer capability
+         * is opaque and is consumed by the authenticated key owner; no
+         * private key bytes are represented in this API. */
+        ByteBuffer certificate_list;
+        ByteBuffer signer_capability;
+        u64 connection_generation { 0 };
     };
 
     static NonnullRefPtr<Request> create_from_id(Badge<RequestClient>, RequestClient& client, u64 request_id)
@@ -81,7 +86,7 @@ public:
     bool pause_receiving();
     bool resume_receiving();
 
-    Function<CertificateAndKey()> on_certificate_requested;
+    Function<CertificateAndSignerCapability()> on_certificate_requested;
 
     void did_finish(Badge<RequestClient>, u64 total_size, RequestTimingInfo const& timing_info, Optional<NetworkError> const& network_error);
     void did_receive_headers(Badge<RequestClient>, NonnullRefPtr<HTTP::HeaderList> response_headers, Optional<u32> response_code, Optional<String> const& reason_phrase);

@@ -26,6 +26,9 @@
 #include <RequestServer/ConnectionFromClient.h>
 #include <RequestServer/Request.h>
 #include <RequestServer/Resolver.h>
+#if defined(AK_OS_RINOS)
+#    include <requestserver_tls_client_certificate_policy.h>
+#endif
 
 namespace RequestServer {
 
@@ -377,14 +380,27 @@ Messages::RequestServer::StopRequestResponse ConnectionFromClient::stop_request(
     return true;
 }
 
-Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certificate(u64 request_id, ByteString certificate, ByteString key)
+Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certificate(
+    u64 request_id, u64 connection_generation, ByteBuffer certificate_list,
+    ByteBuffer signer_capability)
 {
-    /* RinHTTPFetch/rinTLS currently implement server certificate
-     * authentication only. Do not claim success for a client-certificate
-     * challenge; callers must surface the authentication failure. */
-    dbgln("SetCertificate: client certificates are unsupported (request {})", request_id);
-    (void)certificate;
-    (void)key;
+    /* Validate the authenticated, generation-bound envelope even while the
+     * RinTLS signer transport is unavailable. Never accept a private key or
+     * turn an unbound challenge into a false success. */
+#if defined(AK_OS_RINOS)
+    if (!rin_requestserver_tls_client_certificate_ipc_valid(
+            request_id, connection_generation, certificate_list.data(),
+            certificate_list.size(), signer_capability.data(),
+            signer_capability.size())) {
+        dbgln("SetCertificate: invalid client-certificate capability (request {})", request_id);
+        return false;
+    }
+#else
+    (void)connection_generation;
+    (void)certificate_list;
+    (void)signer_capability;
+#endif
+    dbgln("SetCertificate: authenticated signer transport is unavailable (request {})", request_id);
     return false;
 }
 
@@ -488,15 +504,27 @@ void ConnectionFromClient::websocket_close(u64 websocket_id, u16 code, ByteStrin
         connection->close(code, reason);
 }
 
-Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::websocket_set_certificate(u64 websocket_id, ByteString certificate, ByteString key)
+Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::websocket_set_certificate(
+    u64 websocket_id, u64 connection_generation, ByteBuffer certificate_list,
+    ByteBuffer signer_capability)
 {
-    /* WebSocket::ConnectionInfo has no RinTLS client-certificate hook yet.
-     * Returning true here used to turn an unhandled challenge into a false
-     * success. Keep the connection fail-closed until the transport grows a
-     * bounded, authenticated client-key API. */
-    dbgln("WebSocketSetCertificate: client certificates are unsupported (websocket {})", websocket_id);
-    (void)certificate;
-    (void)key;
+    /* WebSocket has the same authenticated envelope as HTTP. The transport
+     * still has no signer hook, so a validated request is rejected rather
+     * than acknowledged. */
+#if defined(AK_OS_RINOS)
+    if (!rin_requestserver_tls_client_certificate_ipc_valid(
+            websocket_id, connection_generation, certificate_list.data(),
+            certificate_list.size(), signer_capability.data(),
+            signer_capability.size())) {
+        dbgln("WebSocketSetCertificate: invalid client-certificate capability (websocket {})", websocket_id);
+        return false;
+    }
+#else
+    (void)connection_generation;
+    (void)certificate_list;
+    (void)signer_capability;
+#endif
+    dbgln("WebSocketSetCertificate: authenticated signer transport is unavailable (websocket {})", websocket_id);
     return false;
 }
 
