@@ -83,6 +83,95 @@ static Optional<TextPathPosition> first_contour_position_and_tangent(Vector<Path
     return {};
 }
 
+static float cross_product(FloatPoint const& a, FloatPoint const& b, FloatPoint const& c)
+{
+    return (b.x() - a.x()) * (c.y() - a.y()) - (b.y() - a.y()) * (c.x() - a.x());
+}
+
+static Optional<float> convex_orientation(PathImplAquamarine::Contour const& contour)
+{
+    if (!contour.closed || contour.points.size() < 3)
+        return {};
+
+    float orientation = 0.0f;
+    for (size_t index = 0; index < contour.points.size(); ++index) {
+        auto const& a = contour.points[index];
+        auto const& b = contour.points[(index + 1) % contour.points.size()];
+        auto const& c = contour.points[(index + 2) % contour.points.size()];
+        auto cross = cross_product(a, b, c);
+        if (!isfinite(cross))
+            return {};
+        if (fabsf(cross) <= 0.0001f)
+            continue;
+        if (orientation == 0.0f)
+            orientation = cross;
+        else if (orientation * cross < 0.0f)
+            return {};
+    }
+    if (orientation == 0.0f)
+        return {};
+    return orientation > 0.0f ? 1.0f : -1.0f;
+}
+
+static bool inside_clip_edge(FloatPoint const& point, FloatPoint const& edge_start, FloatPoint const& edge_end, float orientation)
+{
+    return orientation * cross_product(edge_start, edge_end, point) >= -0.0001f;
+}
+
+static Optional<FloatPoint> edge_intersection(FloatPoint const& start, FloatPoint const& end, FloatPoint const& edge_start, FloatPoint const& edge_end)
+{
+    auto dx = end.x() - start.x();
+    auto dy = end.y() - start.y();
+    auto ex = edge_end.x() - edge_start.x();
+    auto ey = edge_end.y() - edge_start.y();
+    auto denominator = dx * ey - dy * ex;
+    if (!isfinite(denominator) || fabsf(denominator) <= 0.000001f)
+        return {};
+    auto qx = edge_start.x() - start.x();
+    auto qy = edge_start.y() - start.y();
+    auto t = (qx * ey - qy * ex) / denominator;
+    if (!isfinite(t))
+        return {};
+    FloatPoint point { start.x() + t * dx, start.y() + t * dy };
+    if (!valid_path_point(point))
+        return {};
+    return point;
+}
+
+static Optional<Vector<FloatPoint>> intersect_convex_contours(PathImplAquamarine::Contour const& subject, PathImplAquamarine::Contour const& clip, float clip_orientation)
+{
+    Vector<FloatPoint> polygon;
+    for (auto const& point : subject.points)
+        polygon.append(point);
+
+    for (size_t edge_index = 0; edge_index < clip.points.size(); ++edge_index) {
+        if (polygon.is_empty())
+            break;
+        auto const& edge_start = clip.points[edge_index];
+        auto const& edge_end = clip.points[(edge_index + 1) % clip.points.size()];
+        Vector<FloatPoint> next;
+        auto previous = polygon.last();
+        bool previous_inside = inside_clip_edge(previous, edge_start, edge_end, clip_orientation);
+        for (auto const& current : polygon) {
+            bool current_inside = inside_clip_edge(current, edge_start, edge_end, clip_orientation);
+            if (current_inside != previous_inside) {
+                auto intersection = edge_intersection(previous, current, edge_start, edge_end);
+                if (!intersection.has_value())
+                    return {};
+                next.append(intersection.value());
+            }
+            if (current_inside)
+                next.append(current);
+            previous = current;
+            previous_inside = current_inside;
+        }
+        polygon = move(next);
+    }
+    if (polygon.size() < 3)
+        polygon.clear();
+    return polygon;
+}
+
 NonnullOwnPtr<PathImplAquamarine> PathImplAquamarine::create()
 {
     return adopt_own(*new PathImplAquamarine());
@@ -397,10 +486,53 @@ void PathImplAquamarine::append_path(Gfx::Path const& other)
 
 void PathImplAquamarine::intersect(Gfx::Path const& other)
 {
-    auto intersection = bounding_box().intersected(other.bounding_box());
+    auto const& other_impl = static_cast<PathImplAquamarine const&>(other.impl());
+    Vector<Vector<FloatPoint>> intersections;
+    bool unsupported = !m_valid || !other_impl.m_valid;
+    for (auto const& subject : m_contours) {
+        auto subject_orientation = convex_orientation(subject);
+        if (!subject_orientation.has_value()) {
+            if (!subject.points.is_empty())
+                unsupported = true;
+            continue;
+        }
+        for (auto const& clip : other_impl.m_contours) {
+            auto clip_orientation = convex_orientation(clip);
+            if (!clip_orientation.has_value()) {
+                if (!clip.points.is_empty())
+                    unsupported = true;
+                continue;
+            }
+            auto clipped = intersect_convex_contours(subject, clip, clip_orientation.value());
+            if (!clipped.has_value()) {
+                unsupported = true;
+                continue;
+            }
+            if (!clipped->is_empty())
+                intersections.append(move(clipped.value()));
+        }
+    }
+
+    if (unsupported || intersections.size() > s_max_contours) {
+        reject_path();
+        return;
+    }
+    size_t point_count = 0;
+    for (auto const& polygon : intersections) {
+        if (polygon.size() > s_max_points - min(point_count, s_max_points)) {
+            reject_path();
+            return;
+        }
+        point_count += polygon.size();
+    }
+
     clear();
-    if (!intersection.is_empty())
-        append_rectangle(intersection);
+    for (auto const& polygon : intersections) {
+        move_to(polygon[0]);
+        for (size_t index = 1; index < polygon.size(); ++index)
+            line_to(polygon[index]);
+        close();
+    }
 }
 
 bool PathImplAquamarine::is_empty() const

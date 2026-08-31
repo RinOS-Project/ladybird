@@ -258,3 +258,49 @@ TEST_CASE(truetype_point_matching_composite_rejects_an_out_of_range_anchor)
         return;
     EXPECT(!typeface_or_error.release_value()->glyph_outline(2).has_value());
 }
+
+TEST_CASE(convex_path_intersection_preserves_the_polygon_shape)
+{
+    Gfx::Path subject;
+    subject.move_to({ 0, 0 });
+    subject.line_to({ 8, 0 });
+    subject.line_to({ 8, 8 });
+    subject.line_to({ 0, 8 });
+    subject.close();
+
+    Gfx::Path clip;
+    clip.move_to({ 2, 2 });
+    clip.line_to({ 6, 2 });
+    clip.line_to({ 6, 6 });
+    clip.line_to({ 2, 6 });
+    clip.close();
+
+    subject.intersect(clip);
+
+    EXPECT(!subject.is_empty());
+    EXPECT_EQ(subject.bounding_box(), Gfx::FloatRect(2, 2, 4, 4));
+    EXPECT(subject.contains({ 3, 3 }, Gfx::WindingRule::Nonzero));
+    EXPECT(!subject.contains({ 1, 1 }, Gfx::WindingRule::Nonzero));
+}
+
+TEST_CASE(unsupported_nonconvex_path_intersection_fails_closed)
+{
+    Gfx::Path subject;
+    subject.move_to({ 0, 0 });
+    subject.line_to({ 8, 0 });
+    subject.line_to({ 4, 2 });
+    subject.line_to({ 8, 8 });
+    subject.line_to({ 0, 8 });
+    subject.close();
+
+    Gfx::Path clip;
+    clip.move_to({ 1, 1 });
+    clip.line_to({ 7, 1 });
+    clip.line_to({ 7, 7 });
+    clip.line_to({ 1, 7 });
+    clip.close();
+
+    subject.intersect(clip);
+
+    EXPECT(subject.is_empty());
+}

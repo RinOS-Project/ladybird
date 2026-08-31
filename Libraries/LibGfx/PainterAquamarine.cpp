@@ -13,6 +13,7 @@
 #include <LibGfx/PaintStyle.h>
 #include <LibGfx/PaintingSurface.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 extern "C" {
@@ -39,6 +40,31 @@ static bool supports_source_over(CompositingAndBlendingOperator compositing_and_
 {
     return compositing_and_blending_operator == CompositingAndBlendingOperator::Normal
         || compositing_and_blending_operator == CompositingAndBlendingOperator::SourceOver;
+}
+
+static Optional<AqRect> to_aq_rect(FloatRect const& rect)
+{
+    float values[] = { rect.x(), rect.y(), rect.width(), rect.height() };
+    for (auto value : values) {
+        if (!isfinite(value) || static_cast<double>(value) < static_cast<double>(INT32_MIN) || static_cast<double>(value) > static_cast<double>(INT32_MAX))
+            return {};
+    }
+    if (rect.width() <= 0 || rect.height() <= 0)
+        return {};
+    return AQ_RECT(
+        static_cast<int32_t>(rect.x()),
+        static_cast<int32_t>(rect.y()),
+        static_cast<int32_t>(rect.width()),
+        static_cast<int32_t>(rect.height()));
+}
+
+static Optional<uint8_t> to_aq_alpha(float global_alpha)
+{
+    if (!isfinite(global_alpha) || global_alpha < 0)
+        return {};
+    if (global_alpha >= 1.0f)
+        return 255;
+    return static_cast<uint8_t>(roundf(global_alpha * 255.0f));
 }
 
 static Optional<Color> solid_color_for_paint_style(PaintStyle const& paint_style, float global_alpha)
@@ -294,9 +320,22 @@ void PainterAquamarine::fill_rect(FloatRect const& rect, Color color)
         to_aq_color(color));
 }
 
-void PainterAquamarine::draw_bitmap(FloatRect const& dst_rect, ImmutableBitmap const& src_bitmap, IntRect const& src_rect, ScalingMode, Optional<Filter>, float, CompositingAndBlendingOperator)
+void PainterAquamarine::draw_bitmap(FloatRect const& dst_rect, ImmutableBitmap const& src_bitmap, IntRect const& src_rect, ScalingMode scaling_mode, Optional<Filter> filter, float global_alpha, CompositingAndBlendingOperator compositing_and_blending_operator)
 {
     if (!m_impl->aq_surf)
+        return;
+    // Aquamarine currently has no image-filter pipeline. Refuse filtered
+    // content instead of silently rendering a different image.
+    if (filter.has_value())
+        return;
+    bool copy = compositing_and_blending_operator == CompositingAndBlendingOperator::Copy;
+    if (!copy && !supports_source_over(compositing_and_blending_operator))
+        return;
+    auto alpha = to_aq_alpha(global_alpha);
+    if (!alpha.has_value())
+        return;
+    auto aq_dst = to_aq_rect(dst_rect);
+    if (!aq_dst.has_value())
         return;
     auto bmp = src_bitmap.bitmap();
     if (!bmp)
@@ -306,13 +345,8 @@ void PainterAquamarine::draw_bitmap(FloatRect const& dst_rect, ImmutableBitmap c
         return;
 
     AqRect aq_src = AQ_RECT(src_rect.x(), src_rect.y(), src_rect.width(), src_rect.height());
-    AqRect aq_dst = AQ_RECT(
-        static_cast<int32_t>(dst_rect.x()),
-        static_cast<int32_t>(dst_rect.y()),
-        static_cast<int32_t>(dst_rect.width()),
-        static_cast<int32_t>(dst_rect.height()));
-
-    aq_blit_scaled(m_impl->aq_surf, aq_dst, src_surf, aq_src);
+    bool bilinear = scaling_mode == ScalingMode::Bilinear || scaling_mode == ScalingMode::BilinearMipmap;
+    aq_blit_scaled_alpha(m_impl->aq_surf, aq_dst.value(), src_surf, aq_src, alpha.value(), bilinear, copy);
     aq_surface_destroy(src_surf);
 }
 
