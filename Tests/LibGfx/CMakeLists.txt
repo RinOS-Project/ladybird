@@ -14,6 +14,7 @@ if (AK_OS_RINOS)
     list(APPEND TEST_SOURCES
         TestPainterAquamarine.cpp
         TestPathAquamarine.cpp
+        TestVectorGraphicAquamarine.cpp
     )
 endif()
 

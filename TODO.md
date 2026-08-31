@@ -52,7 +52,7 @@
 - Painter.cpp: PainterAquamarineスタブ（TODO: 完全実装）
 - Path.cpp: PathImplAquamarineスタブ（TODO: 完全実装）
 - TextLayout.cpp: SkTextBlobなしのグリフバウンド計算
-- VectorGraphic.cpp: ブランクビットマップ返却（TODO: PainterAquamarine統合）
+- VectorGraphic.cpp: `Painter::create()` 経由で PainterAquamarine を使い、変形後の intrinsic bounds を destination へ fit/center して描画
 - YUVData.cpp: Skia YUV型を除外、コアバッファのみ保持
 - CMakeLists.txt: aquamarineリンク追加、AK_OS_RINOS定義追加
 

@@ -7,16 +7,43 @@
 #include <LibGfx/Bitmap.h>
 #ifndef AK_OS_RINOS
 #    include <LibGfx/PainterSkia.h>
+#else
+#    include <LibGfx/Painter.h>
 #endif
 #include <LibGfx/VectorGraphic.h>
+#include <math.h>
 
 namespace Gfx {
 
 #ifdef AK_OS_RINOS
-ErrorOr<NonnullRefPtr<Gfx::Bitmap>> VectorGraphic::bitmap(IntSize size, AffineTransform) const
+ErrorOr<NonnullRefPtr<Gfx::Bitmap>> VectorGraphic::bitmap(IntSize size, AffineTransform transform) const
 {
-    // TODO: Implement with PainterAquamarine
-    return TRY(Bitmap::create(Gfx::BitmapFormat::BGRA8888, size));
+    auto bitmap = TRY(Bitmap::create(Gfx::BitmapFormat::BGRA8888, size));
+    auto painter = Painter::create(bitmap);
+
+    // Match the Skia path: apply the requested transform, scale the transformed
+    // intrinsic bounds to fit, then center the result in the destination. The
+    // painter factory selects PainterAquamarine on RinOS, so vector images use
+    // the same bounded path rasterizer as ordinary display-list painting.
+    auto transformed_rect = transform.map(FloatRect { {}, this->size() });
+    if (transformed_rect.is_empty() || transformed_rect.width() <= 0.0f ||
+        transformed_rect.height() <= 0.0f)
+        return bitmap;
+    auto scale = min(float(size.width()) / transformed_rect.width(),
+        float(size.height()) / transformed_rect.height());
+    if (!isfinite(scale) || scale <= 0.0f)
+        return bitmap;
+    auto centered = FloatRect { {}, transformed_rect.size().scaled(scale) }
+                        .centered_within(IntRect { {}, size }.to_type<float>());
+    auto view_transform = AffineTransform {}
+                              .translate(centered.location())
+                              .multiply(AffineTransform {}.scale(scale, scale))
+                              .multiply(AffineTransform {}.translate(-transformed_rect.location()))
+                              .multiply(transform);
+
+    painter->set_transform(view_transform);
+    draw(*painter);
+    return bitmap;
 }
 #else
 ErrorOr<NonnullRefPtr<Gfx::Bitmap>> VectorGraphic::bitmap(IntSize size, AffineTransform transform) const
