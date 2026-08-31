@@ -50,6 +50,7 @@
 - ImmutableBitmap.cpp: Bitmapのみの実装（SkImage/GPU不使用）
 - PaintingSurface.cpp/.h: Bitmap直接ラップ（SkSurface不使用）
 - Painter.cpp: PainterAquamarine は矩形・パス・ビットマップ描画を Aquamarine へ接続済み。ビットマップは最近傍／線形、global alpha、SourceOver／Copy、無効な rect の拒否を実装した。Filter、その他の合成演算子、paint-style の shader、cap／join／dash／blur、非矩形 clip は未接続で、入力を成功扱いせず fail-close する。
+- PainterAquamarine の `fill_rect`／`clear_rect` は、identity では安全な整数矩形 fast path、非 identity では有限性・clip・1,048,576 pixel budget付きの変換矩形パスへ接続した。未対応の filter／合成／stroke semantics と browser/QEMU evidence は引き続き未完了である。
 - Path.cpp: PathImplAquamarine は有限点の bounded flattening、glyph outline、text-on-path と convex polygon intersection を実装した。concave／self-intersecting／boolean 多輪郭の完全演算は未実装で、bounding-box近似へ戻さず fail-close する。
 - TextLayout.cpp: SkTextBlobなしのグリフバウンド計算
 - VectorGraphic.cpp: `Painter::create()` 経由で PainterAquamarine を使い、変形後の intrinsic bounds を destination へ fit/center して描画

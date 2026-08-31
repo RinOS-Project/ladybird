@@ -167,24 +167,67 @@ static void collect_intersections(Vector<ScanlineIntersection>& intersections, P
             auto const& end = contour.points[(index + 1) % contour.points.size()];
             if ((start.y() <= scan_y && end.y() > scan_y) || (end.y() <= scan_y && start.y() > scan_y)) {
                 float x = start.x() + (scan_y - start.y()) * (end.x() - start.x()) / (end.y() - start.y());
-                intersections.append({ x, end.y() > start.y() ? 1 : -1 });
+                if (isfinite(x))
+                    intersections.append({ x, end.y() > start.y() ? 1 : -1 });
             }
         }
     }
 }
 
+struct RasterBounds {
+    int min_x { 0 };
+    int max_x { 0 };
+    int min_y { 0 };
+    int max_y { 0 };
+};
+
+static Optional<RasterBounds> raster_bounds(AqSurface* surface, Path const& path)
+{
+    if (!surface || !surface->pixels)
+        return {};
+    auto bounds = path.bounding_box();
+    if (bounds.is_empty())
+        return {};
+
+    float values[] = { bounds.x(), bounds.y(), bounds.width(), bounds.height(), bounds.right(), bounds.bottom() };
+    for (auto value : values) {
+        if (!isfinite(value))
+            return {};
+    }
+
+    auto clip = aq_surface_get_clip(surface);
+    int64_t clip_right = static_cast<int64_t>(clip.x) + clip.w;
+    int64_t clip_bottom = static_cast<int64_t>(clip.y) + clip.h;
+    int64_t min_x = max<int64_t>(clip.x, static_cast<int64_t>(floorf(bounds.x())));
+    int64_t max_x = min<int64_t>(clip_right, static_cast<int64_t>(ceilf(bounds.right())));
+    int64_t min_y = max<int64_t>(clip.y, static_cast<int64_t>(floorf(bounds.y())));
+    int64_t max_y = min<int64_t>(clip_bottom, static_cast<int64_t>(ceilf(bounds.bottom())));
+    if (min_x >= max_x || min_y >= max_y)
+        return {};
+
+    auto width = static_cast<uint64_t>(max_x - min_x);
+    auto height = static_cast<uint64_t>(max_y - min_y);
+    if (height == 0 || width > UINT64_C(1048576) / height)
+        return {};
+
+    return RasterBounds {
+        static_cast<int>(min_x),
+        static_cast<int>(max_x),
+        static_cast<int>(min_y),
+        static_cast<int>(max_y),
+    };
+}
+
 static void fill_flattened_path(AqSurface* surface, Path const& path, Color color, WindingRule winding_rule)
 {
     auto const& path_impl = aq_path(path);
-    auto bounds = path.bounding_box();
-    if (bounds.is_empty())
+    auto raster = raster_bounds(surface, path);
+    if (!raster.has_value())
         return;
 
-    int min_y = static_cast<int>(floorf(bounds.y()));
-    int max_y = static_cast<int>(ceilf(bounds.bottom()));
     auto aq_color = to_aq_color(color);
 
-    for (int y = min_y; y < max_y; ++y) {
+    for (int y = raster->min_y; y < raster->max_y; ++y) {
         Vector<ScanlineIntersection> intersections;
         collect_intersections(intersections, path_impl, static_cast<float>(y) + 0.5f);
         if (intersections.is_empty())
@@ -193,8 +236,8 @@ static void fill_flattened_path(AqSurface* surface, Path const& path, Color colo
         quick_sort(intersections, [](auto const& a, auto const& b) { return a.x < b.x; });
         if (winding_rule == WindingRule::EvenOdd) {
             for (size_t index = 0; index + 1 < intersections.size(); index += 2) {
-                int x0 = static_cast<int>(ceilf(intersections[index].x));
-                int x1 = static_cast<int>(floorf(intersections[index + 1].x));
+                int x0 = max(raster->min_x, static_cast<int>(ceilf(intersections[index].x)));
+                int x1 = min(raster->max_x - 1, static_cast<int>(floorf(intersections[index + 1].x)));
                 if (x1 >= x0)
                     aq_fill_rect(surface, x0, y, x1 - x0 + 1, 1, aq_color);
             }
@@ -209,14 +252,94 @@ static void fill_flattened_path(AqSurface* surface, Path const& path, Color colo
             if (previous_winding == 0 && winding != 0) {
                 span_start = intersection.x;
             } else if (previous_winding != 0 && winding == 0 && span_start.has_value()) {
-                int x0 = static_cast<int>(ceilf(span_start.value()));
-                int x1 = static_cast<int>(floorf(intersection.x));
+                int x0 = max(raster->min_x, static_cast<int>(ceilf(span_start.value())));
+                int x1 = min(raster->max_x - 1, static_cast<int>(floorf(intersection.x)));
                 if (x1 >= x0)
                     aq_fill_rect(surface, x0, y, x1 - x0 + 1, 1, aq_color);
                 span_start.clear();
             }
         }
     }
+}
+
+static void clear_flattened_path(AqSurface* surface, Path const& path, Color color, WindingRule winding_rule)
+{
+    auto const& path_impl = aq_path(path);
+    auto raster = raster_bounds(surface, path);
+    if (!raster.has_value())
+        return;
+
+    auto aq_color = to_aq_color(color);
+    auto clear_span = [&](int y, int left, int right) {
+        if (right < left)
+            return;
+        for (int x = left; x <= right; ++x)
+            aq_put_pixel(surface, x, y, aq_color);
+    };
+
+    for (int y = raster->min_y; y < raster->max_y; ++y) {
+        Vector<ScanlineIntersection> intersections;
+        collect_intersections(intersections, path_impl, static_cast<float>(y) + 0.5f);
+        if (intersections.is_empty())
+            continue;
+
+        quick_sort(intersections, [](auto const& a, auto const& b) { return a.x < b.x; });
+        if (winding_rule == WindingRule::EvenOdd) {
+            for (size_t index = 0; index + 1 < intersections.size(); index += 2) {
+                int x0 = max(raster->min_x, static_cast<int>(ceilf(intersections[index].x)));
+                int x1 = min(raster->max_x - 1, static_cast<int>(floorf(intersections[index + 1].x)));
+                clear_span(y, x0, x1);
+            }
+            continue;
+        }
+
+        int winding = 0;
+        Optional<float> span_start;
+        for (auto const& intersection : intersections) {
+            int previous_winding = winding;
+            winding += intersection.winding;
+            if (previous_winding == 0 && winding != 0) {
+                span_start = intersection.x;
+            } else if (previous_winding != 0 && winding == 0 && span_start.has_value()) {
+                int x0 = max(raster->min_x, static_cast<int>(ceilf(span_start.value())));
+                int x1 = min(raster->max_x - 1, static_cast<int>(floorf(intersection.x)));
+                clear_span(y, x0, x1);
+                span_start.clear();
+            }
+        }
+    }
+}
+
+static Optional<Path> transformed_rectangle_path(FloatRect const& rect, AffineTransform const& transform)
+{
+    float values[] = { rect.x(), rect.y(), rect.width(), rect.height() };
+    for (auto value : values) {
+        if (!isfinite(value))
+            return {};
+    }
+    if (rect.width() <= 0 || rect.height() <= 0)
+        return {};
+
+    auto right = rect.x() + rect.width();
+    auto bottom = rect.y() + rect.height();
+    if (!isfinite(right) || !isfinite(bottom))
+        return {};
+
+    Path path;
+    path.move_to({ rect.x(), rect.y() });
+    path.line_to({ right, rect.y() });
+    path.line_to({ right, bottom });
+    path.line_to({ rect.x(), bottom });
+    path.close();
+    if (path.is_empty())
+        return {};
+
+    if (!transform.is_identity()) {
+        path = path.copy_transformed(transform);
+        if (path.is_empty())
+            return {};
+    }
+    return path;
 }
 
 static void stroke_flattened_path(AqSurface* surface, Path const& path, Color color, float thickness)
@@ -306,47 +429,46 @@ void PainterAquamarine::clear_rect(FloatRect const& rect, Color color)
 {
     if (!m_impl->aq_surf)
         return;
-    auto c = to_aq_color(color);
-    int32_t x = static_cast<int32_t>(rect.x());
-    int32_t y = static_cast<int32_t>(rect.y());
-    int32_t w = static_cast<int32_t>(rect.width());
-    int32_t h = static_cast<int32_t>(rect.height());
+    if (m_impl->transform.is_identity()) {
+        auto aq_rect = to_aq_rect(rect);
+        if (!aq_rect.has_value())
+            return;
 
-    auto* s = m_impl->aq_surf;
-    for (int32_t row = y; row < y + h && row < s->height; ++row) {
-        if (row < 0)
-            continue;
-        uint8_t* p = aq_surface_row(s, row);
-        for (int32_t col = x; col < x + w && col < s->width; ++col) {
-            if (col < 0)
-                continue;
-            if (s->format == AQ_FORMAT_BGRA32) {
-                uint8_t* px = p + col * 4;
-                px[0] = c.b;
-                px[1] = c.g;
-                px[2] = c.r;
-                px[3] = c.a;
-            } else if (s->format == AQ_FORMAT_RGBA32) {
-                uint8_t* px = p + col * 4;
-                px[0] = c.r;
-                px[1] = c.g;
-                px[2] = c.b;
-                px[3] = c.a;
-            }
+        auto clip = aq_surface_get_clip(m_impl->aq_surf);
+        int64_t left = max<int64_t>(aq_rect->x, clip.x);
+        int64_t top = max<int64_t>(aq_rect->y, clip.y);
+        int64_t right = min<int64_t>(static_cast<int64_t>(aq_rect->x) + aq_rect->w, static_cast<int64_t>(clip.x) + clip.w);
+        int64_t bottom = min<int64_t>(static_cast<int64_t>(aq_rect->y) + aq_rect->h, static_cast<int64_t>(clip.y) + clip.h);
+        auto aq_color = to_aq_color(color);
+        for (int64_t row = top; row < bottom; ++row) {
+            for (int64_t col = left; col < right; ++col)
+                aq_put_pixel(m_impl->aq_surf, static_cast<int32_t>(col), static_cast<int32_t>(row), aq_color);
         }
+        return;
     }
+
+    auto path = transformed_rectangle_path(rect, m_impl->transform);
+    if (!path.has_value())
+        return;
+    clear_flattened_path(m_impl->aq_surf, path.value(), color, WindingRule::Nonzero);
 }
 
 void PainterAquamarine::fill_rect(FloatRect const& rect, Color color)
 {
     if (!m_impl->aq_surf)
         return;
-    aq_fill_rect(m_impl->aq_surf,
-        static_cast<int32_t>(rect.x()),
-        static_cast<int32_t>(rect.y()),
-        static_cast<int32_t>(rect.width()),
-        static_cast<int32_t>(rect.height()),
-        to_aq_color(color));
+    if (m_impl->transform.is_identity()) {
+        auto aq_rect = to_aq_rect(rect);
+        if (!aq_rect.has_value())
+            return;
+        aq_fill_rect(m_impl->aq_surf, aq_rect->x, aq_rect->y, aq_rect->w, aq_rect->h, to_aq_color(color));
+        return;
+    }
+
+    auto path = transformed_rectangle_path(rect, m_impl->transform);
+    if (!path.has_value())
+        return;
+    fill_flattened_path(m_impl->aq_surf, path.value(), color, WindingRule::Nonzero);
 }
 
 void PainterAquamarine::draw_bitmap(FloatRect const& dst_rect, ImmutableBitmap const& src_bitmap, IntRect const& src_rect, ScalingMode scaling_mode, Optional<Filter> filter, float global_alpha, CompositingAndBlendingOperator compositing_and_blending_operator)

@@ -93,6 +93,35 @@ TEST_CASE(aquamarine_clip_rejects_non_rectangular_geometry)
     EXPECT_EQ(bitmap->get_pixel(4, 3), Gfx::Color::Transparent);
 }
 
+TEST_CASE(aquamarine_fill_rect_honors_transform)
+{
+    auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, { 8, 8 }));
+    auto painter = Gfx::Painter::create(bitmap);
+    Gfx::AffineTransform transform;
+    transform.translate(3, 2);
+    painter->set_transform(transform);
+
+    painter->fill_rect({ 1, 1, 2, 2 }, Gfx::Color::Red);
+
+    EXPECT_EQ(bitmap->get_pixel(4, 3), Gfx::Color::Red);
+    EXPECT_EQ(bitmap->get_pixel(1, 1), Gfx::Color::Transparent);
+}
+
+TEST_CASE(aquamarine_clear_rect_honors_transform)
+{
+    auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, { 8, 8 }));
+    auto painter = Gfx::Painter::create(bitmap);
+    painter->fill_rect({ 0, 0, 8, 8 }, Gfx::Color::Red);
+
+    Gfx::AffineTransform transform;
+    transform.translate(3, 2);
+    painter->set_transform(transform);
+    painter->clear_rect({ 1, 1, 2, 2 }, Gfx::Color::Transparent);
+
+    EXPECT_EQ(bitmap->get_pixel(4, 3), Gfx::Color::Transparent);
+    EXPECT_EQ(bitmap->get_pixel(1, 1), Gfx::Color::Red);
+}
+
 TEST_CASE(aquamarine_stroke_rejects_unimplemented_cap_semantics)
 {
     auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, { 8, 8 }));
