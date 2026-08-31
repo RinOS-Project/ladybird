@@ -76,3 +76,34 @@ TEST_CASE(aquamarine_bitmap_copy_and_bilinear_are_explicit)
 
     EXPECT_EQ(target->get_pixel(1, 1), Gfx::Color(128, 128, 128, 255));
 }
+
+TEST_CASE(aquamarine_clip_rejects_non_rectangular_geometry)
+{
+    auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, { 8, 8 }));
+    auto painter = Gfx::Painter::create(bitmap);
+    Gfx::Path triangle;
+    triangle.move_to({ 1, 1 });
+    triangle.line_to({ 7, 1 });
+    triangle.line_to({ 4, 7 });
+    triangle.close();
+
+    painter->clip(triangle, Gfx::WindingRule::Nonzero);
+    painter->fill_rect({ 0, 0, 8, 8 }, Gfx::Color::Red);
+
+    EXPECT_EQ(bitmap->get_pixel(4, 3), Gfx::Color::Transparent);
+}
+
+TEST_CASE(aquamarine_stroke_rejects_unimplemented_cap_semantics)
+{
+    auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, { 8, 8 }));
+    auto painter = Gfx::Painter::create(bitmap);
+    Gfx::Path path;
+    path.move_to({ 1, 4 });
+    path.line_to({ 7, 4 });
+
+    painter->stroke_path(path, Gfx::Color::Red, 2.0f, 0.0f,
+        Gfx::CompositingAndBlendingOperator::SourceOver,
+        Gfx::Path::CapStyle::Butt, Gfx::Path::JoinStyle::Round, 4.0f, {}, 0.0f);
+
+    EXPECT_EQ(bitmap->get_pixel(4, 4), Gfx::Color::Transparent);
+}

@@ -67,6 +67,35 @@ static Optional<uint8_t> to_aq_alpha(float global_alpha)
     return static_cast<uint8_t>(roundf(global_alpha * 255.0f));
 }
 
+static bool is_axis_aligned_rectangle(PathImplAquamarine const& path_impl)
+{
+    if (path_impl.contours().size() != 1 || !path_impl.contours()[0].closed || path_impl.contours()[0].points.size() != 4)
+        return false;
+    auto const& points = path_impl.contours()[0].points;
+    auto bounds = path_impl.bounding_box();
+    if (bounds.is_empty() || bounds.width() <= 0 || bounds.height() <= 0)
+        return false;
+    bool saw_top = false;
+    bool saw_bottom = false;
+    bool saw_left = false;
+    bool saw_right = false;
+    for (auto const& point : points) {
+        if (!isfinite(point.x()) || !isfinite(point.y()))
+            return false;
+        bool on_left = point.x() == bounds.x();
+        bool on_right = point.x() == bounds.right();
+        bool on_top = point.y() == bounds.y();
+        bool on_bottom = point.y() == bounds.bottom();
+        if ((!on_left && !on_right) || (!on_top && !on_bottom))
+            return false;
+        saw_left |= on_left;
+        saw_right |= on_right;
+        saw_top |= on_top;
+        saw_bottom |= on_bottom;
+    }
+    return saw_left && saw_right && saw_top && saw_bottom;
+}
+
 static Optional<Color> solid_color_for_paint_style(PaintStyle const& paint_style, float global_alpha)
 {
     if (auto const* solid_color = as_if<SolidColorPaintStyle>(paint_style))
@@ -358,8 +387,14 @@ void PainterAquamarine::stroke_path(Path const& path, Color color, float thickne
     stroke_flattened_path(m_impl->aq_surf, transformed_path, color, max(thickness, 1.0f));
 }
 
-void PainterAquamarine::stroke_path(Path const& path, Color color, float thickness, float, CompositingAndBlendingOperator, Path::CapStyle, Path::JoinStyle, float, Vector<float> const&, float)
+void PainterAquamarine::stroke_path(Path const& path, Color color, float thickness, float blur_radius, CompositingAndBlendingOperator compositing_and_blending_operator, Path::CapStyle cap_style, Path::JoinStyle join_style, float miter_limit, Vector<float> const& dash_array, float dash_offset)
 {
+    // The flattened Aquamarine stroke has round caps/joins and no dash or
+    // blur pipeline. Do not silently substitute those semantics.
+    if (blur_radius != 0.0f || !isfinite(blur_radius) || !supports_source_over(compositing_and_blending_operator)
+        || cap_style != Path::CapStyle::Round || join_style != Path::JoinStyle::Round
+        || !dash_array.is_empty() || !isfinite(miter_limit) || !isfinite(dash_offset))
+        return;
     stroke_path(path, color, thickness);
 }
 
@@ -378,9 +413,14 @@ void PainterAquamarine::stroke_path(Path const& path, PaintStyle const& paint_st
     stroke_path(path, color.value(), thickness);
 }
 
-void PainterAquamarine::stroke_path(Path const& path, PaintStyle const& paint_style, Optional<Filter> filter, float thickness, float global_alpha, CompositingAndBlendingOperator compositing_and_blending_operator, Path::CapStyle const&, Path::JoinStyle const&, float, Vector<float> const&, float)
+void PainterAquamarine::stroke_path(Path const& path, PaintStyle const& paint_style, Optional<Filter> filter, float thickness, float global_alpha, CompositingAndBlendingOperator compositing_and_blending_operator, Path::CapStyle const& cap_style, Path::JoinStyle const& join_style, float miter_limit, Vector<float> const& dash_array, float dash_offset)
 {
-    stroke_path(path, paint_style, move(filter), thickness, global_alpha, compositing_and_blending_operator);
+    if (filter.has_value() || !supports_source_over(compositing_and_blending_operator))
+        return;
+    auto color = solid_color_for_paint_style(paint_style, global_alpha);
+    if (!color.has_value())
+        return;
+    stroke_path(path, color.value(), thickness, 0.0f, compositing_and_blending_operator, cap_style, join_style, miter_limit, dash_array, dash_offset);
 }
 
 void PainterAquamarine::fill_path(Path const& path, Color color, WindingRule winding_rule)
@@ -391,8 +431,10 @@ void PainterAquamarine::fill_path(Path const& path, Color color, WindingRule win
     fill_flattened_path(m_impl->aq_surf, transformed_path, color, winding_rule);
 }
 
-void PainterAquamarine::fill_path(Path const& path, Color color, WindingRule winding_rule, float, CompositingAndBlendingOperator)
+void PainterAquamarine::fill_path(Path const& path, Color color, WindingRule winding_rule, float blur_radius, CompositingAndBlendingOperator compositing_and_blending_operator)
 {
+    if (blur_radius != 0.0f || !isfinite(blur_radius) || !supports_source_over(compositing_and_blending_operator))
+        return;
     fill_path(path, color, winding_rule);
 }
 
@@ -429,11 +471,22 @@ void PainterAquamarine::restore()
     m_impl->transform = state.transform;
 }
 
-void PainterAquamarine::clip(Path const& path, WindingRule)
+void PainterAquamarine::clip(Path const& path, WindingRule winding_rule)
 {
     if (!m_impl->aq_surf)
         return;
+    if (winding_rule != WindingRule::Nonzero && winding_rule != WindingRule::EvenOdd) {
+        aq_surface_set_clip(m_impl->aq_surf, AQ_RECT(0, 0, 0, 0));
+        return;
+    }
     auto transformed_path = m_impl->transform.is_identity() ? path.clone() : path.copy_transformed(m_impl->transform);
+    auto const& impl = static_cast<PathImplAquamarine const&>(transformed_path.impl());
+    if (!is_axis_aligned_rectangle(impl)) {
+        // AqSurface exposes a rectangular clip only. A bounding-box clip for
+        // arbitrary geometry would reveal pixels outside the requested path.
+        aq_surface_set_clip(m_impl->aq_surf, AQ_RECT(0, 0, 0, 0));
+        return;
+    }
     auto bounds = transformed_path.bounding_box().to_type<int>();
     aq_surface_set_clip(m_impl->aq_surf, AQ_RECT(bounds.x(), bounds.y(), bounds.width(), bounds.height()));
 }
