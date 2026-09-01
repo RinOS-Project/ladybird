@@ -22,7 +22,6 @@ PathFontProvider::PathFontProvider() = default;
 PathFontProvider::~PathFontProvider() = default;
 
 // https://learn.microsoft.com/en-us/typography/opentype/spec/otff#ttc-header
-#if !defined(AK_OS_RINOS)
 static u32 number_of_fonts_in_ttc(ReadonlyBytes bytes)
 {
     // TTC Header:
@@ -42,14 +41,9 @@ static u32 number_of_fonts_in_ttc(ReadonlyBytes bytes)
 
     return num_fonts;
 }
-#endif
 
 void PathFontProvider::load_all_fonts_from_uri(StringView uri)
 {
-#if defined(AK_OS_RINOS)
-    (void)uri;
-    return;
-#else
     auto root_or_error = Core::Resource::load_from_uri(uri);
     if (root_or_error.is_error()) {
         if (root_or_error.error().is_errno() && root_or_error.error().code() == ENOENT) {
@@ -85,7 +79,6 @@ void PathFontProvider::load_all_fonts_from_uri(StringView uri)
         }
         return IterationDecision::Continue;
     });
-#endif
 }
 
 RefPtr<Gfx::Font> PathFontProvider::get_font(FlyString const& family, float point_size, unsigned weight, unsigned width, unsigned slope, Optional<FontVariationSettings> const& font_variation_settings, Optional<Gfx::ShapeFeatures> const& shape_features)

@@ -43,10 +43,25 @@ static void ensure_aquamarine_allocator()
     initialized = true;
 }
 
-static AqFont const* text_font()
+static AqFont const* load_bitmap_font(StringView uri, RefPtr<Core::Resource>& resource)
 {
     ensure_aquamarine_allocator();
 
+    auto resource_or_error = Core::Resource::load_from_uri(uri);
+    if (!resource_or_error.is_error()) {
+        auto loaded_resource = resource_or_error.release_value();
+        auto const data = loaded_resource->data();
+        if (auto* loaded_font = aq_font_load_psf(data.data(), data.size()); loaded_font) {
+            // aq_font_load_psf() borrows its source bytes.
+            resource = move(loaded_resource);
+            return loaded_font;
+        }
+    }
+    return nullptr;
+}
+
+static AqFont const* text_font()
+{
     static AqFont const* s_font = nullptr;
     static RefPtr<Core::Resource> s_font_resource;
     static bool attempted_load = false;
@@ -55,17 +70,26 @@ static AqFont const* text_font()
         return s_font ? s_font : aq_font_builtin_8x16();
 
     attempted_load = true;
-    auto resource_or_error = Core::Resource::load_from_uri("resource://fonts/browser-ui.psf"sv);
-    if (!resource_or_error.is_error()) {
-        auto resource = resource_or_error.release_value();
-        auto const data = resource->data();
-        if (auto* loaded_font = aq_font_load_psf(data.data(), data.size()); loaded_font) {
-            // aq_font_load_psf() borrows its source bytes.
-            s_font_resource = resource;
-            s_font = loaded_font;
-        }
-    }
+    s_font = load_bitmap_font("resource://fonts/RIN-CJK-JP.PSF"sv,
+                              s_font_resource);
+    if (!s_font)
+        s_font = load_bitmap_font("resource://fonts/browser-ui.psf"sv,
+                                  s_font_resource);
+    return s_font ? s_font : aq_font_builtin_8x16();
+}
 
+static AqFont const* text_fallback_font()
+{
+    static AqFont const* s_font = nullptr;
+    static RefPtr<Core::Resource> s_font_resource;
+    static bool attempted_load = false;
+
+    if (attempted_load)
+        return s_font ? s_font : aq_font_builtin_8x16();
+
+    attempted_load = true;
+    s_font = load_bitmap_font("resource://fonts/browser-ui.psf"sv,
+                              s_font_resource);
     return s_font ? s_font : aq_font_builtin_8x16();
 }
 
@@ -76,9 +100,32 @@ static void draw_codepoint_scaled(AqSurface* surface, int x, int y, u32 codepoin
 
     auto glyph_index = aq_font_lookup_glyph(font, codepoint);
     auto const* glyph = aq_font_glyph_data(font, glyph_index);
+    if (!glyph) {
+        auto const* fallback = text_fallback_font();
+        if (fallback && fallback != font) {
+            glyph_index = aq_font_lookup_glyph(fallback, codepoint);
+            glyph = aq_font_glyph_data(fallback, glyph_index);
+            if (glyph) {
+                font = fallback;
+                target_width = max(1, (font->glyph_w * target_height +
+                                      max(font->glyph_h, 1) - 1) /
+                                         max(font->glyph_h, 1));
+            }
+        }
+    }
+    if (!glyph) {
+        glyph_index = aq_font_lookup_glyph(font, static_cast<u32>('?'));
+        glyph = aq_font_glyph_data(font, glyph_index);
+    }
     if (!glyph)
         return;
 
+    auto logical_advance = aq_text_codepoint_advance(font, codepoint);
+    if (logical_advance > 0) {
+        target_width = max(1, (logical_advance * target_height +
+                              max(font->glyph_h, 1) - 1) /
+                                 max(font->glyph_h, 1));
+    }
     int const glyph_width = max(font->glyph_w, 1);
     int const glyph_height = max(font->glyph_h, 1);
     int const bytes_per_row = (glyph_width + 7) / 8;

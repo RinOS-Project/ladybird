@@ -1,8 +1,12 @@
 set(FONTS
-    NotoEmoji.ttf
-    SerenitySans-Regular.ttf
+    "${LADYBIRD_SOURCE_DIR}/Base/res/fonts/NotoEmoji.ttf"
+    "${LADYBIRD_SOURCE_DIR}/Base/res/fonts/SerenitySans-Regular.ttf"
+    "${LADYBIRD_SOURCE_DIR}/../../resources/fonts/browser-ui.psf"
+    "${LADYBIRD_SOURCE_DIR}/../../resources/fonts/RIN-CJK-JP.PSF"
+    "${LADYBIRD_SOURCE_DIR}/../../resources/fonts/RIN-CJK-KR.PSF"
+    "${LADYBIRD_SOURCE_DIR}/../../resources/fonts/RIN-CJK-SC.PSF"
+    "${LADYBIRD_SOURCE_DIR}/../../resources/fonts/RIN-CJK-TC.PSF"
 )
-list(TRANSFORM FONTS PREPEND "${LADYBIRD_SOURCE_DIR}/Base/res/fonts/")
 
 set(16x16_ICONS
     app-system-monitor.png
