@@ -75,6 +75,13 @@ static constexpr u64 s_load_start_retry_interval_ms = 250;
 static constexpr u64 s_load_start_retry_budget_ms = 10000;
 static constexpr u32 s_load_start_retry_limit = 40;
 
+/* Keep startup/RPC diagnostics bounded.  These markers make a Unix-socket
+ * failure distinguishable from a WebContent capability or renderer failure
+ * without turning the per-request path into an unbounded log source. */
+static bool s_logged_first_rpc_success = false;
+static bool s_logged_first_client_auth_failure = false;
+static bool s_logged_first_client_auth_success = false;
+
 static u64 monotonic_time_ms()
 {
     return static_cast<u64>(MonotonicTime::now_coarse().milliseconds());
@@ -307,8 +314,16 @@ static bool send_message(int fd, u32 command, i32 status, u32 page_id, void cons
     header.page_id = page_id;
     header.payload_len = payload_len;
 
-    return send_all(fd, &header, sizeof(header), deadline_ms)
+    bool sent = send_all(fd, &header, sizeof(header), deadline_ms)
         && (payload_len == 0 || send_all(fd, payload, payload_len, deadline_ms));
+    if (sent && !s_logged_first_rpc_success) {
+        s_logged_first_rpc_success = true;
+        auto message = ByteString::formatted(
+            "[webcontent] first RPC succeeded command={} page={} status={}\n",
+            command, page_id, status);
+        rin_log(message.characters());
+    }
+    return sent;
 }
 
 class BridgeApplication final : public WebView::Application {
@@ -2835,6 +2850,7 @@ static ErrorOr<int> run_bridge()
         cleanup_server_socket();
         return bind_error;
     }
+    rin_log("[webcontent] Unix socket bind succeeded path=/run/rin/webcontent.sock\n");
 
     {
         int one = 1;
@@ -2844,12 +2860,14 @@ static ErrorOr<int> run_bridge()
             return publish_error;
         }
     }
+    rin_log("[webcontent] Unix socket publish succeeded service=webcontent\n");
 
     if (::listen(server_fd, 16) < 0) {
         auto listen_error = Error::from_errno(errno);
         cleanup_server_socket();
         return listen_error;
     }
+    rin_log("[webcontent] Unix socket listen succeeded backlog=16\n");
 
     // RinOS does not provide /proc/self/exe, so pin helper/resource discovery
     // to the packaged bridge bundle directory.
@@ -2911,8 +2929,16 @@ static ErrorOr<int> run_bridge()
                 return;
             }
             if (!client_peer_authenticated(client_fd)) {
+                if (!s_logged_first_client_auth_failure) {
+                    s_logged_first_client_auth_failure = true;
+                    rin_log("[webcontent] Browser peer authentication rejected\n");
+                }
                 ::close(client_fd);
                 return;
+            }
+            if (!s_logged_first_client_auth_success) {
+                s_logged_first_client_auth_success = true;
+                rin_log("[webcontent] Browser peer authenticated\n");
             }
             handle_client(client_fd);
             ::close(client_fd);
