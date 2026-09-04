@@ -2796,8 +2796,21 @@ static bool ensure_system_runtime_directory(char const* path)
 {
     struct stat status {};
 
-    if (::mkdir(path, 0755) < 0 && errno != EEXIST)
-        return false;
+    if (::mkdir(path, 0755) < 0) {
+        auto mkdir_error = errno;
+
+        /* RinOS keeps the privileged Unix socket namespace in the kernel.
+         * An ISO-only boot has no writable RinFS mount, so the backing VFS
+         * reports EINVAL (and some storage configurations report ENOENT or
+         * EROFS) for these otherwise virtual runtime directories.  Keep
+         * validating a real directory when one exists, but let the kernel
+         * socket namespace provide the fixed endpoint in that case. */
+        if (mkdir_error != EEXIST && mkdir_error != ENOENT &&
+            mkdir_error != EINVAL && mkdir_error != EROFS)
+            return false;
+        if (mkdir_error != EEXIST)
+            return true;
+    }
     if (::stat(path, &status) < 0 || !S_ISDIR(status.st_mode) ||
         status.st_uid != 0 ||
         (status.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
