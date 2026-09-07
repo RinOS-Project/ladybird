@@ -10,6 +10,7 @@
 #include <LibRequests/RequestClient.h>
 #if defined(AK_OS_RINOS)
 #    include <unistd.h>
+#    include <requestserver_upload_body_policy.hpp>
 #endif
 
 namespace Requests {
@@ -49,9 +50,7 @@ RefPtr<Request> RequestClient::start_request(ByteString const& method, URL::URL 
 
 RefPtr<Request> RequestClient::start_streaming_request(ByteString const& method, URL::URL const& url, Optional<HTTP::HeaderList const&> request_headers, u64 request_body_length, RequestBodySource source, HTTP::CacheMode cache_mode, HTTP::Cookie::IncludeCredentials include_credentials, Core::ProxyData const& proxy_data)
 {
-    static constexpr u64 max_request_body_bytes = 128u * 1024u * 1024u;
-    if (request_body_length > max_request_body_bytes ||
-        (request_body_length != 0u && !source))
+    if (!RinRequestServerUploadPolicy::admission_valid(request_body_length, !!source))
         return nullptr;
 
     auto request_id = m_next_request_id++;
@@ -121,18 +120,24 @@ void RequestClient::request_started(u64 request_id, IPC::File response_file)
 
 Messages::RequestClient::RequestBodyChunkResponse RequestClient::request_body_chunk(u64 request_id, u32 maximum_bytes)
 {
-    static constexpr u32 max_request_body_chunk_bytes = 64u * 1024u;
     auto body = m_streaming_request_bodies.get(request_id);
-    if (!body.has_value() || maximum_bytes == 0u || maximum_bytes > max_request_body_chunk_bytes)
+    if (!body.has_value() || !RinRequestServerUploadPolicy::chunk_request_valid(maximum_bytes))
         return { ByteBuffer {}, false };
 
     auto& state = body.value();
     if (state.failed)
         return { ByteBuffer {}, false };
     if (state.eof)
-        return { ByteBuffer {}, state.delivered == state.expected_length };
+        return { ByteBuffer {}, RinRequestServerUploadPolicy::eof_result_valid(state.delivered, state.expected_length) };
 
-    u8 buffer[max_request_body_chunk_bytes];
+    if (state.expected_length == 0u)
+        return { ByteBuffer {}, true };
+    if (!state.source) {
+        state.failed = true;
+        return { ByteBuffer {}, false };
+    }
+
+    u8 buffer[RinRequestServerUploadPolicy::max_chunk_bytes];
     auto result = state.source(buffer, maximum_bytes);
     if (result.is_error()) {
         state.failed = true;
@@ -141,13 +146,14 @@ Messages::RequestClient::RequestBodyChunkResponse RequestClient::request_body_ch
     }
 
     auto count = result.value();
-    if (count > maximum_bytes || count > state.expected_length - min(state.delivered, state.expected_length)) {
+    if (!RinRequestServerUploadPolicy::chunk_result_valid(state.delivered, state.expected_length,
+                                                          maximum_bytes, count)) {
         state.failed = true;
         return { ByteBuffer {}, false };
     }
     if (count == 0u) {
         state.eof = true;
-        return { ByteBuffer {}, state.delivered == state.expected_length };
+        return { ByteBuffer {}, RinRequestServerUploadPolicy::eof_result_valid(state.delivered, state.expected_length) };
     }
 
     state.delivered += count;

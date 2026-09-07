@@ -10,6 +10,7 @@
 #include <LibTLS/TLSv12.h>
 #include <RequestServer/Resolver.h>
 #include <RequestServer/RinHTTPTransport.h>
+#include <requestserver_upload_body_policy.hpp>
 
 #include "rinos_http_transport_policy.h"
 
@@ -174,8 +175,7 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
 {
     auto fetch = adopt_own(*new RinHTTPFetch());
 
-    if (request_body.expected_length > 128u * 1024u * 1024u ||
-        (request_body.expected_length != 0u && !request_body.read))
+    if (!RinRequestServerUploadPolicy::admission_valid(request_body.expected_length, !!request_body.read))
         return Error::from_string_literal("Request body exceeds RinOS limit");
     fetch->m_request_body_length = request_body.expected_length;
     fetch->m_request_body_read = move(request_body.read);
@@ -307,7 +307,10 @@ ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url, ByteString const& 
                 return read_result.release_error();
             }
             auto count = read_result.value();
-            if (count == 0u || count > requested) {
+            if (!RinRequestServerUploadPolicy::chunk_result_valid(body_written,
+                                                                  m_request_body_length,
+                                                                  static_cast<u32>(requested),
+                                                                  count)) {
                 dbgln("[RinHTTP] request body source returned invalid count {}", count);
                 return Error::from_string_literal("Request body source was incomplete");
             }
@@ -328,7 +331,9 @@ ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url, ByteString const& 
             dbgln("[RinHTTP] request body EOF probe failed: {}", eof_probe.error());
             return eof_probe.release_error();
         }
-        if (eof_probe.value() != 0u) {
+        if (RinRequestServerUploadPolicy::trailing_bytes_rejected(body_written,
+                                                                  m_request_body_length,
+                                                                  eof_probe.value())) {
             dbgln("[RinHTTP] request body source has bytes beyond Content-Length");
             return Error::from_string_literal("Request body source has trailing bytes");
         }
