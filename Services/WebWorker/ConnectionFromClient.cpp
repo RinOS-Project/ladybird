@@ -89,6 +89,15 @@ Web::Page const& ConnectionFromClient::page() const
 
 void ConnectionFromClient::start_worker(URL::URL url, Web::Bindings::WorkerType type, Web::Bindings::RequestCredentials credentials, String name, Web::HTML::TransferDataEncoder implicit_port, Web::HTML::SerializedEnvironmentSettingsObject outside_settings, Web::Bindings::AgentType agent_type)
 {
+    // Service workers are not an enabled RinOS feature yet.  Rejecting the
+    // request at the helper boundary must be observable as a worker error;
+    // VERIFY here would abort the entire WebWorker process and turn one
+    // unsupported API into a WebContent crash.
+    if (agent_type == Web::Bindings::AgentType::ServiceWorker) {
+        page_host().did_fail_loading_worker_script();
+        return;
+    }
+
     m_worker_host = make_ref_counted<WorkerHost>(move(url), type, move(name));
 
     bool const is_shared = agent_type == Web::Bindings::AgentType::SharedWorker;
