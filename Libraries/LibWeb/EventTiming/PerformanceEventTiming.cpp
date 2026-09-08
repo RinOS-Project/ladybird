@@ -7,6 +7,7 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/PerformanceEventTimingPrototype.h>
 #include <LibWeb/DOM/Event.h>
+#include <LibWeb/DOM/Node.h>
 #include <LibWeb/EventTiming/PerformanceEventTiming.h>
 #include <LibWeb/PerformanceTimeline/EntryTypes.h>
 
@@ -25,8 +26,14 @@ PerformanceEventTiming::PerformanceEventTiming(
     unsigned long long interaction_id)
     : PerformanceTimeline::PerformanceEntry(realm, name, start_time, duration)
     , m_entry_type(PerformanceTimeline::EntryTypes::event)
+    , m_event_target(event.target())
     , m_start_time(event.time_stamp())
     , m_processing_start(processing_start)
+    // The constructor receives the duration measured from the event's start
+    // timestamp. Keep the end timestamp stable for the lifetime of the entry;
+    // the dispatch-pending/final-event-timing algorithms can replace this
+    // value once they provide a real completion timestamp.
+    , m_processing_end(start_time + duration)
     , m_cancelable(event.cancelable())
     , m_interaction_id(interaction_id)
 
@@ -42,14 +49,12 @@ FlyString const& PerformanceEventTiming::entry_type() const
 
 HighResolutionTime::DOMHighResTimeStamp PerformanceEventTiming::processing_end() const
 {
-    dbgln("FIXME: Implement PerformanceEventTiming processing_end()");
-    return 0;
+    return m_processing_end;
 }
 
 HighResolutionTime::DOMHighResTimeStamp PerformanceEventTiming::processing_start() const
 {
-    dbgln("FIXME: Implement PerformanceEventTiming processing_start()");
-    return 0;
+    return m_processing_start;
 }
 
 bool PerformanceEventTiming::cancelable() const
@@ -59,14 +64,16 @@ bool PerformanceEventTiming::cancelable() const
 
 JS::ThrowCompletionOr<GC::Ptr<DOM::Node>> PerformanceEventTiming::target()
 {
-    dbgln("FIXME: Implement PerformanceEventTiming::PerformanceEventTiming target()");
-    return nullptr;
+    // Event Timing exposes only Node targets. Window, worker and other
+    // EventTarget instances are intentionally represented as null.
+    if (!m_event_target || !m_event_target->is_dom_node())
+        return nullptr;
+    return static_cast<DOM::Node*>(m_event_target.ptr());
 }
 
 unsigned long long PerformanceEventTiming::interaction_id()
 {
-    dbgln("FIXME: Implement PerformanceEventTiming interaction_id()");
-    return 0;
+    return m_interaction_id;
 }
 
 // https://www.w3.org/TR/event-timing/#sec-should-add-performanceeventtiming

@@ -53,6 +53,7 @@ private:
     GC::Ptr<DOM::EventTarget> m_event_target;
     HighResolutionTime::DOMHighResTimeStamp m_start_time;
     HighResolutionTime::DOMHighResTimeStamp m_processing_start;
+    HighResolutionTime::DOMHighResTimeStamp m_processing_end;
     bool m_cancelable;
     unsigned long long m_interaction_id;
 
