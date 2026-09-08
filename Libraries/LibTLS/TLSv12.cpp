@@ -198,6 +198,22 @@ TLSv12::TLSv12(NonnullOwnPtr<Core::TCPSocket> socket, rintls_ctx* ctx)
     };
 }
 
+TLSv12::TLSv12(NonnullOwnPtr<Core::TCPSocket> socket, rintls_ctx* ctx,
+    Optional<ByteBuffer> client_certificate_list,
+    rintls_client_certificate_sign_func client_certificate_sign,
+    void* client_certificate_sign_opaque)
+    : m_ctx(ctx)
+    , m_client_certificate_list(move(client_certificate_list))
+    , m_client_certificate_sign(client_certificate_sign)
+    , m_client_certificate_sign_opaque(client_certificate_sign_opaque)
+    , m_socket(move(socket))
+{
+    m_socket->on_ready_to_read = [this] {
+        if (on_ready_to_read)
+            on_ready_to_read();
+    };
+}
+
 TLSv12::~TLSv12()
 {
     if (m_ctx)
@@ -227,10 +243,12 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPS
     if (rintls_set_trusted_time(ctx, static_cast<u64>(trusted_unix_time)) != RINTLS_OK)
         return Error::from_string_literal("Failed to configure RinOS trusted time");
 
+    Optional<ByteBuffer> retained_client_certificate_list;
     if (options.client_certificate_list.has_value()) {
         if (!options.client_certificate_sign)
             return Error::from_string_literal("RinOS client certificate signer is not configured");
-        auto const& certificate_list = *options.client_certificate_list;
+        retained_client_certificate_list = options.client_certificate_list.release_value();
+        auto const& certificate_list = *retained_client_certificate_list;
         if (rintls_set_client_certificate(
                 ctx, certificate_list.data(), certificate_list.size(),
                 options.client_certificate_sign,
@@ -248,7 +266,9 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPS
     }
 
     free_ctx.disarm();
-    return adopt_own(*new TLSv12(move(socket), ctx));
+    return adopt_own(*new TLSv12(move(socket), ctx,
+        move(retained_client_certificate_list), options.client_certificate_sign,
+        options.client_certificate_sign_opaque));
 }
 
 }

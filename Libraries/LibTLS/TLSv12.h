@@ -8,6 +8,7 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
+#include <AK/Function.h>
 #include <LibCore/Socket.h>
 #include <LibCrypto/Certificate/Certificate.h>
 #ifdef AK_OS_RINOS
@@ -55,6 +56,10 @@ public:
 private:
 #ifdef AK_OS_RINOS
     explicit TLSv12(NonnullOwnPtr<Core::TCPSocket>, rintls_ctx*);
+    explicit TLSv12(NonnullOwnPtr<Core::TCPSocket>, rintls_ctx*,
+        Optional<ByteBuffer> client_certificate_list,
+        rintls_client_certificate_sign_func client_certificate_sign,
+        void* client_certificate_sign_opaque);
 #else
     explicit TLSv12(NonnullOwnPtr<Core::TCPSocket>, SSL_CTX*, SSL*);
 #endif
@@ -65,6 +70,13 @@ private:
 
 #ifdef AK_OS_RINOS
     rintls_ctx* m_ctx { nullptr };
+    /* rintls keeps a borrowed pointer to the certificate_list. Retain the
+     * owning buffer for the complete TLS socket lifetime so a post-handshake
+     * CertificateVerify path can never dereference the temporary Options
+     * object used during connect_internal(). */
+    Optional<ByteBuffer> m_client_certificate_list;
+    rintls_client_certificate_sign_func m_client_certificate_sign { nullptr };
+    void* m_client_certificate_sign_opaque { nullptr };
 #else
     SSL_CTX* m_ssl_ctx { nullptr };
     SSL* m_ssl { nullptr };
