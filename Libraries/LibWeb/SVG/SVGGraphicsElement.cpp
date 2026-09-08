@@ -393,8 +393,23 @@ GC::Ref<SVGAnimatedTransformList> SVGGraphicsElement::transform() const
 
 GC::Ptr<Geometry::DOMMatrix> SVGGraphicsElement::get_screen_ctm()
 {
-    dbgln("(STUBBED) SVGGraphicsElement::get_screen_ctm(). Called on: {}", debug_description());
-    return Geometry::DOMMatrix::create(realm());
+    auto matrix = get_ctm();
+    if (!matrix)
+        return {};
+
+    /* get_ctm() is relative to the owning SVG viewport. Add the viewport's
+     * absolute layout origin only when it is a real paintable; this avoids
+     * fabricating a screen transform for detached or non-rendered elements. */
+    auto owner = owner_svg_element();
+    if (!owner)
+        return matrix;
+    auto owner_paintable = owner->paintable_box();
+    if (!owner_paintable)
+        return matrix;
+    auto origin = owner_paintable->absolute_rect().location();
+    matrix->set_e(matrix->e() + origin.x());
+    matrix->set_f(matrix->f() + origin.y());
+    return matrix;
 }
 
 GC::Ptr<Geometry::DOMMatrix> SVGGraphicsElement::get_ctm()
