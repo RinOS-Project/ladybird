@@ -8,6 +8,8 @@
 
 #define GL_GLEXT_PROTOTYPES 1
 
+#include <AK/ByteBuffer.h>
+#include <AK/NumericLimits.h>
 #include <GLES3/gl3.h>
 extern "C" {
 #include <GLES2/gl2ext.h>
@@ -1893,10 +1895,160 @@ JS::Value WebGLRenderingContextImpl::get_framebuffer_attachment_parameter(WebIDL
     return JS::Value(object);
 }
 
-JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram>, GC::Root<WebGLUniformLocation>)
+JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram> program, GC::Root<WebGLUniformLocation> location)
 {
-    dbgln("FIXME: Implement get_uniform");
-    return JS::Value(0);
+    m_context->make_current();
+
+    if (!program || !location) {
+        set_error(GL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    auto program_handle_or_error = program->handle(this);
+    if (program_handle_or_error.is_error()) {
+        set_error(GL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+    auto program_handle = program_handle_or_error.release_value();
+
+    auto location_handle_or_error = location->handle(program.ptr());
+    if (location_handle_or_error.is_error()) {
+        set_error(GL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+    auto location_handle = location_handle_or_error.release_value();
+    if (location_handle > static_cast<GLuint>(NumericLimits<GLint>::max())) {
+        set_error(GL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    /* Resolve the type from the linked program instead of guessing from the
+     * location value.  A location from another program is rejected by the
+     * WebGLUniformLocation parent check above. */
+    GLint active_uniform_count = 0;
+    glGetProgramiv(program_handle, GL_ACTIVE_UNIFORMS, &active_uniform_count);
+    GLenum uniform_type = 0;
+    GLint uniform_size = 0;
+    bool found = false;
+    for (GLint index = 0; index < active_uniform_count; ++index) {
+        GLchar name[256] {};
+        GLsizei name_length = 0;
+        glGetActiveUniform(program_handle, static_cast<GLuint>(index), sizeof(name),
+            &name_length, &uniform_size, &uniform_type, name);
+        if (name_length <= 0 || name_length >= static_cast<GLsizei>(sizeof(name)))
+            continue;
+        auto uniform_name = String::from_utf8_without_validation(ReadonlyBytes { name, static_cast<size_t>(name_length) });
+        auto active_location = glGetUniformLocation(program_handle, null_terminated_string(uniform_name).data());
+        if (active_location == static_cast<GLint>(location_handle)) {
+            found = true;
+            break;
+        }
+    }
+    if (!found || uniform_size != 1) {
+        /* Array locations need element-aware reflection; do not return a
+         * scalar for an array base and do not manufacture a value for an
+         * unknown location. */
+        set_error(GL_INVALID_OPERATION);
+        return JS::js_null();
+    }
+
+    auto make_float_array = [this](auto const& values) -> JS::Value {
+        auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+        if (bytes_or_error.is_error()) {
+            set_error(GL_OUT_OF_MEMORY);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+        return JS::Float32Array::create(realm(), values.size(), array_buffer);
+    };
+    auto make_int_array = [this](auto const& values) -> JS::Value {
+        auto bytes_or_error = ByteBuffer::copy(values.span().reinterpret<u8>());
+        if (bytes_or_error.is_error()) {
+            set_error(GL_OUT_OF_MEMORY);
+            return JS::js_null();
+        }
+        auto array_buffer = JS::ArrayBuffer::create(realm(), bytes_or_error.release_value());
+        return JS::Int32Array::create(realm(), values.size(), array_buffer);
+    };
+
+    switch (uniform_type) {
+    case GL_FLOAT: {
+        GLfloat value = 0.0f;
+        glGetUniformfv(program_handle, static_cast<GLint>(location_handle), &value);
+        return JS::Value(value);
+    }
+    case GL_FLOAT_VEC2: {
+        Array<GLfloat, 2> values {};
+        glGetUniformfv(program_handle, static_cast<GLint>(location_handle), values.data());
+        return make_float_array(values);
+    }
+    case GL_FLOAT_VEC3: {
+        Array<GLfloat, 3> values {};
+        glGetUniformfv(program_handle, static_cast<GLint>(location_handle), values.data());
+        return make_float_array(values);
+    }
+    case GL_FLOAT_VEC4: {
+        Array<GLfloat, 4> values {};
+        glGetUniformfv(program_handle, static_cast<GLint>(location_handle), values.data());
+        return make_float_array(values);
+    }
+    case GL_FLOAT_MAT2: {
+        Array<GLfloat, 4> values {};
+        glGetUniformfv(program_handle, static_cast<GLint>(location_handle), values.data());
+        return make_float_array(values);
+    }
+    case GL_FLOAT_MAT3: {
+        Array<GLfloat, 9> values {};
+        glGetUniformfv(program_handle, static_cast<GLint>(location_handle), values.data());
+        return make_float_array(values);
+    }
+    case GL_FLOAT_MAT4: {
+        Array<GLfloat, 16> values {};
+        glGetUniformfv(program_handle, static_cast<GLint>(location_handle), values.data());
+        return make_float_array(values);
+    }
+    case GL_INT:
+    case GL_SAMPLER_2D:
+    case GL_SAMPLER_CUBE: {
+        GLint value = 0;
+        glGetUniformiv(program_handle, static_cast<GLint>(location_handle), &value);
+        return JS::Value(value);
+    }
+    case GL_INT_VEC2: {
+        Array<GLint, 2> values {};
+        glGetUniformiv(program_handle, static_cast<GLint>(location_handle), values.data());
+        return make_int_array(values);
+    }
+    case GL_INT_VEC3: {
+        Array<GLint, 3> values {};
+        glGetUniformiv(program_handle, static_cast<GLint>(location_handle), values.data());
+        return make_int_array(values);
+    }
+    case GL_INT_VEC4: {
+        Array<GLint, 4> values {};
+        glGetUniformiv(program_handle, static_cast<GLint>(location_handle), values.data());
+        return make_int_array(values);
+    }
+    case GL_BOOL: {
+        GLint value = 0;
+        glGetUniformiv(program_handle, static_cast<GLint>(location_handle), &value);
+        return JS::Value(value != 0);
+    }
+    case GL_BOOL_VEC2:
+    case GL_BOOL_VEC3:
+    case GL_BOOL_VEC4: {
+        Array<GLint, 4> values {};
+        size_t count = uniform_type == GL_BOOL_VEC2 ? 2 : uniform_type == GL_BOOL_VEC3 ? 3 : 4;
+        glGetUniformiv(program_handle, static_cast<GLint>(location_handle), values.data());
+        Array<JS::Value, 4> result {};
+        for (size_t index = 0; index < count; ++index)
+            result[index] = JS::Value(values[index] != 0);
+        return JS::Array::create_from(realm(), result.span().slice(0, count));
+    }
+    default:
+        set_error(GL_INVALID_OPERATION);
+        return JS::js_null();
+    }
 }
 
 GC::Root<WebGLUniformLocation> WebGLRenderingContextImpl::get_uniform_location(GC::Root<WebGLProgram> program, String name)
