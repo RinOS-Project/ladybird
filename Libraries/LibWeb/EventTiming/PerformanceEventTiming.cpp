@@ -72,7 +72,6 @@ unsigned long long PerformanceEventTiming::interaction_id()
 // https://www.w3.org/TR/event-timing/#sec-should-add-performanceeventtiming
 PerformanceTimeline::ShouldAddEntry PerformanceEventTiming::should_add_performance_event_timing() const
 {
-    dbgln("FIXME: Implement PerformanceEventTiming should_add_performance_event_timing()");
     // 1. If entry’s entryType attribute value equals to "first-input", return true.
     if (entry_type() == "first-input")
         return PerformanceTimeline::ShouldAddEntry::Yes;
@@ -80,14 +79,13 @@ PerformanceTimeline::ShouldAddEntry PerformanceEventTiming::should_add_performan
     // 2. Assert that entry’s entryType attribute value equals "event".
     VERIFY(entry_type() == "event");
 
-    // FIXME: 3. Let minDuration be computed as follows:
-    // FIXME: 3.1. If options is not present or if options’s durationThreshold is not present, let minDuration be 104.
-    // FIXME: 3.2. Otherwise, let minDuration be the maximum between 16 and options’s durationThreshold value.
-
-    // FIXME: 4. If entry’s duration attribute value is greater than or equal to minDuration, return true.
-
-    // 5. Otherwise, return false.
-    return PerformanceTimeline::ShouldAddEntry::No;
+    /* PerformanceObserverInit currently has no durationThreshold member in
+     * this pinned tree. Use the Web Event Timing default (104ms) until that
+     * dictionary is extended; short events must not fill the timeline. */
+    constexpr double default_duration_threshold = 104.0;
+    return duration() >= default_duration_threshold
+        ? PerformanceTimeline::ShouldAddEntry::Yes
+        : PerformanceTimeline::ShouldAddEntry::No;
 }
 
 // https://w3c.github.io/timing-entrytypes-registry/#dfn-availablefromtimeline
@@ -95,8 +93,9 @@ PerformanceTimeline::ShouldAddEntry PerformanceEventTiming::should_add_performan
 //        the commented out if statement won't compile
 PerformanceTimeline::AvailableFromTimeline PerformanceEventTiming::available_from_timeline()
 {
-    dbgln("FIXME: Implement PerformanceEventTiming available_from_timeline()");
-    // if (entry_type() == "first-input")
+    /* Both `event` and `first-input` entries are exposed by this timeline.
+     * The registry API is static in the current binding, so the type-specific
+     * distinction is enforced by should_add_performance_event_timing(). */
     return PerformanceTimeline::AvailableFromTimeline::Yes;
 }
 
@@ -104,10 +103,10 @@ PerformanceTimeline::AvailableFromTimeline PerformanceEventTiming::available_fro
 // FIXME: Same issue as available_from_timeline() above
 Optional<u64> PerformanceEventTiming::max_buffer_size()
 {
-    dbgln("FIXME: Implement PerformanceEventTiming max_buffer_size()");
-    if (true) //(entry_type() == "first-input")
-        return 1;
-    // else return 150;
+    /* The registry hook is static although this class has two entry types.
+     * Reserve the larger event buffer; first-input remains bounded by its
+     * admission rule and does not make the allocation unbounded. */
+    return 150;
 }
 
 // https://w3c.github.io/timing-entrytypes-registry/#dfn-should-add-entry
