@@ -8,6 +8,7 @@
 #include "CSSKeyframeRule.h"
 #include <LibWeb/Bindings/CSSKeyframeRulePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/Parser/Tokenizer.h>
 #include <LibWeb/CSS/CSSRuleList.h>
 #include <LibWeb/Dump.h>
 
@@ -45,6 +46,42 @@ String CSSKeyframeRule::serialized() const
     StringBuilder builder;
     builder.appendff("{}% {{ {} }}", key().value(), style()->serialized());
     return MUST(builder.to_string());
+}
+
+void CSSKeyframeRule::set_key_text(String const& key_text)
+{
+    auto tokens = Parser::Tokenizer::tokenize(key_text.bytes_as_string_view(), "utf-8"sv);
+    size_t index = 0;
+    while (index < tokens.size() && tokens[index].is(Parser::Token::Type::Whitespace))
+        ++index;
+    if (index >= tokens.size())
+        return;
+
+    double candidate = 0.0;
+    auto const& token = tokens[index++];
+    if (token.is(Parser::Token::Type::Ident)) {
+        if (token.ident().equals_ignoring_ascii_case("from"sv))
+            candidate = 0.0;
+        else if (token.ident().equals_ignoring_ascii_case("to"sv))
+            candidate = 100.0;
+        else
+            return;
+    } else if (token.is(Parser::Token::Type::Percentage)) {
+        candidate = token.percentage();
+    } else {
+        return;
+    }
+
+    while (index < tokens.size() && tokens[index].is(Parser::Token::Type::Whitespace))
+        ++index;
+    if (index >= tokens.size() ||
+        !tokens[index].is(Parser::Token::Type::EndOfFile) ||
+        !isfinite(candidate) || candidate < 0.0 || candidate > 100.0)
+        return;
+
+    // CSSKeyframeRule currently stores one offset. A comma-separated selector
+    // list therefore remains invalid and cannot partially mutate the rule.
+    m_key = CSS::Percentage(candidate);
 }
 
 void CSSKeyframeRule::dump(StringBuilder& builder, int indent_levels) const
