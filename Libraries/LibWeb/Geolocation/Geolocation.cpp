@@ -106,17 +106,28 @@ void Geolocation::acquire_a_position(GC::Ref<WebIDL::CallbackType> success_callb
         return;
 
     // 2. Let acquisitionTime be a new EpochTimeStamp that represents now.
-    HighResolutionTime::EpochTimeStamp const acquisition_time = AK::UnixDateTime::now().milliseconds_since_epoch();
+    [[maybe_unused]] HighResolutionTime::EpochTimeStamp const acquisition_time = AK::UnixDateTime::now().milliseconds_since_epoch();
 
     // 3. Let timeoutTime be the sum of acquisitionTime and options.timeout.
     [[maybe_unused]] HighResolutionTime::EpochTimeStamp const timeout_time = acquisition_time + options.timeout;
 
     // 4. Let cachedPosition be this's [[cachedPosition]].
-    auto cached_position = m_cached_position;
+    [[maybe_unused]] auto cached_position = m_cached_position;
 
     // FIXME: 5. Create an implementation-specific timeout task that elapses at timeoutTime, during which it tries to acquire
     //    the device's position by running the following steps:
     {
+#if defined(AK_OS_RINOS)
+        /* RinOS has no authenticated geolocation permission/backend owner yet.
+         * Do not fall through to the historical synthetic-coordinate path:
+         * exposing an empty coordinate object would look like a successful
+         * location grant to WebContent.  Keep the request fail-closed until
+         * the permission producer and platform location owner are connected. */
+        (void)success_callback;
+        (void)options;
+        call_back_with_error(error_callback, GeolocationPositionError::ErrorCode::PermissionDenied);
+        return;
+#else
         // FIXME: 1. Let permission be get the current permission state of "geolocation".
 
         // FIXME: 2. If permission is "denied":
@@ -242,6 +253,7 @@ void Geolocation::acquire_a_position(GC::Ref<WebIDL::CallbackType> success_callb
                 (void)WebIDL::invoke_callback(success_callback, {}, WebIDL::ExceptionBehavior::Report, { { position } });
             }));
         }
+#endif
     }
 }
 
@@ -293,6 +305,17 @@ void Geolocation::request_a_position(GC::Ref<WebIDL::CallbackType> success_callb
     [[maybe_unused]] auto& document = as<HTML::Window>(HTML::relevant_global_object(*this)).associated_document();
 
     // FIXME: 3. If document is not allowed to use the "geolocation" feature:
+#if defined(AK_OS_RINOS)
+    /* The WebContent permission event producer and platform location owner
+     * are not connected yet.  Refuse before scheduling an acquisition so a
+     * renderer cannot observe a synthetic success while the broker is absent. */
+    (void)success_callback;
+    (void)options;
+    if (watch_id.has_value())
+        m_watch_ids.remove(watch_id.value());
+    call_back_with_error(error_callback, GeolocationPositionError::ErrorCode::PermissionDenied);
+    return;
+#else
     if (false) {
         // 1. If watchId was passed, remove watchId from watchIDs.
         if (watch_id.has_value())
@@ -365,6 +388,7 @@ void Geolocation::request_a_position(GC::Ref<WebIDL::CallbackType> success_callb
             }
         }
     }));
+#endif
 }
 
 void Geolocation::run_in_parallel_when_document_is_visible(DOM::Document& document, GC::Ref<GC::Function<void()>> callback)
