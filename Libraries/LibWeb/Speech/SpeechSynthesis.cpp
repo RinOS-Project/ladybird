@@ -52,7 +52,13 @@ GC::Ptr<WebIDL::CallbackType> SpeechSynthesis::onvoiceschanged()
 // https://wicg.github.io/speech-api/#dom-speechsynthesis-cancel
 void SpeechSynthesis::cancel()
 {
-    dbgln("FIXME: Implement SpeechSynthesis::cancel()");
+    // The audio backend is not connected yet, but the Web-exposed state must
+    // still stop advertising queued or active speech after cancellation.
+    // Clearing all three flags is idempotent and does not synthesize an
+    // utterance completion event for work that has not been dispatched.
+    m_pending = false;
+    m_speaking = false;
+    m_paused = false;
 }
 
 // https://wicg.github.io/speech-api/#dom-speechsynthesis-getvoices
