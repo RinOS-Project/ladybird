@@ -9,9 +9,10 @@
 
 namespace Requests {
 
-WebSocket::WebSocket(RequestClient& client, u64 websocket_id)
+WebSocket::WebSocket(RequestClient& client, u64 websocket_id, URL::URL url)
     : m_client(client)
     , m_websocket_id(websocket_id)
+    , m_url(move(url))
 {
 }
 
@@ -76,13 +77,21 @@ void WebSocket::did_close(Badge<RequestClient>, u16 code, ByteString reason, boo
 
 void WebSocket::did_request_certificates(Badge<RequestClient>)
 {
+    if (!m_client)
+        return;
+    CertificateAndSignerCapability result;
     if (on_certificate_requested) {
-        auto result = on_certificate_requested();
-        if (!m_client->websocket_set_certificate(
-                m_websocket_id, result.connection_generation,
-                move(result.certificate_list), move(result.signer_capability)))
-            dbgln("WebSocket: set_certificate failed");
+        result = on_certificate_requested();
+    } else {
+        if (!m_client->provide_client_certificate(
+                m_url, result.connection_generation, result.certificate_list,
+                result.signer_capability))
+            return;
     }
+    if (!m_client->websocket_set_certificate(
+            m_websocket_id, result.connection_generation,
+            move(result.certificate_list), move(result.signer_capability)))
+        dbgln("WebSocket: set_certificate failed");
 }
 
 }

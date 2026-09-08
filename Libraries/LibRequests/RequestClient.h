@@ -37,6 +37,14 @@ public:
 
     using RequestBodySource = Function<ErrorOr<size_t>(u8*, size_t)>;
 
+    /* Browser-owned certificate selection stays outside RequestServer. The
+     * provider returns only public TLS wire bytes, an opaque signer capability,
+     * and the authenticated connection generation. Returning false is a
+     * deliberate fail-closed refusal to present a client identity. */
+    using ClientCertificateProvider = Function<bool(
+        URL::URL const&, u64& connection_generation,
+        ByteBuffer& certificate_list, ByteBuffer& signer_capability)>;
+
     RefPtr<Request> start_request(ByteString const& method, URL::URL const&, Optional<HTTP::HeaderList const&> request_headers = {}, ReadonlyBytes request_body = {}, HTTP::CacheMode = HTTP::CacheMode::Default, HTTP::Cookie::IncludeCredentials = HTTP::Cookie::IncludeCredentials::Yes, Core::ProxyData const& = {});
     RefPtr<Request> start_streaming_request(ByteString const& method, URL::URL const&, Optional<HTTP::HeaderList const&> request_headers, u64 request_body_length, RequestBodySource, HTTP::CacheMode = HTTP::CacheMode::Default, HTTP::Cookie::IncludeCredentials = HTTP::Cookie::IncludeCredentials::Yes, Core::ProxyData const& = {});
     bool stop_request(Badge<Request>, Request&);
@@ -45,6 +53,16 @@ public:
     bool set_certificate(Badge<Request>, Request&, u64 connection_generation,
                          ByteBuffer certificate_list,
                          ByteBuffer signer_capability);
+
+    void set_client_certificate_provider(ClientCertificateProvider provider)
+    {
+        m_client_certificate_provider = move(provider);
+    }
+
+    bool provide_client_certificate(URL::URL const& url,
+                                    u64& connection_generation,
+                                    ByteBuffer& certificate_list,
+                                    ByteBuffer& signer_capability) const;
 
     RefPtr<WebSocket> websocket_connect(URL::URL const&, ByteString const& origin, Vector<ByteString> const& protocols, Vector<ByteString> const& extensions, HTTP::HeaderList const& request_headers);
 
@@ -92,6 +110,7 @@ private:
 
     HashMap<u64, NonnullRefPtr<Core::Promise<CacheSizes>>> m_pending_cache_size_estimations;
     u64 m_next_cache_size_estimation_id { 0 };
+    ClientCertificateProvider m_client_certificate_provider;
 };
 
 }

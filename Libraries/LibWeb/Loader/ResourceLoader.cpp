@@ -67,9 +67,21 @@ ResourceLoader::ResourceLoader(GC::Heap& heap, NonnullRefPtr<Requests::RequestCl
 void ResourceLoader::set_client(NonnullRefPtr<Requests::RequestClient> request_client)
 {
     m_request_client = move(request_client);
+    if (m_client_certificate_provider)
+        m_request_client->set_client_certificate_provider(
+            m_client_certificate_provider);
     m_request_client->on_request_server_died = [this]() {
         m_request_client = nullptr;
     };
+}
+
+void ResourceLoader::set_client_certificate_provider(
+    Requests::RequestClient::ClientCertificateProvider provider)
+{
+    m_client_certificate_provider = move(provider);
+    if (m_request_client)
+        m_request_client->set_client_certificate_provider(
+            m_client_certificate_provider);
 }
 
 void ResourceLoader::prefetch_dns(URL::URL const& url)
@@ -507,8 +519,13 @@ RefPtr<Requests::Request> ResourceLoader::start_network_request(LoadRequest cons
         return nullptr;
     }
 
-    protocol_request->on_certificate_requested = []() -> Requests::Request::CertificateAndSignerCapability {
-        return {};
+    protocol_request->on_certificate_requested = [this, url = request.url().value()] {
+        Requests::Request::CertificateAndSignerCapability result;
+        if (!m_request_client->provide_client_certificate(
+                url, result.connection_generation, result.certificate_list,
+                result.signer_capability))
+            return Requests::Request::CertificateAndSignerCapability {};
+        return result;
     };
 
     if (auto page = request.page()) {

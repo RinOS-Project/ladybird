@@ -15,6 +15,7 @@
 #include <LibHTTP/HeaderList.h>
 #include <LibRequests/Forward.h>
 #include <LibRequests/RequestTimingInfo.h>
+#include <LibRequests/RequestClient.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Loader/NavigatorCompatibilityMode.h>
@@ -38,6 +39,13 @@ public:
     RefPtr<Requests::Request> load(LoadRequest&, GC::Root<OnHeadersReceived>, GC::Root<OnDataReceived>, GC::Root<OnComplete>);
 
     RefPtr<Requests::RequestClient>& request_client() { return m_request_client; }
+
+    /* Install the authenticated Browser-side identity producer used when
+     * RequestServer raises a TLS CertificateRequest. The callback returns
+     * only public certificate wire bytes, an opaque signer capability, and a
+     * connection generation; false keeps the request fail-closed. */
+    void set_client_certificate_provider(
+        Requests::RequestClient::ClientCertificateProvider provider);
 
     void prefetch_dns(URL::URL const&);
     void preconnect(URL::URL const&);
@@ -88,6 +96,7 @@ private:
 
     GC::Heap& m_heap;
     RefPtr<Requests::RequestClient> m_request_client;
+    Requests::RequestClient::ClientCertificateProvider m_client_certificate_provider;
     HashTable<NonnullRefPtr<Requests::Request>> m_active_requests;
 
     String m_user_agent;

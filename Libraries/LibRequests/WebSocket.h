@@ -12,6 +12,7 @@
 #include <AK/Function.h>
 #include <AK/RefCounted.h>
 #include <AK/WeakPtr.h>
+#include <LibURL/URL.h>
 
 namespace Requests {
 
@@ -43,9 +44,10 @@ public:
         Closed = 3,
     };
 
-    static NonnullRefPtr<WebSocket> create_from_id(Badge<RequestClient>, RequestClient& client, u64 websocket_id)
+    static NonnullRefPtr<WebSocket> create_from_id(Badge<RequestClient>, RequestClient& client,
+                                                   u64 websocket_id, URL::URL url)
     {
-        return adopt_ref(*new WebSocket(client, websocket_id));
+        return adopt_ref(*new WebSocket(client, websocket_id, move(url)));
     }
 
     u64 id() const { return m_websocket_id; }
@@ -73,12 +75,13 @@ public:
     void did_request_certificates(Badge<RequestClient>);
 
 private:
-    WebSocket(RequestClient&, u64 websocket_id);
+    WebSocket(RequestClient&, u64 websocket_id, URL::URL);
 
     WeakPtr<RequestClient> m_client;
     ReadyState m_ready_state { ReadyState::Connecting };
     ByteString m_subprotocol;
     u64 m_websocket_id { 0 };
+    URL::URL m_url;
 };
 
 }

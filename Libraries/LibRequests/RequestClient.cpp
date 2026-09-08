@@ -22,6 +22,19 @@ RequestClient::RequestClient(NonnullOwnPtr<IPC::Transport> transport)
 
 RequestClient::~RequestClient() = default;
 
+bool RequestClient::provide_client_certificate(
+    URL::URL const& url, u64& connection_generation,
+    ByteBuffer& certificate_list, ByteBuffer& signer_capability) const
+{
+    connection_generation = 0;
+    certificate_list = {};
+    signer_capability = {};
+    if (!m_client_certificate_provider)
+        return false;
+    return m_client_certificate_provider(url, connection_generation,
+                                         certificate_list, signer_capability);
+}
+
 void RequestClient::die()
 {
     for (auto& [id, request] : m_requests) {
@@ -204,7 +217,7 @@ RefPtr<WebSocket> RequestClient::websocket_connect(URL::URL const& url, ByteStri
 {
     auto websocket_id = m_next_websocket_id++;
     IPCProxy::async_websocket_connect(websocket_id, url, origin, protocols, extensions, request_headers.headers());
-    auto connection = WebSocket::create_from_id({}, *this, websocket_id);
+    auto connection = WebSocket::create_from_id({}, *this, websocket_id, url);
     m_websockets.set(websocket_id, connection);
     return connection;
 }
