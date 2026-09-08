@@ -46,8 +46,11 @@ bool MediaDecodingConfiguration::is_valid_media_decoding_configuration() const
     if (!is_valid_media_configuration())
         return false;
 
-    // 2. If keySystemConfiguration exists:
-    // FIXME: Implement this.
+    // 2. If keySystemConfiguration exists, it must be evaluated through the
+    // authenticated EME/CDM path. That path is not connected to
+    // MediaCapabilities yet; keep validation of the media portion here and
+    // make the result explicitly unsupported below instead of synthesizing a
+    // successful clear-media capability.
 
     return true;
 }
@@ -183,12 +186,14 @@ MediaCapabilitiesDecodingInfo create_a_media_capabilities_decoding_info(MediaDec
     //    a new property with the same name and value in configuration.
     info.configuration = { { configuration.video, configuration.audio }, configuration.type, configuration.key_system_configuration };
 
-    // 3. If configuration.keySystemConfiguration exists:
-    if (false) {
-        // FIXME: Implement this.
-    }
-    // 4. Otherwise, run the following steps:
-    else {
+    // 3. If configuration.keySystemConfiguration exists, the EME access
+    // algorithm is required to determine support. Until an authenticated
+    // key-system owner is wired here, encrypted media must not be reported as
+    // supported by the clear-media MIME probe.
+    if (configuration.key_system_configuration.has_value()) {
+        info.supported = false;
+    } else {
+        // 4. Otherwise, run the following steps:
         // 1. Set keySystemAccess to null.
         // FIXME: Implement this.
 
