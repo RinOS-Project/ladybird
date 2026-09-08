@@ -95,6 +95,11 @@ private:
 
     Optional<ViewBox> m_fallback_view_box_for_svg_as_image;
 
+    /* User-agent zoom state exposed by currentScale/currentTranslate. The
+     * embedding may defer applying this state to its compositor viewport. */
+    float m_current_scale { 1.0f };
+    GC::Ptr<Geometry::DOMPointReadOnly> m_current_translate;
+
     mutable Optional<RefPtr<CSS::StyleValue const>> m_cached_width_style_value;
     mutable Optional<RefPtr<CSS::StyleValue const>> m_cached_height_style_value;
 

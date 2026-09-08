@@ -36,6 +36,8 @@ void SVGSVGElement::initialize(JS::Realm& realm)
     WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGSVGElement);
     Base::initialize(realm);
     SVGFitToViewBox::initialize(realm);
+    m_current_translate = Geometry::DOMPointReadOnly::construct_impl(
+        realm, 0, 0, 0, 1);
 }
 
 void SVGSVGElement::visit_edges(Visitor& visitor)
@@ -43,6 +45,7 @@ void SVGSVGElement::visit_edges(Visitor& visitor)
     Base::visit_edges(visitor);
     SVGFitToViewBox::visit_edges(visitor);
     visitor.visit(m_active_view_element);
+    visitor.visit(m_current_translate);
 }
 
 GC::Ptr<Layout::Node> SVGSVGElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
@@ -195,19 +198,26 @@ GC::Ref<SVGAnimatedLength> SVGSVGElement::height() const
 
 float SVGSVGElement::current_scale() const
 {
-    dbgln("(STUBBED) SVGSVGElement::current_scale(). Called on: {}", debug_description());
-    return 1.0f;
+    return m_current_scale;
 }
 
-void SVGSVGElement::set_current_scale(float)
+void SVGSVGElement::set_current_scale(float scale)
 {
-    dbgln("(STUBBED) SVGSVGElement::set_current_scale(). Called on: {}", debug_description());
+    /* The WebIDL float conversion can produce NaN/Infinity; reject those and
+     * non-positive zoom values without publishing a partial state change. */
+    if (!isfinite(scale) || scale <= 0.0f)
+        return;
+    m_current_scale = scale;
 }
 
 GC::Ref<Geometry::DOMPointReadOnly> SVGSVGElement::current_translate() const
 {
-    dbgln("(STUBBED) SVGSVGElement::current_translate(). Called on: {}", debug_description());
-    return Geometry::DOMPointReadOnly::create(realm());
+    /* Keep a stable [SameObject] value even for legacy construction paths
+     * that call this accessor before initialize(). */
+    if (!m_current_translate)
+        const_cast<SVGSVGElement*>(this)->m_current_translate =
+            Geometry::DOMPointReadOnly::construct_impl(realm(), 0, 0, 0, 1);
+    return *m_current_translate;
 }
 
 GC::Ref<DOM::NodeList> SVGSVGElement::get_intersection_list(GC::Ref<Geometry::DOMRectReadOnly>, GC::Ptr<SVGElement>) const
