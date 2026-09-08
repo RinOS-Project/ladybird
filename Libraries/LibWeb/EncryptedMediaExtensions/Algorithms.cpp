@@ -145,14 +145,16 @@ bool is_persistent_session_type(Utf16String const& session_type)
 // https://w3c.github.io/encrypted-media/#get-consent-status
 ConsentStatus get_consent_status(Bindings::MediaKeySystemConfiguration const& accumulated_configuration, MediaKeyRestrictions& restrictions, URL::Origin const& origin)
 {
-    // FIXME: Implement this
+    // A consent owner is not wired into LibWeb yet.  Do not turn an absent
+    // owner into an implicit grant: EME may expose a distinctive identifier
+    // or persistent state, so the safe result is to deny the candidate and
+    // let the caller retry once an authenticated policy owner is available.
     (void)accumulated_configuration;
     (void)restrictions;
     (void)origin;
 
-    dbgln("get_consent_status: Not implemented, returning Allowed by default");
-
-    return ConsentStatus::Allowed;
+    dbgln("get_consent_status: consent owner unavailable, denying configuration");
+    return ConsentStatus::ConsentDenied;
 }
 
 // https://w3c.github.io/encrypted-media/#get-supported-configuration-and-consent
