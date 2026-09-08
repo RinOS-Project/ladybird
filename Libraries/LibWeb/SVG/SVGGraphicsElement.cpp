@@ -399,8 +399,23 @@ GC::Ptr<Geometry::DOMMatrix> SVGGraphicsElement::get_screen_ctm()
 
 GC::Ptr<Geometry::DOMMatrix> SVGGraphicsElement::get_ctm()
 {
-    dbgln("(STUBBED) SVGGraphicsElement::get_ctm(). Called on: {}", debug_description());
-    return Geometry::DOMMatrix::create(realm());
+    const_cast<DOM::Document&>(document()).update_layout_if_needed_for_node(
+        *this, DOM::UpdateLayoutReason::SVGGraphicsElementGetBBox);
+    auto matrix = Geometry::DOMMatrix::create(realm());
+    auto paintable = paintable_box();
+    if (!paintable || !is<Painting::SVGGraphicsPaintable>(*paintable))
+        return matrix;
+
+    auto transform = static_cast<Painting::SVGGraphicsPaintable&>(*paintable)
+                         .computed_transforms()
+                         .svg_to_css_pixels_transform();
+    matrix->set_a(transform.a());
+    matrix->set_b(transform.b());
+    matrix->set_c(transform.c());
+    matrix->set_d(transform.d());
+    matrix->set_e(transform.e());
+    matrix->set_f(transform.f());
+    return matrix;
 }
 
 }
