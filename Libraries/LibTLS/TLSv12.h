@@ -30,6 +30,10 @@ struct Options {
     Optional<ByteBuffer> client_certificate_list;
     rintls_client_certificate_sign_func client_certificate_sign { nullptr };
     void* client_certificate_sign_opaque { nullptr };
+    /* Optional one-shot key-owner hook. RinTLS invokes this after a TLS 1.3
+     * CertificateRequest and before emitting Certificate/CertificateVerify. */
+    rintls_client_certificate_provider_func client_certificate_provider { nullptr };
+    void* client_certificate_provider_opaque { nullptr };
 #endif
 };
 

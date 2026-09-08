@@ -256,6 +256,12 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPS
             return Error::from_string_literal("Invalid RinOS client certificate list");
     }
 
+    if (options.client_certificate_provider &&
+        rintls_set_client_certificate_provider(
+            ctx, options.client_certificate_provider,
+            options.client_certificate_provider_opaque) != RINTLS_OK)
+        return Error::from_string_literal("Invalid RinOS client certificate provider");
+
     if (rintls_set_hostname(ctx, host.characters()) != RINTLS_OK)
         return Error::from_string_literal("Failed to set TLS hostname");
 
