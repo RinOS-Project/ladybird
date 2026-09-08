@@ -35,7 +35,7 @@ public:
 
     [[nodiscard]] GC::Ref<CookieStore::CookieStore> cookie_store();
 
-protected:
+public:
     explicit ServiceWorkerGlobalScope(JS::Realm&, GC::Ref<Web::Page>);
 
 private:

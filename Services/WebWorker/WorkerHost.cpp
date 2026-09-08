@@ -22,6 +22,7 @@
 #include <LibWeb/HTML/WorkerGlobalScope.h>
 #include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/Loader/ResourceLoader.h>
+#include <LibWeb/ServiceWorker/ServiceWorkerGlobalScope.h>
 #include <WebWorker/PageHost.h>
 #include <WebWorker/WorkerHost.h>
 
@@ -48,7 +49,7 @@ static Web::HTML::WorkerGlobalScope::Owner relevant_owner_to_add(Web::HTML::Seri
 }
 
 // https://html.spec.whatwg.org/multipage/workers.html#run-a-worker
-void WorkerHost::run(GC::Ref<Web::Page> page, Web::HTML::TransferDataEncoder message_port_data, Web::HTML::SerializedEnvironmentSettingsObject const& outside_settings_snapshot, Web::Bindings::RequestCredentials credentials, bool is_shared)
+void WorkerHost::run(GC::Ref<Web::Page> page, Web::HTML::TransferDataEncoder message_port_data, Web::HTML::SerializedEnvironmentSettingsObject const& outside_settings_snapshot, Web::Bindings::RequestCredentials credentials, bool is_shared, bool is_service)
 {
     // 1. Let is shared be true if worker is a SharedWorker object, and false otherwise.
     // 2. Let owner be the relevant owner to add given outside settings.
@@ -60,7 +61,9 @@ void WorkerHost::run(GC::Ref<Web::Page> page, Web::HTML::TransferDataEncoder mes
     // 5. Let realm execution context be the result of creating a new realm given agent and the following customizations:
     auto realm_execution_context = Web::Bindings::create_a_new_javascript_realm(
         Web::Bindings::main_thread_vm(),
-        [page, is_shared](JS::Realm& realm) -> JS::Object* {
+        [page, is_shared, is_service](JS::Realm& realm) -> JS::Object* {
+            if (is_service)
+                return realm.heap().allocate<Web::ServiceWorker::ServiceWorkerGlobalScope>(realm, page);
             // For the global object, if is shared is true, create a new SharedWorkerGlobalScope object.
             if (is_shared)
                 return realm.heap().allocate<Web::HTML::SharedWorkerGlobalScope>(realm, page);
@@ -129,7 +132,8 @@ void WorkerHost::run(GC::Ref<Web::Page> page, Web::HTML::TransferDataEncoder mes
     }
 
     // 11. Let destination be "sharedworker" if is shared is true, and "worker" otherwise.
-    auto destination = is_shared ? Web::Fetch::Infrastructure::Request::Destination::SharedWorker
+    auto destination = is_service ? Web::Fetch::Infrastructure::Request::Destination::ServiceWorker
+                                 : is_shared ? Web::Fetch::Infrastructure::Request::Destination::SharedWorker
                                  : Web::Fetch::Infrastructure::Request::Destination::Worker;
 
     // In both cases, let performFetch be the following perform the fetch hook given request, isTopLevel, and processCustomFetchResponse:

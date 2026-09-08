@@ -89,23 +89,15 @@ Web::Page const& ConnectionFromClient::page() const
 
 void ConnectionFromClient::start_worker(URL::URL url, Web::Bindings::WorkerType type, Web::Bindings::RequestCredentials credentials, String name, Web::HTML::TransferDataEncoder implicit_port, Web::HTML::SerializedEnvironmentSettingsObject outside_settings, Web::Bindings::AgentType agent_type)
 {
-    // Service workers are not an enabled RinOS feature yet.  Rejecting the
-    // request at the helper boundary must be observable as a worker error;
-    // VERIFY here would abort the entire WebWorker process and turn one
-    // unsupported API into a WebContent crash.
-    if (agent_type == Web::Bindings::AgentType::ServiceWorker) {
-        page_host().did_fail_loading_worker_script();
-        return;
-    }
-
     m_worker_host = make_ref_counted<WorkerHost>(move(url), type, move(name));
 
     bool const is_shared = agent_type == Web::Bindings::AgentType::SharedWorker;
-    VERIFY(is_shared || agent_type == Web::Bindings::AgentType::DedicatedWorker);
+    bool const is_service = agent_type == Web::Bindings::AgentType::ServiceWorker;
+    VERIFY(is_shared || is_service || agent_type == Web::Bindings::AgentType::DedicatedWorker);
 
     // FIXME: Add an assertion that the agent_type passed here is the same that was passed at process creation to initialize_main_thread_vm()
 
-    m_worker_host->run(page(), move(implicit_port), outside_settings, credentials, is_shared);
+    m_worker_host->run(page(), move(implicit_port), outside_settings, credentials, is_shared, is_service);
 }
 
 void ConnectionFromClient::handle_file_return(i32 error, Optional<IPC::File> file, i32 request_id)
