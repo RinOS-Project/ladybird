@@ -37,6 +37,18 @@ public:
 
     static Optional<ConnectionFromClient&> primary_connection();
 
+    /* Product owner hook for the pre-handshake client-certificate boundary.
+     * The callback receives only the public certificate list, opaque signer
+     * capability, and authenticated request/generation tuple. It must retain
+     * any live signer session itself and return true only after key-owner
+     * admission; private-key bytes and certificate paths never cross here. */
+    using ClientCertificateOwner = bool (*)(void*, u64 request_id,
+                                            u64 connection_generation,
+                                            ByteBuffer certificate_list,
+                                            ByteBuffer signer_capability);
+    static bool set_client_certificate_owner(ClientCertificateOwner owner,
+                                              void* context);
+
     void start_revalidation_request(Badge<Request>, ByteString method, URL::URL, NonnullRefPtr<HTTP::HeaderList> request_headers, ByteBuffer request_body, HTTP::Cookie::IncludeCredentials, Core::ProxyData proxy_data);
     void request_complete(Badge<Request>, Request const&);
 

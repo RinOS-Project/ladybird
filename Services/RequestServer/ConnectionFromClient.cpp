@@ -34,6 +34,8 @@ namespace RequestServer {
 
 static ConnectionFromClient* g_primary_connection = nullptr;
 static IDAllocator s_client_ids;
+static ConnectionFromClient::ClientCertificateOwner g_client_certificate_owner = nullptr;
+static void* g_client_certificate_owner_context = nullptr;
 
 ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transport, IsPrimaryConnection is_primary_connection, ConnectionMap& connections, Optional<HTTP::DiskCache&> disk_cache)
     : IPC::ConnectionFromClient<RequestClientEndpoint, RequestServerEndpoint>(*this, move(transport), s_client_ids.allocate())
@@ -86,6 +88,19 @@ Optional<ConnectionFromClient&> ConnectionFromClient::primary_connection()
     if (g_primary_connection)
         return *g_primary_connection;
     return {};
+}
+
+bool ConnectionFromClient::set_client_certificate_owner(
+    ClientCertificateOwner owner, void* context)
+{
+    if (owner == nullptr || context == nullptr) {
+        g_client_certificate_owner = nullptr;
+        g_client_certificate_owner_context = nullptr;
+        return owner == nullptr && context == nullptr;
+    }
+    g_client_certificate_owner = owner;
+    g_client_certificate_owner_context = context;
+    return true;
 }
 
 void ConnectionFromClient::request_complete(Badge<Request>, Request const& request)
@@ -395,6 +410,17 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
         dbgln("SetCertificate: invalid client-certificate capability (request {})", request_id);
         return false;
     }
+    if (g_client_certificate_owner == nullptr ||
+        g_client_certificate_owner_context == nullptr) {
+        dbgln("SetCertificate: authenticated signer owner is unavailable (request {})", request_id);
+        return false;
+    }
+    const bool admitted = g_client_certificate_owner(
+        g_client_certificate_owner_context, request_id, connection_generation,
+        move(certificate_list), move(signer_capability));
+    if (admitted)
+        dbgln("SetCertificate: client-certificate owner admitted request {}", request_id);
+    return admitted;
 #else
     (void)connection_generation;
     (void)certificate_list;
@@ -519,6 +545,17 @@ Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::w
         dbgln("WebSocketSetCertificate: invalid client-certificate capability (websocket {})", websocket_id);
         return false;
     }
+    if (g_client_certificate_owner == nullptr ||
+        g_client_certificate_owner_context == nullptr) {
+        dbgln("WebSocketSetCertificate: authenticated signer owner is unavailable (websocket {})", websocket_id);
+        return false;
+    }
+    const bool admitted = g_client_certificate_owner(
+        g_client_certificate_owner_context, websocket_id,
+        connection_generation, move(certificate_list), move(signer_capability));
+    if (admitted)
+        dbgln("WebSocketSetCertificate: client-certificate owner admitted websocket {}", websocket_id);
+    return admitted;
 #else
     (void)connection_generation;
     (void)certificate_list;
