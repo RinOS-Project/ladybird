@@ -278,18 +278,13 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                         return output;
                     };
                     self(self, connection.destination_node_id, process(sample, 0), process(right, 1), depth + 1);
-                    }
+                    continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Analyser && connection.analyser) {
                     connection.analyser->push_frame(sample, right);
-                    for (auto const& downstream : node_connections) {
-                        if (downstream.source_node_id != connection.destination_node_id
-                            || downstream.destination_kind != AudioNodeRenderKind::Destination)
-                            continue;
-                        for (u32 channel = 0; channel < m_number_of_channels; ++channel)
-                            mixed_samples[channel] += channel == 1 ? right : sample;
-                    }
+                    self(self, connection.destination_node_id, sample, right, depth + 1);
                 }
+            }
         };
 
         for (auto const& source : buffer_sources) {
