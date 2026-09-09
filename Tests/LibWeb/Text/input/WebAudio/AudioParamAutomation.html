@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    test(() => {
+        const context = new OfflineAudioContext(1, 128, 44100);
+        const gain = context.createGain().gain;
+
+        println(`initial: ${gain.value}`);
+        gain.setValueAtTime(0.25, 0);
+        println(`set: ${gain.value}`);
+        gain.linearRampToValueAtTime(1, 1);
+        println(`linear@0.5: ${gain.valueAtTime ? gain.valueAtTime(0.5) : "scheduled"}`);
+        gain.setTargetAtTime(0.5, 1, 0.25);
+        gain.setValueCurveAtTime(new Float32Array([0.5, 0.75, 1]), 2, 1);
+        gain.cancelAndHoldAtTime(2.5);
+        println(`automation accepted: ${gain.value}`);
+
+        try {
+            gain.setValueCurveAtTime(new Float32Array([1]), 0, 1);
+            println("FAIL: one-point curve was accepted");
+        } catch (e) {
+            println(`invalid curve: ${e}`);
+        }
+    });
+</script>

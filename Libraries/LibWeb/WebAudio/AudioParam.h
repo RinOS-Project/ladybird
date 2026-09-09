@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Vector.h>
 #include <LibJS/Forward.h>
 #include <LibWeb/Bindings/AudioParamPrototype.h>
 #include <LibWeb/Bindings/PlatformObject.h>
@@ -31,6 +32,11 @@ public:
     float value() const;
     void set_value(float);
 
+    // Returns the value produced by the automation timeline at the supplied
+    // audio time.  The renderer uses this instead of reading the base value
+    // directly so scheduled events are observable by every node.
+    float value_at_time(double) const;
+
     Bindings::AutomationRate automation_rate() const;
     WebIDL::ExceptionOr<void> set_automation_rate(Bindings::AutomationRate);
 
@@ -47,21 +53,44 @@ public:
     WebIDL::ExceptionOr<GC::Ref<AudioParam>> cancel_and_hold_at_time(double cancel_time);
 
 private:
+    enum class AutomationEventType {
+        SetValue,
+        LinearRamp,
+        ExponentialRamp,
+        SetTarget,
+        SetValueCurve,
+    };
+
+    struct AutomationEvent {
+        AutomationEventType type { AutomationEventType::SetValue };
+        double time { 0 };
+        float value { 0 };
+        float start_value { 0 };
+        float time_constant { 0 };
+        double duration { 0 };
+        Vector<float> curve;
+    };
+
     AudioParam(JS::Realm&, GC::Ref<BaseAudioContext>, float default_value, float min_value, float max_value, Bindings::AutomationRate, FixedAutomationRate = FixedAutomationRate::No);
+
+    void insert_event(AutomationEvent&&);
+    float evaluate_event(AutomationEvent const&, double) const;
 
     GC::Ref<BaseAudioContext> m_context;
 
     // https://webaudio.github.io/web-audio-api/#dom-audioparam-current-value-slot
-    float m_current_value {}; //  [[current value]]
+    float m_current_value { }; //  [[current value]]
 
-    float m_default_value {};
+    float m_default_value { };
 
-    float m_min_value {};
-    float m_max_value {};
+    float m_min_value { };
+    float m_max_value { };
 
-    Bindings::AutomationRate m_automation_rate {};
+    Bindings::AutomationRate m_automation_rate { };
 
     FixedAutomationRate m_fixed_automation_rate { FixedAutomationRate::No };
+
+    Vector<AutomationEvent> m_automation_events;
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
