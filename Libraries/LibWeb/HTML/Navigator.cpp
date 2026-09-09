@@ -145,7 +145,10 @@ GC::Ref<WebXR::XRSystem> Navigator::xr()
 // https://w3c.github.io/pointerevents/#dom-navigator-maxtouchpoints
 WebIDL::Long Navigator::max_touch_points()
 {
-    dbgln("FIXME: Unimplemented Navigator.maxTouchPoints");
+    // LibWeb does not currently expose a touch-capable input device through
+    // Page's input backend. Per Pointer Events, report the number of touch
+    // contacts the user agent can support; zero is the truthful value until a
+    // platform touch owner is connected.
     return 0;
 }
 
