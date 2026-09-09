@@ -33,13 +33,8 @@ GC::Ref<WebIDL::Promise> CacheStorage::open(String const&)
 // https://w3c.github.io/ServiceWorker/#cache-storage-has
 GC::Ref<WebIDL::Promise> CacheStorage::has(String const&)
 {
-    /* Cache names are not persisted or backed by an authenticated service in
-     * RinOS yet.  Reject explicitly instead of exposing a boolean value as a
-     * failure reason, which made callers mistake an unavailable store for a
-     * cache miss. */
-    return WebIDL::create_rejected_promise(
-        realm(), WebIDL::NotSupportedError::create(
-                     realm(), "CacheStorage.has() is not yet implemented"_utf16));
+    dbgln("FIXME: CacheStorage::has() is not implemented yet");
+    return WebIDL::create_rejected_promise(realm(), JS::Value(false));
 }
 
 }
