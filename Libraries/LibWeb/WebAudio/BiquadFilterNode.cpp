@@ -82,6 +82,9 @@ WebIDL::ExceptionOr<void> BiquadFilterNode::get_frequency_response(GC::Root<WebI
         || magnitudes.viewed_array_buffer()->is_detached()
         || phases.viewed_array_buffer()->is_detached())
         return vm.throw_completion<JS::TypeError>(JS::ErrorType::DetachedArrayBuffer);
+    if (frequencies.data().size() != magnitudes.data().size()
+        || frequencies.data().size() != phases.data().size())
+        return WebIDL::IndexSizeError::create(realm(), "Frequency and response arrays must have the same length"_utf16);
 
     auto const sample_rate = context()->sample_rate();
     if (!isfinite(sample_rate) || sample_rate <= 0)

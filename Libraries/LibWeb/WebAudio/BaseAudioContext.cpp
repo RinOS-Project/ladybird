@@ -27,8 +27,182 @@
 #include <LibWeb/WebAudio/PannerNode.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 #include <LibWeb/WebIDL/Promise.h>
+#include <AK/NumericLimits.h>
+#include <math.h>
+#include <string.h>
 
 namespace Web::WebAudio {
+
+namespace {
+
+struct DecodedPcm {
+    Vector<float> samples;
+    u32 channels { 0 };
+    u32 frames { 0 };
+    u32 sample_rate { 0 };
+};
+
+static bool has_bytes(ReadonlyBytes bytes, size_t offset, size_t count)
+{
+    return offset <= bytes.size() && count <= bytes.size() - offset;
+}
+
+static u16 read_u16_le(ReadonlyBytes bytes, size_t offset)
+{
+    return static_cast<u16>(bytes[offset]) | (static_cast<u16>(bytes[offset + 1]) << 8);
+}
+
+static u32 read_u32_le(ReadonlyBytes bytes, size_t offset)
+{
+    return static_cast<u32>(bytes[offset])
+        | (static_cast<u32>(bytes[offset + 1]) << 8)
+        | (static_cast<u32>(bytes[offset + 2]) << 16)
+        | (static_cast<u32>(bytes[offset + 3]) << 24);
+}
+
+static i32 read_i24_le(ReadonlyBytes bytes, size_t offset)
+{
+    u32 value = static_cast<u32>(bytes[offset])
+        | (static_cast<u32>(bytes[offset + 1]) << 8)
+        | (static_cast<u32>(bytes[offset + 2]) << 16);
+    if (value & 0x00800000)
+        value |= 0xff000000;
+    return static_cast<i32>(value);
+}
+
+static float decode_pcm_sample(ReadonlyBytes bytes, size_t offset, u16 format, u16 bits_per_sample)
+{
+    if (format == 3 && bits_per_sample == 32) {
+        u32 bits = read_u32_le(bytes, offset);
+        float value;
+        memcpy(&value, &bits, sizeof(value));
+        return value;
+    }
+    if (format == 3 && bits_per_sample == 64) {
+        u64 bits = static_cast<u64>(read_u32_le(bytes, offset))
+            | (static_cast<u64>(read_u32_le(bytes, offset + 4)) << 32);
+        double value;
+        memcpy(&value, &bits, sizeof(value));
+        return static_cast<float>(value);
+    }
+
+    switch (bits_per_sample) {
+    case 8:
+        return (static_cast<float>(bytes[offset]) - 128.0f) / 128.0f;
+    case 16:
+        return static_cast<float>(static_cast<i16>(read_u16_le(bytes, offset))) / 32768.0f;
+    case 24:
+        return static_cast<float>(read_i24_le(bytes, offset)) / 8388608.0f;
+    case 32:
+        return static_cast<float>(static_cast<i32>(read_u32_le(bytes, offset))) / 2147483648.0f;
+    default:
+        return 0;
+    }
+}
+
+static ErrorOr<DecodedPcm> decode_wave_pcm(ReadonlyBytes bytes)
+{
+    if (!has_bytes(bytes, 0, 12) || memcmp(bytes.data(), "RIFF", 4) != 0 || memcmp(bytes.data() + 8, "WAVE", 4) != 0)
+        return Error::from_string_literal("unsupported audio container");
+
+    auto riff_size = read_u32_le(bytes, 4);
+    if (riff_size < 4 || static_cast<u64>(riff_size) + 8 > bytes.size())
+        return Error::from_string_literal("truncated RIFF container");
+
+    Optional<u16> format;
+    Optional<u16> channels;
+    Optional<u16> bits_per_sample;
+    Optional<u16> block_align;
+    Optional<u32> sample_rate;
+    ReadonlyBytes data;
+
+    size_t offset = 12;
+    auto container_end = min(bytes.size(), static_cast<size_t>(riff_size) + 8);
+    while (offset < container_end) {
+        if (!has_bytes(bytes, offset, 8) || offset + 8 > container_end)
+            return Error::from_string_literal("truncated RIFF chunk");
+        auto chunk_size = read_u32_le(bytes, offset + 4);
+        auto chunk_data = offset + 8;
+        if (chunk_size > container_end - chunk_data)
+            return Error::from_string_literal("RIFF chunk exceeds container");
+
+        if (memcmp(bytes.data() + offset, "fmt ", 4) == 0) {
+            if (format.has_value() || chunk_size < 16)
+                return Error::from_string_literal("invalid WAV format chunk");
+            auto format_tag = read_u16_le(bytes, chunk_data);
+            auto channel_count = read_u16_le(bytes, chunk_data + 2);
+            auto rate = read_u32_le(bytes, chunk_data + 4);
+            auto byte_rate = read_u32_le(bytes, chunk_data + 8);
+            auto alignment = read_u16_le(bytes, chunk_data + 12);
+            auto bits = read_u16_le(bytes, chunk_data + 14);
+
+            if (format_tag == 0xfffe) {
+                if (chunk_size < 40 || read_u16_le(bytes, chunk_data + 16) < 22)
+                    return Error::from_string_literal("invalid extensible WAV format");
+                auto subtype = read_u16_le(bytes, chunk_data + 24);
+                if (subtype != 1 && subtype != 3)
+                    return Error::from_string_literal("unsupported extensible WAV subtype");
+                format_tag = subtype;
+            }
+            if (format_tag != 1 && format_tag != 3)
+                return Error::from_string_literal("unsupported WAV encoding");
+            if (channel_count == 0 || channel_count > BaseAudioContext::MAX_NUMBER_OF_CHANNELS || rate < BaseAudioContext::MIN_SAMPLE_RATE || rate > BaseAudioContext::MAX_SAMPLE_RATE)
+                return Error::from_string_literal("WAV format is outside WebAudio limits");
+            if (format_tag == 1) {
+                if (bits != 8 && bits != 16 && bits != 24 && bits != 32)
+                    return Error::from_string_literal("unsupported PCM width");
+            } else if (bits != 32 && bits != 64) {
+                return Error::from_string_literal("unsupported float width");
+            }
+            auto bytes_per_sample = static_cast<u32>((bits + 7) / 8);
+            if (alignment != channel_count * bytes_per_sample || byte_rate != rate * alignment)
+                return Error::from_string_literal("invalid WAV block geometry");
+            format = format_tag;
+            channels = channel_count;
+            bits_per_sample = bits;
+            block_align = alignment;
+            sample_rate = rate;
+        } else if (memcmp(bytes.data() + offset, "data", 4) == 0) {
+            if (!data.is_empty())
+                return Error::from_string_literal("multiple WAV data chunks are not supported");
+            data = bytes.slice(chunk_data, chunk_size);
+        }
+
+        auto padded_size = static_cast<u64>(chunk_size) + (chunk_size & 1);
+        if (padded_size > container_end - offset - 8)
+            return Error::from_string_literal("invalid WAV chunk padding");
+        offset += 8 + padded_size;
+    }
+
+    if (!format.has_value() || !channels.has_value() || !bits_per_sample.has_value() || !block_align.has_value() || !sample_rate.has_value() || data.is_empty())
+        return Error::from_string_literal("WAV is missing format or data");
+    if (data.size() % block_align.value() != 0)
+        return Error::from_string_literal("WAV data is not frame aligned");
+
+    auto frame_count = data.size() / block_align.value();
+    if (frame_count == 0 || frame_count > NumericLimits<u32>::max())
+        return Error::from_string_literal("WAV frame count is out of range");
+
+    DecodedPcm decoded;
+    decoded.channels = channels.value();
+    decoded.frames = static_cast<u32>(frame_count);
+    decoded.sample_rate = sample_rate.value();
+    TRY(decoded.samples.try_resize(frame_count * decoded.channels));
+
+    auto bytes_per_sample = bits_per_sample.value() / 8;
+    for (u32 frame = 0; frame < decoded.frames; ++frame) {
+        for (u16 channel = 0; channel < decoded.channels; ++channel) {
+            auto sample_offset = static_cast<size_t>(frame) * block_align.value() + static_cast<size_t>(channel) * bytes_per_sample;
+            auto value = decode_pcm_sample(data, sample_offset, format.value(), bits_per_sample.value());
+            if (!isfinite(value))
+                return Error::from_string_literal("WAV contains a non-finite sample");
+            decoded.samples[static_cast<size_t>(frame) * decoded.channels + channel] = value;
+        }
+    }
+    return decoded;
+}
+
+}
 
 BaseAudioContext::BaseAudioContext(JS::Realm& realm, float sample_rate)
     : DOM::EventTarget(realm)
@@ -244,8 +418,8 @@ GC::Ref<WebIDL::Promise> BaseAudioContext::decode_audio_data(GC::Root<WebIDL::Bu
     // 2. Let promise be a new Promise.
     auto promise = WebIDL::create_promise(realm);
 
-    // FIXME: 3. If audioData is detached, execute the following steps:
-    if (true) {
+    // 3. If audioData is not detached, execute the following steps:
+    if (!WebIDL::is_buffer_source_detached(JS::Value(*audio_data->raw_object()))) {
         // 3.1. Append promise to [[pending promises]].
         m_pending_promises.append(promise);
 
@@ -281,73 +455,78 @@ GC::Ref<WebIDL::Promise> BaseAudioContext::decode_audio_data(GC::Root<WebIDL::Bu
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-baseaudiocontext-decodeaudiodata
-void BaseAudioContext::queue_a_decoding_operation(GC::Ref<JS::PromiseCapability> promise, [[maybe_unused]] GC::Root<WebIDL::BufferSource> audio_data, GC::Ptr<WebIDL::CallbackType> success_callback, GC::Ptr<WebIDL::CallbackType> error_callback)
+void BaseAudioContext::queue_a_decoding_operation(GC::Ref<JS::PromiseCapability> promise, GC::Root<WebIDL::BufferSource> audio_data, GC::Ptr<WebIDL::CallbackType> success_callback, GC::Ptr<WebIDL::CallbackType> error_callback)
 {
-    auto& realm = this->realm();
-
-    // FIXME: When queuing a decoding operation to be performed on another thread, the following steps
-    //        MUST happen on a thread that is not the control thread nor the rendering thread, called
-    //        the decoding thread.
-
-    // 1. Let can decode be a boolean flag, initially set to true.
-    auto can_decode { true };
-
-    // FIXME: 2. Attempt to determine the MIME type of audioData, using MIME Sniffing § 6.2 Matching an
-    //           audio or video type pattern. If the audio or video type pattern matching algorithm returns
-    //           undefined, set can decode to false.
-
-    // 3. If can decode is true,
-    if (can_decode) {
-        // FIXME: attempt to decode the encoded audioData into linear PCM. In case of
-        //        failure, set can decode to false.
-
-        // FIXME: If the media byte-stream contains multiple audio tracks, only decode the first track to linear pcm.
-    }
-
-    // 4. If can decode is false,
-    if (!can_decode) {
-        // queue a media element task to execute the following steps:
-        queue_a_media_element_task(GC::create_function(heap(), [this, &realm, promise, error_callback] {
-            // 4.1. Let error be a DOMException whose name is EncodingError.
-            auto error = WebIDL::EncodingError::create(realm, "Unable to decode."_utf16);
-
-            // 4.1.2. Reject promise with error, and remove it from [[pending promises]].
+    auto reject_decode = [this, promise, error_callback](auto message) {
+        queue_a_media_element_task(GC::create_function(heap(), [this, promise, error_callback, message] {
+            auto& realm = this->realm();
+            auto error = WebIDL::EncodingError::create(realm, message);
             WebIDL::reject_promise(realm, promise, error);
             m_pending_promises.remove_first_matching([&promise](auto& pending_promise) {
                 return pending_promise == promise;
             });
-
-            // 4.2. If errorCallback is not missing, invoke errorCallback with error.
             if (error_callback) {
                 auto completion = WebIDL::invoke_callback(*error_callback, {}, { { error } });
                 if (completion.is_abrupt())
                     HTML::report_exception(completion, realm);
             }
         }));
+    };
+
+    auto bytes_or_error = WebIDL::get_buffer_source_copy(*audio_data->raw_object());
+    if (bytes_or_error.is_error() || bytes_or_error.value().is_empty()) {
+        reject_decode("Audio data is detached or unavailable."_utf16);
+        return;
     }
 
-    // 5. Otherwise:
-    else {
-        // FIXME: 5.1. Take the result, representing the decoded linear PCM audio data, and resample it to the
-        //             sample-rate of the BaseAudioContext if it is different from the sample-rate of
-        //             audioData.
+    auto decoded_or_error = decode_wave_pcm(bytes_or_error.value().bytes());
+    if (decoded_or_error.is_error()) {
+        reject_decode("Only valid RIFF/WAVE PCM audio can be decoded."_utf16);
+        return;
+    }
 
-        // FIXME: 5.2. queue a media element task to execute the following steps:
+    auto decoded = decoded_or_error.release_value();
+    auto output_rate = sample_rate() == 0 ? decoded.sample_rate : static_cast<u32>(sample_rate());
+    u64 output_frames = decoded.frames;
+    if (output_rate != decoded.sample_rate)
+        output_frames = (static_cast<u64>(decoded.frames) * output_rate + decoded.sample_rate / 2) / decoded.sample_rate;
+    if (output_frames == 0 || output_frames > NumericLimits<u32>::max()) {
+        reject_decode("Decoded audio is outside the supported duration."_utf16);
+        return;
+    }
 
-        // FIXME: 5.2.1. Let buffer be an AudioBuffer containing the final result (after possibly performing
-        //               sample-rate conversion).
-        auto buffer = MUST(create_buffer(2, 1, 44100));
+    auto buffer_or_error = create_buffer(decoded.channels, static_cast<u32>(output_frames), static_cast<float>(output_rate));
+    if (buffer_or_error.is_exception()) {
+        reject_decode("Unable to allocate the decoded audio buffer."_utf16);
+        return;
+    }
+    auto buffer = buffer_or_error.release_value();
+    for (u32 channel = 0; channel < decoded.channels; ++channel) {
+        auto output_channel = MUST(buffer->get_channel_data(channel));
+        for (u32 frame = 0; frame < output_frames; ++frame) {
+            double source_position = static_cast<double>(frame) * decoded.sample_rate / output_rate;
+            source_position = min(source_position, static_cast<double>(decoded.frames - 1));
+            auto source_frame = static_cast<u32>(source_position);
+            auto next_frame = min(source_frame + 1, decoded.frames - 1);
+            auto interpolation = static_cast<float>(source_position - source_frame);
+            auto first = decoded.samples[static_cast<size_t>(source_frame) * decoded.channels + channel];
+            auto second = decoded.samples[static_cast<size_t>(next_frame) * decoded.channels + channel];
+            output_channel->data()[frame] = first + (second - first) * interpolation;
+        }
+    }
 
-        // 5.2.2. Resolve promise with buffer.
+    queue_a_media_element_task(GC::create_function(heap(), [this, promise, success_callback, buffer] {
+        auto& realm = this->realm();
         WebIDL::resolve_promise(realm, promise, buffer);
-
-        // 5.2.3. If successCallback is not missing, invoke successCallback with buffer.
+        m_pending_promises.remove_first_matching([&promise](auto& pending_promise) {
+            return pending_promise == promise;
+        });
         if (success_callback) {
             auto completion = WebIDL::invoke_callback(*success_callback, {}, { { buffer } });
             if (completion.is_abrupt())
                 HTML::report_exception(completion, realm);
         }
-    }
+    }));
 }
 
 }
