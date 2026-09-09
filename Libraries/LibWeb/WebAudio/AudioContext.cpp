@@ -17,6 +17,7 @@
 #include <LibWeb/WebAudio/AudioContext.h>
 #include <LibWeb/WebAudio/AudioDestinationNode.h>
 #include <LibWeb/WebIDL/Promise.h>
+#include <LibMedia/Audio/PlaybackStream.h>
 
 namespace Web::WebAudio {
 
@@ -184,6 +185,9 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::resume()
     // 7.2: Set the [[rendering thread state]] on the AudioContext to running.
     set_rendering_state(Bindings::AudioContextState::Running);
 
+    if (m_playback_stream)
+        (void)m_playback_stream->resume();
+
     // 7.3: Start rendering the audio graph.
     if (!start_rendering_audio_graph()) {
         // 7.4: In case of failure, queue a media element task to execute the following steps:
@@ -274,6 +278,9 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::suspend()
     // 7.2: Set the [[rendering thread state]] on the AudioContext to suspended.
     set_rendering_state(Bindings::AudioContextState::Suspended);
 
+    if (m_playback_stream)
+        (void)m_playback_stream->drain_buffer_and_suspend();
+
     // 7.3: queue a media element task to execute the following steps:
     queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
         auto& realm = this->realm();
@@ -327,6 +334,11 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::close()
     // 5.2: Set the [[rendering thread state]] to "suspended".
     set_rendering_state(Bindings::AudioContextState::Suspended);
 
+    if (m_playback_stream) {
+        (void)m_playback_stream->discard_buffer_and_suspend();
+        m_playback_stream = nullptr;
+    }
+
     // FIXME: 5.3: If this control message is being run in a reaction to the document being unloaded, abort this algorithm.
 
     // 5.4: queue a media element task to execute the following steps:
@@ -352,11 +364,40 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::close()
     return promise;
 }
 
-// FIXME: Actually implement the rendering thread
 bool AudioContext::start_rendering_audio_graph()
 {
-    bool render_result = true;
-    return render_result;
+    if (m_playback_stream) {
+        (void)m_playback_stream->resume();
+        return true;
+    }
+
+    if (m_backend_start_pending)
+        return true;
+
+    m_backend_start_pending = true;
+    GC::Ref<AudioContext> self = *this;
+    auto data_callback = [self](Span<float> buffer) -> ReadonlySpan<float> {
+        // The graph mixer is not connected yet. Keep the real device callback
+        // fed with explicit silence rather than treating an empty callback as
+        // an underrun.
+        buffer.fill(0.0f);
+        return buffer;
+    };
+    auto create_promise = Audio::PlaybackStream::create(Audio::OutputState::Suspended, 100, move(data_callback));
+    create_promise->when_resolved([self](auto& stream) {
+        self->m_backend_start_pending = false;
+        self->m_playback_stream = stream;
+        if (self->state() == Bindings::AudioContextState::Running)
+            (void)self->m_playback_stream->resume();
+    });
+    create_promise->when_rejected([self](auto&) {
+        self->m_backend_start_pending = false;
+        if (self->state() != Bindings::AudioContextState::Closed) {
+            self->set_control_state(Bindings::AudioContextState::Suspended);
+            self->set_rendering_state(Bindings::AudioContextState::Suspended);
+        }
+    });
+    return true;
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audiocontext-createmediaelementsource

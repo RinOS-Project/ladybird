@@ -7,8 +7,10 @@
 #pragma once
 
 #include <AK/Variant.h>
+#include <AK/RefPtr.h>
 #include <LibWeb/Bindings/AudioContextPrototype.h>
 #include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
+#include <LibMedia/Audio/PlaybackStream.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/MediaElementAudioSourceNode.h>
 
@@ -58,6 +60,8 @@ private:
     bool m_allowed_to_start = true;
     Vector<GC::Ref<WebIDL::Promise>> m_pending_resume_promises;
     bool m_suspended_by_user = false;
+    RefPtr<Audio::PlaybackStream> m_playback_stream;
+    bool m_backend_start_pending { false };
 
     bool start_rendering_audio_graph();
 };
