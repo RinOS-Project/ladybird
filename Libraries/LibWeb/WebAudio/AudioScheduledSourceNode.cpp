@@ -10,6 +10,7 @@
 #include <LibWeb/WebAudio/AudioScheduledSourceNode.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/ControlMessage.h>
+#include <math.h>
 
 namespace Web::WebAudio {
 
@@ -44,8 +45,8 @@ WebIDL::ExceptionOr<void> AudioScheduledSourceNode::start(double when)
     // 2. Check for any errors that must be thrown due to parameter constraints described below.
     //    If any exception is thrown during this step, abort those steps.
     //    A RangeError exception MUST be thrown if when is negative.
-    if (when < 0)
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "when must not be negative"sv };
+    if (!isfinite(when) || when < 0)
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "when must be finite and non-negative"sv };
 
     // 3. Set the internal slot [[source started]] on this AudioScheduledSourceNode to true.
     set_source_started(true);
@@ -67,8 +68,8 @@ WebIDL::ExceptionOr<void> AudioScheduledSourceNode::stop(double when)
 
     // 2. Check for any errors that must be thrown due to parameter constraints described below.
     //    A RangeError exception MUST be thrown if when is negative.
-    if (when < 0)
-        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "when must not be negative"sv };
+    if (!isfinite(when) || when < 0)
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "when must be finite and non-negative"sv };
 
     // 3. Queue a control message to stop the AudioScheduledSourceNode, including the parameter values in the message.
     context()->queue_control_message(StopSource { .node_id = node_id(), .when = when });
