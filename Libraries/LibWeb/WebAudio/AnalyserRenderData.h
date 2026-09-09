@@ -7,7 +7,8 @@
 #pragma once
 
 #include <AK/AtomicRefCounted.h>
-#include <AK/ErrorOr.h>
+#include <AK/Error.h>
+#include <AK/RefPtr.h>
 #include <AK/Vector.h>
 #include <LibThreading/Mutex.h>
 
@@ -24,8 +25,8 @@ public:
 
 private:
     explicit AnalyserRenderData(size_t frame_count)
-        : m_history(frame_count)
     {
+        m_history.resize(frame_count);
     }
 
     mutable Threading::Mutex m_mutex;

@@ -28,10 +28,10 @@ public:
 private:
     DelayRenderData(float sample_rate, size_t capacity, RefPtr<AudioParamRenderData> automation)
         : m_sample_rate(sample_rate)
-        , m_left(capacity)
-        , m_right(capacity)
         , m_automation(move(automation))
     {
+        m_left.resize(capacity);
+        m_right.resize(capacity);
         m_left.fill(0.0f);
         m_right.fill(0.0f);
     }

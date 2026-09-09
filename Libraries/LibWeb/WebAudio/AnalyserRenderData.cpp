@@ -7,6 +7,7 @@
 #include <AK/Math.h>
 #include <LibWeb/WebAudio/AnalyserRenderData.h>
 #include <errno.h>
+#include <math.h>
 
 namespace Web::WebAudio {
 
@@ -15,7 +16,7 @@ ErrorOr<NonnullRefPtr<AnalyserRenderData>> AnalyserRenderData::create(size_t fra
     if (frame_count < 32 || frame_count > 32768)
         return Error::from_errno(EINVAL);
     auto result = adopt_nonnull_ref_or_enomem(new (nothrow) AnalyserRenderData(frame_count));
-    result->m_history.fill(0.0f);
+    result.value()->m_history.fill(0.0f);
     return result;
 }
 
