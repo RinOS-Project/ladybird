@@ -288,6 +288,57 @@ ErrorOr<bool> RSA::verify(ReadonlyBytes message, ReadonlyBytes signature)
     return memcmp(recovered.data(), message.data(), message.size()) == 0;
 }
 
+ErrorOr<ByteBuffer> RSA_PKCS1_EME::encrypt(ReadonlyBytes plaintext)
+{
+    auto provider_key = TRY(rintls_make_public_key(m_public_key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    if (plaintext.size() > provider_key.modulus_len - 11u)
+        return Error::from_string_literal("RSA PKCS#1 v1.5 plaintext is too large");
+
+    auto encoded = TRY(ByteBuffer::create_zeroed(provider_key.modulus_len));
+    ScopeGuard clear_encoded = [&] { rintls_secure_zeroize(encoded.data(), encoded.size()); };
+    auto padding_length = provider_key.modulus_len - plaintext.size() - 3u;
+    if (padding_length < 8u)
+        return Error::from_string_literal("RSA PKCS#1 v1.5 padding is too short");
+    encoded[0] = 0u;
+    encoded[1] = 2u;
+    for (size_t index = 0; index < padding_length; ++index) {
+        u8 random_byte = 0u;
+        bool nonzero = false;
+        for (size_t attempt = 0; attempt < 32u; ++attempt) {
+            if (rintls_get_random(&random_byte, 1u) != 0)
+                return Error::from_string_literal("RinOS CSPRNG failed during RSA padding");
+            if (random_byte != 0u) {
+                nonzero = true;
+                break;
+            }
+        }
+        if (!nonzero)
+            return Error::from_string_literal("RinOS CSPRNG produced zero-only RSA padding");
+        encoded[2u + index] = random_byte;
+    }
+    encoded[2u + padding_length] = 0u;
+    if (!plaintext.is_empty())
+        memcpy(encoded.data() + 3u + padding_length, plaintext.data(), plaintext.size());
+    return rintls_raw_public_operation(m_public_key, encoded.bytes());
+}
+
+ErrorOr<ByteBuffer> RSA_PKCS1_EME::decrypt(ReadonlyBytes ciphertext)
+{
+    auto encoded = TRY(rintls_raw_private_operation(m_private_key, ciphertext));
+    ScopeGuard clear_encoded = [&] { rintls_secure_zeroize(encoded.data(), encoded.size()); };
+    if (encoded.size() < 11u || encoded[0] != 0u || encoded[1] != 2u)
+        return Error::from_string_literal("Malformed RSA PKCS#1 v1.5 block");
+
+    size_t separator = 2u;
+    while (separator < encoded.size() && encoded[separator] != 0u)
+        ++separator;
+    if (separator >= encoded.size() || separator < 10u)
+        return Error::from_string_literal("Malformed RSA PKCS#1 v1.5 padding");
+    return ByteBuffer::copy(encoded.data() + separator + 1u,
+                            encoded.size() - separator - 1u);
+}
+
 void RSA::import_private_key(ReadonlyBytes bytes, bool pem)
 {
     ByteBuffer decoded_bytes;

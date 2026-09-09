@@ -224,4 +224,16 @@ TEST_CASE(test_RinOS_RSA_raw_and_generic_emsa)
     EXPECT(TRY_OR_FAIL(emsa.verify("generic EMSA payload"sv.bytes(), signature.bytes())));
     EXPECT(!TRY_OR_FAIL(emsa.verify("tampered EMSA payload"sv.bytes(), signature.bytes())));
 }
+
+TEST_CASE(test_RinOS_RSA_pkcs1_eme)
+{
+    auto keypair = TRY_OR_FAIL(Crypto::PK::RSA::generate_key_pair(2048));
+    Crypto::PK::RSA_PKCS1_EME rsa(keypair);
+    auto plaintext = "PKCS#1 v1.5 encrypted payload"sv.bytes();
+    auto ciphertext = TRY_OR_FAIL(rsa.encrypt(plaintext));
+    EXPECT_EQ(ciphertext.size(), rsa.public_key().length());
+    auto recovered = TRY_OR_FAIL(rsa.decrypt(ciphertext.bytes()));
+    EXPECT_EQ(recovered.size(), plaintext.size());
+    EXPECT(memcmp(recovered.data(), plaintext.data(), plaintext.size()) == 0);
+}
 #endif

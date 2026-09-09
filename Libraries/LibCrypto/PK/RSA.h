@@ -271,6 +271,11 @@ public:
         return "RSA_PKCS1-EME";
     }
 
+#ifdef AK_OS_RINOS
+    virtual ErrorOr<ByteBuffer> encrypt(ReadonlyBytes plaintext) override;
+    virtual ErrorOr<ByteBuffer> decrypt(ReadonlyBytes ciphertext) override;
+#endif
+
 protected:
 #ifndef AK_OS_RINOS
     ErrorOr<void> configure(OpenSSL_PKEY_CTX& ctx) override;
