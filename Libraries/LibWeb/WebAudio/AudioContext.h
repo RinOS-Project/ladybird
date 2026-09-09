@@ -125,6 +125,10 @@ private:
         AudioParamID stereo_panner_param_id { 0 };
         RefPtr<DelayRenderData> delay;
         AudioParamID delay_param_id { 0 };
+        RefPtr<PannerRenderData> panner;
+        AudioParamID panner_position_x_param_id { 0 };
+        AudioParamID panner_position_y_param_id { 0 };
+        AudioParamID panner_position_z_param_id { 0 };
         RefPtr<DynamicsCompressorRenderData> compressor;
         AudioParamID compressor_threshold_param_id { 0 };
         AudioParamID compressor_knee_param_id { 0 };

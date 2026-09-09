@@ -23,7 +23,14 @@ enum class AudioNodeRenderKind : u8 {
     StereoPanner,
     Delay,
     DynamicsCompressor,
+    Panner,
     Destination,
+};
+
+enum class PannerDistanceModel : u8 {
+    Linear,
+    Inverse,
+    Exponential,
 };
 
 }

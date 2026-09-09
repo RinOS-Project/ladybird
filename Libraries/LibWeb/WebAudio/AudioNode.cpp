@@ -16,6 +16,8 @@
 #include <LibWeb/WebAudio/DynamicsCompressorNode.h>
 #include <LibWeb/WebAudio/DynamicsCompressorRenderData.h>
 #include <LibWeb/WebAudio/GainNode.h>
+#include <LibWeb/WebAudio/PannerNode.h>
+#include <LibWeb/WebAudio/PannerRenderData.h>
 #include <LibWeb/WebAudio/StereoPannerNode.h>
 
 namespace Web::WebAudio {
@@ -98,6 +100,10 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     RefPtr<AnalyserRenderData> analyser;
     RefPtr<DelayRenderData> delay;
     AudioParamID delay_param_id { 0 };
+    RefPtr<PannerRenderData> panner;
+    AudioParamID panner_position_x_param_id { 0 };
+    AudioParamID panner_position_y_param_id { 0 };
+    AudioParamID panner_position_z_param_id { 0 };
     RefPtr<DynamicsCompressorRenderData> compressor;
     AudioParamID compressor_threshold_param_id { 0 };
     AudioParamID compressor_knee_param_id { 0 };
@@ -183,6 +189,28 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
             compressor_node.threshold()->value(), compressor_node.knee()->value(), compressor_node.ratio()->value(),
             compressor_node.attack()->value(), compressor_node.release()->value(), move(threshold_automation),
             move(knee_automation), move(ratio_automation), move(attack_automation), move(release_automation)));
+    } else if (is<PannerNode>(*destination_node)) {
+        destination_kind = AudioNodeRenderKind::Panner;
+        auto const& panner_node = as<PannerNode>(*destination_node);
+        PannerDistanceModel distance_model;
+        switch (panner_node.distance_model()) {
+        case Bindings::DistanceModelType::Linear:
+            distance_model = PannerDistanceModel::Linear;
+            break;
+        case Bindings::DistanceModelType::Inverse:
+            distance_model = PannerDistanceModel::Inverse;
+            break;
+        case Bindings::DistanceModelType::Exponential:
+            distance_model = PannerDistanceModel::Exponential;
+            break;
+        }
+        auto position_x = TRY(panner_node.position_x()->create_render_data());
+        auto position_y = TRY(panner_node.position_y()->create_render_data());
+        auto position_z = TRY(panner_node.position_z()->create_render_data());
+        panner_position_x_param_id = panner_node.position_x()->param_id();
+        panner_position_y_param_id = panner_node.position_y()->param_id();
+        panner_position_z_param_id = panner_node.position_z()->param_id();
+        panner = TRY(PannerRenderData::create(distance_model, panner_node.ref_distance(), panner_node.max_distance(), panner_node.rolloff_factor(), move(position_x), move(position_y), move(position_z)));
     } else if (is<AudioDestinationNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Destination;
     }
@@ -202,6 +230,10 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         .stereo_panner_param_id = stereo_panner_param_id,
         .delay = move(delay),
         .delay_param_id = delay_param_id,
+        .panner = move(panner),
+        .panner_position_x_param_id = panner_position_x_param_id,
+        .panner_position_y_param_id = panner_position_y_param_id,
+        .panner_position_z_param_id = panner_position_z_param_id,
         .compressor = move(compressor),
         .compressor_threshold_param_id = compressor_threshold_param_id,
         .compressor_knee_param_id = compressor_knee_param_id,

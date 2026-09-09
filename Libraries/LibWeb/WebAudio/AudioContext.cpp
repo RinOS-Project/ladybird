@@ -542,6 +542,10 @@ void AudioContext::render_audio(Span<float> buffer)
                     .stereo_panner_param_id = connect.stereo_panner_param_id,
                     .delay = connect.delay,
                     .delay_param_id = connect.delay_param_id,
+                    .panner = connect.panner,
+                    .panner_position_x_param_id = connect.panner_position_x_param_id,
+                    .panner_position_y_param_id = connect.panner_position_y_param_id,
+                    .panner_position_z_param_id = connect.panner_position_z_param_id,
                     .compressor = connect.compressor,
                     .compressor_threshold_param_id = connect.compressor_threshold_param_id,
                     .compressor_knee_param_id = connect.compressor_knee_param_id,
@@ -590,6 +594,14 @@ void AudioContext::render_audio(Span<float> buffer)
                         connection.stereo_panner_automation = update.render_data;
                     if (connection.delay && connection.delay_param_id == update.param_id)
                         connection.delay->update_automation(update.render_data);
+                    if (connection.panner) {
+                        if (connection.panner_position_x_param_id == update.param_id)
+                            connection.panner->update_position_x(update.render_data);
+                        if (connection.panner_position_y_param_id == update.param_id)
+                            connection.panner->update_position_y(update.render_data);
+                        if (connection.panner_position_z_param_id == update.param_id)
+                            connection.panner->update_position_z(update.render_data);
+                    }
                     if (connection.compressor) {
                         if (connection.compressor_threshold_param_id == update.param_id)
                             connection.compressor->update_threshold_automation(update.render_data);
@@ -661,6 +673,11 @@ void AudioContext::render_audio(Span<float> buffer)
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Delay && connection.delay) {
                     connection.delay->process(source_left, source_right, now);
+                    self(self, connection.destination_node_id, source_left, source_right, depth + 1);
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::Panner && connection.panner) {
+                    connection.panner->process(source_left, source_right, now);
                     self(self, connection.destination_node_id, source_left, source_right, depth + 1);
                     continue;
                 }

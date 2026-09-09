@@ -1121,6 +1121,7 @@ set(SOURCES
     WebAudio/AudioParamRenderData.cpp
     WebAudio/BiquadFilterRenderData.cpp
     WebAudio/PeriodicWaveRenderData.cpp
+    WebAudio/PannerRenderData.cpp
     WebAudio/AudioBufferSourceNode.cpp
     WebAudio/AudioContext.cpp
     WebAudio/AudioDestinationNode.cpp

@@ -42,6 +42,7 @@ public:
 
     WebIDL::UnsignedLong number_of_inputs() override { return 1; }
     WebIDL::UnsignedLong number_of_outputs() override { return 1; }
+    AudioNodeRenderKind render_kind() const override { return AudioNodeRenderKind::Panner; }
 
     GC::Ref<AudioParam const> position_x() const { return m_position_x; }
     GC::Ref<AudioParam const> position_y() const { return m_position_y; }
