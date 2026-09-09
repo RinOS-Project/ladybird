@@ -407,8 +407,8 @@ GC::Ptr<Geometry::DOMMatrix> SVGGraphicsElement::get_screen_ctm()
     if (!owner_paintable)
         return matrix;
     auto origin = owner_paintable->absolute_rect().location();
-    matrix->set_e(matrix->e() + origin.x());
-    matrix->set_f(matrix->f() + origin.y());
+    matrix->set_e(matrix->e() + origin.x().to_double());
+    matrix->set_f(matrix->f() + origin.y().to_double());
     return matrix;
 }
 
