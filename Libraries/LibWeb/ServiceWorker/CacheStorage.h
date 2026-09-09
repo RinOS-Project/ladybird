@@ -10,6 +10,10 @@
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/WebIDL/Promise.h>
 
+namespace Web {
+class Page;
+}
+
 namespace Web::StorageAPI {
 class StorageBottle;
 }

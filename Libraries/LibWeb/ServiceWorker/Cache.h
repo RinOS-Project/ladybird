@@ -13,6 +13,10 @@
 #include <LibWeb/StorageAPI/StorageBottle.h>
 #include <LibWeb/WebIDL/Promise.h>
 
+namespace Web {
+class Page;
+}
+
 namespace Web::ServiceWorker {
 
 // https://w3c.github.io/ServiceWorker/#cache-interface
