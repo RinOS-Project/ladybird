@@ -284,6 +284,12 @@ void HTMLTrackElement::inserted()
 
 void HTMLTrackElement::removed_from(DOM::Node* old_parent, DOM::Node& old_root)
 {
+    if (m_loading && m_fetch_controller) {
+        m_loading = false;
+        ++m_fetch_generation;
+        m_fetch_controller->abort(realm(), {});
+    }
+
     if (is<HTMLMediaElement>(old_parent))
         as<HTMLMediaElement>(old_parent)->remove_text_track_element(*m_track);
 
@@ -328,6 +334,7 @@ void HTMLTrackElement::set_track_url(String track_url)
     // https://html.spec.whatwg.org/multipage/media.html#start-the-track-processing-model
     if (m_loading && m_fetch_controller && track_is_hidden_or_showing) {
         m_loading = false;
+        ++m_fetch_generation;
         m_fetch_controller->abort(realm(), {});
     }
 
@@ -370,6 +377,8 @@ void HTMLTrackElement::start_the_track_processing_model_parallel_steps()
 {
     auto& realm = this->realm();
 
+    auto fetch_generation = ++m_fetch_generation;
+
     // 5. Top: Await a stable state. The synchronous section consists of the following steps.
 
     // 6. ⌛ Set the text track readiness state to loading.
@@ -402,37 +411,39 @@ void HTMLTrackElement::start_the_track_processing_model_parallel_steps()
         request->set_initiator_type(Fetch::Infrastructure::Request::InitiatorType::Track);
 
         Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
-        fetch_algorithms_input.process_response_consume_body = [this, &realm](auto response, auto body_bytes) {
+        fetch_algorithms_input.process_response_consume_body = [this, &realm, fetch_generation](auto response, auto body_bytes) {
+            if (fetch_generation != m_fetch_generation)
+                return;
             m_loading = false;
 
             // If fetching fails for any reason (network error, the server returns an error code, CORS fails, etc.),
             // or if URL is the empty string, then queue an element task on the DOM manipulation task source given the media element
             // to first change the text track readiness state to failed to load and then fire an event named error at the track element.
             if (!response->url().has_value() || body_bytes.template has<Empty>() || body_bytes.template has<Fetch::Infrastructure::FetchAlgorithms::ConsumeBodyFailureTag>() || !Fetch::Infrastructure::is_ok_status(response->status()) || response->is_network_error()) {
-                track_failed_to_load();
+                track_failed_to_load(fetch_generation);
                 return;
             }
 
             auto* bytes = body_bytes.template get_pointer<ByteBuffer>();
             if (!bytes || bytes->size() > 4 * 1024 * 1024) {
-                track_failed_to_load();
+                track_failed_to_load(fetch_generation);
                 return;
             }
 
             auto decoder = TextCodec::decoder_for("UTF-8"sv);
             if (!decoder.has_value()) {
-                track_failed_to_load();
+                track_failed_to_load(fetch_generation);
                 return;
             }
             auto source_text = TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, *bytes);
             if (source_text.is_error()) {
-                track_failed_to_load();
+                track_failed_to_load(fetch_generation);
                 return;
             }
 
             auto parsed_cues = parse_webvtt(source_text.release_value());
             if (parsed_cues.is_error()) {
-                track_failed_to_load();
+                track_failed_to_load(fetch_generation);
                 return;
             }
 
@@ -442,12 +453,12 @@ void HTMLTrackElement::start_the_track_processing_model_parallel_steps()
             for (auto const& parsed : parsed_cues.value()) {
                 auto cue = WebVTT::VTTCue::construct_impl(realm, parsed.start_time, parsed.end_time, parsed.text);
                 if (cue.is_error()) {
-                    track_failed_to_load();
+                    track_failed_to_load(fetch_generation);
                     return;
                 }
                 cue.value()->set_id(parsed.id);
                 if (new_cues.try_append(cue.release_value()).is_error()) {
-                    track_failed_to_load();
+                    track_failed_to_load(fetch_generation);
                     return;
                 }
             }
@@ -455,12 +466,14 @@ void HTMLTrackElement::start_the_track_processing_model_parallel_steps()
             m_track->clear_cues();
             for (auto cue : new_cues) {
                 if (m_track->add_cue(cue).is_error()) {
-                    track_failed_to_load();
+                    track_failed_to_load(fetch_generation);
                     return;
                 }
             }
 
-            queue_an_element_task(Task::Source::Networking, [this, &realm]() {
+            queue_an_element_task(Task::Source::Networking, [this, &realm, fetch_generation]() {
+                if (fetch_generation != m_fetch_generation)
+                    return;
                 m_track->set_readiness_state(TextTrack::ReadinessState::Loaded);
                 dispatch_event(DOM::Event::create(realm, HTML::EventNames::load));
             });
@@ -493,9 +506,11 @@ void HTMLTrackElement::track_became_ready()
     m_awaiting_track_url_change = true;
 }
 
-void HTMLTrackElement::track_failed_to_load()
+void HTMLTrackElement::track_failed_to_load(Optional<u64> fetch_generation)
 {
-    queue_an_element_task(Task::Source::DOMManipulation, [this]() {
+    queue_an_element_task(Task::Source::DOMManipulation, [this, fetch_generation]() {
+        if (fetch_generation.has_value() && fetch_generation.value() != m_fetch_generation)
+            return;
         auto& realm = this->realm();
 
         m_track->set_readiness_state(TextTrack::ReadinessState::FailedToLoad);

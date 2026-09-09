@@ -36,7 +36,7 @@ private:
     void start_the_track_processing_model_parallel_steps();
 
     void track_became_ready();
-    void track_failed_to_load();
+    void track_failed_to_load(Optional<u64> fetch_generation = {});
 
     // ^DOM::Element
     virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
@@ -52,6 +52,7 @@ private:
     GC::Ptr<Fetch::Infrastructure::FetchAlgorithms> m_fetch_algorithms;
     GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
 
+    u64 m_fetch_generation { 0 };
     bool m_loading { false };
     bool m_awaiting_track_url_change { false };
 };
