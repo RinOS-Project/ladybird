@@ -1,4 +1,5 @@
 #import <DOM/EventTarget.idl>
+#import <HTML/TextTrackCueList.idl>
 
 // https://html.spec.whatwg.org/multipage/media.html#texttrackmode
 enum TextTrackMode { "disabled",  "hidden",  "showing" };
@@ -18,11 +19,11 @@ interface TextTrack : EventTarget {
 
     attribute TextTrackMode mode;
 
-    [FIXME] readonly attribute TextTrackCueList? cues;
-    [FIXME] readonly attribute TextTrackCueList? activeCues;
+    [SameObject] readonly attribute TextTrackCueList cues;
+    [SameObject] readonly attribute TextTrackCueList activeCues;
 
-    [FIXME] undefined addCue(TextTrackCue cue);
-    [FIXME] undefined removeCue(TextTrackCue cue);
+    undefined addCue(TextTrackCue cue);
+    undefined removeCue(TextTrackCue cue);
 
     attribute EventHandler oncuechange;
 };
