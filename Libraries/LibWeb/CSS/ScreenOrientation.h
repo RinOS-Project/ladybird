@@ -13,12 +13,14 @@
 
 namespace Web::CSS {
 
+class Screen;
+
 class ScreenOrientation final : public DOM::EventTarget {
     WEB_PLATFORM_OBJECT(ScreenOrientation, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(ScreenOrientation);
 
 public:
-    [[nodiscard]] static GC::Ref<ScreenOrientation> create(JS::Realm&);
+    [[nodiscard]] static GC::Ref<ScreenOrientation> create(Screen&);
 
     WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> lock(Bindings::OrientationLockType);
     void unlock();
@@ -29,9 +31,12 @@ public:
     GC::Ptr<WebIDL::CallbackType> onchange();
 
 private:
-    explicit ScreenOrientation(JS::Realm&);
+    explicit ScreenOrientation(Screen&);
 
     virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    GC::Ref<Screen> m_screen;
 };
 
 }

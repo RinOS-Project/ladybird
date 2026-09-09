@@ -7,14 +7,16 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/ScreenOrientationPrototype.h>
 #include <LibWeb/CSS/ScreenOrientation.h>
+#include <LibWeb/CSS/Screen.h>
 #include <LibWeb/HTML/EventNames.h>
 
 namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(ScreenOrientation);
 
-ScreenOrientation::ScreenOrientation(JS::Realm& realm)
-    : DOM::EventTarget(realm)
+ScreenOrientation::ScreenOrientation(Screen& screen)
+    : DOM::EventTarget(screen.realm())
+    , m_screen(screen)
 {
 }
 
@@ -24,9 +26,15 @@ void ScreenOrientation::initialize(JS::Realm& realm)
     Base::initialize(realm);
 }
 
-GC::Ref<ScreenOrientation> ScreenOrientation::create(JS::Realm& realm)
+GC::Ref<ScreenOrientation> ScreenOrientation::create(Screen& screen)
 {
-    return realm.create<ScreenOrientation>(realm);
+    return screen.realm().create<ScreenOrientation>(screen);
+}
+
+void ScreenOrientation::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_screen);
 }
 
 // https://w3c.github.io/screen-orientation/#lock-method
@@ -38,20 +46,29 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> ScreenOrientation::lock(Bindings::
 // https://w3c.github.io/screen-orientation/#unlock-method
 void ScreenOrientation::unlock()
 {
-    dbgln("FIXME: Stubbed ScreenOrientation::unlock()");
+    // The lock() operation remains unavailable until a platform orientation
+    // owner is connected. There is therefore no pending lock to cancel here;
+    // unlock() is intentionally an idempotent no-op.
 }
 
 // https://w3c.github.io/screen-orientation/#type-attribute
 Bindings::OrientationType ScreenOrientation::type() const
 {
-    dbgln("FIXME: Stubbed ScreenOrientation::type()");
+    // The Web-exposed screen area is the only orientation source currently
+    // available to LibWeb. Without a rotation sensor, the primary orientation
+    // is derived from its bounded CSS dimensions.
+    auto width = m_screen->width();
+    auto height = m_screen->height();
+    if (height > width)
+        return Bindings::OrientationType::PortraitPrimary;
     return Bindings::OrientationType::LandscapePrimary;
 }
 
 // https://w3c.github.io/screen-orientation/#angle-attribute
 WebIDL::UnsignedShort ScreenOrientation::angle() const
 {
-    dbgln("FIXME: Stubbed ScreenOrientation::angle()");
+    // No platform rotation sensor is connected yet. A primary orientation is
+    // therefore always exposed with the spec-defined zero-degree angle.
     return 0;
 }
 

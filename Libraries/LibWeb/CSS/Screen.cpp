@@ -88,7 +88,7 @@ u32 Screen::pixel_depth() const
 GC::Ref<ScreenOrientation> Screen::orientation()
 {
     if (!m_orientation)
-        m_orientation = ScreenOrientation::create(realm());
+        m_orientation = ScreenOrientation::create(*this);
     return *m_orientation;
 }
 
