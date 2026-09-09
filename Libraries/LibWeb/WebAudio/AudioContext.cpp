@@ -13,6 +13,7 @@
 #include <LibWeb/HTML/MessagePort.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/WebAudio/AudioContext.h>
 #include <LibWeb/WebAudio/AudioDestinationNode.h>
 #include <LibWeb/WebIDL/Promise.h>
@@ -134,8 +135,14 @@ void AudioContext::visit_edges(Cell::Visitor& visitor)
 // https://www.w3.org/TR/webaudio/#dom-audiocontext-getoutputtimestamp
 AudioTimestamp AudioContext::get_output_timestamp()
 {
-    dbgln("(STUBBED) getOutputTimestamp()");
-    return {};
+    // The rendering backend currently advances the context clock directly. Use
+    // the same monotonic clock exposed to the owning global for the
+    // corresponding performance timestamp; this keeps both values finite and
+    // prevents an unbound zero timestamp from masquerading as output progress.
+    return {
+        .context_time = current_time(),
+        .performance_time = HighResolutionTime::current_high_resolution_time(realm().global_object()),
+    };
 }
 
 // https://www.w3.org/TR/webaudio/#dom-audiocontext-resume
