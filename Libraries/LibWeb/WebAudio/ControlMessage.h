@@ -11,6 +11,7 @@
 #include <AK/Variant.h>
 #include <LibWeb/WebAudio/AudioBufferRenderData.h>
 #include <LibWeb/WebAudio/AudioParamRenderData.h>
+#include <LibWeb/WebAudio/BiquadFilterRenderData.h>
 #include <LibWeb/WebAudio/Types.h>
 
 namespace Web::WebAudio {
@@ -62,6 +63,7 @@ struct ConnectNode {
     NodeID destination_node_id { 0 };
     AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
     RefPtr<AudioParamRenderData> gain_automation;
+    RefPtr<BiquadFilterRenderData> biquad;
 };
 
 struct DisconnectNode {

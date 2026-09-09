@@ -9,6 +9,7 @@
 #include <LibWeb/WebAudio/AudioDestinationNode.h>
 #include <LibWeb/WebAudio/AudioNode.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
+#include <LibWeb/WebAudio/BiquadFilterNode.h>
 #include <LibWeb/WebAudio/ControlMessage.h>
 #include <LibWeb/WebAudio/GainNode.h>
 
@@ -88,10 +89,47 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     destination_node->m_input_connections.append(input_connection);
 
     RefPtr<AudioParamRenderData> gain_automation;
+    RefPtr<BiquadFilterRenderData> biquad;
     auto destination_kind = AudioNodeRenderKind::Unknown;
     if (is<GainNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Gain;
         gain_automation = TRY(as<GainNode>(*destination_node).gain()->create_render_data());
+    } else if (is<BiquadFilterNode>(*destination_node)) {
+        destination_kind = AudioNodeRenderKind::Biquad;
+        auto const& filter = as<BiquadFilterNode>(*destination_node);
+        BiquadFilterKind filter_kind;
+        switch (filter.type()) {
+        case Bindings::BiquadFilterType::Lowpass:
+            filter_kind = BiquadFilterKind::Lowpass;
+            break;
+        case Bindings::BiquadFilterType::Highpass:
+            filter_kind = BiquadFilterKind::Highpass;
+            break;
+        case Bindings::BiquadFilterType::Bandpass:
+            filter_kind = BiquadFilterKind::Bandpass;
+            break;
+        case Bindings::BiquadFilterType::Notch:
+            filter_kind = BiquadFilterKind::Notch;
+            break;
+        case Bindings::BiquadFilterType::Allpass:
+            filter_kind = BiquadFilterKind::Allpass;
+            break;
+        case Bindings::BiquadFilterType::Peaking:
+            filter_kind = BiquadFilterKind::Peaking;
+            break;
+        case Bindings::BiquadFilterType::Lowshelf:
+            filter_kind = BiquadFilterKind::Lowshelf;
+            break;
+        case Bindings::BiquadFilterType::Highshelf:
+            filter_kind = BiquadFilterKind::Highshelf;
+            break;
+        }
+        auto frequency_automation = TRY(filter.frequency()->create_render_data());
+        auto detune_automation = TRY(filter.detune()->create_render_data());
+        auto q_automation = TRY(filter.q()->create_render_data());
+        auto gain_automation_for_filter = TRY(filter.gain()->create_render_data());
+        biquad = TRY(BiquadFilterRenderData::create(filter_kind, filter.frequency()->value(), filter.detune()->value(), filter.q()->value(), filter.gain()->value(),
+            move(frequency_automation), move(detune_automation), move(q_automation), move(gain_automation_for_filter)));
     } else if (is<AudioDestinationNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Destination;
     }
@@ -100,6 +138,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         .destination_node_id = destination_node->node_id(),
         .destination_kind = destination_kind,
         .gain_automation = move(gain_automation),
+        .biquad = move(biquad),
     });
 
     return destination_node;

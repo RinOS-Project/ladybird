@@ -160,6 +160,11 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         NodeID destination_node_id { 0 };
         AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
         RefPtr<AudioParamRenderData> gain_automation;
+        RefPtr<BiquadFilterRenderData> biquad;
+        float x1[2] { 0, 0 };
+        float x2[2] { 0, 0 };
+        float y1[2] { 0, 0 };
+        float y2[2] { 0, 0 };
     };
 
     Vector<OfflineBufferSource> buffer_sources;
@@ -217,6 +222,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .destination_node_id = connect.destination_node_id,
                     .destination_kind = connect.destination_kind,
                     .gain_automation = connect.gain_automation,
+                    .biquad = connect.biquad,
                 });
             },
             [&](DisconnectNode const& disconnect) {
@@ -240,7 +246,18 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
 
         auto mix_source = [&](NodeID source_node_id, float sample, Optional<float> right_sample = {}) {
             auto right = right_sample.value_or(sample);
-            for (auto const& connection : node_connections) {
+            auto process_biquad = [&](OfflineNodeConnection& connection, float input, u32 channel) {
+                auto coefficients = connection.biquad->coefficients_at_time(now, static_cast<float>(output_rate));
+                auto output = coefficients.b0 * input + coefficients.b1 * connection.x1[channel] + coefficients.b2 * connection.x2[channel]
+                    - coefficients.a1 * connection.y1[channel] - coefficients.a2 * connection.y2[channel];
+                connection.x2[channel] = connection.x1[channel];
+                connection.x1[channel] = input;
+                connection.y2[channel] = connection.y1[channel];
+                connection.y1[channel] = output;
+                return output;
+            };
+
+            for (auto& connection : node_connections) {
                 if (connection.source_node_id != source_node_id)
                     continue;
                 if (connection.destination_kind == AudioNodeRenderKind::Destination) {
@@ -258,6 +275,17 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                             continue;
                         for (u32 channel = 0; channel < m_number_of_channels; ++channel)
                             mixed_samples[channel] += (channel == 1 ? right : sample) * gain;
+                    }
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::Biquad && connection.biquad) {
+                    for (auto const& downstream : node_connections) {
+                        if (downstream.source_node_id != connection.destination_node_id
+                            || downstream.destination_kind != AudioNodeRenderKind::Destination)
+                            continue;
+                        auto filtered_left = process_biquad(connection, sample, 0);
+                        auto filtered_right = process_biquad(connection, right, 1);
+                        for (u32 channel = 0; channel < m_number_of_channels; ++channel)
+                            mixed_samples[channel] += channel == 1 ? filtered_right : filtered_left;
                     }
                 }
             }

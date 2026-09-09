@@ -505,6 +505,7 @@ void AudioContext::render_audio(Span<float> buffer)
                     .destination_node_id = connect.destination_node_id,
                     .destination_kind = connect.destination_kind,
                     .gain_automation = connect.gain_automation,
+                    .biquad = connect.biquad,
                 });
             },
             [&](DisconnectNode const& disconnect) {
@@ -523,7 +524,18 @@ void AudioContext::render_audio(Span<float> buffer)
         auto right = 0.0f;
 
         auto mix_source = [&](NodeID source_node_id, float source_left, float source_right) {
-            for (auto const& connection : m_node_connections) {
+            auto process_biquad = [&](NodeConnection& connection, float input, u32 channel) {
+                auto coefficients = connection.biquad->coefficients_at_time(now, static_cast<float>(output_rate));
+                auto output = coefficients.b0 * input + coefficients.b1 * connection.x1[channel] + coefficients.b2 * connection.x2[channel]
+                    - coefficients.a1 * connection.y1[channel] - coefficients.a2 * connection.y2[channel];
+                connection.x2[channel] = connection.x1[channel];
+                connection.x1[channel] = input;
+                connection.y2[channel] = connection.y1[channel];
+                connection.y1[channel] = output;
+                return output;
+            };
+
+            for (auto& connection : m_node_connections) {
                 if (connection.source_node_id != source_node_id)
                     continue;
                 if (connection.destination_kind == AudioNodeRenderKind::Destination) {
@@ -541,6 +553,15 @@ void AudioContext::render_audio(Span<float> buffer)
                             continue;
                         left += source_left * gain;
                         right += source_right * gain;
+                    }
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::Biquad && connection.biquad) {
+                    for (auto const& downstream : m_node_connections) {
+                        if (downstream.source_node_id != connection.destination_node_id
+                            || downstream.destination_kind != AudioNodeRenderKind::Destination)
+                            continue;
+                        left += process_biquad(connection, source_left, 0);
+                        right += process_biquad(connection, source_right, 1);
                     }
                 }
             }

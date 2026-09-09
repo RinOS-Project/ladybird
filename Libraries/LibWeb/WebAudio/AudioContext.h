@@ -97,6 +97,11 @@ private:
         NodeID destination_node_id { 0 };
         AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
         RefPtr<AudioParamRenderData> gain_automation;
+        RefPtr<BiquadFilterRenderData> biquad;
+        float x1[2] { 0, 0 };
+        float x2[2] { 0, 0 };
+        float y1[2] { 0, 0 };
+        float y2[2] { 0, 0 };
     };
     Vector<ActiveAudioSource> m_active_audio_sources;
     Vector<ActiveOscillator> m_active_oscillators;
