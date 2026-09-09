@@ -180,6 +180,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         AudioParamID biquad_q_param_id { 0 };
         AudioParamID biquad_gain_param_id { 0 };
         RefPtr<AnalyserRenderData> analyser;
+        RefPtr<AudioParamRenderData> stereo_panner_automation;
+        AudioParamID stereo_panner_param_id { 0 };
         float x1[2] { 0, 0 };
         float x2[2] { 0, 0 };
         float y1[2] { 0, 0 };
@@ -275,6 +277,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .biquad_q_param_id = connect.biquad_q_param_id,
                     .biquad_gain_param_id = connect.biquad_gain_param_id,
                     .analyser = connect.analyser,
+                    .stereo_panner_automation = connect.stereo_panner_automation,
+                    .stereo_panner_param_id = connect.stereo_panner_param_id,
                 });
             },
             [&](DisconnectNode const& disconnect) {
@@ -313,6 +317,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                         if (connection.biquad_gain_param_id == update.param_id)
                             connection.biquad->update_gain_automation(update.render_data);
                     }
+                    if (connection.stereo_panner_param_id == update.param_id)
+                        connection.stereo_panner_automation = update.render_data;
                 }
             });
     }
@@ -363,6 +369,16 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 if (connection.destination_kind == AudioNodeRenderKind::Analyser && connection.analyser) {
                     connection.analyser->push_frame(sample, right);
                     self(self, connection.destination_node_id, sample, right, depth + 1);
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::StereoPanner) {
+                    auto pan = connection.stereo_panner_automation ? connection.stereo_panner_automation->value_at_time(now) : 0.0f;
+                    if (!isfinite(pan))
+                        continue;
+                    pan = clamp(pan, -1.0f, 1.0f);
+                    auto angle = (static_cast<double>(pan) + 1.0) * AK::Pi<double> / 4.0;
+                    auto mono = (sample + right) * 0.5f;
+                    self(self, connection.destination_node_id, mono * static_cast<float>(cos(angle)), mono * static_cast<float>(sin(angle)), depth + 1);
                 }
             }
         };

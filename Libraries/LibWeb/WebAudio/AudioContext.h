@@ -119,6 +119,8 @@ private:
         AudioParamID biquad_q_param_id { 0 };
         AudioParamID biquad_gain_param_id { 0 };
         RefPtr<AnalyserRenderData> analyser;
+        RefPtr<AudioParamRenderData> stereo_panner_automation;
+        AudioParamID stereo_panner_param_id { 0 };
         float x1[2] { 0, 0 };
         float x2[2] { 0, 0 };
         float y1[2] { 0, 0 };

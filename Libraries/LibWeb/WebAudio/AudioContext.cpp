@@ -538,6 +538,8 @@ void AudioContext::render_audio(Span<float> buffer)
                     .biquad_q_param_id = connect.biquad_q_param_id,
                     .biquad_gain_param_id = connect.biquad_gain_param_id,
                     .analyser = connect.analyser,
+                    .stereo_panner_automation = connect.stereo_panner_automation,
+                    .stereo_panner_param_id = connect.stereo_panner_param_id,
                 });
             },
             [&](DisconnectNode const& disconnect) {
@@ -576,6 +578,8 @@ void AudioContext::render_audio(Span<float> buffer)
                         if (connection.biquad_gain_param_id == update.param_id)
                             connection.biquad->update_gain_automation(update.render_data);
                     }
+                    if (connection.stereo_panner_param_id == update.param_id)
+                        connection.stereo_panner_automation = update.render_data;
                 }
             });
     }
@@ -621,6 +625,16 @@ void AudioContext::render_audio(Span<float> buffer)
                 if (connection.destination_kind == AudioNodeRenderKind::Analyser && connection.analyser) {
                     connection.analyser->push_frame(source_left, source_right);
                     self(self, connection.destination_node_id, source_left, source_right, depth + 1);
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::StereoPanner) {
+                    auto pan = connection.stereo_panner_automation ? connection.stereo_panner_automation->value_at_time(now) : 0.0f;
+                    if (!isfinite(pan))
+                        continue;
+                    pan = clamp(pan, -1.0f, 1.0f);
+                    auto angle = (static_cast<double>(pan) + 1.0) * AK::Pi<double> / 4.0;
+                    auto mono = (source_left + source_right) * 0.5f;
+                    self(self, connection.destination_node_id, mono * static_cast<float>(cos(angle)), mono * static_cast<float>(sin(angle)), depth + 1);
                 }
             }
         };

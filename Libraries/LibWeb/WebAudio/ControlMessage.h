@@ -91,6 +91,8 @@ struct ConnectNode {
     AudioParamID biquad_q_param_id { 0 };
     AudioParamID biquad_gain_param_id { 0 };
     RefPtr<AnalyserRenderData> analyser;
+    RefPtr<AudioParamRenderData> stereo_panner_automation;
+    AudioParamID stereo_panner_param_id { 0 };
 };
 
 struct UpdateAudioParam {

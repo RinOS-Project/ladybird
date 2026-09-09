@@ -13,6 +13,7 @@
 #include <LibWeb/WebAudio/BiquadFilterNode.h>
 #include <LibWeb/WebAudio/ControlMessage.h>
 #include <LibWeb/WebAudio/GainNode.h>
+#include <LibWeb/WebAudio/StereoPannerNode.h>
 
 namespace Web::WebAudio {
 
@@ -92,6 +93,8 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     AudioParamID biquad_q_param_id { 0 };
     AudioParamID biquad_gain_param_id { 0 };
     RefPtr<AnalyserRenderData> analyser;
+    RefPtr<AudioParamRenderData> stereo_panner_automation;
+    AudioParamID stereo_panner_param_id { 0 };
     auto destination_kind = AudioNodeRenderKind::Unknown;
     if (is<GainNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Gain;
@@ -141,6 +144,11 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     } else if (is<AnalyserNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Analyser;
         analyser = TRY(as<AnalyserNode>(*destination_node).ensure_render_data());
+    } else if (is<StereoPannerNode>(*destination_node)) {
+        destination_kind = AudioNodeRenderKind::StereoPanner;
+        auto pan = as<StereoPannerNode>(*destination_node).pan();
+        stereo_panner_automation = TRY(pan->create_render_data());
+        stereo_panner_param_id = pan->param_id();
     } else if (is<AudioDestinationNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Destination;
     }
@@ -156,6 +164,8 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         .biquad_q_param_id = biquad_q_param_id,
         .biquad_gain_param_id = biquad_gain_param_id,
         .analyser = move(analyser),
+        .stereo_panner_automation = move(stereo_panner_automation),
+        .stereo_panner_param_id = stereo_panner_param_id,
     });
 
     // Publish the JS graph only after all render-side snapshots were built.

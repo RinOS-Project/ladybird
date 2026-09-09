@@ -20,6 +20,7 @@ enum class AudioNodeRenderKind : u8 {
     Gain,
     Biquad,
     Analyser,
+    StereoPanner,
     Destination,
 };
 
