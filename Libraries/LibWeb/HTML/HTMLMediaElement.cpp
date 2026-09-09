@@ -399,6 +399,20 @@ void HTMLMediaElement::text_track_cues_changed()
     time_marches_on(TimeMarchesOnReason::Other);
 }
 
+void HTMLMediaElement::text_track_cue_removed(TextTrack& track, GC::Ref<TextTrackCue> cue)
+{
+    if (!cue->is_active())
+        return;
+
+    cue->set_active(false);
+    queue_a_media_element_task(GC::weak_callback(*cue, [](auto& cue) {
+        cue.dispatch_event(DOM::Event::create(cue.realm(), HTML::EventNames::exit));
+    }));
+    queue_a_media_element_task(GC::weak_callback(track, [](auto& track) {
+        track.dispatch_event(DOM::Event::create(track.realm(), HTML::EventNames::cuechange));
+    }));
+}
+
 // https://html.spec.whatwg.org/multipage/media.html#dom-media-duration
 double HTMLMediaElement::duration() const
 {

@@ -170,6 +170,8 @@ void TextTrack::remove_cue(GC::Ref<TextTrackCue> cue)
 {
     if (!m_cues->remove(*cue))
         return;
+    if (m_media_element && cue->is_active())
+        m_media_element->text_track_cue_removed(*this, cue);
     cue->set_track(nullptr);
     if (m_media_element)
         m_media_element->text_track_cues_changed();
@@ -177,8 +179,12 @@ void TextTrack::remove_cue(GC::Ref<TextTrackCue> cue)
 
 void TextTrack::clear_cues()
 {
-    for (size_t index = 0; index < m_cues->length(); ++index)
-        m_cues->at(index)->set_track(nullptr);
+    for (size_t index = 0; index < m_cues->length(); ++index) {
+        auto cue = m_cues->at(index);
+        if (m_media_element && cue->is_active())
+            m_media_element->text_track_cue_removed(*this, cue);
+        cue->set_track(nullptr);
+    }
     m_cues->clear();
     m_active_cues->clear();
     if (m_media_element)

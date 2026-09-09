@@ -153,6 +153,8 @@ public:
 
     // Re-run the text-track timing algorithm after a cue or track mode mutation.
     void text_track_cues_changed();
+    // Queue the exit/cuechange pair before a cue is detached from its track.
+    void text_track_cue_removed(TextTrack&, GC::Ref<TextTrackCue>);
 
     void create_controls();
     void destroy_controls();
