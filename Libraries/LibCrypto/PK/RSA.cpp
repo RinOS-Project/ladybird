@@ -11,6 +11,7 @@
 #include <LibCrypto/ASN1/PEM.h>
 #include <LibCrypto/Certificate/Certificate.h>
 #include <LibCrypto/PK/RSA.h>
+#include <cstring>
 
 #ifdef AK_OS_RINOS
 #    include "../../../../rintls/crypto/rsa_webcrypto.h"
@@ -125,6 +126,36 @@ static RSA::KeyPairType rintls_keypair_from_provider(rintls_rsa_private_key cons
     };
 }
 
+static ErrorOr<ByteBuffer> rintls_raw_public_operation(RSAPublicKey const& key, ReadonlyBytes input)
+{
+    auto provider_key = TRY(rintls_make_public_key(key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    if (input.size() != provider_key.modulus_len)
+        return Error::from_string_literal("RSA representative must have the exact modulus length");
+
+    auto output = TRY(ByteBuffer::create_zeroed(provider_key.modulus_len));
+    rin_size_t output_length = 0;
+    if (rintls_rsa_raw_public(&provider_key, input.data(), input.size(), output.data(), output.size(), &output_length) != 0 ||
+        output_length != output.size())
+        return Error::from_string_literal("rintls RSA public operation failed");
+    return output;
+}
+
+static ErrorOr<ByteBuffer> rintls_raw_private_operation(RSAPrivateKey const& key, ReadonlyBytes input)
+{
+    auto provider_key = TRY(rintls_make_private_key(key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    if (input.size() != provider_key.public_key.modulus_len)
+        return Error::from_string_literal("RSA representative must have the exact modulus length");
+
+    auto output = TRY(ByteBuffer::create_zeroed(provider_key.public_key.modulus_len));
+    rin_size_t output_length = 0;
+    if (rintls_rsa_raw_private(&provider_key, input.data(), input.size(), output.data(), output.size(), &output_length) != 0 ||
+        output_length != output.size())
+        return Error::from_string_literal("rintls RSA private operation failed");
+    return output;
+}
+
 ErrorOr<RSA::KeyPairType> RSA::parse_rsa_key(ReadonlyBytes der, bool is_private, Vector<StringView> current_scope)
 {
     KeyPairType keypair;
@@ -233,27 +264,28 @@ ErrorOr<bool> RSAPrivateKey::is_valid() const
 
 ErrorOr<ByteBuffer> RSA::encrypt(ReadonlyBytes in)
 {
-    (void)in;
-    return Error::from_string_literal("Raw RSA is unavailable; use a padded rintls RSA algorithm");
+    return rintls_raw_public_operation(m_public_key, in);
 }
 
 ErrorOr<ByteBuffer> RSA::decrypt(ReadonlyBytes in)
 {
-    (void)in;
-    return Error::from_string_literal("Raw RSA is unavailable; use a padded rintls RSA algorithm");
+    return rintls_raw_private_operation(m_private_key, in);
 }
 
 ErrorOr<ByteBuffer> RSA::sign(ReadonlyBytes message)
 {
-    (void)message;
-    return Error::from_string_literal("Raw RSA is unavailable; use a padded rintls RSA algorithm");
+    return rintls_raw_private_operation(m_private_key, message);
 }
 
 ErrorOr<bool> RSA::verify(ReadonlyBytes message, ReadonlyBytes signature)
 {
-    (void)message;
-    (void)signature;
-    return Error::from_string_literal("Raw RSA is unavailable; use a padded rintls RSA algorithm");
+    auto maybe_recovered = rintls_raw_public_operation(m_public_key, signature);
+    if (maybe_recovered.is_error())
+        return false;
+    auto recovered = maybe_recovered.release_value();
+    if (message.size() != recovered.size())
+        return false;
+    return memcmp(recovered.data(), message.data(), message.size()) == 0;
 }
 
 void RSA::import_private_key(ReadonlyBytes bytes, bool pem)
@@ -320,15 +352,39 @@ void RSA::import_public_key(ReadonlyBytes bytes, bool pem)
 
 ErrorOr<bool> RSA_EMSA::verify(ReadonlyBytes message, ReadonlyBytes signature)
 {
-    (void)message;
-    (void)signature;
-    return Error::from_string_literal("Generic RSA EMSA is unavailable; select PKCS#1 v1.5 or a reviewed PSS provider");
+    auto provider_key = TRY(rintls_make_public_key(m_public_key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    if (signature.size() != provider_key.modulus_len)
+        return false;
+
+    auto recovered = TRY(ByteBuffer::create_zeroed(provider_key.modulus_len));
+    rin_size_t recovered_length = 0;
+    if (rintls_rsa_raw_public(&provider_key, signature.data(), signature.size(), recovered.data(), recovered.size(), &recovered_length) != 0)
+        return false;
+    if (recovered_length != provider_key.modulus_len)
+        return false;
+    return rintls_rsa_emsa_pkcs1_verify(message.data(), message.size(), provider_key.modulus_len,
+                                        recovered.data(), recovered_length) == RINTLS_RSA_VERIFY_VALID;
 }
 
 ErrorOr<ByteBuffer> RSA_EMSA::sign(ReadonlyBytes message)
 {
-    (void)message;
-    return Error::from_string_literal("Generic RSA EMSA is unavailable; select PKCS#1 v1.5 or a reviewed PSS provider");
+    auto provider_key = TRY(rintls_make_private_key(m_private_key));
+    ScopeGuard clear_provider_key = [&] { rintls_secure_zeroize(&provider_key, sizeof(provider_key)); };
+    auto encoded = TRY(ByteBuffer::create_zeroed(provider_key.public_key.modulus_len));
+    rin_size_t encoded_length = 0;
+    if (rintls_rsa_emsa_pkcs1_encode(message.data(), message.size(), provider_key.public_key.modulus_len,
+                                     encoded.data(), encoded.size(), &encoded_length) != 0 ||
+        encoded_length != provider_key.public_key.modulus_len)
+        return Error::from_string_literal("rintls generic RSA EMSA encoding failed");
+
+    auto signature = TRY(ByteBuffer::create_zeroed(provider_key.public_key.modulus_len));
+    rin_size_t signature_length = 0;
+    if (rintls_rsa_raw_private(&provider_key, encoded.data(), encoded_length,
+                               signature.data(), signature.size(), &signature_length) != 0 ||
+        signature_length != signature.size())
+        return Error::from_string_literal("rintls generic RSA EMSA signing failed");
+    return signature;
 }
 
 ErrorOr<ByteBuffer> RSA_PKCS1_EMSA::sign(ReadonlyBytes message)

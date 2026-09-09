@@ -203,3 +203,25 @@ TEST_CASE(test_RSA_sign_verify)
     auto ok = TRY_OR_FAIL(rsa.verify(msg, sig));
     EXPECT_EQ(ok, true);
 }
+
+#ifdef AK_OS_RINOS
+TEST_CASE(test_RinOS_RSA_raw_and_generic_emsa)
+{
+    auto keypair = TRY_OR_FAIL(Crypto::PK::RSA::generate_key_pair(2048));
+    Crypto::PK::RSA rsa(keypair);
+
+    ByteBuffer representative = TRY_OR_FAIL(ByteBuffer::create_zeroed(rsa.public_key().length()));
+    representative.overwrite(0, "RinOS raw RSA representative", 28);
+    auto encrypted = TRY_OR_FAIL(rsa.encrypt(representative.bytes()));
+    EXPECT_EQ(encrypted.size(), rsa.public_key().length());
+    auto decrypted = TRY_OR_FAIL(rsa.decrypt(encrypted.bytes()));
+    EXPECT_EQ(decrypted.size(), representative.size());
+    EXPECT(memcmp(decrypted.data(), representative.data(), representative.size()) == 0);
+
+    Crypto::PK::RSA_EMSA emsa(Crypto::Hash::HashKind::None, keypair);
+    auto signature = TRY_OR_FAIL(emsa.sign("generic EMSA payload"sv.bytes()));
+    EXPECT_EQ(signature.size(), rsa.public_key().length());
+    EXPECT(TRY_OR_FAIL(emsa.verify("generic EMSA payload"sv.bytes(), signature.bytes())));
+    EXPECT(!TRY_OR_FAIL(emsa.verify("tampered EMSA payload"sv.bytes(), signature.bytes())));
+}
+#endif
