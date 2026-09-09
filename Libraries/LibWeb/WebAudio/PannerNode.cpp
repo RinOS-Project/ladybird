@@ -9,6 +9,7 @@
 #include <LibWeb/WebAudio/AudioParam.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/PannerNode.h>
+#include <math.h>
 
 namespace Web::WebAudio {
 
@@ -26,22 +27,24 @@ WebIDL::ExceptionOr<GC::Ref<PannerNode>> PannerNode::construct_impl(JS::Realm& r
 {
     // https://webaudio.github.io/web-audio-api/#dom-pannernode-refdistance
     // A RangeError exception MUST be thrown if this is set to a negative value.
-    if (options.ref_distance < 0.0)
+    if (!isfinite(options.ref_distance) || options.ref_distance <= 0.0)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "refDistance cannot be negative"sv };
 
     // https://webaudio.github.io/web-audio-api/#dom-pannernode-rollofffactor
     // A RangeError exception MUST be thrown if this is set to a negative value.
-    if (options.rolloff_factor < 0.0)
+    if (!isfinite(options.rolloff_factor) || options.rolloff_factor < 0.0)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "rolloffFactor cannot be negative"sv };
 
     // https://webaudio.github.io/web-audio-api/#dom-pannernode-maxdistance
     // A RangeError exception MUST be thrown if this is set to a non-positive value.
-    if (options.max_distance <= 0.0)
+    if (!isfinite(options.max_distance) || options.max_distance <= 0.0)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "maxDistance cannot be negative"sv };
 
     // https://webaudio.github.io/web-audio-api/#dom-pannernode-coneoutergain
     // It is a linear value (not dB) in the range [0, 1]. An InvalidStateError MUST be thrown if the parameter is outside this range.
-    if (options.cone_outer_gain < 0.0 || options.cone_outer_gain > 1.0)
+    if (!isfinite(options.cone_inner_angle) || !isfinite(options.cone_outer_angle) || options.cone_inner_angle < 0.0 || options.cone_inner_angle > 360.0 || options.cone_outer_angle < 0.0 || options.cone_outer_angle > 360.0 || options.cone_outer_angle < options.cone_inner_angle)
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "cone angles must be finite, ordered, and within [0, 360]"sv };
+    if (!isfinite(options.cone_outer_gain) || options.cone_outer_gain < 0.0 || options.cone_outer_gain > 1.0)
         return WebIDL::InvalidStateError::create(realm, "coneOuterGain must be in the range of [0, 1]"_utf16);
 
     // Create the node and allocate memory
@@ -99,7 +102,7 @@ void PannerNode::visit_edges(Cell::Visitor& visitor)
 WebIDL::ExceptionOr<void> PannerNode::set_ref_distance(double value)
 {
     // A RangeError exception MUST be thrown if this is set to a negative value.
-    if (value <= 0.0)
+    if (!isfinite(value) || value <= 0.0)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "refDistance cannot be negative"sv };
 
     m_ref_distance = value;
@@ -110,7 +113,7 @@ WebIDL::ExceptionOr<void> PannerNode::set_ref_distance(double value)
 WebIDL::ExceptionOr<void> PannerNode::set_max_distance(double value)
 {
     // A RangeError exception MUST be thrown if this is set to a non-positive value.
-    if (value < 0.0)
+    if (!isfinite(value) || value <= 0.0)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "maxDistance cannot be negative"sv };
 
     m_max_distance = value;
@@ -121,10 +124,26 @@ WebIDL::ExceptionOr<void> PannerNode::set_max_distance(double value)
 WebIDL::ExceptionOr<void> PannerNode::set_rolloff_factor(double value)
 {
     // A RangeError exception MUST be thrown if this is set to a negative value.
-    if (value < 0.0)
+    if (!isfinite(value) || value < 0.0)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "rolloffFactor cannot be negative"sv };
 
     m_rolloff_factor = value;
+    return {};
+}
+
+WebIDL::ExceptionOr<void> PannerNode::set_cone_inner_angle(double value)
+{
+    if (!isfinite(value) || value < 0.0 || value > 360.0 || value > m_cone_outer_angle)
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "coneInnerAngle must be finite, within [0, 360], and no greater than coneOuterAngle"sv };
+    m_cone_inner_angle = value;
+    return {};
+}
+
+WebIDL::ExceptionOr<void> PannerNode::set_cone_outer_angle(double value)
+{
+    if (!isfinite(value) || value < 0.0 || value > 360.0 || value < m_cone_inner_angle)
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "coneOuterAngle must be finite, within [0, 360], and no less than coneInnerAngle"sv };
+    m_cone_outer_angle = value;
     return {};
 }
 
@@ -132,7 +151,7 @@ WebIDL::ExceptionOr<void> PannerNode::set_rolloff_factor(double value)
 WebIDL::ExceptionOr<void> PannerNode::set_cone_outer_gain(double value)
 {
     // It is a linear value (not dB) in the range [0, 1]. An InvalidStateError MUST be thrown if the parameter is outside this range.
-    if (value < 0.0 || value > 1.0)
+    if (!isfinite(value) || value < 0.0 || value > 1.0)
         return WebIDL::InvalidStateError::create(realm(), "coneOuterGain must be in the range of [0, 1]"_utf16);
 
     m_cone_outer_gain = value;

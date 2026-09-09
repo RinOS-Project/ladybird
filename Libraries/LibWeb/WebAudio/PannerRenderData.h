@@ -24,16 +24,27 @@ public:
         float rolloff_factor,
         RefPtr<AudioParamRenderData> position_x,
         RefPtr<AudioParamRenderData> position_y,
-        RefPtr<AudioParamRenderData> position_z);
+        RefPtr<AudioParamRenderData> position_z,
+        RefPtr<AudioParamRenderData> orientation_x,
+        RefPtr<AudioParamRenderData> orientation_y,
+        RefPtr<AudioParamRenderData> orientation_z,
+        float cone_inner_angle,
+        float cone_outer_angle,
+        float cone_outer_gain);
 
     void process(float& left, float& right, double time) const;
     void update_position_x(RefPtr<AudioParamRenderData> value) { m_position_x = move(value); }
     void update_position_y(RefPtr<AudioParamRenderData> value) { m_position_y = move(value); }
     void update_position_z(RefPtr<AudioParamRenderData> value) { m_position_z = move(value); }
+    void update_orientation_x(RefPtr<AudioParamRenderData> value) { m_orientation_x = move(value); }
+    void update_orientation_y(RefPtr<AudioParamRenderData> value) { m_orientation_y = move(value); }
+    void update_orientation_z(RefPtr<AudioParamRenderData> value) { m_orientation_z = move(value); }
 
 private:
     PannerRenderData(PannerDistanceModel distance_model, float ref_distance, float max_distance, float rolloff_factor,
-        RefPtr<AudioParamRenderData> position_x, RefPtr<AudioParamRenderData> position_y, RefPtr<AudioParamRenderData> position_z)
+        RefPtr<AudioParamRenderData> position_x, RefPtr<AudioParamRenderData> position_y, RefPtr<AudioParamRenderData> position_z,
+        RefPtr<AudioParamRenderData> orientation_x, RefPtr<AudioParamRenderData> orientation_y, RefPtr<AudioParamRenderData> orientation_z,
+        float cone_inner_angle, float cone_outer_angle, float cone_outer_gain)
         : m_distance_model(distance_model)
         , m_ref_distance(ref_distance)
         , m_max_distance(max_distance)
@@ -41,6 +52,12 @@ private:
         , m_position_x(move(position_x))
         , m_position_y(move(position_y))
         , m_position_z(move(position_z))
+        , m_orientation_x(move(orientation_x))
+        , m_orientation_y(move(orientation_y))
+        , m_orientation_z(move(orientation_z))
+        , m_cone_inner_angle(cone_inner_angle)
+        , m_cone_outer_angle(cone_outer_angle)
+        , m_cone_outer_gain(cone_outer_gain)
     {
     }
 
@@ -51,6 +68,12 @@ private:
     RefPtr<AudioParamRenderData> m_position_x;
     RefPtr<AudioParamRenderData> m_position_y;
     RefPtr<AudioParamRenderData> m_position_z;
+    RefPtr<AudioParamRenderData> m_orientation_x;
+    RefPtr<AudioParamRenderData> m_orientation_y;
+    RefPtr<AudioParamRenderData> m_orientation_z;
+    float m_cone_inner_angle { 360.0f };
+    float m_cone_outer_angle { 360.0f };
+    float m_cone_outer_gain { 0.0f };
 };
 
 }

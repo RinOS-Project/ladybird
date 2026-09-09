@@ -551,6 +551,9 @@ void AudioContext::render_audio(Span<float> buffer)
                     .panner_position_x_param_id = connect.panner_position_x_param_id,
                     .panner_position_y_param_id = connect.panner_position_y_param_id,
                     .panner_position_z_param_id = connect.panner_position_z_param_id,
+                    .panner_orientation_x_param_id = connect.panner_orientation_x_param_id,
+                    .panner_orientation_y_param_id = connect.panner_orientation_y_param_id,
+                    .panner_orientation_z_param_id = connect.panner_orientation_z_param_id,
                     .compressor = connect.compressor,
                     .compressor_threshold_param_id = connect.compressor_threshold_param_id,
                     .compressor_knee_param_id = connect.compressor_knee_param_id,
@@ -606,6 +609,12 @@ void AudioContext::render_audio(Span<float> buffer)
                             connection.panner->update_position_y(update.render_data);
                         if (connection.panner_position_z_param_id == update.param_id)
                             connection.panner->update_position_z(update.render_data);
+                        if (connection.panner_orientation_x_param_id == update.param_id)
+                            connection.panner->update_orientation_x(update.render_data);
+                        if (connection.panner_orientation_y_param_id == update.param_id)
+                            connection.panner->update_orientation_y(update.render_data);
+                        if (connection.panner_orientation_z_param_id == update.param_id)
+                            connection.panner->update_orientation_z(update.render_data);
                     }
                     if (connection.compressor) {
                         if (connection.compressor_threshold_param_id == update.param_id)

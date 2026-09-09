@@ -67,10 +67,10 @@ public:
     WebIDL::ExceptionOr<void> set_rolloff_factor(double);
 
     double cone_inner_angle() const { return m_cone_inner_angle; }
-    void set_cone_inner_angle(double value) { m_cone_inner_angle = value; }
+    WebIDL::ExceptionOr<void> set_cone_inner_angle(double);
 
     double cone_outer_angle() const { return m_cone_outer_angle; }
-    void set_cone_outer_angle(double value) { m_cone_outer_angle = value; }
+    WebIDL::ExceptionOr<void> set_cone_outer_angle(double);
 
     double cone_outer_gain() const { return m_cone_outer_gain; }
     WebIDL::ExceptionOr<void> set_cone_outer_gain(double);
