@@ -175,6 +175,15 @@ void TextTrack::remove_cue(GC::Ref<TextTrackCue> cue)
         m_media_element->text_track_cues_changed();
 }
 
+void TextTrack::cue_time_changed(TextTrackCue& cue)
+{
+    if (!m_cues->contains(cue))
+        return;
+    m_cues->resort_by_start_time();
+    if (m_media_element)
+        m_media_element->text_track_cues_changed();
+}
+
 void TextTrack::set_media_element(HTMLMediaElement& media_element)
 {
     m_media_element = media_element;

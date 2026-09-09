@@ -45,8 +45,8 @@ void TextTrackCue::set_start_time(double start_time)
     // FIXME: then, if the TextTrackCue object's text track cue is in a text track's list of cues, and that text track is in a media
     //        element's list of text tracks, and the media element's show poster flag is not set, then run the time marches on steps
     //        for that media element.
-    if (m_track && m_track->media_element())
-        m_track->media_element()->text_track_cues_changed();
+    if (m_track)
+        m_track->cue_time_changed(*this);
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttrackcue-endtime

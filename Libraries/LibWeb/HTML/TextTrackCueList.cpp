@@ -115,6 +115,29 @@ void TextTrackCueList::insert_sorted_by_start_time(GC::Ref<TextTrackCue> cue)
     m_cues.insert(insertion_index, cue);
 }
 
+void TextTrackCueList::resort_by_start_time()
+{
+    Vector<GC::Ref<TextTrackCue>> sorted;
+    sorted.ensure_capacity(m_cues.size());
+
+    for (auto cue : m_cues) {
+        auto start_time = cue->start_time();
+        size_t insertion_index = 0;
+        if (isfinite(start_time)) {
+            for (; insertion_index < sorted.size(); ++insertion_index) {
+                auto existing_start_time = sorted.at(insertion_index)->start_time();
+                if (isfinite(existing_start_time) && existing_start_time > start_time)
+                    break;
+            }
+        } else {
+            insertion_index = sorted.size();
+        }
+        sorted.insert(insertion_index, cue);
+    }
+
+    m_cues = move(sorted);
+}
+
 bool TextTrackCueList::remove(TextTrackCue const& cue)
 {
     return m_cues.remove_first_matching([&](auto const& candidate) {
