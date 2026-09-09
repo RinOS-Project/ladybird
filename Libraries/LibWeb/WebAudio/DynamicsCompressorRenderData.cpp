@@ -29,11 +29,11 @@ ErrorOr<NonnullRefPtr<DynamicsCompressorRenderData>> DynamicsCompressorRenderDat
             move(attack_automation), move(release_automation)));
 }
 
-float DynamicsCompressorRenderData::process(float input, double time) const
+float DynamicsCompressorRenderData::process(float input, double time, float threshold_modulation, float knee_modulation, float ratio_modulation, float attack_modulation, float release_modulation) const
 {
     auto left = input;
     auto right = input;
-    process_stereo(left, right, time, 48'000.0f);
+    process_stereo(left, right, time, 48'000.0f, threshold_modulation, knee_modulation, ratio_modulation, attack_modulation, release_modulation);
     return left;
 }
 
@@ -42,18 +42,18 @@ float DynamicsCompressorRenderData::reduction() const
     return bit_cast<float>(m_reduction_bits.load());
 }
 
-void DynamicsCompressorRenderData::process_stereo(float& left, float& right, double time, float sample_rate) const
+void DynamicsCompressorRenderData::process_stereo(float& left, float& right, double time, float sample_rate, float threshold_modulation, float knee_modulation, float ratio_modulation, float attack_modulation, float release_modulation) const
 {
     if (!isfinite(left))
         left = 0.0f;
     if (!isfinite(right))
         right = 0.0f;
 
-    auto threshold = m_threshold_automation ? m_threshold_automation->value_at_time(time) : m_threshold;
-    auto knee = m_knee_automation ? m_knee_automation->value_at_time(time) : m_knee;
-    auto ratio = m_ratio_automation ? m_ratio_automation->value_at_time(time) : m_ratio;
-    auto attack = m_attack_automation ? m_attack_automation->value_at_time(time) : m_attack;
-    auto release = m_release_automation ? m_release_automation->value_at_time(time) : m_release;
+    auto threshold = (m_threshold_automation ? m_threshold_automation->value_at_time(time) : m_threshold) + threshold_modulation;
+    auto knee = (m_knee_automation ? m_knee_automation->value_at_time(time) : m_knee) + knee_modulation;
+    auto ratio = (m_ratio_automation ? m_ratio_automation->value_at_time(time) : m_ratio) + ratio_modulation;
+    auto attack = (m_attack_automation ? m_attack_automation->value_at_time(time) : m_attack) + attack_modulation;
+    auto release = (m_release_automation ? m_release_automation->value_at_time(time) : m_release) + release_modulation;
     if (!isfinite(threshold) || !isfinite(knee) || !isfinite(ratio) || !isfinite(attack) || !isfinite(release))
         return;
 

@@ -26,13 +26,13 @@ ErrorOr<NonnullRefPtr<BiquadFilterRenderData>> BiquadFilterRenderData::create(
         move(frequency_automation), move(detune_automation), move(q_automation), move(gain_automation)));
 }
 
-BiquadFilterCoefficients BiquadFilterRenderData::coefficients_at_time(double time, float sample_rate) const
+BiquadFilterCoefficients BiquadFilterRenderData::coefficients_at_time(double time, float sample_rate, float frequency_modulation, float detune_modulation, float q_modulation, float gain_modulation) const
 {
     BiquadFilterCoefficients coefficients;
-    auto frequency = m_frequency_automation ? m_frequency_automation->value_at_time(time) : m_frequency;
-    auto detune = m_detune_automation ? m_detune_automation->value_at_time(time) : m_detune;
-    auto q = m_q_automation ? m_q_automation->value_at_time(time) : m_q;
-    auto gain = m_gain_automation ? m_gain_automation->value_at_time(time) : m_gain;
+    auto frequency = (m_frequency_automation ? m_frequency_automation->value_at_time(time) : m_frequency) + frequency_modulation;
+    auto detune = (m_detune_automation ? m_detune_automation->value_at_time(time) : m_detune) + detune_modulation;
+    auto q = (m_q_automation ? m_q_automation->value_at_time(time) : m_q) + q_modulation;
+    auto gain = (m_gain_automation ? m_gain_automation->value_at_time(time) : m_gain) + gain_modulation;
     if (!isfinite(frequency) || !isfinite(detune) || !isfinite(q) || !isfinite(gain) || !isfinite(sample_rate) || sample_rate <= 0)
         return coefficients;
 

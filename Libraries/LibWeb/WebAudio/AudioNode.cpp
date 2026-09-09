@@ -8,6 +8,7 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/WebAudio/AudioDestinationNode.h>
 #include <LibWeb/WebAudio/AudioNode.h>
+#include <LibWeb/WebAudio/AudioParam.h>
 #include <LibWeb/WebAudio/AnalyserNode.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/BiquadFilterNode.h>
@@ -342,6 +343,11 @@ WebIDL::ExceptionOr<void> AudioNode::connect(GC::Ref<AudioParam> destination_par
     }
 
     // Connect node's output to destination_param.
+    m_context->queue_control_message(ConnectParam {
+        .source_node_id = node_id(),
+        .destination_param_id = destination_param->param_id(),
+        .output_index = output,
+    });
     m_param_connections.append(param_connection);
 
     return {};
@@ -350,6 +356,15 @@ WebIDL::ExceptionOr<void> AudioNode::connect(GC::Ref<AudioParam> destination_par
 // https://webaudio.github.io/web-audio-api/#dom-audionode-disconnect
 void AudioNode::disconnect()
 {
+    for (auto const& connection : m_param_connections) {
+        m_context->queue_control_message(DisconnectParam {
+            .source_node_id = node_id(),
+            .destination_param_id = connection.destination_param->param_id(),
+            .output_index = connection.output,
+        });
+    }
+    m_param_connections.clear();
+
     while (!m_output_connections.is_empty()) {
         auto connection = m_output_connections.take_last();
         auto destination = connection.destination_node;
@@ -364,7 +379,6 @@ void AudioNode::disconnect()
         });
     }
 
-    m_param_connections.clear();
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audionode-disconnect-output
@@ -394,7 +408,14 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(WebIDL::UnsignedLong output)
     });
 
     m_param_connections.remove_all_matching([&](AudioParamConnection& connection) {
-        return connection.output == output;
+        if (connection.output != output)
+            return false;
+        m_context->queue_control_message(DisconnectParam {
+            .source_node_id = node_id(),
+            .destination_param_id = connection.destination_param->param_id(),
+            .output_index = connection.output,
+        });
+        return true;
     });
 
     return {};
@@ -511,7 +532,14 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(GC::Ref<AudioParam> destination_
     // The destinationParam parameter is the AudioParam to disconnect.
     auto before = m_param_connections.size();
     m_param_connections.remove_all_matching([&](AudioParamConnection& connection) {
-        return connection.destination_param == destination_param;
+        if (connection.destination_param != destination_param)
+            return false;
+        m_context->queue_control_message(DisconnectParam {
+            .source_node_id = node_id(),
+            .destination_param_id = connection.destination_param->param_id(),
+            .output_index = connection.output,
+        });
+        return true;
     });
 
     // If there is no connection to the destinationParam, an InvalidAccessError exception MUST be thrown.
@@ -533,7 +561,14 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(GC::Ref<AudioParam> destination_
     // The destinationParam parameter is the AudioParam to disconnect.
     auto before = m_param_connections.size();
     m_param_connections.remove_all_matching([&](AudioParamConnection& connection) {
-        return connection.destination_param == destination_param && connection.output == output;
+        if (connection.destination_param != destination_param || connection.output != output)
+            return false;
+        m_context->queue_control_message(DisconnectParam {
+            .source_node_id = node_id(),
+            .destination_param_id = connection.destination_param->param_id(),
+            .output_index = connection.output,
+        });
+        return true;
     });
 
     // If there is no connection to the destinationParam, an InvalidAccessError exception MUST be thrown.

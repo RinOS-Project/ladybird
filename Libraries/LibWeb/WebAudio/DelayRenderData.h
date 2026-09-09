@@ -22,7 +22,7 @@ class WEB_API DelayRenderData final : public AtomicRefCounted<DelayRenderData> {
 public:
     static ErrorOr<NonnullRefPtr<DelayRenderData>> create(float max_delay_time, float sample_rate, RefPtr<AudioParamRenderData> automation);
 
-    void process(float& left, float& right, double time);
+    void process(float& left, float& right, double time, float modulation = 0);
     void update_automation(RefPtr<AudioParamRenderData> automation) { m_automation = move(automation); }
 
 private:

@@ -604,6 +604,25 @@ void AudioContext::render_audio(Span<float> buffer)
                         && existing.destination_node_id == disconnect.destination_node_id;
                 });
             },
+            [&](ConnectParam const& connect) {
+                m_param_connections.remove_all_matching([&](auto const& existing) {
+                    return existing.source_node_id == connect.source_node_id
+                        && existing.destination_param_id == connect.destination_param_id
+                        && existing.output_index == connect.output_index;
+                });
+                m_param_connections.append({
+                    .source_node_id = connect.source_node_id,
+                    .destination_param_id = connect.destination_param_id,
+                    .output_index = connect.output_index,
+                });
+            },
+            [&](DisconnectParam const& disconnect) {
+                m_param_connections.remove_all_matching([&](auto const& existing) {
+                    return existing.source_node_id == disconnect.source_node_id
+                        && existing.destination_param_id == disconnect.destination_param_id
+                        && existing.output_index == disconnect.output_index;
+                });
+            },
             [&](UpdateAudioParam const& update) {
                 for (auto& source : m_active_audio_sources) {
                     if (source.playback_rate_param_id == update.param_id)
@@ -692,6 +711,39 @@ void AudioContext::render_audio(Span<float> buffer)
         auto now = static_cast<double>(render_start_frame + frame) / output_rate;
         auto left = 0.0f;
         auto right = 0.0f;
+        struct ParamModulation {
+            AudioParamID id { 0 };
+            float value { 0 };
+            bool used { false };
+        };
+        Array<ParamModulation, 1024> param_modulations { };
+        auto add_param_modulation = [&](AudioParamID id, float value) {
+            if (id == 0 || !isfinite(value))
+                return;
+            ParamModulation* free_slot = nullptr;
+            for (auto& modulation : param_modulations) {
+                if (modulation.used && modulation.id == id) {
+                    modulation.value += value;
+                    return;
+                }
+                if (!modulation.used && !free_slot)
+                    free_slot = &modulation;
+            }
+            if (free_slot) {
+                free_slot->id = id;
+                free_slot->value = value;
+                free_slot->used = true;
+            }
+        };
+        auto param_modulation = [&](AudioParamID id) {
+            if (id == 0)
+                return 0.0f;
+            for (auto const& modulation : param_modulations) {
+                if (modulation.used && modulation.id == id)
+                    return modulation.value;
+            }
+            return 0.0f;
+        };
         struct MergerFrame {
             NodeID node_id { 0 };
             Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> channels { };
@@ -703,6 +755,10 @@ void AudioContext::render_audio(Span<float> buffer)
         auto mix_source = [&](auto&& self, NodeID source_node_id, float source_left, float source_right, u32 depth) -> void {
             if (depth > 32)
                 return;
+            for (auto const& param_connection : m_param_connections) {
+                if (param_connection.source_node_id == source_node_id && param_connection.output_index == 0)
+                    add_param_modulation(param_connection.destination_param_id, (source_left + source_right) * 0.5f);
+            }
             for (auto& connection : m_node_connections) {
                 if (connection.source_node_id != source_node_id)
                     continue;
@@ -740,13 +796,15 @@ void AudioContext::render_audio(Span<float> buffer)
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Gain) {
-                    auto gain = connection.gain_automation ? connection.gain_automation->value_at_time(now) : 1.0f;
+                    auto gain = (connection.gain_automation ? connection.gain_automation->value_at_time(now) : 1.0f) + param_modulation(connection.gain_param_id);
                     if (isfinite(gain))
                         self(self, connection.destination_node_id, routed_left * gain, routed_right * gain, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Biquad && connection.biquad) {
-                    auto coefficients = connection.biquad->coefficients_at_time(now, static_cast<float>(output_rate));
+                    auto coefficients = connection.biquad->coefficients_at_time(now, static_cast<float>(output_rate),
+                        param_modulation(connection.biquad_frequency_param_id), param_modulation(connection.biquad_detune_param_id),
+                        param_modulation(connection.biquad_q_param_id), param_modulation(connection.biquad_gain_param_id));
                     auto process = [&](float input, u32 channel) {
                         auto output = coefficients.b0 * input + coefficients.b1 * connection.x1[channel] + coefficients.b2 * connection.x2[channel]
                             - coefficients.a1 * connection.y1[channel] - coefficients.a2 * connection.y2[channel];
@@ -765,7 +823,7 @@ void AudioContext::render_audio(Span<float> buffer)
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::StereoPanner) {
-                    auto pan = connection.stereo_panner_automation ? connection.stereo_panner_automation->value_at_time(now) : 0.0f;
+                    auto pan = (connection.stereo_panner_automation ? connection.stereo_panner_automation->value_at_time(now) : 0.0f) + param_modulation(connection.stereo_panner_param_id);
                     if (!isfinite(pan))
                         continue;
                     pan = clamp(pan, -1.0f, 1.0f);
@@ -775,17 +833,25 @@ void AudioContext::render_audio(Span<float> buffer)
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Delay && connection.delay) {
-                    connection.delay->process(routed_left, routed_right, now);
+                    connection.delay->process(routed_left, routed_right, now, param_modulation(connection.delay_param_id));
                     self(self, connection.destination_node_id, routed_left, routed_right, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Panner && connection.panner) {
-                    connection.panner->process(routed_left, routed_right, now);
+                    connection.panner->process(routed_left, routed_right, now,
+                        param_modulation(connection.panner_position_x_param_id), param_modulation(connection.panner_position_y_param_id), param_modulation(connection.panner_position_z_param_id),
+                        param_modulation(connection.panner_orientation_x_param_id), param_modulation(connection.panner_orientation_y_param_id), param_modulation(connection.panner_orientation_z_param_id),
+                        param_modulation(connection.listener_position_x_param_id), param_modulation(connection.listener_position_y_param_id), param_modulation(connection.listener_position_z_param_id),
+                        param_modulation(connection.listener_forward_x_param_id), param_modulation(connection.listener_forward_y_param_id), param_modulation(connection.listener_forward_z_param_id),
+                        param_modulation(connection.listener_up_x_param_id), param_modulation(connection.listener_up_y_param_id), param_modulation(connection.listener_up_z_param_id));
                     self(self, connection.destination_node_id, routed_left, routed_right, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::DynamicsCompressor && connection.compressor) {
-                    connection.compressor->process_stereo(routed_left, routed_right, now, static_cast<float>(output_rate));
+                    connection.compressor->process_stereo(routed_left, routed_right, now, static_cast<float>(output_rate),
+                        param_modulation(connection.compressor_threshold_param_id), param_modulation(connection.compressor_knee_param_id),
+                        param_modulation(connection.compressor_ratio_param_id), param_modulation(connection.compressor_attack_param_id),
+                        param_modulation(connection.compressor_release_param_id));
                     self(self, connection.destination_node_id, routed_left, routed_right, depth + 1);
                 }
             }
@@ -811,8 +877,8 @@ void AudioContext::render_audio(Span<float> buffer)
                 continue;
             }
 
-            auto playback_rate = source.playback_rate_automation ? source.playback_rate_automation->value_at_time(now) : source.playback_rate;
-            auto detune = source.detune_automation ? source.detune_automation->value_at_time(now) : source.detune;
+            auto playback_rate = (source.playback_rate_automation ? source.playback_rate_automation->value_at_time(now) : source.playback_rate) + param_modulation(source.playback_rate_param_id);
+            auto detune = (source.detune_automation ? source.detune_automation->value_at_time(now) : source.detune) + param_modulation(source.detune_param_id);
             if (!isfinite(playback_rate) || !isfinite(detune))
                 continue;
             auto rate = max(static_cast<double>(playback_rate), 0.0) * pow(2.0, static_cast<double>(detune) / 1200.0);
@@ -858,8 +924,8 @@ void AudioContext::render_audio(Span<float> buffer)
                 continue;
             }
 
-            auto frequency_value = oscillator.frequency_automation ? oscillator.frequency_automation->value_at_time(now) : oscillator.frequency;
-            auto detune_value = oscillator.detune_automation ? oscillator.detune_automation->value_at_time(now) : oscillator.detune;
+            auto frequency_value = (oscillator.frequency_automation ? oscillator.frequency_automation->value_at_time(now) : oscillator.frequency) + param_modulation(oscillator.frequency_param_id);
+            auto detune_value = (oscillator.detune_automation ? oscillator.detune_automation->value_at_time(now) : oscillator.detune) + param_modulation(oscillator.detune_param_id);
             if (!isfinite(frequency_value) || !isfinite(detune_value))
                 continue;
             auto frequency = static_cast<double>(frequency_value) * pow(2.0, static_cast<double>(detune_value) / 1200.0);
@@ -896,7 +962,7 @@ void AudioContext::render_audio(Span<float> buffer)
                     source.ended_reported = queue_source_ended(source.node_id);
                 continue;
             }
-            auto sample = source.offset_automation ? source.offset_automation->value_at_time(now) : source.offset;
+            auto sample = (source.offset_automation ? source.offset_automation->value_at_time(now) : source.offset) + param_modulation(source.offset_param_id);
             if (isfinite(sample))
                 mix_source(mix_source, source.node_id, sample, sample, 0);
         }

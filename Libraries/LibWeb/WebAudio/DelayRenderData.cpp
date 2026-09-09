@@ -21,9 +21,9 @@ ErrorOr<NonnullRefPtr<DelayRenderData>> DelayRenderData::create(float max_delay_
     return adopt_nonnull_ref_or_enomem(new (nothrow) DelayRenderData(sample_rate, capacity, move(automation)));
 }
 
-void DelayRenderData::process(float& left, float& right, double time)
+void DelayRenderData::process(float& left, float& right, double time, float modulation)
 {
-    auto delay_seconds = m_automation ? m_automation->value_at_time(time) : 0.0f;
+    auto delay_seconds = (m_automation ? m_automation->value_at_time(time) : 0.0f) + modulation;
     if (isfinite(delay_seconds)) {
         delay_seconds = clamp(delay_seconds, 0.0f, (m_left.size() - 2) / m_sample_rate);
         m_last_delay_seconds = delay_seconds;

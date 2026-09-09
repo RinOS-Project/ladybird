@@ -135,7 +135,22 @@ struct DisconnectNode {
     NodeID destination_node_id { 0 };
 };
 
+// A node-to-parameter edge is kept separate from the node graph. The render
+// callback accumulates the source sample for the current frame and adds it to
+// the destination AudioParam's immutable automation value.
+struct ConnectParam {
+    NodeID source_node_id { 0 };
+    AudioParamID destination_param_id { 0 };
+    u32 output_index { 0 };
+};
+
+struct DisconnectParam {
+    NodeID source_node_id { 0 };
+    AudioParamID destination_param_id { 0 };
+    u32 output_index { 0 };
+};
+
 // https://webaudio.github.io/web-audio-api/#control-message
-using ControlMessage = Variant<StartSource, StartOscillator, StartConstantSource, UpdateOscillatorWaveform, StartBufferSource, StopSource, ConnectNode, DisconnectNode, UpdateAudioParam>;
+using ControlMessage = Variant<StartSource, StartOscillator, StartConstantSource, UpdateOscillatorWaveform, StartBufferSource, StopSource, ConnectNode, DisconnectNode, ConnectParam, DisconnectParam, UpdateAudioParam>;
 
 }

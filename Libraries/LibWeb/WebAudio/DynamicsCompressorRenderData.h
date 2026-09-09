@@ -28,8 +28,8 @@ public:
         RefPtr<AudioParamRenderData> attack_automation,
         RefPtr<AudioParamRenderData> release_automation);
 
-    float process(float input, double time) const;
-    void process_stereo(float& left, float& right, double time, float sample_rate) const;
+    float process(float input, double time, float threshold_modulation = 0, float knee_modulation = 0, float ratio_modulation = 0, float attack_modulation = 0, float release_modulation = 0) const;
+    void process_stereo(float& left, float& right, double time, float sample_rate, float threshold_modulation = 0, float knee_modulation = 0, float ratio_modulation = 0, float attack_modulation = 0, float release_modulation = 0) const;
     float reduction() const;
 
     void update_threshold_automation(RefPtr<AudioParamRenderData> data) { m_threshold_automation = move(data); }

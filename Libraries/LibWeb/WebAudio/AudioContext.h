@@ -159,10 +159,16 @@ private:
         float y1[2] { 0, 0 };
         float y2[2] { 0, 0 };
     };
+    struct ParamConnection {
+        NodeID source_node_id { 0 };
+        AudioParamID destination_param_id { 0 };
+        u32 output_index { 0 };
+    };
     Vector<ActiveAudioSource> m_active_audio_sources;
     Vector<ActiveOscillator> m_active_oscillators;
     Vector<ActiveConstantSource> m_active_constant_sources;
     Vector<NodeConnection> m_node_connections;
+    Vector<ParamConnection> m_param_connections;
     u64 m_render_frame_position { 0 };
     u32 m_output_sample_rate { 48'000 };
     RefPtr<Core::Timer> m_source_ended_timer;

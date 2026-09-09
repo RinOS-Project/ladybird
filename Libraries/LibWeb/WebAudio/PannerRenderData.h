@@ -41,7 +41,12 @@ public:
         float cone_outer_angle,
         float cone_outer_gain);
 
-    void process(float& left, float& right, double time) const;
+    void process(float& left, float& right, double time,
+        float position_x_modulation = 0, float position_y_modulation = 0, float position_z_modulation = 0,
+        float orientation_x_modulation = 0, float orientation_y_modulation = 0, float orientation_z_modulation = 0,
+        float listener_position_x_modulation = 0, float listener_position_y_modulation = 0, float listener_position_z_modulation = 0,
+        float listener_forward_x_modulation = 0, float listener_forward_y_modulation = 0, float listener_forward_z_modulation = 0,
+        float listener_up_x_modulation = 0, float listener_up_y_modulation = 0, float listener_up_z_modulation = 0) const;
     void update_position_x(RefPtr<AudioParamRenderData> value) { m_position_x = move(value); }
     void update_position_y(RefPtr<AudioParamRenderData> value) { m_position_y = move(value); }
     void update_position_z(RefPtr<AudioParamRenderData> value) { m_position_z = move(value); }

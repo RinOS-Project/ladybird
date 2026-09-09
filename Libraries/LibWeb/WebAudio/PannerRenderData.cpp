@@ -31,23 +31,28 @@ ErrorOr<NonnullRefPtr<PannerRenderData>> PannerRenderData::create(PannerDistance
         cone_inner_angle, cone_outer_angle, cone_outer_gain));
 }
 
-void PannerRenderData::process(float& left, float& right, double time) const
+void PannerRenderData::process(float& left, float& right, double time,
+    float position_x_modulation, float position_y_modulation, float position_z_modulation,
+    float orientation_x_modulation, float orientation_y_modulation, float orientation_z_modulation,
+    float listener_position_x_modulation, float listener_position_y_modulation, float listener_position_z_modulation,
+    float listener_forward_x_modulation, float listener_forward_y_modulation, float listener_forward_z_modulation,
+    float listener_up_x_modulation, float listener_up_y_modulation, float listener_up_z_modulation) const
 {
-    auto x = m_position_x ? m_position_x->value_at_time(time) : 0.0f;
-    auto y = m_position_y ? m_position_y->value_at_time(time) : 0.0f;
-    auto z = m_position_z ? m_position_z->value_at_time(time) : 0.0f;
-    auto orientation_x = m_orientation_x ? m_orientation_x->value_at_time(time) : 1.0f;
-    auto orientation_y = m_orientation_y ? m_orientation_y->value_at_time(time) : 0.0f;
-    auto orientation_z = m_orientation_z ? m_orientation_z->value_at_time(time) : 0.0f;
-    auto listener_x = m_listener_position_x ? m_listener_position_x->value_at_time(time) : 0.0f;
-    auto listener_y = m_listener_position_y ? m_listener_position_y->value_at_time(time) : 0.0f;
-    auto listener_z = m_listener_position_z ? m_listener_position_z->value_at_time(time) : 0.0f;
-    auto listener_forward_x = m_listener_forward_x ? m_listener_forward_x->value_at_time(time) : 0.0f;
-    auto listener_forward_y = m_listener_forward_y ? m_listener_forward_y->value_at_time(time) : 0.0f;
-    auto listener_forward_z = m_listener_forward_z ? m_listener_forward_z->value_at_time(time) : -1.0f;
-    auto listener_up_x = m_listener_up_x ? m_listener_up_x->value_at_time(time) : 0.0f;
-    auto listener_up_y = m_listener_up_y ? m_listener_up_y->value_at_time(time) : 1.0f;
-    auto listener_up_z = m_listener_up_z ? m_listener_up_z->value_at_time(time) : 0.0f;
+    auto x = (m_position_x ? m_position_x->value_at_time(time) : 0.0f) + position_x_modulation;
+    auto y = (m_position_y ? m_position_y->value_at_time(time) : 0.0f) + position_y_modulation;
+    auto z = (m_position_z ? m_position_z->value_at_time(time) : 0.0f) + position_z_modulation;
+    auto orientation_x = (m_orientation_x ? m_orientation_x->value_at_time(time) : 1.0f) + orientation_x_modulation;
+    auto orientation_y = (m_orientation_y ? m_orientation_y->value_at_time(time) : 0.0f) + orientation_y_modulation;
+    auto orientation_z = (m_orientation_z ? m_orientation_z->value_at_time(time) : 0.0f) + orientation_z_modulation;
+    auto listener_x = (m_listener_position_x ? m_listener_position_x->value_at_time(time) : 0.0f) + listener_position_x_modulation;
+    auto listener_y = (m_listener_position_y ? m_listener_position_y->value_at_time(time) : 0.0f) + listener_position_y_modulation;
+    auto listener_z = (m_listener_position_z ? m_listener_position_z->value_at_time(time) : 0.0f) + listener_position_z_modulation;
+    auto listener_forward_x = (m_listener_forward_x ? m_listener_forward_x->value_at_time(time) : 0.0f) + listener_forward_x_modulation;
+    auto listener_forward_y = (m_listener_forward_y ? m_listener_forward_y->value_at_time(time) : 0.0f) + listener_forward_y_modulation;
+    auto listener_forward_z = (m_listener_forward_z ? m_listener_forward_z->value_at_time(time) : -1.0f) + listener_forward_z_modulation;
+    auto listener_up_x = (m_listener_up_x ? m_listener_up_x->value_at_time(time) : 0.0f) + listener_up_x_modulation;
+    auto listener_up_y = (m_listener_up_y ? m_listener_up_y->value_at_time(time) : 1.0f) + listener_up_y_modulation;
+    auto listener_up_z = (m_listener_up_z ? m_listener_up_z->value_at_time(time) : 0.0f) + listener_up_z_modulation;
     if (!isfinite(x) || !isfinite(y) || !isfinite(z) || !isfinite(orientation_x) || !isfinite(orientation_y) || !isfinite(orientation_z)
         || !isfinite(listener_x) || !isfinite(listener_y) || !isfinite(listener_z)
         || !isfinite(listener_forward_x) || !isfinite(listener_forward_y) || !isfinite(listener_forward_z)
