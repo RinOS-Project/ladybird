@@ -163,6 +163,21 @@ bool Cache::owner_is_current() const
         response.origin == m_owner_origin;
 }
 
+bool Cache::owner_fetch_is_current(Fetch::Request const& request) const
+{
+    if (!owner_is_current())
+        return false;
+    if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
+        return false;
+    auto request_url = request.url().to_byte_string();
+    auto response = m_page->client().request_service_worker_owner(
+        5u, request_url, m_owner_origin, {}, {}, 0u);
+    return response.accepted && response.found &&
+        response.generation == m_owner_generation &&
+        response.origin == m_owner_origin &&
+        response.script_url == request_url;
+}
+
 GC::Ref<WebIDL::Promise> Cache::owner_rejected_promise() const
 {
     return WebIDL::create_rejected_promise_from_exception(
@@ -291,16 +306,35 @@ bool Cache::store_serialized_entry(String const& key, String const& value)
     if (!result.has<WebView::StorageOperationError>())
         return true;
 
-    // Cache endpoint storage is quota-bound in the browser owner. Evict the
-    // oldest entries from this cache and retry, preserving the operation's
-    // failure-atomic behavior when even an empty cache cannot fit the value.
-    while (!m_entries.is_empty()) {
-        auto victim_key = storage_key_for(*m_entries[0].request);
+    // Cache endpoint storage is quota-bound in the browser owner. Stage the
+    // oldest records first and only publish their in-memory removal after the
+    // replacement fits. If no candidate fits, restore every removed record so
+    // a quota failure cannot silently destroy otherwise valid cache entries.
+    Vector<String> evicted_keys;
+    Vector<Optional<String>> evicted_values;
+    size_t candidate_count = 0;
+    while (candidate_count < m_entries.size()) {
+        auto victim_key = storage_key_for(*m_entries[candidate_count].request);
+        auto victim_value = m_storage_bottle->get(victim_key);
+        evicted_keys.append(victim_key);
+        evicted_values.append(victim_value);
         m_storage_bottle->remove(victim_key);
-        m_entries.remove(0);
+        ++candidate_count;
+
         result = m_storage_bottle->set(key, value);
-        if (!result.has<WebView::StorageOperationError>())
+        if (!result.has<WebView::StorageOperationError>()) {
+            for (size_t i = 0; i < candidate_count; ++i)
+                m_entries.remove(0);
             return true;
+        }
+    }
+
+    // The attempted replacement was never published on quota failure. Put
+    // the old values back before reporting failure; the owner storage was
+    // already within quota before this transaction started.
+    for (size_t i = 0; i < evicted_values.size(); ++i) {
+        if (evicted_values[i].has_value())
+            (void)m_storage_bottle->set(evicted_keys[i], evicted_values[i].value());
     }
     return false;
 }
@@ -487,7 +521,7 @@ GC::Ref<WebIDL::Promise> Cache::add(Fetch::RequestInfo const& input)
     WebIDL::react_to_promise(
         *fetch_promise,
         GC::create_function(realm().heap(), [this, promise, request = request.release_value()](JS::Value value) -> WebIDL::ExceptionOr<JS::Value> {
-            if (!owner_is_current()) {
+            if (!owner_fetch_is_current(*request)) {
                 WebIDL::reject_promise(realm(), promise, WebIDL::InvalidStateError::create(
                     realm(), "Cache profile owner was revoked during fetch"_utf16));
                 return JS::js_undefined();
@@ -548,8 +582,10 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
     // Start network work only after the complete input list has been
     // normalized and admitted.  A malformed or non-GET later entry therefore
     // cannot leave earlier entries with an in-flight fetch.
-    if (!owner_is_current())
-        return owner_rejected_promise();
+    for (auto const& request : requests) {
+        if (!owner_fetch_is_current(*request))
+            return owner_rejected_promise();
+    }
     for (auto const& input : inputs)
         fetch_promises.append(Fetch::fetch(realm().vm(), input));
 
@@ -581,6 +617,13 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
                     return;
                 }
                 staged_entries.append(staged.release_value());
+            }
+            for (auto const& entry : staged_entries) {
+                if (!owner_fetch_is_current(*entry.request)) {
+                    WebIDL::reject_promise(realm(), promise, WebIDL::InvalidStateError::create(
+                        realm(), "Cache profile owner was revoked during fetch"_utf16));
+                    return;
+                }
             }
             // Persist every cloned entry before resolving addAll(). Clones
             // are still staged until all fetches and response cloning have
