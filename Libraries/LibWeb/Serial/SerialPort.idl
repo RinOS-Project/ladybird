@@ -47,7 +47,8 @@ dictionary SerialInputSignals {
 dictionary SerialPortInfo {
     unsigned short usbVendorId;
     unsigned short usbProductId;
-    // FIXME: Should be a BluetoothServiceUUID
+    // BluetoothServiceUUID is represented as DOMString until Bluetooth
+    // transport support is added; RinOS currently supports USB serial only.
     DOMString bluetoothServiceClassId;
 };
 

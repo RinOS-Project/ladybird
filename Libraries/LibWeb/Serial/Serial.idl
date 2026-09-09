@@ -14,13 +14,15 @@ interface Serial : EventTarget {
 dictionary SerialPortFilter {
     unsigned short usbVendorId;
     unsigned short usbProductId;
-    // FIXME: Should be a BluetoothServiceUUID
+    // BluetoothServiceUUID is represented as DOMString until Bluetooth
+    // transport support is added; RinOS currently supports USB serial only.
     DOMString bluetoothServiceClassId;
 };
 
 // https://wicg.github.io/serial/#serialportrequestoptions-dictionary
 dictionary SerialPortRequestOptions {
     sequence<SerialPortFilter> filters;
-    // FIXME: Should be a BluetoothServiceUUID
+    // BluetoothServiceUUID is represented as DOMString until Bluetooth
+    // transport support is added; RinOS currently supports USB serial only.
     sequence<DOMString> allowedBluetoothServiceClassIds;
 };
