@@ -165,6 +165,11 @@ bool Cache::owner_is_current() const
 
 bool Cache::owner_fetch_is_current(Fetch::Request const& request) const
 {
+    // A standalone in-memory Cache has no Browser owner channel. Preserve its
+    // normal Fetch behavior; durable Caches always carry a bottle and a
+    // non-zero generation and therefore take the authenticated path below.
+    if (!m_storage_bottle && m_owner_generation == 0)
+        return true;
     if (!owner_is_current())
         return false;
     if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
