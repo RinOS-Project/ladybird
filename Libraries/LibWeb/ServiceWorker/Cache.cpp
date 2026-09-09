@@ -146,8 +146,8 @@ GC::Ref<WebIDL::Promise> Cache::add(Fetch::RequestInfo const& input)
             }
 
             GC::Ref<Fetch::Response> response = as<Fetch::Response>(value.as_object());
-            if (!response->ok()) {
-                WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.add() received a non-success response"sv));
+            if (!response->ok() || response->status() == 206) {
+                WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.add() received a non-cacheable response"sv));
                 return JS::js_undefined();
             }
             auto put_promise = put_normalized(request, response);
@@ -207,8 +207,8 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
                     return;
                 }
                 GC::Ref<Fetch::Response> response = as<Fetch::Response>(values[i].as_object());
-                if (!response->ok()) {
-                    WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.addAll() received a non-success response"sv));
+                if (!response->ok() || response->status() == 206) {
+                    WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.addAll() received a non-cacheable response"sv));
                     return;
                 }
                 auto staged = clone_entry(requests[i], response);
@@ -244,8 +244,8 @@ GC::Ref<WebIDL::Promise> Cache::put_normalized(GC::Ref<Fetch::Request> request, 
 {
     if (request->method() != "GET"_string)
         return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only GET requests can be stored in a Cache"sv));
-    if (response->type() == Bindings::ResponseType::Error)
-        return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "A network error response cannot be stored in a Cache"sv));
+    if (response->type() == Bindings::ResponseType::Error || response->status() == 206)
+        return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "This response cannot be stored in a Cache"sv));
 
     auto entry = clone_entry(request, response);
     if (entry.is_exception())
@@ -281,11 +281,8 @@ GC::Ref<WebIDL::Promise> Cache::delete_(Fetch::RequestInfo const& input, CacheQu
     auto request = normalize_request(input);
     if (request.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
-    auto it = m_entries.find_if([&](auto const& entry) { return matches(entry, *request.value(), options); });
-    if (it == m_entries.end())
-        return WebIDL::create_resolved_promise(realm(), JS::Value(false));
-    m_entries.remove(it);
-    return WebIDL::create_resolved_promise(realm(), JS::Value(true));
+    auto removed = m_entries.remove_all_matching([&](auto const& entry) { return matches(entry, *request.value(), options); });
+    return WebIDL::create_resolved_promise(realm(), JS::Value(removed));
 }
 
 GC::Ref<WebIDL::Promise> Cache::keys(Optional<Fetch::RequestInfo> const& input, CacheQueryOptions const& options)
