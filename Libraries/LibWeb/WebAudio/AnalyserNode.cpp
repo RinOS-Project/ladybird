@@ -39,7 +39,6 @@ WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> AnalyserNode::create(JS::Realm& realm
 // https://webaudio.github.io/web-audio-api/#current-time-domain-data
 Vector<f32> AnalyserNode::current_time_domain_data()
 {
-    dbgln("FIXME: Analyser node: implement current time domain data");
     // The input signal must be down-mixed to mono as if channelCount is 1, channelCountMode is "max" and channelInterpretation is "speakers".
     // This is independent of the settings for the AnalyserNode itself.
     // The most recent fftSize frames are used for the down-mixing operation.
@@ -79,9 +78,69 @@ Vector<f32> AnalyserNode::apply_a_blackman_window(Vector<f32> const& x) const
 // https://webaudio.github.io/web-audio-api/#fourier-transform
 static Vector<f32> apply_a_fourier_transform(Vector<f32> const& input)
 {
-    dbgln("FIXME: Analyser node: implement apply a fourier transform");
-    auto result = Vector<f32>();
-    result.resize(input.size());
+    // The analyser operates on a power-of-two fftSize.  Use an in-place
+    // radix-2 transform so the bounded maximum of 32768 samples does not
+    // turn each read into an O(n^2) operation.
+    const size_t size = input.size();
+    if (size == 0 || !is_power_of_two(size))
+        return {};
+
+    Vector<f32> real;
+    Vector<f32> imaginary;
+    real.resize(size);
+    imaginary.resize(size);
+    for (size_t index = 0; index < size; ++index)
+        real[index] = input[index];
+
+    for (size_t index = 0, reversed = 0; index < size; ++index) {
+        if (index < reversed) {
+            auto real_value = real[index];
+            real[index] = real[reversed];
+            real[reversed] = real_value;
+        }
+        size_t bit = size >> 1;
+        while (reversed & bit) {
+            reversed ^= bit;
+            bit >>= 1;
+        }
+        reversed ^= bit;
+    }
+
+    for (size_t block_size = 2; block_size <= size; block_size <<= 1) {
+        const f32 angle = -2.0f * AK::Pi<f32> / static_cast<f32>(block_size);
+        const f32 rotation_real = cos(angle);
+        const f32 rotation_imaginary = sin(angle);
+        for (size_t block = 0; block < size; block += block_size) {
+            f32 factor_real = 1.0f;
+            f32 factor_imaginary = 0.0f;
+            const size_t half_block = block_size >> 1;
+            for (size_t offset = 0; offset < half_block; ++offset) {
+                const size_t even = block + offset;
+                const size_t odd = even + half_block;
+                const f32 odd_real = real[odd] * factor_real -
+                    imaginary[odd] * factor_imaginary;
+                const f32 odd_imaginary = real[odd] * factor_imaginary +
+                    imaginary[odd] * factor_real;
+                const f32 even_real = real[even];
+                const f32 even_imaginary = imaginary[even];
+                real[even] = even_real + odd_real;
+                imaginary[even] = even_imaginary + odd_imaginary;
+                real[odd] = even_real - odd_real;
+                imaginary[odd] = even_imaginary - odd_imaginary;
+                const f32 next_factor_real = factor_real * rotation_real -
+                    factor_imaginary * rotation_imaginary;
+                factor_imaginary = factor_real * rotation_imaginary +
+                    factor_imaginary * rotation_real;
+                factor_real = next_factor_real;
+            }
+        }
+    }
+
+    Vector<f32> result;
+    result.resize(size);
+    for (size_t index = 0; index < size; ++index)
+        result[index] = AK::sqrt(real[index] * real[index] +
+                                 imaginary[index] * imaginary[index]);
     return result;
 }
 
