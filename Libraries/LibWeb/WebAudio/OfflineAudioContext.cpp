@@ -159,13 +159,13 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
 
 WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::resume()
 {
-    return WebIDL::NotSupportedError::create(realm(), "FIXME: Implement OfflineAudioContext::resume"_utf16);
+    return WebIDL::NotSupportedError::create(realm(), "OfflineAudioContext rendering control is unavailable"_utf16);
 }
 
 WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::suspend(double suspend_time)
 {
     (void)suspend_time;
-    return WebIDL::NotSupportedError::create(realm(), "FIXME: Implement OfflineAudioContext::suspend"_utf16);
+    return WebIDL::NotSupportedError::create(realm(), "OfflineAudioContext rendering control is unavailable"_utf16);
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-offlineaudiocontext-length

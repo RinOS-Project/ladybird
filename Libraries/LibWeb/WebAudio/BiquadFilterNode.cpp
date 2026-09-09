@@ -71,8 +71,7 @@ WebIDL::ExceptionOr<void> BiquadFilterNode::get_frequency_response(GC::Root<WebI
     (void)frequency_hz;
     (void)mag_response;
     (void)phase_response;
-    dbgln("FIXME: Implement BiquadFilterNode::get_frequency_response(Float32Array, Float32Array, Float32Array)");
-    return {};
+    return WebIDL::NotSupportedError::create(realm(), "BiquadFilterNode frequency response is unavailable"_utf16);
 }
 
 WebIDL::ExceptionOr<GC::Ref<BiquadFilterNode>> BiquadFilterNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, BiquadFilterOptions const& options)

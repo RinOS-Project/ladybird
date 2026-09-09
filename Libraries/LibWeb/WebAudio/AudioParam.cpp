@@ -87,8 +87,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::set_value_at_time(float val
 {
     (void)value;
     (void)start_time;
-    dbgln("FIXME: Implement AudioParam::set_value_at_time");
-    return GC::Ref { *this };
+    return WebIDL::NotSupportedError::create(realm(), "AudioParam automation is unavailable"_utf16);
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audioparam-linearramptovalueattime
@@ -96,8 +95,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::linear_ramp_to_value_at_tim
 {
     (void)value;
     (void)end_time;
-    dbgln("FIXME: Implement AudioParam::linear_ramp_to_value_at_time");
-    return GC::Ref { *this };
+    return WebIDL::NotSupportedError::create(realm(), "AudioParam automation is unavailable"_utf16);
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audioparam-exponentialramptovalueattime
@@ -105,8 +103,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::exponential_ramp_to_value_a
 {
     (void)value;
     (void)end_time;
-    dbgln("FIXME: Implement AudioParam::exponential_ramp_to_value_at_time");
-    return GC::Ref { *this };
+    return WebIDL::NotSupportedError::create(realm(), "AudioParam automation is unavailable"_utf16);
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audioparam-settargetattime
@@ -115,8 +112,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::set_target_at_time(float ta
     (void)target;
     (void)start_time;
     (void)time_constant;
-    dbgln("FIXME: Implement AudioParam::set_target_at_time");
-    return GC::Ref { *this };
+    return WebIDL::NotSupportedError::create(realm(), "AudioParam automation is unavailable"_utf16);
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audioparam-setvaluecurveattime
@@ -125,24 +121,21 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::set_value_curve_at_time(Spa
     (void)values;
     (void)start_time;
     (void)duration;
-    dbgln("FIXME: Implement AudioParam::set_value_curve_at_time");
-    return GC::Ref { *this };
+    return WebIDL::NotSupportedError::create(realm(), "AudioParam automation is unavailable"_utf16);
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audioparam-cancelscheduledvalues
 WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::cancel_scheduled_values(double cancel_time)
 {
     (void)cancel_time;
-    dbgln("FIXME: Implement AudioParam::cancel_scheduled_values");
-    return GC::Ref { *this };
+    return WebIDL::NotSupportedError::create(realm(), "AudioParam automation is unavailable"_utf16);
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audioparam-cancelandholdattime
 WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::cancel_and_hold_at_time(double cancel_time)
 {
     (void)cancel_time;
-    dbgln("FIXME: Implement AudioParam::cancel_and_hold_at_time");
-    return GC::Ref { *this };
+    return WebIDL::NotSupportedError::create(realm(), "AudioParam automation is unavailable"_utf16);
 }
 
 void AudioParam::initialize(JS::Realm& realm)

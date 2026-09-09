@@ -127,15 +127,10 @@ WebIDL::ExceptionOr<void> AudioBufferSourceNode::start(Optional<double> when, Op
     if (duration.has_value() && duration.value() < 0)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "duration must not be negative"sv };
 
-    // 3. Set the internal slot [[source started]] on this AudioBufferSourceNode to true.
-    set_source_started(true);
-
-    // FIXME: 4. Queue a control message to start the AudioBufferSourceNode, including the parameter values in the message.
-    // FIXME: 5. Acquire the contents of the buffer if the buffer has been set.
-    // FIXME: 6. Send a control message to the associated AudioContext to start running its rendering thread only when all the following conditions are met:
-
-    dbgln("FIXME: Implement AudioBufferSourceNode::start(when, offset, duration)");
-    return {};
+    // The rendering-thread control message and buffer acquisition are not
+    // available yet. Do not mark the source as started or report success: a
+    // caller must be able to detect that no audio was scheduled.
+    return WebIDL::NotSupportedError::create(realm(), "AudioBufferSourceNode rendering is unavailable"_utf16);
 }
 
 WebIDL::ExceptionOr<GC::Ref<AudioBufferSourceNode>> AudioBufferSourceNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, AudioBufferSourceOptions const& options)
