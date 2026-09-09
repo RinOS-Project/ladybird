@@ -122,7 +122,10 @@ WebIDL::ExceptionOr<GC::Ref<AudioContext>> AudioContext::construct_impl(JS::Real
     return context;
 }
 
-AudioContext::~AudioContext() = default;
+AudioContext::~AudioContext()
+{
+    stop_source_ended_timer();
+}
 
 void AudioContext::initialize(JS::Realm& realm)
 {
@@ -190,6 +193,7 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::resume()
 
     if (m_playback_stream)
         (void)m_playback_stream->resume();
+    start_source_ended_timer();
 
     // 7.3: Start rendering the audio graph.
     auto playback_stream_ready = m_playback_stream != nullptr;
@@ -293,6 +297,7 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::suspend()
 
     if (m_playback_stream)
         (void)m_playback_stream->drain_buffer_and_suspend();
+    stop_source_ended_timer();
 
     // 7.3: queue a media element task to execute the following steps:
     queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
@@ -351,6 +356,7 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::close()
         (void)m_playback_stream->discard_buffer_and_suspend();
         m_playback_stream = nullptr;
     }
+    stop_source_ended_timer();
 
     // FIXME: 5.3: If this control message is being run in a reaction to the document being unloaded, abort this algorithm.
 
@@ -381,6 +387,7 @@ bool AudioContext::start_rendering_audio_graph()
 {
     if (m_playback_stream) {
         (void)m_playback_stream->resume();
+        start_source_ended_timer();
         return true;
     }
 
@@ -400,6 +407,7 @@ bool AudioContext::start_rendering_audio_graph()
         self->m_backend_start_pending = false;
         self->m_playback_stream = stream;
         self->m_output_sample_rate = stream->sample_specification().sample_rate();
+        self->start_source_ended_timer();
         if (self->state() == Bindings::AudioContextState::Running)
             (void)self->m_playback_stream->resume();
         if (!self->m_pending_resume_promises.is_empty()) {
@@ -435,6 +443,26 @@ bool AudioContext::start_rendering_audio_graph()
         }));
     });
     return true;
+}
+
+void AudioContext::start_source_ended_timer()
+{
+    if (!m_source_ended_timer) {
+        auto weak_context = GC::Weak { *this };
+        m_source_ended_timer = Core::Timer::create_repeating(10, [weak_context]() mutable {
+            if (auto context = weak_context.ptr())
+                context->dispatch_source_ended_events();
+        });
+    }
+    if (!m_source_ended_timer->is_active())
+        m_source_ended_timer->start();
+}
+
+void AudioContext::stop_source_ended_timer()
+{
+    if (m_source_ended_timer)
+        m_source_ended_timer->stop();
+    dispatch_source_ended_events();
 }
 
 void AudioContext::render_audio(Span<float> buffer)
@@ -554,6 +582,15 @@ void AudioContext::render_audio(Span<float> buffer)
                     .panner_orientation_x_param_id = connect.panner_orientation_x_param_id,
                     .panner_orientation_y_param_id = connect.panner_orientation_y_param_id,
                     .panner_orientation_z_param_id = connect.panner_orientation_z_param_id,
+                    .listener_position_x_param_id = connect.listener_position_x_param_id,
+                    .listener_position_y_param_id = connect.listener_position_y_param_id,
+                    .listener_position_z_param_id = connect.listener_position_z_param_id,
+                    .listener_forward_x_param_id = connect.listener_forward_x_param_id,
+                    .listener_forward_y_param_id = connect.listener_forward_y_param_id,
+                    .listener_forward_z_param_id = connect.listener_forward_z_param_id,
+                    .listener_up_x_param_id = connect.listener_up_x_param_id,
+                    .listener_up_y_param_id = connect.listener_up_y_param_id,
+                    .listener_up_z_param_id = connect.listener_up_z_param_id,
                     .compressor = connect.compressor,
                     .compressor_threshold_param_id = connect.compressor_threshold_param_id,
                     .compressor_knee_param_id = connect.compressor_knee_param_id,
@@ -615,6 +652,24 @@ void AudioContext::render_audio(Span<float> buffer)
                             connection.panner->update_orientation_y(update.render_data);
                         if (connection.panner_orientation_z_param_id == update.param_id)
                             connection.panner->update_orientation_z(update.render_data);
+                        if (connection.listener_position_x_param_id == update.param_id)
+                            connection.panner->update_listener_position_x(update.render_data);
+                        if (connection.listener_position_y_param_id == update.param_id)
+                            connection.panner->update_listener_position_y(update.render_data);
+                        if (connection.listener_position_z_param_id == update.param_id)
+                            connection.panner->update_listener_position_z(update.render_data);
+                        if (connection.listener_forward_x_param_id == update.param_id)
+                            connection.panner->update_listener_forward_x(update.render_data);
+                        if (connection.listener_forward_y_param_id == update.param_id)
+                            connection.panner->update_listener_forward_y(update.render_data);
+                        if (connection.listener_forward_z_param_id == update.param_id)
+                            connection.panner->update_listener_forward_z(update.render_data);
+                        if (connection.listener_up_x_param_id == update.param_id)
+                            connection.panner->update_listener_up_x(update.render_data);
+                        if (connection.listener_up_y_param_id == update.param_id)
+                            connection.panner->update_listener_up_y(update.render_data);
+                        if (connection.listener_up_z_param_id == update.param_id)
+                            connection.panner->update_listener_up_z(update.render_data);
                     }
                     if (connection.compressor) {
                         if (connection.compressor_threshold_param_id == update.param_id)

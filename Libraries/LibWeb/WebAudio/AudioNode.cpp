@@ -109,6 +109,15 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     AudioParamID panner_orientation_x_param_id { 0 };
     AudioParamID panner_orientation_y_param_id { 0 };
     AudioParamID panner_orientation_z_param_id { 0 };
+    AudioParamID listener_position_x_param_id { 0 };
+    AudioParamID listener_position_y_param_id { 0 };
+    AudioParamID listener_position_z_param_id { 0 };
+    AudioParamID listener_forward_x_param_id { 0 };
+    AudioParamID listener_forward_y_param_id { 0 };
+    AudioParamID listener_forward_z_param_id { 0 };
+    AudioParamID listener_up_x_param_id { 0 };
+    AudioParamID listener_up_y_param_id { 0 };
+    AudioParamID listener_up_z_param_id { 0 };
     RefPtr<DynamicsCompressorRenderData> compressor;
     AudioParamID compressor_threshold_param_id { 0 };
     AudioParamID compressor_knee_param_id { 0 };
@@ -225,8 +234,30 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         panner_orientation_x_param_id = panner_node.orientation_x()->param_id();
         panner_orientation_y_param_id = panner_node.orientation_y()->param_id();
         panner_orientation_z_param_id = panner_node.orientation_z()->param_id();
+        auto listener = m_context->listener();
+        auto listener_position_x = TRY(listener->position_x()->create_render_data());
+        auto listener_position_y = TRY(listener->position_y()->create_render_data());
+        auto listener_position_z = TRY(listener->position_z()->create_render_data());
+        auto listener_forward_x = TRY(listener->forward_x()->create_render_data());
+        auto listener_forward_y = TRY(listener->forward_y()->create_render_data());
+        auto listener_forward_z = TRY(listener->forward_z()->create_render_data());
+        auto listener_up_x = TRY(listener->up_x()->create_render_data());
+        auto listener_up_y = TRY(listener->up_y()->create_render_data());
+        auto listener_up_z = TRY(listener->up_z()->create_render_data());
+        listener_position_x_param_id = listener->position_x()->param_id();
+        listener_position_y_param_id = listener->position_y()->param_id();
+        listener_position_z_param_id = listener->position_z()->param_id();
+        listener_forward_x_param_id = listener->forward_x()->param_id();
+        listener_forward_y_param_id = listener->forward_y()->param_id();
+        listener_forward_z_param_id = listener->forward_z()->param_id();
+        listener_up_x_param_id = listener->up_x()->param_id();
+        listener_up_y_param_id = listener->up_y()->param_id();
+        listener_up_z_param_id = listener->up_z()->param_id();
         panner = TRY(PannerRenderData::create(distance_model, panner_node.ref_distance(), panner_node.max_distance(), panner_node.rolloff_factor(),
             move(position_x), move(position_y), move(position_z), move(orientation_x), move(orientation_y), move(orientation_z),
+            move(listener_position_x), move(listener_position_y), move(listener_position_z),
+            move(listener_forward_x), move(listener_forward_y), move(listener_forward_z),
+            move(listener_up_x), move(listener_up_y), move(listener_up_z),
             static_cast<float>(panner_node.cone_inner_angle()), static_cast<float>(panner_node.cone_outer_angle()), static_cast<float>(panner_node.cone_outer_gain())));
     } else if (is<ChannelMergerNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::ChannelMerger;
@@ -261,6 +292,15 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         .panner_orientation_x_param_id = panner_orientation_x_param_id,
         .panner_orientation_y_param_id = panner_orientation_y_param_id,
         .panner_orientation_z_param_id = panner_orientation_z_param_id,
+        .listener_position_x_param_id = listener_position_x_param_id,
+        .listener_position_y_param_id = listener_position_y_param_id,
+        .listener_position_z_param_id = listener_position_z_param_id,
+        .listener_forward_x_param_id = listener_forward_x_param_id,
+        .listener_forward_y_param_id = listener_forward_y_param_id,
+        .listener_forward_z_param_id = listener_forward_z_param_id,
+        .listener_up_x_param_id = listener_up_x_param_id,
+        .listener_up_y_param_id = listener_up_y_param_id,
+        .listener_up_z_param_id = listener_up_z_param_id,
         .compressor = move(compressor),
         .compressor_threshold_param_id = compressor_threshold_param_id,
         .compressor_knee_param_id = compressor_knee_param_id,

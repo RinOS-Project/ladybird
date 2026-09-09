@@ -106,6 +106,15 @@ struct ConnectNode {
     AudioParamID panner_orientation_x_param_id { 0 };
     AudioParamID panner_orientation_y_param_id { 0 };
     AudioParamID panner_orientation_z_param_id { 0 };
+    AudioParamID listener_position_x_param_id { 0 };
+    AudioParamID listener_position_y_param_id { 0 };
+    AudioParamID listener_position_z_param_id { 0 };
+    AudioParamID listener_forward_x_param_id { 0 };
+    AudioParamID listener_forward_y_param_id { 0 };
+    AudioParamID listener_forward_z_param_id { 0 };
+    AudioParamID listener_up_x_param_id { 0 };
+    AudioParamID listener_up_y_param_id { 0 };
+    AudioParamID listener_up_z_param_id { 0 };
     RefPtr<DynamicsCompressorRenderData> compressor;
     AudioParamID compressor_threshold_param_id { 0 };
     AudioParamID compressor_knee_param_id { 0 };

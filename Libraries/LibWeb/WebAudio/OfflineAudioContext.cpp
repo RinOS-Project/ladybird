@@ -91,6 +91,15 @@ public:
         AudioParamID panner_orientation_x_param_id { 0 };
         AudioParamID panner_orientation_y_param_id { 0 };
         AudioParamID panner_orientation_z_param_id { 0 };
+        AudioParamID listener_position_x_param_id { 0 };
+        AudioParamID listener_position_y_param_id { 0 };
+        AudioParamID listener_position_z_param_id { 0 };
+        AudioParamID listener_forward_x_param_id { 0 };
+        AudioParamID listener_forward_y_param_id { 0 };
+        AudioParamID listener_forward_z_param_id { 0 };
+        AudioParamID listener_up_x_param_id { 0 };
+        AudioParamID listener_up_y_param_id { 0 };
+        AudioParamID listener_up_z_param_id { 0 };
         RefPtr<DynamicsCompressorRenderData> compressor;
         AudioParamID compressor_threshold_param_id { 0 };
         AudioParamID compressor_knee_param_id { 0 };
@@ -339,6 +348,15 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .panner_orientation_x_param_id = connect.panner_orientation_x_param_id,
                     .panner_orientation_y_param_id = connect.panner_orientation_y_param_id,
                     .panner_orientation_z_param_id = connect.panner_orientation_z_param_id,
+                    .listener_position_x_param_id = connect.listener_position_x_param_id,
+                    .listener_position_y_param_id = connect.listener_position_y_param_id,
+                    .listener_position_z_param_id = connect.listener_position_z_param_id,
+                    .listener_forward_x_param_id = connect.listener_forward_x_param_id,
+                    .listener_forward_y_param_id = connect.listener_forward_y_param_id,
+                    .listener_forward_z_param_id = connect.listener_forward_z_param_id,
+                    .listener_up_x_param_id = connect.listener_up_x_param_id,
+                    .listener_up_y_param_id = connect.listener_up_y_param_id,
+                    .listener_up_z_param_id = connect.listener_up_z_param_id,
                     .compressor = connect.compressor,
                     .compressor_threshold_param_id = connect.compressor_threshold_param_id,
                     .compressor_knee_param_id = connect.compressor_knee_param_id,
@@ -400,6 +418,24 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                             connection.panner->update_orientation_y(update.render_data);
                         if (connection.panner_orientation_z_param_id == update.param_id)
                             connection.panner->update_orientation_z(update.render_data);
+                        if (connection.listener_position_x_param_id == update.param_id)
+                            connection.panner->update_listener_position_x(update.render_data);
+                        if (connection.listener_position_y_param_id == update.param_id)
+                            connection.panner->update_listener_position_y(update.render_data);
+                        if (connection.listener_position_z_param_id == update.param_id)
+                            connection.panner->update_listener_position_z(update.render_data);
+                        if (connection.listener_forward_x_param_id == update.param_id)
+                            connection.panner->update_listener_forward_x(update.render_data);
+                        if (connection.listener_forward_y_param_id == update.param_id)
+                            connection.panner->update_listener_forward_y(update.render_data);
+                        if (connection.listener_forward_z_param_id == update.param_id)
+                            connection.panner->update_listener_forward_z(update.render_data);
+                        if (connection.listener_up_x_param_id == update.param_id)
+                            connection.panner->update_listener_up_x(update.render_data);
+                        if (connection.listener_up_y_param_id == update.param_id)
+                            connection.panner->update_listener_up_y(update.render_data);
+                        if (connection.listener_up_z_param_id == update.param_id)
+                            connection.panner->update_listener_up_z(update.render_data);
                     }
                     if (connection.compressor) {
                         if (connection.compressor_threshold_param_id == update.param_id)

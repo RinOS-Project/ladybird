@@ -8,6 +8,7 @@
 
 #include <AK/Variant.h>
 #include <AK/RefPtr.h>
+#include <LibCore/Timer.h>
 #include <LibWeb/Bindings/AudioContextPrototype.h>
 #include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibMedia/Audio/PlaybackStream.h>
@@ -87,6 +88,7 @@ private:
         bool loop { false };
         double loop_start { 0.0 };
         double loop_end { 0.0 };
+        bool ended_reported { false };
     };
     struct ActiveOscillator {
         NodeID node_id { 0 };
@@ -100,6 +102,7 @@ private:
         AudioParamID detune_param_id { 0 };
         RefPtr<PeriodicWaveRenderData> periodic_wave;
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
+        bool ended_reported { false };
     };
     struct ActiveConstantSource {
         NodeID node_id { 0 };
@@ -108,6 +111,7 @@ private:
         float offset { 1.0f };
         RefPtr<AudioParamRenderData> offset_automation;
         AudioParamID offset_param_id { 0 };
+        bool ended_reported { false };
     };
     struct NodeConnection {
         NodeID source_node_id { 0 };
@@ -135,6 +139,15 @@ private:
         AudioParamID panner_orientation_x_param_id { 0 };
         AudioParamID panner_orientation_y_param_id { 0 };
         AudioParamID panner_orientation_z_param_id { 0 };
+        AudioParamID listener_position_x_param_id { 0 };
+        AudioParamID listener_position_y_param_id { 0 };
+        AudioParamID listener_position_z_param_id { 0 };
+        AudioParamID listener_forward_x_param_id { 0 };
+        AudioParamID listener_forward_y_param_id { 0 };
+        AudioParamID listener_forward_z_param_id { 0 };
+        AudioParamID listener_up_x_param_id { 0 };
+        AudioParamID listener_up_y_param_id { 0 };
+        AudioParamID listener_up_z_param_id { 0 };
         RefPtr<DynamicsCompressorRenderData> compressor;
         AudioParamID compressor_threshold_param_id { 0 };
         AudioParamID compressor_knee_param_id { 0 };
@@ -152,8 +165,11 @@ private:
     Vector<NodeConnection> m_node_connections;
     u64 m_render_frame_position { 0 };
     u32 m_output_sample_rate { 48'000 };
+    RefPtr<Core::Timer> m_source_ended_timer;
 
     bool start_rendering_audio_graph();
+    void start_source_ended_timer();
+    void stop_source_ended_timer();
     void render_audio(Span<float>);
 };
 
