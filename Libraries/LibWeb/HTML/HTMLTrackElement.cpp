@@ -241,11 +241,16 @@ void HTMLTrackElement::attribute_changed(FlyString const& name, Optional<String>
         m_track->set_language(value.value_or({}));
     } else if (name.equals_ignoring_ascii_case(HTML::AttributeNames::src)) {
         // https://html.spec.whatwg.org/multipage/media.html#sourcing-out-of-band-text-tracks:attr-track-src
-        // FIXME: Whenever a track element has its src attribute set, changed, or removed, the user agent must immediately empty the element's text track's text track list of cues.
-        //        (This also causes the algorithm above to stop adding cues from the resource being obtained using the previously given URL, if any.)
+        // Whenever src changes, discard cues from the previous resource before
+        // starting (or declining) the next fetch. The generation guard in the
+        // processing model prevents an old response from republishing them.
+        m_track->clear_cues();
+        m_track->set_readiness_state(TextTrack::ReadinessState::NotLoaded);
 
-        if (!value.has_value())
+        if (!value.has_value()) {
+            set_track_url({});
             return;
+        }
 
         // https://html.spec.whatwg.org/multipage/media.html#attr-track-src
         // When the element's src attribute is set, run these steps:
