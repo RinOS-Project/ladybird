@@ -198,7 +198,6 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         // edge. The reduction attribute is read from this exact native state,
         // so it must observe the same envelope that the renderer updates.
         compressor_node.set_render_data(compressor);
-        compressor_node.set_render_data(compressor);
     } else if (is<PannerNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Panner;
         auto const& panner_node = as<PannerNode>(*destination_node);
