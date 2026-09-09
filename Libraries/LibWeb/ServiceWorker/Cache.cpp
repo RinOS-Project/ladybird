@@ -16,7 +16,9 @@
 #include <LibWeb/Fetch/Infrastructure/URL.h>
 #include <LibWeb/Fetch/Request.h>
 #include <LibWeb/Fetch/Response.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/ServiceWorker/Cache.h>
+#include <LibWeb/WebIDL/DOMException.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 #include <LibWeb/WebIDL/QuotaExceededError.h>
@@ -116,10 +118,14 @@ static Optional<String> decode_string(StringView encoded)
     return string.release_value();
 }
 
-Cache::Cache(JS::Realm& realm, String name, GC::Ptr<StorageAPI::StorageBottle> storage_bottle)
+Cache::Cache(JS::Realm& realm, String name, GC::Ptr<StorageAPI::StorageBottle> storage_bottle,
+             GC::Ptr<Page> page, ByteString owner_origin, u64 owner_generation)
     : Bindings::PlatformObject(realm)
     , m_name(move(name))
     , m_storage_bottle(storage_bottle)
+    , m_page(page)
+    , m_owner_origin(move(owner_origin))
+    , m_owner_generation(owner_generation)
 {
     restore_entries();
 }
@@ -134,10 +140,34 @@ void Cache::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_storage_bottle);
+    visitor.visit(m_page);
     for (auto& entry : m_entries) {
         visitor.visit(entry.request);
         visitor.visit(entry.response);
     }
+}
+
+bool Cache::owner_is_current() const
+{
+    // Standalone in-memory Cache objects used by embedding/unit callers have
+    // no durable owner to authenticate. Durable Caches always carry both a
+    // storage bottle and a non-zero generation, so they cannot take this path.
+    if (!m_storage_bottle && m_owner_generation == 0)
+        return true;
+    if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
+        return false;
+    auto response = m_page->client().request_service_worker_owner(
+        4u, {}, m_owner_origin, {}, {}, 0u);
+    return response.accepted && response.found &&
+        response.generation == m_owner_generation &&
+        response.origin == m_owner_origin;
+}
+
+GC::Ref<WebIDL::Promise> Cache::owner_rejected_promise() const
+{
+    return WebIDL::create_rejected_promise_from_exception(
+        realm(), WebIDL::InvalidStateError::create(
+            realm(), "Cache profile owner rejected the page"_utf16));
 }
 
 WebIDL::ExceptionOr<GC::Ref<Fetch::Request>> Cache::normalize_request(Fetch::RequestInfo const& input) const
@@ -323,6 +353,11 @@ GC::Ref<WebIDL::Promise> Cache::persist_entry(Entry entry, GC::Ref<Fetch::Respon
     WebIDL::react_to_promise(
         *bytes_promise.value(),
         GC::create_function(realm().heap(), [this, promise, entry = move(entry)](JS::Value value) mutable -> WebIDL::ExceptionOr<JS::Value> {
+            if (!owner_is_current()) {
+                WebIDL::reject_promise(realm(), promise, WebIDL::InvalidStateError::create(
+                    realm(), "Cache profile owner was revoked during put"_utf16));
+                return JS::js_undefined();
+            }
             if (!value.is_object()) {
                 WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache response body is not a byte sequence"sv));
                 return JS::js_undefined();
@@ -385,6 +420,8 @@ bool Cache::matches(Entry const& entry, Fetch::Request const& request, CacheQuer
 
 GC::Ref<WebIDL::Promise> Cache::match(Fetch::RequestInfo const& input, CacheQueryOptions const& options)
 {
+    if (!owner_is_current())
+        return owner_rejected_promise();
     auto request = normalize_request(input);
     if (request.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
@@ -402,6 +439,8 @@ GC::Ref<WebIDL::Promise> Cache::match(Fetch::RequestInfo const& input, CacheQuer
 
 GC::Ref<WebIDL::Promise> Cache::match_all(Optional<Fetch::RequestInfo> const& input, CacheQueryOptions const& options)
 {
+    if (!owner_is_current())
+        return owner_rejected_promise();
     Optional<GC::Ref<Fetch::Request>> request;
     if (input.has_value()) {
         auto normalized = normalize_request(input.value());
@@ -424,6 +463,8 @@ GC::Ref<WebIDL::Promise> Cache::match_all(Optional<Fetch::RequestInfo> const& in
 
 GC::Ref<WebIDL::Promise> Cache::add(Fetch::RequestInfo const& input)
 {
+    if (!owner_is_current())
+        return owner_rejected_promise();
     auto request = normalize_request(input);
     if (request.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
@@ -437,10 +478,20 @@ GC::Ref<WebIDL::Promise> Cache::add(Fetch::RequestInfo const& input)
         return WebIDL::create_rejected_promise_from_exception(realm(), JS::throw_completion(JS::TypeError::create(realm(), "Only HTTP(S) requests can be added to a Cache"sv)));
 
     auto promise = WebIDL::create_promise(realm());
+    // The fetch must be admitted by the same live page/profile owner as the
+    // cache. The network IPC carries the page id; this generation check closes
+    // the gap where a revoked profile could otherwise start a new fetch.
+    if (!owner_is_current())
+        return owner_rejected_promise();
     auto fetch_promise = Fetch::fetch(realm().vm(), input);
     WebIDL::react_to_promise(
         *fetch_promise,
         GC::create_function(realm().heap(), [this, promise, request = request.release_value()](JS::Value value) -> WebIDL::ExceptionOr<JS::Value> {
+            if (!owner_is_current()) {
+                WebIDL::reject_promise(realm(), promise, WebIDL::InvalidStateError::create(
+                    realm(), "Cache profile owner was revoked during fetch"_utf16));
+                return JS::js_undefined();
+            }
             if (!value.is<Fetch::Response>()) {
                 WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Fetch did not produce a Response"sv));
                 return JS::js_undefined();
@@ -473,6 +524,8 @@ GC::Ref<WebIDL::Promise> Cache::add(Fetch::RequestInfo const& input)
 
 GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs)
 {
+    if (!owner_is_current())
+        return owner_rejected_promise();
     auto promise = WebIDL::create_promise(realm());
     Vector<GC::Ref<Fetch::Request>> requests;
     Vector<GC::Ref<WebIDL::Promise>> fetch_promises;
@@ -495,6 +548,8 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
     // Start network work only after the complete input list has been
     // normalized and admitted.  A malformed or non-GET later entry therefore
     // cannot leave earlier entries with an in-flight fetch.
+    if (!owner_is_current())
+        return owner_rejected_promise();
     for (auto const& input : inputs)
         fetch_promises.append(Fetch::fetch(realm().vm(), input));
 
@@ -502,6 +557,11 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
         realm(),
         fetch_promises,
         [this, promise, requests = move(requests)](Vector<JS::Value> const& values) mutable {
+            if (!owner_is_current()) {
+                WebIDL::reject_promise(realm(), promise, WebIDL::InvalidStateError::create(
+                    realm(), "Cache profile owner was revoked during fetch"_utf16));
+                return;
+            }
             Vector<Entry> staged_entries;
             staged_entries.ensure_capacity(values.size());
             for (size_t i = 0; i < values.size(); ++i) {
@@ -555,6 +615,8 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
 
 GC::Ref<WebIDL::Promise> Cache::put(Fetch::RequestInfo const& input, GC::Root<Fetch::Response> const& response)
 {
+    if (!owner_is_current())
+        return owner_rejected_promise();
     auto request = normalize_request(input);
     if (request.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
@@ -603,6 +665,8 @@ void Cache::commit_entry(Entry entry)
 
 GC::Ref<WebIDL::Promise> Cache::delete_(Fetch::RequestInfo const& input, CacheQueryOptions const& options)
 {
+    if (!owner_is_current())
+        return owner_rejected_promise();
     auto request = normalize_request(input);
     if (request.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
@@ -622,6 +686,8 @@ GC::Ref<WebIDL::Promise> Cache::delete_(Fetch::RequestInfo const& input, CacheQu
 
 GC::Ref<WebIDL::Promise> Cache::keys(Optional<Fetch::RequestInfo> const& input, CacheQueryOptions const& options)
 {
+    if (!owner_is_current())
+        return owner_rejected_promise();
     Optional<GC::Ref<Fetch::Request>> request;
     if (input.has_value()) {
         auto normalized = normalize_request(input.value());
@@ -642,9 +708,10 @@ GC::Ref<WebIDL::Promise> Cache::keys(Optional<Fetch::RequestInfo> const& input, 
     return WebIDL::create_resolved_promise(realm(), JS::Array::create_from(realm(), requests));
 }
 
-GC::Ref<Cache> Cache::create(JS::Realm& realm, String name, GC::Ptr<StorageAPI::StorageBottle> storage_bottle)
+GC::Ref<Cache> Cache::create(JS::Realm& realm, String name, GC::Ptr<StorageAPI::StorageBottle> storage_bottle,
+                             GC::Ptr<Page> page, ByteString owner_origin, u64 owner_generation)
 {
-    return realm.create<Cache>(realm, move(name), storage_bottle);
+    return realm.create<Cache>(realm, move(name), storage_bottle, page, move(owner_origin), owner_generation);
 }
 
 }

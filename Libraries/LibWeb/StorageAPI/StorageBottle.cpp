@@ -95,10 +95,10 @@ GC::Ptr<StorageBottle> obtain_a_session_storage_bottle_map(HTML::EnvironmentSett
 
 GC::Ref<StorageBottle> StorageBottle::create(GC::Heap& heap, GC::Ref<Page> page, StorageType type,
                                              StorageKey key, Optional<u64> quota,
-                                             StorageEndpointType endpoint)
+                                             StorageEndpointType endpoint, u64 owner_generation)
 {
     if (type == StorageType::Local)
-        return LocalStorageBottle::create(heap, page, key, quota, endpoint);
+        return LocalStorageBottle::create(heap, page, key, quota, endpoint, owner_generation);
     return SessionStorageBottle::create(heap, quota);
 }
 
@@ -110,32 +110,32 @@ void LocalStorageBottle::visit_edges(GC::Cell::Visitor& visitor)
 
 size_t LocalStorageBottle::size() const
 {
-    return m_page->client().page_did_request_storage_keys(m_endpoint, m_storage_key.to_string()).size();
+    return m_page->client().page_did_request_storage_keys(m_endpoint, m_storage_key.to_string(), m_owner_generation).size();
 }
 
 Vector<String> LocalStorageBottle::keys() const
 {
-    return m_page->client().page_did_request_storage_keys(m_endpoint, m_storage_key.to_string());
+    return m_page->client().page_did_request_storage_keys(m_endpoint, m_storage_key.to_string(), m_owner_generation);
 }
 
 Optional<String> LocalStorageBottle::get(String const& key) const
 {
-    return m_page->client().page_did_request_storage_item(m_endpoint, m_storage_key.to_string(), key);
+    return m_page->client().page_did_request_storage_item(m_endpoint, m_storage_key.to_string(), key, m_owner_generation);
 }
 
 WebView::StorageSetResult LocalStorageBottle::set(String const& key, String const& value)
 {
-    return m_page->client().page_did_set_storage_item(m_endpoint, m_storage_key.to_string(), key, value);
+    return m_page->client().page_did_set_storage_item(m_endpoint, m_storage_key.to_string(), key, value, m_owner_generation);
 }
 
 void LocalStorageBottle::clear()
 {
-    m_page->client().page_did_clear_storage(m_endpoint, m_storage_key.to_string());
+    m_page->client().page_did_clear_storage(m_endpoint, m_storage_key.to_string(), m_owner_generation);
 }
 
 void LocalStorageBottle::remove(String const& key)
 {
-    m_page->client().page_did_remove_storage_item(m_endpoint, m_storage_key.to_string(), key);
+    m_page->client().page_did_remove_storage_item(m_endpoint, m_storage_key.to_string(), key, m_owner_generation);
 }
 
 size_t SessionStorageBottle::size() const

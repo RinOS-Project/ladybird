@@ -31,7 +31,7 @@ class Cache final : public Bindings::PlatformObject {
     GC_DECLARE_ALLOCATOR(Cache);
 
 public:
-    static GC::Ref<Cache> create(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle> = {});
+    static GC::Ref<Cache> create(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle> = {}, GC::Ptr<Page> = {}, ByteString owner_origin = {}, u64 owner_generation = 0);
 
     String const& name() const { return m_name; }
     void remove_persisted_entries();
@@ -51,7 +51,7 @@ private:
         GC::Ref<Fetch::Response> response;
     };
 
-    Cache(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle>);
+    Cache(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle>, GC::Ptr<Page>, ByteString owner_origin, u64 owner_generation);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
@@ -63,6 +63,8 @@ private:
     Optional<Entry> deserialize_entry(String const& key, String const& value);
     bool store_serialized_entry(String const& key, String const& value);
     GC::Ref<WebIDL::Promise> persist_entry(Entry, GC::Ref<Fetch::Response>);
+    bool owner_is_current() const;
+    GC::Ref<WebIDL::Promise> owner_rejected_promise() const;
     void restore_entries();
     void commit_entry(Entry);
     GC::Ref<WebIDL::Promise> put_normalized(GC::Ref<Fetch::Request>, GC::Ref<Fetch::Response>);
@@ -71,6 +73,9 @@ private:
 
     String m_name;
     GC::Ptr<StorageAPI::StorageBottle> m_storage_bottle;
+    GC::Ptr<Page> m_page;
+    ByteString m_owner_origin;
+    u64 m_owner_generation { 0 };
     u64 m_next_sequence { 1 };
     Vector<Entry> m_entries;
 };

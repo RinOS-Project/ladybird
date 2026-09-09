@@ -35,8 +35,13 @@ private:
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
+    bool owner_is_current() const;
+    GC::Ref<WebIDL::Promise> owner_rejected_promise() const;
+
     OrderedHashMap<String, GC::Ref<Cache>> m_caches;
     GC::Ptr<StorageAPI::StorageBottle> m_storage_bottle;
+    GC::Ptr<Page> m_page;
+    ByteString m_owner_origin;
     bool m_owner_authorized { false };
     u64 m_owner_generation { 0 };
 };
