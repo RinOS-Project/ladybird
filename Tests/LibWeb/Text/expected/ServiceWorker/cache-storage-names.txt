@@ -1,0 +1,5 @@
+opened: rinos-cache
+has: true
+keys: rinos-cache
+deleted: true
+has-after: false

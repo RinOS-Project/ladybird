@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    asyncTest(done => {
+        setTimeout(async () => {
+            spoofCurrentURL("https://example.com/cache-storage-names.html");
+            const cache = await caches.open("rinos-cache");
+            println(`opened: ${cache.name}`);
+            println(`has: ${await caches.has("rinos-cache")}`);
+            println(`keys: ${(await caches.keys()).join(",")}`);
+            println(`deleted: ${await caches.delete("rinos-cache")}`);
+            println(`has-after: ${await caches.has("rinos-cache")}`);
+            done();
+        }, 0);
+    });
+</script>

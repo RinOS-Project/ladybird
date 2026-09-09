@@ -8,17 +8,50 @@
 #include <LibJS/Runtime/PrimitiveString.h>
 #include <LibWeb/Bindings/CacheStoragePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
+#include <LibWeb/HTML/Window.h>
+#include <LibWeb/HTML/WorkerGlobalScope.h>
+#include <LibWeb/StorageAPI/StorageBottle.h>
+#include <LibWeb/StorageAPI/StorageEndpoint.h>
+#include <LibWeb/StorageAPI/StorageKey.h>
 #include <LibWeb/ServiceWorker/Cache.h>
 #include <LibWeb/ServiceWorker/CacheStorage.h>
+#include <LibWeb/WebIDL/QuotaExceededError.h>
 #include <LibWeb/WebIDL/Promise.h>
 
 namespace Web::ServiceWorker {
 
 GC_DEFINE_ALLOCATOR(CacheStorage);
 
+static auto const cache_storage_marker = "RIN-CACHE-NAME-V1"_string;
+
+static GC::Ptr<Page> page_for_cache_storage(JS::Realm& realm)
+{
+    auto& global_object = realm.global_object();
+    if (is<HTML::Window>(global_object))
+        return as<HTML::Window>(global_object).page();
+    if (is<HTML::WorkerGlobalScope>(global_object))
+        return as<HTML::WorkerGlobalScope>(global_object).page();
+    return {};
+}
+
 CacheStorage::CacheStorage(JS::Realm& realm)
     : Bindings::PlatformObject(realm)
 {
+    auto storage_key = StorageAPI::obtain_a_storage_key(
+        HTML::relevant_settings_object(realm.global_object()));
+    auto page = page_for_cache_storage(realm);
+    if (!storage_key.has_value() || !page)
+        return;
+
+    m_storage_bottle = StorageAPI::LocalStorageBottle::create(
+        heap(), *page, storage_key.value(), {}, StorageAPI::StorageEndpointType::Caches);
+    for (auto const& cache_name : m_storage_bottle->keys()) {
+        auto marker = m_storage_bottle->get(cache_name);
+        if (!marker.has_value() || marker.value() != cache_storage_marker)
+            continue;
+        m_caches.set(cache_name, Cache::create(realm, cache_name));
+    }
 }
 
 void CacheStorage::initialize(JS::Realm& realm)
@@ -31,11 +64,19 @@ void CacheStorage::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_caches);
+    visitor.visit(m_storage_bottle);
 }
 
 // https://w3c.github.io/ServiceWorker/#cache-storage-open
 GC::Ref<WebIDL::Promise> CacheStorage::open(String const& cache_name)
 {
+    if (!m_caches.contains(cache_name) && m_storage_bottle) {
+        auto result = m_storage_bottle->set(cache_name, cache_storage_marker);
+        if (result.has<WebView::StorageOperationError>())
+            return WebIDL::create_rejected_promise_from_exception(
+                realm(), WebIDL::QuotaExceededError::create(realm(), "Cache storage quota exceeded"_utf16));
+    }
+
     auto cache = m_caches.ensure(cache_name, [this, &cache_name] {
         return Cache::create(realm(), cache_name);
     });
@@ -51,7 +92,10 @@ GC::Ref<WebIDL::Promise> CacheStorage::has(String const& cache_name)
 // https://w3c.github.io/ServiceWorker/#cache-storage-delete
 GC::Ref<WebIDL::Promise> CacheStorage::delete_(String const& cache_name)
 {
-    return WebIDL::create_resolved_promise(realm(), JS::Value(m_caches.remove(cache_name)));
+    const bool removed = m_caches.remove(cache_name);
+    if (removed && m_storage_bottle)
+        m_storage_bottle->remove(cache_name);
+    return WebIDL::create_resolved_promise(realm(), JS::Value(removed));
 }
 
 // https://w3c.github.io/ServiceWorker/#cache-storage-keys

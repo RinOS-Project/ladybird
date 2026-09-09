@@ -10,6 +10,10 @@
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/WebIDL/Promise.h>
 
+namespace Web::StorageAPI {
+class StorageBottle;
+}
+
 namespace Web::ServiceWorker {
 
 class Cache;
@@ -32,6 +36,7 @@ private:
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
     OrderedHashMap<String, GC::Ref<Cache>> m_caches;
+    GC::Ptr<StorageAPI::StorageBottle> m_storage_bottle;
 };
 
 }
