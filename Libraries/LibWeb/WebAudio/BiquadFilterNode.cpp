@@ -94,6 +94,8 @@ WebIDL::ExceptionOr<void> BiquadFilterNode::get_frequency_response(GC::Root<WebI
     auto const parameter_detune = detune()->value();
     auto const parameter_q = q()->value();
     auto const parameter_gain = gain()->value();
+    if (!isfinite(parameter_frequency) || !isfinite(parameter_detune) || !isfinite(parameter_q) || !isfinite(parameter_gain))
+        return WebIDL::InvalidStateError::create(realm(), "BiquadFilter parameters must be finite"_utf16);
     auto const frequency_scale = pow(2.0f, parameter_detune / 1200.0f);
     auto const effective_frequency = clamp(parameter_frequency * frequency_scale, 0.0f, sample_rate / 2.0f);
     auto const q_value = max(abs(parameter_q), 1e-8f);
