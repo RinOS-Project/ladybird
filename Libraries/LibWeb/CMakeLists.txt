@@ -1114,6 +1114,7 @@ set(SOURCES
     ${LIBWEB_WASM_SOURCES}
     WebAudio/AnalyserNode.cpp
     WebAudio/AudioBuffer.cpp
+    WebAudio/AudioBufferRenderData.cpp
     WebAudio/AudioBufferSourceNode.cpp
     WebAudio/AudioContext.cpp
     WebAudio/AudioDestinationNode.cpp
