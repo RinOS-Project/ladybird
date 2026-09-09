@@ -27,7 +27,11 @@ AudioDestinationNode::~AudioDestinationNode() = default;
 // https://webaudio.github.io/web-audio-api/#dom-audiodestinationnode-maxchannelcount
 WebIDL::UnsignedLong AudioDestinationNode::max_channel_count()
 {
-    dbgln("FIXME: Implement Audio::DestinationNode::max_channel_count()");
+    // Before the asynchronous output stream is ready, the RinOS playback
+    // owner advertises its stereo contract. Once ready, expose the actual
+    // backend channel map instead of pretending every sink is stereo.
+    if (auto* audio_context = as_if<AudioContext>(context().ptr()))
+        return audio_context->output_channel_count();
     return 2;
 }
 

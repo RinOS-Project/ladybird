@@ -39,6 +39,10 @@ public:
 
     double base_latency() const { return m_base_latency; }
     double output_latency() const { return m_output_latency; }
+    WebIDL::UnsignedLong output_channel_count() const
+    {
+        return m_playback_stream ? m_playback_stream->sample_specification().channel_count() : 2;
+    }
     AudioTimestamp get_output_timestamp();
     WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> resume();
     WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> suspend();
