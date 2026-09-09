@@ -5,6 +5,7 @@
  */
 
 #include <LibJS/Runtime/Array.h>
+#include <LibJS/Runtime/PrimitiveString.h>
 #include <LibWeb/Bindings/CacheStoragePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/ServiceWorker/Cache.h>
@@ -56,10 +57,10 @@ GC::Ref<WebIDL::Promise> CacheStorage::delete_(String const& cache_name)
 // https://w3c.github.io/ServiceWorker/#cache-storage-keys
 GC::Ref<WebIDL::Promise> CacheStorage::keys()
 {
-    Vector<String> cache_names;
+    GC::RootVector<JS::Value> cache_names(realm().heap());
     cache_names.ensure_capacity(m_caches.size());
     for (auto const& entry : m_caches)
-        cache_names.append(entry.key);
+        cache_names.append(JS::PrimitiveString::create(realm().vm(), entry.key));
     return WebIDL::create_resolved_promise(realm(), JS::Array::create_from(realm(), cache_names));
 }
 

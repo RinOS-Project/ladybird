@@ -54,7 +54,7 @@ private:
     virtual void visit_edges(Cell::Visitor&) override;
 
     WebIDL::ExceptionOr<GC::Ref<Fetch::Request>> normalize_request(Fetch::RequestInfo const&) const;
-    WebIDL::ExceptionOr<Entry> clone_entry(GC::Ref<Fetch::Request>, GC::Ref<Fetch::Response>) const;
+    WebIDL::ExceptionOr<Entry> clone_entry(GC::Ref<Fetch::Request>, Fetch::Response const&) const;
     void commit_entry(Entry);
     GC::Ref<WebIDL::Promise> put_normalized(GC::Ref<Fetch::Request>, GC::Ref<Fetch::Response>);
     bool matches(Entry const&, Fetch::Request const&, CacheQueryOptions const&) const;
