@@ -10,6 +10,7 @@
 #include <LibWeb/WebAudio/AudioBufferSourceNode.h>
 #include <LibWeb/WebAudio/AudioParam.h>
 #include <LibWeb/WebAudio/AudioScheduledSourceNode.h>
+#include <LibWeb/WebAudio/ControlMessage.h>
 #include <math.h>
 
 namespace Web::WebAudio {
