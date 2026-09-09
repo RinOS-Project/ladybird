@@ -132,6 +132,8 @@ void AudioParam::insert_event(AutomationEvent&& event)
 
 float AudioParam::evaluate_event(AutomationEvent const& event, double time) const
 {
+    if (event.type == AutomationEventType::SetValueCurve && !event.curve.is_empty() && time == event.time)
+        return event.curve.first();
     if (time <= event.time)
         return event.start_value;
 
