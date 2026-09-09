@@ -12,6 +12,7 @@
 #include <LibWeb/WebAudio/AudioParam.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/BiquadFilterNode.h>
+#include <math.h>
 
 namespace Web::WebAudio {
 
@@ -68,11 +69,146 @@ GC::Ref<AudioParam> BiquadFilterNode::gain() const
 // https://webaudio.github.io/web-audio-api/#dom-biquadfilternode-getfrequencyresponse
 WebIDL::ExceptionOr<void> BiquadFilterNode::get_frequency_response(GC::Root<WebIDL::BufferSource> const& frequency_hz, GC::Root<WebIDL::BufferSource> const& mag_response, GC::Root<WebIDL::BufferSource> const& phase_response)
 {
-    (void)frequency_hz;
-    (void)mag_response;
-    (void)phase_response;
-    dbgln("FIXME: Implement BiquadFilterNode::get_frequency_response(Float32Array, Float32Array, Float32Array)");
-    return {};
+    auto& vm = this->vm();
+    if (!is<JS::Float32Array>(*frequency_hz->raw_object())
+        || !is<JS::Float32Array>(*mag_response->raw_object())
+        || !is<JS::Float32Array>(*phase_response->raw_object()))
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "Float32Array");
+
+    auto& frequencies = static_cast<JS::Float32Array&>(*frequency_hz->raw_object());
+    auto& magnitudes = static_cast<JS::Float32Array&>(*mag_response->raw_object());
+    auto& phases = static_cast<JS::Float32Array&>(*phase_response->raw_object());
+    if (frequencies.viewed_array_buffer()->is_detached()
+        || magnitudes.viewed_array_buffer()->is_detached()
+        || phases.viewed_array_buffer()->is_detached())
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::DetachedArrayBuffer);
+
+    auto const sample_rate = context()->sample_rate();
+    if (!isfinite(sample_rate) || sample_rate <= 0)
+        return WebIDL::InvalidStateError::create(realm(), "Audio context has no valid sample rate"_utf16);
+
+    auto const parameter_frequency = frequency()->value();
+    auto const parameter_detune = detune()->value();
+    auto const parameter_q = q()->value();
+    auto const parameter_gain = gain()->value();
+    auto const frequency_scale = pow(2.0f, parameter_detune / 1200.0f);
+    auto const effective_frequency = clamp(parameter_frequency * frequency_scale, 0.0f, sample_rate / 2.0f);
+    auto const q_value = max(abs(parameter_q), 1e-8f);
+    auto const gain_factor = pow(10.0f, parameter_gain / 40.0f);
+    auto const parameter_omega = 2.0f * AK::Pi<float> * effective_frequency / sample_rate;
+    auto const parameter_cosine = cos(parameter_omega);
+    auto const parameter_sine = sin(parameter_omega);
+    auto const alpha = parameter_sine / (2.0f * q_value);
+    auto const shelf_alpha = parameter_sine * 0.5f * AK::sqrt(2.0f);
+    auto const two_sqrt_gain_alpha = 2.0f * AK::sqrt(gain_factor) * shelf_alpha;
+
+    auto const count = frequencies.data().size();
+    for (size_t i = 0; i < count; ++i) {
+        auto input_frequency = frequencies.data()[i];
+        if (!isfinite(input_frequency)) {
+            if (i < magnitudes.data().size())
+                magnitudes.data()[i] = 0;
+            if (i < phases.data().size())
+                phases.data()[i] = 0;
+            continue;
+        }
+
+        float b0 = 0;
+        float b1 = 0;
+        float b2 = 0;
+        float a0 = 1;
+        float a1 = 0;
+        float a2 = 0;
+        switch (type()) {
+        case Bindings::BiquadFilterType::Lowpass:
+            b0 = (1 - parameter_cosine) / 2;
+            b1 = 1 - parameter_cosine;
+            b2 = b0;
+            a0 = 1 + alpha;
+            a1 = -2 * parameter_cosine;
+            a2 = 1 - alpha;
+            break;
+        case Bindings::BiquadFilterType::Highpass:
+            b0 = (1 + parameter_cosine) / 2;
+            b1 = -(1 + parameter_cosine);
+            b2 = b0;
+            a0 = 1 + alpha;
+            a1 = -2 * parameter_cosine;
+            a2 = 1 - alpha;
+            break;
+        case Bindings::BiquadFilterType::Bandpass:
+            b0 = parameter_sine / 2;
+            b1 = 0;
+            b2 = -parameter_sine / 2;
+            a0 = 1 + alpha;
+            a1 = -2 * parameter_cosine;
+            a2 = 1 - alpha;
+            break;
+        case Bindings::BiquadFilterType::Notch:
+            b0 = 1;
+            b1 = -2 * parameter_cosine;
+            b2 = 1;
+            a0 = 1 + alpha;
+            a1 = -2 * parameter_cosine;
+            a2 = 1 - alpha;
+            break;
+        case Bindings::BiquadFilterType::Allpass:
+            b0 = 1 - alpha;
+            b1 = -2 * parameter_cosine;
+            b2 = 1 + alpha;
+            a0 = 1 + alpha;
+            a1 = -2 * parameter_cosine;
+            a2 = 1 - alpha;
+            break;
+        case Bindings::BiquadFilterType::Peaking:
+            b0 = 1 + alpha * gain_factor;
+            b1 = -2 * parameter_cosine;
+            b2 = 1 - alpha * gain_factor;
+            a0 = 1 + alpha / gain_factor;
+            a1 = -2 * parameter_cosine;
+            a2 = 1 - alpha / gain_factor;
+            break;
+        case Bindings::BiquadFilterType::Lowshelf:
+            b0 = gain_factor * ((gain_factor + 1) - (gain_factor - 1) * parameter_cosine + two_sqrt_gain_alpha);
+            b1 = 2 * gain_factor * ((gain_factor - 1) - (gain_factor + 1) * parameter_cosine);
+            b2 = gain_factor * ((gain_factor + 1) - (gain_factor - 1) * parameter_cosine - two_sqrt_gain_alpha);
+            a0 = (gain_factor + 1) + (gain_factor - 1) * parameter_cosine + two_sqrt_gain_alpha;
+            a1 = -2 * ((gain_factor - 1) + (gain_factor + 1) * parameter_cosine);
+            a2 = (gain_factor + 1) + (gain_factor - 1) * parameter_cosine - two_sqrt_gain_alpha;
+            break;
+        case Bindings::BiquadFilterType::Highshelf:
+            b0 = gain_factor * ((gain_factor + 1) + (gain_factor - 1) * parameter_cosine + two_sqrt_gain_alpha);
+            b1 = -2 * gain_factor * ((gain_factor - 1) + (gain_factor + 1) * parameter_cosine);
+            b2 = gain_factor * ((gain_factor + 1) + (gain_factor - 1) * parameter_cosine - two_sqrt_gain_alpha);
+            a0 = (gain_factor + 1) - (gain_factor - 1) * parameter_cosine + two_sqrt_gain_alpha;
+            a1 = 2 * ((gain_factor - 1) - (gain_factor + 1) * parameter_cosine);
+            a2 = (gain_factor + 1) - (gain_factor - 1) * parameter_cosine - two_sqrt_gain_alpha;
+            break;
+        }
+
+        auto const normalization = 1.0f / a0;
+        b0 *= normalization;
+        b1 *= normalization;
+        b2 *= normalization;
+        a1 *= normalization;
+        a2 *= normalization;
+
+        auto const response_frequency = 2.0f * AK::Pi<float> * abs(input_frequency) / sample_rate;
+        auto const response_cosine = cos(response_frequency);
+        auto const response_sine = sin(response_frequency);
+        auto const response_cosine2 = cos(2.0f * response_frequency);
+        auto const response_sine2 = sin(2.0f * response_frequency);
+        auto const numerator_real = b0 + b1 * response_cosine + b2 * response_cosine2;
+        auto const numerator_imaginary = -(b1 * response_sine + b2 * response_sine2);
+        auto const denominator_real = 1 + a1 * response_cosine + a2 * response_cosine2;
+        auto const denominator_imaginary = -(a1 * response_sine + a2 * response_sine2);
+        auto const denominator_magnitude_squared = denominator_real * denominator_real + denominator_imaginary * denominator_imaginary;
+        if (i < magnitudes.data().size())
+            magnitudes.data()[i] = denominator_magnitude_squared > 0 ? AK::sqrt((numerator_real * numerator_real + numerator_imaginary * numerator_imaginary) / denominator_magnitude_squared) : 0;
+        if (i < phases.data().size())
+            phases.data()[i] = atan2(numerator_imaginary, numerator_real) - atan2(denominator_imaginary, denominator_real);
+    }
+    return { };
 }
 
 WebIDL::ExceptionOr<GC::Ref<BiquadFilterNode>> BiquadFilterNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, BiquadFilterOptions const& options)

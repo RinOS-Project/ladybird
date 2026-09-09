@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    test(() => {
+        const context = new OfflineAudioContext(1, 128, 44100);
+        const filter = context.createBiquadFilter();
+        const frequencies = new Float32Array([0, 100, 1000, 10000]);
+        const magnitude = new Float32Array(frequencies.length);
+        const phase = new Float32Array(frequencies.length);
+        filter.getFrequencyResponse(frequencies, magnitude, phase);
+        println(`magnitude: ${Array.from(magnitude).join(',')}`);
+        println(`phase: ${Array.from(phase).join(',')}`);
+
+        try {
+            filter.getFrequencyResponse(new Float64Array(1), magnitude, phase);
+            println("FAIL: Float64Array was accepted");
+        } catch (e) {
+            println(`invalid input: ${e}`);
+        }
+    });
+</script>
