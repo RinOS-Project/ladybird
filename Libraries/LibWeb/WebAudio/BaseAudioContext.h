@@ -63,6 +63,7 @@ public:
     WebIDL::CallbackType* onstatechange();
 
     void set_sample_rate(float sample_rate) { m_sample_rate = sample_rate; }
+    void set_current_time(double current_time) { m_current_time = current_time; }
     void set_control_state(Bindings::AudioContextState state) { m_control_thread_state = state; }
     void set_rendering_state(Bindings::AudioContextState state) { m_rendering_thread_state = state; }
 

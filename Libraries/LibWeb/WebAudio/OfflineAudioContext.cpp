@@ -5,6 +5,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Array.h>
+#include <AK/Math.h>
+#include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
@@ -14,6 +17,7 @@
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/WebAudio/AudioBuffer.h>
 #include <LibWeb/WebAudio/AudioDestinationNode.h>
+#include <LibWeb/WebAudio/ControlMessage.h>
 #include <LibWeb/WebAudio/OfflineAudioCompletionEvent.h>
 #include <LibWeb/WebAudio/OfflineAudioContext.h>
 #include <math.h>
@@ -126,10 +130,142 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::start_renderi
 
 void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promise)
 {
-    // To begin offline rendering, the following steps MUST happen on a rendering thread that is created for the occasion.
-    // FIXME: 1: Given the current connections and scheduled changes, start rendering length sample-frames of audio into [[rendered buffer]]
-    // FIXME: 2: For every render quantum, check and suspend rendering if necessary.
-    // FIXME: 3: If a suspended context is resumed, continue to render the buffer.
+    struct OfflineBufferSource {
+        RefPtr<AudioBufferRenderData> buffer;
+        double start_time { 0.0 };
+        double offset { 0.0 };
+        Optional<double> duration;
+        Optional<double> stop_time;
+        float playback_rate { 1.0f };
+        float detune { 0.0f };
+        bool loop { false };
+        double loop_start { 0.0 };
+        double loop_end { 0.0 };
+        NodeID node_id { 0 };
+    };
+    struct OfflineOscillator {
+        double start_time { 0.0 };
+        Optional<double> stop_time;
+        float frequency { 440.0f };
+        float detune { 0.0f };
+        OscillatorWaveform waveform { OscillatorWaveform::Sine };
+        NodeID node_id { 0 };
+    };
+
+    Vector<OfflineBufferSource> buffer_sources;
+    Vector<OfflineOscillator> oscillators;
+    for (auto message : drain_control_messages()) {
+        message.visit(
+            [&](StartSource const&) { },
+            [&](StartOscillator const& start) {
+                oscillators.append({
+                    .start_time = start.when,
+                    .frequency = start.frequency,
+                    .detune = start.detune,
+                    .waveform = start.waveform,
+                    .node_id = start.node_id,
+                });
+            },
+            [&](StartBufferSource const& start) {
+                if (!start.buffer || start.buffer->frame_count() == 0)
+                    return;
+                buffer_sources.append({
+                    .buffer = start.buffer,
+                    .start_time = start.when,
+                    .offset = start.offset,
+                    .duration = start.duration,
+                    .playback_rate = start.playback_rate,
+                    .detune = start.detune,
+                    .loop = start.loop,
+                    .loop_start = start.loop_start,
+                    .loop_end = start.loop_end,
+                    .node_id = start.node_id,
+                });
+            },
+            [&](StopSource const& stop) {
+                for (auto& source : buffer_sources) {
+                    if (source.node_id == stop.node_id)
+                        source.stop_time = stop.when;
+                }
+                for (auto& oscillator : oscillators) {
+                    if (oscillator.node_id == stop.node_id)
+                        oscillator.stop_time = stop.when;
+                }
+            });
+    }
+
+    Vector<GC::Ref<JS::Float32Array>> output_channels;
+    output_channels.ensure_capacity(m_number_of_channels);
+    for (u32 channel = 0; channel < m_number_of_channels; ++channel)
+        output_channels.append(MUST(m_rendered_buffer->get_channel_data(channel)));
+
+    auto const output_rate = static_cast<double>(sample_rate());
+    auto const frame_count = m_rendered_buffer->length();
+    for (u32 frame = 0; frame < frame_count; ++frame) {
+        auto now = frame / output_rate;
+        Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> mixed_samples {};
+
+        for (auto const& source : buffer_sources) {
+            if (now < source.start_time || (source.stop_time.has_value() && now >= source.stop_time.value()))
+                continue;
+            auto elapsed = now - source.start_time;
+            if (source.duration.has_value() && elapsed >= source.duration.value())
+                continue;
+            auto rate = max(static_cast<double>(source.playback_rate), 0.0) * pow(2.0, static_cast<double>(source.detune) / 1200.0);
+            auto source_frame = source.offset * source.buffer->sample_rate() + elapsed * rate * source.buffer->sample_rate();
+            auto source_length = static_cast<double>(source.buffer->frame_count());
+            if (source.loop) {
+                auto loop_start = clamp(source.loop_start * source.buffer->sample_rate(), 0.0, source_length);
+                auto loop_end = source.loop_end > source.loop_start ? clamp(source.loop_end * source.buffer->sample_rate(), loop_start, source_length) : source_length;
+                auto loop_length = loop_end - loop_start;
+                if (loop_length > 0 && source_frame >= loop_end)
+                    source_frame = loop_start + fmod(source_frame - loop_start, loop_length);
+            }
+            if (source_frame < 0 || source_frame >= source_length)
+                continue;
+            auto first_frame = static_cast<u32>(source_frame);
+            auto next_frame = min(first_frame + 1, source.buffer->frame_count() - 1);
+            auto fraction = static_cast<float>(source_frame - first_frame);
+            auto sample_at = [&](u32 channel) {
+                auto first = source.buffer->sample(channel, first_frame);
+                auto next = source.buffer->sample(channel, next_frame);
+                return first + (next - first) * fraction;
+            };
+            if (source.buffer->channel_count() == 1) {
+                auto sample = sample_at(0);
+                for (u32 channel = 0; channel < m_number_of_channels; ++channel)
+                    mixed_samples[channel] += sample;
+            } else {
+                if (m_number_of_channels > 0)
+                    mixed_samples[0] += sample_at(0);
+                if (m_number_of_channels > 1)
+                    mixed_samples[1] += sample_at(1);
+            }
+        }
+
+        for (auto const& oscillator : oscillators) {
+            if (now < oscillator.start_time || (oscillator.stop_time.has_value() && now >= oscillator.stop_time.value()))
+                continue;
+            auto frequency = static_cast<double>(oscillator.frequency) * pow(2.0, static_cast<double>(oscillator.detune) / 1200.0);
+            auto phase = fmod((now - oscillator.start_time) * frequency, 1.0);
+            if (phase < 0)
+                phase += 1.0;
+            float sample = 0;
+            switch (oscillator.waveform) {
+            case OscillatorWaveform::Sine: sample = static_cast<float>(sin(phase * 2.0 * AK::Pi<double>)); break;
+            case OscillatorWaveform::Square: sample = phase < 0.5 ? 1.0f : -1.0f; break;
+            case OscillatorWaveform::Sawtooth: sample = static_cast<float>(2.0 * phase - 1.0); break;
+            case OscillatorWaveform::Triangle: sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5)); break;
+            }
+            for (u32 channel = 0; channel < m_number_of_channels; ++channel)
+                mixed_samples[channel] += sample;
+        }
+
+        for (u32 channel = 0; channel < m_number_of_channels; ++channel)
+            output_channels[channel]->data()[frame] = clamp(mixed_samples[channel], -1.0f, 1.0f);
+    }
+    set_current_time(frame_count / output_rate);
+
     // 4: Once the rendering is complete, queue a media element task to execute the following steps:
     queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
         HTML::TemporaryExecutionContext context(this->realm(), HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
