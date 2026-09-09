@@ -7,12 +7,15 @@
 
 #pragma once
 
+#include <AK/RefPtr.h>
 #include <LibWeb/Bindings/OfflineAudioContextPrototype.h>
 #include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::WebAudio {
+
+class OfflineRenderState;
 
 // https://webaudio.github.io/web-audio-api/#OfflineAudioContextOptions
 struct OfflineAudioContextOptions {
@@ -55,6 +58,9 @@ private:
     WebIDL::UnsignedLong m_number_of_channels { };
     bool m_rendering_started { false };
     Optional<double> m_pending_suspend_time;
+    GC::Ptr<WebIDL::Promise> m_pending_suspend_promise;
+    GC::Ptr<WebIDL::Promise> m_rendering_promise;
+    RefPtr<OfflineRenderState> m_render_state;
 
     GC::Ptr<AudioBuffer> m_rendered_buffer;
 

@@ -13,6 +13,8 @@
 #include <LibWeb/WebAudio/BiquadFilterNode.h>
 #include <LibWeb/WebAudio/ControlMessage.h>
 #include <LibWeb/WebAudio/DelayNode.h>
+#include <LibWeb/WebAudio/DynamicsCompressorNode.h>
+#include <LibWeb/WebAudio/DynamicsCompressorRenderData.h>
 #include <LibWeb/WebAudio/GainNode.h>
 #include <LibWeb/WebAudio/StereoPannerNode.h>
 
@@ -96,6 +98,12 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     RefPtr<AnalyserRenderData> analyser;
     RefPtr<DelayRenderData> delay;
     AudioParamID delay_param_id { 0 };
+    RefPtr<DynamicsCompressorRenderData> compressor;
+    AudioParamID compressor_threshold_param_id { 0 };
+    AudioParamID compressor_knee_param_id { 0 };
+    AudioParamID compressor_ratio_param_id { 0 };
+    AudioParamID compressor_attack_param_id { 0 };
+    AudioParamID compressor_release_param_id { 0 };
     RefPtr<AudioParamRenderData> stereo_panner_automation;
     AudioParamID stereo_panner_param_id { 0 };
     auto destination_kind = AudioNodeRenderKind::Unknown;
@@ -158,6 +166,23 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         auto delay_automation = TRY(delay_node.delay_time()->create_render_data());
         delay_param_id = delay_node.delay_time()->param_id();
         delay = TRY(DelayRenderData::create(delay_node.max_delay_time(), m_context->sample_rate(), move(delay_automation)));
+    } else if (is<DynamicsCompressorNode>(*destination_node)) {
+        destination_kind = AudioNodeRenderKind::DynamicsCompressor;
+        auto const& compressor_node = as<DynamicsCompressorNode>(*destination_node);
+        auto threshold_automation = TRY(compressor_node.threshold()->create_render_data());
+        auto knee_automation = TRY(compressor_node.knee()->create_render_data());
+        auto ratio_automation = TRY(compressor_node.ratio()->create_render_data());
+        auto attack_automation = TRY(compressor_node.attack()->create_render_data());
+        auto release_automation = TRY(compressor_node.release()->create_render_data());
+        compressor_threshold_param_id = compressor_node.threshold()->param_id();
+        compressor_knee_param_id = compressor_node.knee()->param_id();
+        compressor_ratio_param_id = compressor_node.ratio()->param_id();
+        compressor_attack_param_id = compressor_node.attack()->param_id();
+        compressor_release_param_id = compressor_node.release()->param_id();
+        compressor = TRY(DynamicsCompressorRenderData::create(
+            compressor_node.threshold()->value(), compressor_node.knee()->value(), compressor_node.ratio()->value(),
+            compressor_node.attack()->value(), compressor_node.release()->value(), move(threshold_automation),
+            move(knee_automation), move(ratio_automation), move(attack_automation), move(release_automation)));
     } else if (is<AudioDestinationNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Destination;
     }
@@ -177,6 +202,12 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         .stereo_panner_param_id = stereo_panner_param_id,
         .delay = move(delay),
         .delay_param_id = delay_param_id,
+        .compressor = move(compressor),
+        .compressor_threshold_param_id = compressor_threshold_param_id,
+        .compressor_knee_param_id = compressor_knee_param_id,
+        .compressor_ratio_param_id = compressor_ratio_param_id,
+        .compressor_attack_param_id = compressor_attack_param_id,
+        .compressor_release_param_id = compressor_release_param_id,
     });
 
     // Publish the JS graph only after all render-side snapshots were built.

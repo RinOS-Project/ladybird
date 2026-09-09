@@ -6,6 +6,7 @@
  */
 
 #include <AK/Array.h>
+#include <AK/AtomicRefCounted.h>
 #include <AK/Math.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/Intrinsics.h>
@@ -23,6 +24,82 @@
 #include <math.h>
 
 namespace Web::WebAudio {
+
+class OfflineRenderState final : public AtomicRefCounted<OfflineRenderState> {
+public:
+    struct BufferSource {
+        RefPtr<AudioBufferRenderData> buffer;
+        double start_time { 0.0 };
+        double offset { 0.0 };
+        Optional<double> duration;
+        Optional<double> stop_time;
+        float playback_rate { 1.0f };
+        float detune { 0.0f };
+        RefPtr<AudioParamRenderData> playback_rate_automation;
+        RefPtr<AudioParamRenderData> detune_automation;
+        AudioParamID playback_rate_param_id { 0 };
+        AudioParamID detune_param_id { 0 };
+        bool loop { false };
+        double loop_start { 0.0 };
+        double loop_end { 0.0 };
+        NodeID node_id { 0 };
+    };
+    struct Oscillator {
+        double start_time { 0.0 };
+        Optional<double> stop_time;
+        float frequency { 440.0f };
+        float detune { 0.0f };
+        RefPtr<AudioParamRenderData> frequency_automation;
+        RefPtr<AudioParamRenderData> detune_automation;
+        AudioParamID frequency_param_id { 0 };
+        AudioParamID detune_param_id { 0 };
+        RefPtr<PeriodicWaveRenderData> periodic_wave;
+        OscillatorWaveform waveform { OscillatorWaveform::Sine };
+        NodeID node_id { 0 };
+    };
+    struct ConstantSource {
+        double start_time { 0.0 };
+        Optional<double> stop_time;
+        float offset { 1.0f };
+        RefPtr<AudioParamRenderData> offset_automation;
+        AudioParamID offset_param_id { 0 };
+        NodeID node_id { 0 };
+    };
+    struct NodeConnection {
+        NodeID source_node_id { 0 };
+        NodeID destination_node_id { 0 };
+        AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
+        RefPtr<AudioParamRenderData> gain_automation;
+        AudioParamID gain_param_id { 0 };
+        RefPtr<BiquadFilterRenderData> biquad;
+        AudioParamID biquad_frequency_param_id { 0 };
+        AudioParamID biquad_detune_param_id { 0 };
+        AudioParamID biquad_q_param_id { 0 };
+        AudioParamID biquad_gain_param_id { 0 };
+        RefPtr<AnalyserRenderData> analyser;
+        RefPtr<AudioParamRenderData> stereo_panner_automation;
+        AudioParamID stereo_panner_param_id { 0 };
+        RefPtr<DelayRenderData> delay;
+        AudioParamID delay_param_id { 0 };
+        RefPtr<DynamicsCompressorRenderData> compressor;
+        AudioParamID compressor_threshold_param_id { 0 };
+        AudioParamID compressor_knee_param_id { 0 };
+        AudioParamID compressor_ratio_param_id { 0 };
+        AudioParamID compressor_attack_param_id { 0 };
+        AudioParamID compressor_release_param_id { 0 };
+        float x1[2] { 0, 0 };
+        float x2[2] { 0, 0 };
+        float y1[2] { 0, 0 };
+        float y2[2] { 0, 0 };
+    };
+
+    Vector<BufferSource> buffer_sources;
+    Vector<Oscillator> oscillators;
+    Vector<ConstantSource> constant_sources;
+    Vector<NodeConnection> node_connections;
+    bool initialized { false };
+    u32 next_frame { 0 };
+};
 
 GC_DEFINE_ALLOCATOR(OfflineAudioContext);
 
@@ -117,9 +194,14 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::start_renderi
 
     // Assign this buffer to an internal slot [[rendered buffer]] in the OfflineAudioContext.
     m_rendered_buffer = buffer_result.release_value();
+    m_rendering_promise = promise;
 
     // 7. Otherwise, in the case that the buffer was successfully constructed, begin offline rendering.
-    begin_offline_rendering(promise);
+    // Rendering starts on a media task so suspend() can publish a target before
+    // the first render quantum is consumed.
+    queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
+        begin_offline_rendering(promise);
+    }));
 
     // 8. Append promise to [[pending promises]].
     m_pending_promises.append(promise);
@@ -130,71 +212,23 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::start_renderi
 
 void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promise)
 {
-    struct OfflineBufferSource {
-        RefPtr<AudioBufferRenderData> buffer;
-        double start_time { 0.0 };
-        double offset { 0.0 };
-        Optional<double> duration;
-        Optional<double> stop_time;
-        float playback_rate { 1.0f };
-        float detune { 0.0f };
-        RefPtr<AudioParamRenderData> playback_rate_automation;
-        RefPtr<AudioParamRenderData> detune_automation;
-        AudioParamID playback_rate_param_id { 0 };
-        AudioParamID detune_param_id { 0 };
-        bool loop { false };
-        double loop_start { 0.0 };
-        double loop_end { 0.0 };
-        NodeID node_id { 0 };
-    };
-    struct OfflineOscillator {
-        double start_time { 0.0 };
-        Optional<double> stop_time;
-        float frequency { 440.0f };
-        float detune { 0.0f };
-        RefPtr<AudioParamRenderData> frequency_automation;
-        RefPtr<AudioParamRenderData> detune_automation;
-        AudioParamID frequency_param_id { 0 };
-        AudioParamID detune_param_id { 0 };
-        RefPtr<PeriodicWaveRenderData> periodic_wave;
-        OscillatorWaveform waveform { OscillatorWaveform::Sine };
-        NodeID node_id { 0 };
-    };
-    struct OfflineConstantSource {
-        double start_time { 0.0 };
-        Optional<double> stop_time;
-        float offset { 1.0f };
-        RefPtr<AudioParamRenderData> offset_automation;
-        AudioParamID offset_param_id { 0 };
-        NodeID node_id { 0 };
-    };
-    struct OfflineNodeConnection {
-        NodeID source_node_id { 0 };
-        NodeID destination_node_id { 0 };
-        AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
-        RefPtr<AudioParamRenderData> gain_automation;
-        AudioParamID gain_param_id { 0 };
-        RefPtr<BiquadFilterRenderData> biquad;
-        AudioParamID biquad_frequency_param_id { 0 };
-        AudioParamID biquad_detune_param_id { 0 };
-        AudioParamID biquad_q_param_id { 0 };
-        AudioParamID biquad_gain_param_id { 0 };
-        RefPtr<AnalyserRenderData> analyser;
-        RefPtr<AudioParamRenderData> stereo_panner_automation;
-        AudioParamID stereo_panner_param_id { 0 };
-        RefPtr<DelayRenderData> delay;
-        AudioParamID delay_param_id { 0 };
-        float x1[2] { 0, 0 };
-        float x2[2] { 0, 0 };
-        float y1[2] { 0, 0 };
-        float y2[2] { 0, 0 };
-    };
+    if (!m_render_state) {
+        auto state = adopt_ref_if_nonnull(new (nothrow) OfflineRenderState());
+        if (!state) {
+            auto error = WebIDL::OperationError::create(realm(), "Unable to allocate offline render state"_utf16);
+            WebIDL::reject_promise(realm(), promise, error);
+            return;
+        }
+        m_render_state = state;
+    }
+    auto& state = *m_render_state;
+    auto& buffer_sources = state.buffer_sources;
+    auto& oscillators = state.oscillators;
+    auto& constant_sources = state.constant_sources;
+    auto& node_connections = state.node_connections;
 
-    Vector<OfflineBufferSource> buffer_sources;
-    Vector<OfflineOscillator> oscillators;
-    Vector<OfflineConstantSource> constant_sources;
-    Vector<OfflineNodeConnection> node_connections;
-    for (auto message : drain_control_messages()) {
+    if (!state.initialized) {
+        for (auto message : drain_control_messages()) {
         message.visit(
             [&](StartSource const&) { },
             [&](StartOscillator const& start) {
@@ -283,6 +317,12 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .stereo_panner_param_id = connect.stereo_panner_param_id,
                     .delay = connect.delay,
                     .delay_param_id = connect.delay_param_id,
+                    .compressor = connect.compressor,
+                    .compressor_threshold_param_id = connect.compressor_threshold_param_id,
+                    .compressor_knee_param_id = connect.compressor_knee_param_id,
+                    .compressor_ratio_param_id = connect.compressor_ratio_param_id,
+                    .compressor_attack_param_id = connect.compressor_attack_param_id,
+                    .compressor_release_param_id = connect.compressor_release_param_id,
                 });
             },
             [&](DisconnectNode const& disconnect) {
@@ -325,8 +365,22 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                         connection.stereo_panner_automation = update.render_data;
                     if (connection.delay && connection.delay_param_id == update.param_id)
                         connection.delay->update_automation(update.render_data);
+                    if (connection.compressor) {
+                        if (connection.compressor_threshold_param_id == update.param_id)
+                            connection.compressor->update_threshold_automation(update.render_data);
+                        if (connection.compressor_knee_param_id == update.param_id)
+                            connection.compressor->update_knee_automation(update.render_data);
+                        if (connection.compressor_ratio_param_id == update.param_id)
+                            connection.compressor->update_ratio_automation(update.render_data);
+                        if (connection.compressor_attack_param_id == update.param_id)
+                            connection.compressor->update_attack_automation(update.render_data);
+                        if (connection.compressor_release_param_id == update.param_id)
+                            connection.compressor->update_release_automation(update.render_data);
+                    }
                 }
             });
+        }
+        state.initialized = true;
     }
 
     Vector<GC::Ref<JS::Float32Array>> output_channels;
@@ -336,7 +390,15 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
 
     auto const output_rate = static_cast<double>(sample_rate());
     auto const frame_count = m_rendered_buffer->length();
-    for (u32 frame = 0; frame < frame_count; ++frame) {
+    auto const render_start = state.next_frame;
+    auto render_end = min(frame_count, render_start + BaseAudioContext::render_quantum_size());
+    Optional<u32> suspend_frame;
+    if (m_pending_suspend_time.has_value()) {
+        auto requested_frame = static_cast<u32>(ceil(max(m_pending_suspend_time.value(), 0.0) * output_rate));
+        suspend_frame = min(requested_frame, frame_count);
+        render_end = min(render_end, suspend_frame.value());
+    }
+    for (u32 frame = render_start; frame < render_end; ++frame) {
         auto now = frame / output_rate;
         Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> mixed_samples { };
 
@@ -390,6 +452,12 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 if (connection.destination_kind == AudioNodeRenderKind::Delay && connection.delay) {
                     connection.delay->process(sample, right, now);
                     self(self, connection.destination_node_id, sample, right, depth + 1);
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::DynamicsCompressor && connection.compressor) {
+                    auto compressed_sample = connection.compressor->process(sample, now);
+                    auto compressed_right = connection.compressor->process(right, now);
+                    self(self, connection.destination_node_id, compressed_sample, compressed_right, depth + 1);
                 }
             }
         };
@@ -478,7 +546,33 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         for (u32 channel = 0; channel < m_number_of_channels; ++channel)
             output_channels[channel]->data()[frame] = clamp(mixed_samples[channel], -1.0f, 1.0f);
     }
-    set_current_time(frame_count / output_rate);
+    state.next_frame = render_end;
+    set_current_time(render_end / output_rate);
+
+    if (suspend_frame.has_value() && render_end >= suspend_frame.value() && render_end < frame_count) {
+        set_control_state(Bindings::AudioContextState::Suspended);
+        set_rendering_state(Bindings::AudioContextState::Suspended);
+        auto suspend_promise = m_pending_suspend_promise;
+        queue_a_media_element_task(GC::create_function(heap(), [suspend_promise, this]() {
+            if (suspend_promise)
+                WebIDL::resolve_promise(this->realm(), suspend_promise, JS::js_undefined());
+            m_pending_suspend_time.clear();
+            m_pending_suspend_promise = nullptr;
+            if (suspend_promise)
+                m_pending_promises.remove_first_matching([&suspend_promise](auto& pending_promise) {
+                    return pending_promise == suspend_promise;
+                });
+            m_pending_suspend_promise = nullptr;
+        }));
+        return;
+    }
+
+    if (render_end < frame_count) {
+        queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
+            begin_offline_rendering(promise);
+        }));
+        return;
+    }
 
     // 4: Once the rendering is complete, queue a media element task to execute the following steps:
     queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
@@ -486,6 +580,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
 
         // 4.1 Resolve the promise created by startRendering() with [[rendered buffer]].
         WebIDL::resolve_promise(this->realm(), promise, this->m_rendered_buffer);
+        m_render_state = nullptr;
 
         // AD-HOC: Remove resolved promise from [[pending promises]]
         // https://github.com/WebAudio/web-audio-api/issues/2648
@@ -515,19 +610,33 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::resume()
     auto& realm = this->realm();
     auto promise = WebIDL::create_promise(realm);
 
-    if (!m_rendering_started) {
+    if (!m_rendering_started || state() != Bindings::AudioContextState::Suspended || !m_render_state) {
         return WebIDL::create_rejected_promise_from_exception(realm, WebIDL::InvalidStateError::create(realm, "Offline rendering has not started"_utf16));
+    }
+    if (!m_render_state || m_render_state->next_frame >= m_rendered_buffer->length()) {
+        return WebIDL::create_rejected_promise_from_exception(realm, WebIDL::InvalidStateError::create(realm, "Offline rendering has completed"_utf16));
     }
 
     m_pending_promises.append(promise);
     m_pending_suspend_time.clear();
+    m_pending_suspend_promise = nullptr;
     set_control_state(Bindings::AudioContextState::Running);
     set_rendering_state(Bindings::AudioContextState::Running);
     queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
+        if (m_rendering_promise)
+            begin_offline_rendering(*m_rendering_promise);
         WebIDL::resolve_promise(this->realm(), promise, JS::js_undefined());
         m_pending_promises.remove_first_matching([&promise](auto& pending_promise) {
             return pending_promise == promise;
         });
+        if (m_render_state && m_render_state->next_frame < m_rendered_buffer->length()) {
+            if (!m_pending_promises.is_empty()) {
+                auto render_promise = m_pending_promises.first();
+                queue_a_media_element_task(GC::create_function(heap(), [render_promise, this]() {
+                    begin_offline_rendering(render_promise);
+                }));
+            }
+        }
     }));
     return promise;
 }
@@ -540,7 +649,7 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::suspend(doubl
     if (!isfinite(suspend_time) || suspend_time < current_time()) {
         return WebIDL::create_rejected_promise_from_exception(realm, WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "suspendTime must be finite and not precede currentTime"sv });
     }
-    if (!m_rendering_started) {
+    if (!m_rendering_started || state() != Bindings::AudioContextState::Running) {
         return WebIDL::create_rejected_promise_from_exception(realm, WebIDL::InvalidStateError::create(realm, "Offline rendering has not started"_utf16));
     }
     if (m_pending_suspend_time.has_value()) {
@@ -549,15 +658,7 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::suspend(doubl
 
     m_pending_promises.append(promise);
     m_pending_suspend_time = suspend_time;
-    set_control_state(Bindings::AudioContextState::Suspended);
-    set_rendering_state(Bindings::AudioContextState::Suspended);
-    queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
-        WebIDL::resolve_promise(this->realm(), promise, JS::js_undefined());
-        m_pending_suspend_time.clear();
-        m_pending_promises.remove_first_matching([&promise](auto& pending_promise) {
-            return pending_promise == promise;
-        });
-    }));
+    m_pending_suspend_promise = promise;
     return promise;
 }
 
@@ -597,6 +698,7 @@ void OfflineAudioContext::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_rendered_buffer);
+    visitor.visit(m_pending_suspend_promise);
 }
 
 }

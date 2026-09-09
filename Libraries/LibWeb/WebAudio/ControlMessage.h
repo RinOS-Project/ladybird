@@ -15,6 +15,7 @@
 #include <LibWeb/WebAudio/BiquadFilterRenderData.h>
 #include <LibWeb/WebAudio/PeriodicWaveRenderData.h>
 #include <LibWeb/WebAudio/DelayRenderData.h>
+#include <LibWeb/WebAudio/DynamicsCompressorRenderData.h>
 #include <LibWeb/WebAudio/Types.h>
 
 namespace Web::WebAudio {
@@ -94,6 +95,12 @@ struct ConnectNode {
     RefPtr<AnalyserRenderData> analyser;
     RefPtr<DelayRenderData> delay;
     AudioParamID delay_param_id { 0 };
+    RefPtr<DynamicsCompressorRenderData> compressor;
+    AudioParamID compressor_threshold_param_id { 0 };
+    AudioParamID compressor_knee_param_id { 0 };
+    AudioParamID compressor_ratio_param_id { 0 };
+    AudioParamID compressor_attack_param_id { 0 };
+    AudioParamID compressor_release_param_id { 0 };
     RefPtr<AudioParamRenderData> stereo_panner_automation;
     AudioParamID stereo_panner_param_id { 0 };
 };

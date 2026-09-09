@@ -15,6 +15,7 @@
 #include <LibWeb/WebAudio/AudioBufferRenderData.h>
 #include <LibWeb/WebAudio/AnalyserRenderData.h>
 #include <LibWeb/WebAudio/DelayRenderData.h>
+#include <LibWeb/WebAudio/DynamicsCompressorRenderData.h>
 #include <LibWeb/WebAudio/MediaElementAudioSourceNode.h>
 #include <LibWeb/WebAudio/PeriodicWaveRenderData.h>
 
@@ -124,6 +125,12 @@ private:
         AudioParamID stereo_panner_param_id { 0 };
         RefPtr<DelayRenderData> delay;
         AudioParamID delay_param_id { 0 };
+        RefPtr<DynamicsCompressorRenderData> compressor;
+        AudioParamID compressor_threshold_param_id { 0 };
+        AudioParamID compressor_knee_param_id { 0 };
+        AudioParamID compressor_ratio_param_id { 0 };
+        AudioParamID compressor_attack_param_id { 0 };
+        AudioParamID compressor_release_param_id { 0 };
         float x1[2] { 0, 0 };
         float x2[2] { 0, 0 };
         float y1[2] { 0, 0 };

@@ -32,6 +32,7 @@ public:
 
     WebIDL::UnsignedLong number_of_inputs() override { return 1; }
     WebIDL::UnsignedLong number_of_outputs() override { return 1; }
+    AudioNodeRenderKind render_kind() const override { return AudioNodeRenderKind::DynamicsCompressor; }
 
     GC::Ref<AudioParam const> threshold() const { return m_threshold; }
     GC::Ref<AudioParam const> knee() const { return m_knee; }

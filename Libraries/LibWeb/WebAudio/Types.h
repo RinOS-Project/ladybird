@@ -22,6 +22,7 @@ enum class AudioNodeRenderKind : u8 {
     Analyser,
     StereoPanner,
     Delay,
+    DynamicsCompressor,
     Destination,
 };
 
