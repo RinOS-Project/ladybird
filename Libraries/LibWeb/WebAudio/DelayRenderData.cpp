@@ -24,12 +24,12 @@ ErrorOr<NonnullRefPtr<DelayRenderData>> DelayRenderData::create(float max_delay_
 void DelayRenderData::process(float& left, float& right, double time)
 {
     auto delay_seconds = m_automation ? m_automation->value_at_time(time) : 0.0f;
-    if (!isfinite(delay_seconds)) {
-        left = 0;
-        right = 0;
-        return;
+    if (isfinite(delay_seconds)) {
+        delay_seconds = clamp(delay_seconds, 0.0f, (m_left.size() - 2) / m_sample_rate);
+        m_last_delay_seconds = delay_seconds;
+    } else {
+        delay_seconds = m_last_delay_seconds;
     }
-    delay_seconds = clamp(delay_seconds, 0.0f, (m_left.size() - 2) / m_sample_rate);
     auto input_left = isfinite(left) ? left : 0.0f;
     auto input_right = isfinite(right) ? right : 0.0f;
     if (delay_seconds == 0.0f) {

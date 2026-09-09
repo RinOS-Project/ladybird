@@ -41,6 +41,7 @@ private:
     Vector<float> m_right;
     RefPtr<AudioParamRenderData> m_automation;
     size_t m_write_index { 0 };
+    float m_last_delay_seconds { 0 };
 };
 
 }
