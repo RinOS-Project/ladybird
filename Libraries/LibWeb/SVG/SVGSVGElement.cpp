@@ -221,18 +221,6 @@ GC::Ref<Geometry::DOMPointReadOnly> SVGSVGElement::current_translate() const
     return *m_current_translate;
 }
 
-GC::Ref<DOM::NodeList> SVGSVGElement::get_intersection_list(GC::Ref<Geometry::DOMRectReadOnly>, GC::Ptr<SVGElement>) const
-{
-    dbgln("(STUBBED) SVGSVGElement::get_intersection_list(). Called on: {}", debug_description());
-    return DOM::StaticNodeList::create(realm(), {});
-}
-
-GC::Ref<DOM::NodeList> SVGSVGElement::get_enclosure_list(GC::Ref<Geometry::DOMRectReadOnly>, GC::Ptr<SVGElement>) const
-{
-    dbgln("(STUBBED) SVGSVGElement::get_enclosure_list(). Called on: {}", debug_description());
-    return DOM::StaticNodeList::create(realm(), {});
-}
-
 static bool normalized_rect_bounds(Geometry::DOMRectReadOnly const& rect,
                                    double& left, double& top,
                                    double& right, double& bottom)
@@ -257,6 +245,37 @@ static Optional<Gfx::DoubleRect> graphics_bounding_rect(SVGElement& element)
     if (!normalized_rect_bounds(*bounding_box, left, top, right, bottom))
         return {};
     return Gfx::DoubleRect { left, top, right - left, bottom - top };
+}
+
+static GC::Ref<DOM::NodeList> collect_svg_geometry_nodes(SVGSVGElement const& root,
+                                                          GC::Ref<Geometry::DOMRectReadOnly> rect,
+                                                          GC::Ptr<SVGElement> reference_element,
+                                                          bool enclosure)
+{
+    Vector<GC::Root<DOM::Node>> matching_nodes;
+    auto const* traversal_root = reference_element ? reference_element.ptr() : static_cast<SVGElement const*>(&root);
+    traversal_root->for_each_in_inclusive_subtree([&](DOM::Node const& node) {
+        if (&node == traversal_root)
+            return TraversalDecision::Continue;
+        auto* svg_element = as_if<SVGElement>(const_cast<DOM::Node&>(node));
+        if (!svg_element)
+            return TraversalDecision::Continue;
+        bool matches = enclosure ? root.check_enclosure(*svg_element, rect) : root.check_intersection(*svg_element, rect);
+        if (matches)
+            matching_nodes.append(GC::make_root(static_cast<DOM::Node&>(*svg_element)));
+        return TraversalDecision::Continue;
+    });
+    return DOM::StaticNodeList::create(root.realm(), move(matching_nodes));
+}
+
+GC::Ref<DOM::NodeList> SVGSVGElement::get_intersection_list(GC::Ref<Geometry::DOMRectReadOnly> rect, GC::Ptr<SVGElement> reference_element) const
+{
+    return collect_svg_geometry_nodes(*this, rect, reference_element, false);
+}
+
+GC::Ref<DOM::NodeList> SVGSVGElement::get_enclosure_list(GC::Ref<Geometry::DOMRectReadOnly> rect, GC::Ptr<SVGElement> reference_element) const
+{
+    return collect_svg_geometry_nodes(*this, rect, reference_element, true);
 }
 
 bool SVGSVGElement::check_intersection(GC::Ref<SVGElement> element, GC::Ref<Geometry::DOMRectReadOnly> rect) const
