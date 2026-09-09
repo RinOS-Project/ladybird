@@ -29,6 +29,8 @@ class AudioBufferSourceNode : public AudioScheduledSourceNode {
     GC_DECLARE_ALLOCATOR(AudioBufferSourceNode);
 
 public:
+    using AudioScheduledSourceNode::start;
+
     virtual ~AudioBufferSourceNode() override;
 
     WebIDL::ExceptionOr<void> set_buffer(GC::Ptr<AudioBuffer>);

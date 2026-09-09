@@ -7,8 +7,9 @@
 #pragma once
 
 #include <AK/AtomicRefCounted.h>
-#include <AK/ErrorOr.h>
-#include <AK/ReadonlySpan.h>
+#include <AK/Error.h>
+#include <AK/RefPtr.h>
+#include <AK/Span.h>
 #include <AK/Vector.h>
 
 namespace Web::WebAudio {
