@@ -16,11 +16,11 @@
 
 namespace WebView {
 
-static bool storage_owner_is_authorized(WebContentClient& client, u64 page_id,
-                                        Web::StorageAPI::StorageEndpointType endpoint,
-                                        String const& storage_key, u64 owner_generation)
+bool WebContentClient::storage_owner_is_authorized(u64 page_id,
+                                                    Web::StorageAPI::StorageEndpointType endpoint,
+                                                    String const& storage_key, u64 owner_generation)
 {
-    auto view = client.view_for_page_id(page_id);
+    auto view = view_for_page_id(page_id);
     if (!view.has_value())
         return false;
     if (endpoint != Web::StorageAPI::StorageEndpointType::Caches)
@@ -604,35 +604,35 @@ void WebContentClient::did_expire_cookies_with_time_offset(AK::Duration offset)
 
 Messages::WebContentClient::DidRequestStorageItemResponse WebContentClient::did_request_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation)
 {
-    if (!storage_owner_is_authorized(*this, page_id, storage_endpoint, storage_key, owner_generation))
-        return {};
+    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
+        return { Optional<String> {} };
     return Application::storage_jar().get_item(storage_endpoint, storage_key, bottle_key);
 }
 
 Messages::WebContentClient::DidSetStorageItemResponse WebContentClient::did_set_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, String value, u64 owner_generation)
 {
-    if (!storage_owner_is_authorized(*this, page_id, storage_endpoint, storage_key, owner_generation))
+    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
         return WebView::StorageOperationError::QuotaExceededError;
     return Application::storage_jar().set_item(storage_endpoint, storage_key, bottle_key, value);
 }
 
 void WebContentClient::did_remove_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation)
 {
-    if (!storage_owner_is_authorized(*this, page_id, storage_endpoint, storage_key, owner_generation))
+    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
         return;
     Application::storage_jar().remove_item(storage_endpoint, storage_key, bottle_key);
 }
 
 Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_request_storage_keys(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation)
 {
-    if (!storage_owner_is_authorized(*this, page_id, storage_endpoint, storage_key, owner_generation))
-        return {};
+    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
+        return { Vector<String> {} };
     return Application::storage_jar().get_all_keys(storage_endpoint, storage_key);
 }
 
 void WebContentClient::did_clear_storage(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation)
 {
-    if (!storage_owner_is_authorized(*this, page_id, storage_endpoint, storage_key, owner_generation))
+    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
         return;
     Application::storage_jar().clear_storage_key(storage_endpoint, storage_key);
 }

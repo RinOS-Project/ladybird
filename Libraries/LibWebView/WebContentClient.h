@@ -154,6 +154,8 @@ private:
         ByteString script_url, ByteString scope,
         u32 update_via_cache) override;
 
+    bool storage_owner_is_authorized(u64 page_id, Web::StorageAPI::StorageEndpointType endpoint,
+                                     String const& storage_key, u64 owner_generation);
     Optional<ViewImplementation&> view_for_page_id(u64, SourceLocation = SourceLocation::current());
 
     HashMap<u64, NonnullRawPtr<ViewImplementation>> m_views;
