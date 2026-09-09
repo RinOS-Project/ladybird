@@ -9,6 +9,7 @@
 #include <LibWeb/Bindings/CachePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Fetch/FetchMethod.h>
+#include <LibWeb/Fetch/Infrastructure/URL.h>
 #include <LibWeb/Fetch/Request.h>
 #include <LibWeb/Fetch/Response.h>
 #include <LibWeb/ServiceWorker/Cache.h>
@@ -55,6 +56,11 @@ String Cache::match_url(String const& url, bool ignore_search)
     if (!question_mark.has_value())
         return url;
     return url.substring(0, question_mark.value());
+}
+
+static bool is_cacheable_request(Fetch::Request const& request)
+{
+    return Fetch::Infrastructure::is_http_or_https_scheme(request.request()->url());
 }
 
 bool Cache::matches(Entry const& entry, Fetch::Request const& request, CacheQueryOptions const& options) const
@@ -134,6 +140,8 @@ GC::Ref<WebIDL::Promise> Cache::add(Fetch::RequestInfo const& input)
     // be committed to this cache.
     if (request.value()->method() != "GET"_string)
         return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only GET requests can be added to a Cache"sv));
+    if (!is_cacheable_request(*request.value()))
+        return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only HTTP(S) requests can be added to a Cache"sv));
 
     auto promise = WebIDL::create_promise(realm());
     auto fetch_promise = Fetch::fetch(realm().vm(), input);
@@ -186,6 +194,8 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
         // one unsupported method must not start earlier requests.
         if (request.value()->method() != "GET"_string)
             return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only GET requests can be added to a Cache"sv));
+        if (!is_cacheable_request(*request.value()))
+            return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only HTTP(S) requests can be added to a Cache"sv));
         requests.append(request.release_value());
     }
 
@@ -244,6 +254,8 @@ GC::Ref<WebIDL::Promise> Cache::put_normalized(GC::Ref<Fetch::Request> request, 
 {
     if (request->method() != "GET"_string)
         return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only GET requests can be stored in a Cache"sv));
+    if (!is_cacheable_request(*request))
+        return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only HTTP(S) requests can be stored in a Cache"sv));
     if (response->type() == Bindings::ResponseType::Error || response->status() == 206)
         return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "This response cannot be stored in a Cache"sv));
 
