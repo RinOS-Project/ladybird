@@ -306,7 +306,9 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             [&](ConnectNode const& connect) {
                 node_connections.remove_all_matching([&](auto const& existing) {
                     return existing.source_node_id == connect.source_node_id
-                        && existing.destination_node_id == connect.destination_node_id;
+                        && existing.destination_node_id == connect.destination_node_id
+                        && existing.output_index == connect.output_index
+                        && existing.input_index == connect.input_index;
                 });
                 node_connections.append({
                     .source_node_id = connect.source_node_id,
