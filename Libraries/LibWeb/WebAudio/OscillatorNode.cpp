@@ -26,6 +26,10 @@ WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
         return WebIDL::InvalidStateError::create(realm(), "Oscillator source has already started"_utf16);
     if (!isfinite(when) || when < 0)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "when must be finite and non-negative"sv };
+    if (!isfinite(m_frequency->value()) || !isfinite(m_detune->value()))
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Oscillator parameters must be finite"sv };
+    if (m_type == Bindings::OscillatorType::Custom)
+        return WebIDL::NotSupportedError::create(realm(), "Custom PeriodicWave rendering is not connected"_utf16);
 
     OscillatorWaveform waveform = OscillatorWaveform::Sine;
     switch (m_type) {
@@ -39,11 +43,10 @@ WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
         waveform = OscillatorWaveform::Triangle;
         break;
     case Bindings::OscillatorType::Sine:
-    case Bindings::OscillatorType::Custom:
-        // Custom PeriodicWave rendering is a separate native table snapshot;
-        // keep the source audible with the defined sine fallback until that
-        // table is connected rather than treating start() as a no-op.
         waveform = OscillatorWaveform::Sine;
+        break;
+    case Bindings::OscillatorType::Custom:
+        VERIFY_NOT_REACHED();
         break;
     }
 
