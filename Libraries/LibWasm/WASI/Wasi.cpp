@@ -294,7 +294,7 @@ ErrorOr<Span<T>> slice_typed_memory(Configuration& configuration, Pointer<T> sou
         return Error::from_errno(ENOBUFS);
 
     auto untyped_slice = memory->data().bytes().slice(address, sizeof(T) * count.value());
-    return Span<T>(untyped_slice.data(), count);
+    return Span<T>(reinterpret_cast<T*>(untyped_slice.data()), count);
 }
 
 template<typename T>
@@ -309,7 +309,7 @@ ErrorOr<Span<T const>> slice_typed_memory(Configuration& configuration, ConstPoi
         return Error::from_errno(ENOBUFS);
 
     auto untyped_slice = memory->data().bytes().slice(address, sizeof(T) * count.value());
-    return Span<T const>(untyped_slice.data(), count);
+    return Span<T const>(reinterpret_cast<T const*>(untyped_slice.data()), count);
 }
 
 static ErrorOr<size_t> copy_string_including_terminating_null(Configuration& configuration, StringView string, Pointer<u8> target)
@@ -1678,16 +1678,16 @@ ErrorOr<Result<Size>> Implementation::impl$poll_oneoff(Configuration& configurat
     auto read_clock = [&](ClockID id) -> ErrorOr<u64> {
         auto native_id = native_clock_id(id);
         if (!native_id.has_value())
-            return Errno::Invalid;
+            return Error::from_errno(EINVAL);
         struct timespec now {};
         if (clock_gettime(native_id.value(), &now) < 0)
-            return errno_value_from_errno(errno);
+            return Error::from_errno(errno);
         if (now.tv_sec < 0 || now.tv_nsec < 0 || now.tv_nsec >= 1'000'000'000)
-            return Errno::Overflow;
+            return Error::from_errno(EOVERFLOW);
         auto seconds = static_cast<u64>(now.tv_sec);
         auto nanos = static_cast<u64>(now.tv_nsec);
         if (seconds > (NumericLimits<u64>::max() - nanos) / 1'000'000'000ull)
-            return Errno::Overflow;
+            return Error::from_errno(EOVERFLOW);
         return seconds * 1'000'000'000ull + nanos;
     };
 
