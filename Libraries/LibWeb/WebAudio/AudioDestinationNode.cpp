@@ -27,8 +27,7 @@ AudioDestinationNode::~AudioDestinationNode() = default;
 // https://webaudio.github.io/web-audio-api/#dom-audiodestinationnode-maxchannelcount
 WebIDL::UnsignedLong AudioDestinationNode::max_channel_count()
 {
-    // RinOS currently exposes a stereo playback sink. Keep the value stable
-    // until the media backend can report the selected device's channel count.
+    dbgln("FIXME: Implement Audio::DestinationNode::max_channel_count()");
     return 2;
 }
 
