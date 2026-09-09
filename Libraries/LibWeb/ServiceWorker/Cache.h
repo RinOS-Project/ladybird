@@ -36,6 +36,8 @@ public:
 
     GC::Ref<WebIDL::Promise> match(Fetch::RequestInfo const&, CacheQueryOptions const& = {});
     GC::Ref<WebIDL::Promise> match_all(Optional<Fetch::RequestInfo> const&, CacheQueryOptions const& = {});
+    GC::Ref<WebIDL::Promise> add(Fetch::RequestInfo const&);
+    GC::Ref<WebIDL::Promise> add_all(Vector<Fetch::RequestInfo> const&);
     GC::Ref<WebIDL::Promise> put(Fetch::RequestInfo const&, GC::Root<Fetch::Response> const&);
     GC::Ref<WebIDL::Promise> delete_(Fetch::RequestInfo const&, CacheQueryOptions const& = {});
     GC::Ref<WebIDL::Promise> keys(Optional<Fetch::RequestInfo> const&, CacheQueryOptions const& = {});
@@ -52,6 +54,7 @@ private:
     virtual void visit_edges(Cell::Visitor&) override;
 
     WebIDL::ExceptionOr<GC::Ref<Fetch::Request>> normalize_request(Fetch::RequestInfo const&) const;
+    GC::Ref<WebIDL::Promise> put_normalized(GC::Ref<Fetch::Request>, GC::Ref<Fetch::Response>);
     bool matches(Entry const&, Fetch::Request const&, CacheQueryOptions const&) const;
     static String match_url(String const&, bool ignore_search);
 

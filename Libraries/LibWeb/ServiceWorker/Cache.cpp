@@ -4,9 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/TypeCasts.h>
+#include <LibJS/Runtime/Array.h>
 #include <LibWeb/Bindings/CachePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibJS/Runtime/Array.h>
+#include <LibWeb/Fetch/FetchMethod.h>
 #include <LibWeb/Fetch/Request.h>
 #include <LibWeb/Fetch/Response.h>
 #include <LibWeb/ServiceWorker/Cache.h>
@@ -121,17 +123,112 @@ GC::Ref<WebIDL::Promise> Cache::match_all(Optional<Fetch::RequestInfo> const& in
     return WebIDL::create_resolved_promise(realm(), JS::Array::create_from(realm(), responses));
 }
 
+GC::Ref<WebIDL::Promise> Cache::add(Fetch::RequestInfo const& input)
+{
+    auto request = normalize_request(input);
+    if (request.is_exception())
+        return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
+
+    auto promise = WebIDL::create_promise(realm());
+    auto fetch_promise = Fetch::fetch(realm().vm(), input);
+    WebIDL::react_to_promise(
+        *fetch_promise,
+        GC::create_function(realm().heap(), [this, promise, request = request.release_value()](JS::Value value) -> WebIDL::ExceptionOr<JS::Value> {
+            if (!value.is<Fetch::Response>()) {
+                WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Fetch did not produce a Response"sv));
+                return JS::js_undefined();
+            }
+
+            GC::Ref<Fetch::Response> response = as<Fetch::Response>(value.as_object());
+            if (!response->ok()) {
+                WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.add() received a non-success response"sv));
+                return JS::js_undefined();
+            }
+            auto put_promise = put_normalized(request, response);
+            WebIDL::react_to_promise(
+                *put_promise,
+                GC::create_function(realm().heap(), [this, promise](JS::Value) -> WebIDL::ExceptionOr<JS::Value> {
+                    WebIDL::resolve_promise(realm(), promise);
+                    return JS::js_undefined();
+                }),
+                GC::create_function(realm().heap(), [this, promise](JS::Value reason) -> WebIDL::ExceptionOr<JS::Value> {
+                    WebIDL::reject_promise(realm(), promise, reason);
+                    return JS::js_undefined();
+                }));
+            return JS::js_undefined();
+        }),
+        GC::create_function(realm().heap(), [this, promise](JS::Value reason) -> WebIDL::ExceptionOr<JS::Value> {
+            WebIDL::reject_promise(realm(), promise, reason);
+            return JS::js_undefined();
+        }));
+    return promise;
+}
+
+GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs)
+{
+    auto promise = WebIDL::create_promise(realm());
+    Vector<GC::Ref<Fetch::Request>> requests;
+    Vector<GC::Ref<WebIDL::Promise>> fetch_promises;
+    requests.ensure_capacity(inputs.size());
+    fetch_promises.ensure_capacity(inputs.size());
+    for (auto const& input : inputs) {
+        auto request = normalize_request(input);
+        if (request.is_exception())
+            return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
+        requests.append(request.release_value());
+        fetch_promises.append(Fetch::fetch(realm().vm(), input));
+    }
+
+    WebIDL::wait_for_all(
+        realm(),
+        fetch_promises,
+        [this, promise, requests = move(requests)](Vector<JS::Value> const& values) mutable {
+            Vector<GC::Ref<WebIDL::Promise>> put_promises;
+            put_promises.ensure_capacity(values.size());
+            for (size_t i = 0; i < values.size(); ++i) {
+                if (!values[i].is<Fetch::Response>()) {
+                    WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.addAll() fetch did not produce a Response"sv));
+                    return;
+                }
+                GC::Ref<Fetch::Response> response = as<Fetch::Response>(values[i].as_object());
+                if (!response->ok()) {
+                    WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.addAll() received a non-success response"sv));
+                    return;
+                }
+                put_promises.append(put_normalized(requests[i], response));
+            }
+            WebIDL::wait_for_all(
+                realm(),
+                put_promises,
+                [this, promise](Vector<JS::Value> const&) {
+                    WebIDL::resolve_promise(realm(), promise);
+                },
+                [this, promise](JS::Value reason) {
+                    WebIDL::reject_promise(realm(), promise, reason);
+                });
+        },
+        [this, promise](JS::Value reason) {
+            WebIDL::reject_promise(realm(), promise, reason);
+        });
+    return promise;
+}
+
 GC::Ref<WebIDL::Promise> Cache::put(Fetch::RequestInfo const& input, GC::Root<Fetch::Response> const& response)
 {
     auto request = normalize_request(input);
     if (request.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
-    if (request.value()->method() != "GET"_string)
+    return put_normalized(request.release_value(), *response);
+}
+
+GC::Ref<WebIDL::Promise> Cache::put_normalized(GC::Ref<Fetch::Request> request, GC::Ref<Fetch::Response> response)
+{
+    if (request->method() != "GET"_string)
         return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only GET requests can be stored in a Cache"sv));
     if (response->type() == Bindings::ResponseType::Error)
         return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "A network error response cannot be stored in a Cache"sv));
 
-    auto request_clone = request.value()->clone();
+    auto request_clone = request->clone();
     if (request_clone.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), request_clone.release_error());
     auto response_clone = response->clone();
