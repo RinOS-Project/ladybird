@@ -203,7 +203,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
     auto const frame_count = m_rendered_buffer->length();
     for (u32 frame = 0; frame < frame_count; ++frame) {
         auto now = frame / output_rate;
-        Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> mixed_samples {};
+        Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> mixed_samples { };
 
         for (auto const& source : buffer_sources) {
             if (now < source.start_time || (source.stop_time.has_value() && now >= source.stop_time.value()))
@@ -252,10 +252,18 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 phase += 1.0;
             float sample = 0;
             switch (oscillator.waveform) {
-            case OscillatorWaveform::Sine: sample = static_cast<float>(sin(phase * 2.0 * AK::Pi<double>)); break;
-            case OscillatorWaveform::Square: sample = phase < 0.5 ? 1.0f : -1.0f; break;
-            case OscillatorWaveform::Sawtooth: sample = static_cast<float>(2.0 * phase - 1.0); break;
-            case OscillatorWaveform::Triangle: sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5)); break;
+            case OscillatorWaveform::Sine:
+                sample = static_cast<float>(sin(phase * 2.0 * AK::Pi<double>));
+                break;
+            case OscillatorWaveform::Square:
+                sample = phase < 0.5 ? 1.0f : -1.0f;
+                break;
+            case OscillatorWaveform::Sawtooth:
+                sample = static_cast<float>(2.0 * phase - 1.0);
+                break;
+            case OscillatorWaveform::Triangle:
+                sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5));
+                break;
             }
             for (u32 channel = 0; channel < m_number_of_channels; ++channel)
                 mixed_samples[channel] += sample;

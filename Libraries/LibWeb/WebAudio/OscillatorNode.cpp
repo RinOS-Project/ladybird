@@ -58,7 +58,7 @@ WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
         .detune = m_detune->value(),
         .waveform = waveform,
     });
-    return {};
+    return { };
 }
 
 WebIDL::ExceptionOr<GC::Ref<OscillatorNode>> OscillatorNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, OscillatorOptions const& options)
