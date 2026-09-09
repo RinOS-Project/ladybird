@@ -6,6 +6,7 @@
 
 #include <AK/TypeCasts.h>
 #include <AK/ByteBuffer.h>
+#include <AK/QuickSort.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Bindings/CachePrototype.h>
@@ -109,7 +110,7 @@ static Optional<String> decode_string(StringView encoded)
     auto bytes = hex_decode(encoded);
     if (!bytes.has_value())
         return {};
-    auto string = String::from_utf8(bytes->bytes());
+    auto string = String::from_utf8(StringView { bytes->bytes() });
     if (string.is_error())
         return {};
     return string.release_value();
@@ -199,6 +200,9 @@ Optional<String> Cache::serialize_entry(Entry const& entry, ReadonlyBytes body) 
     value.append(encoded_response_headers);
     value.append('|');
     value.append(encoded_body);
+    value.append('|');
+    auto sequence = String::number(entry.sequence);
+    value.append(sequence);
     return value.to_string_without_validation();
 }
 
@@ -207,7 +211,7 @@ Optional<Cache::Entry> Cache::deserialize_entry(String const& key, String const&
     if (!key.bytes_as_string_view().starts_with(cache_entry_prefix))
         return {};
     auto fields = value.bytes_as_string_view().split_view('|', SplitBehavior::KeepEmpty);
-    if (fields.size() != 10 || fields[0] != "RIN-CACHE-ENTRY-V2"sv)
+    if ((fields.size() != 10 && fields.size() != 11) || fields[0] != "RIN-CACHE-ENTRY-V2"sv)
         return {};
 
     auto method = decode_string(fields[1]);
@@ -217,6 +221,9 @@ Optional<Cache::Entry> Cache::deserialize_entry(String const& key, String const&
     auto body = hex_decode(fields[9]);
     auto body_present = fields[6] == "1"sv;
     auto response_type = fields[3].to_number<u8>();
+    auto sequence = fields.size() == 11 ? fields[10].to_number<u64>() : Optional<u64> {};
+    if (fields.size() == 11 && !sequence.has_value())
+        return {};
     if (!method.has_value() || !url.has_value() || !status.has_value() || !status_text.has_value() || !body.has_value() || !response_type.has_value() || *response_type > static_cast<u8>(Fetch::Infrastructure::Response::Type::OpaqueRedirect) || (*response_type == static_cast<u8>(Fetch::Infrastructure::Response::Type::Error)) || (fields[6] != "0"sv && fields[6] != "1"sv))
         return {};
     if (*status > 599)
@@ -242,7 +249,7 @@ Optional<Cache::Entry> Cache::deserialize_entry(String const& key, String const&
             return {};
         response->response()->set_body(extracted.value().body);
     }
-    return Entry { request.release_value(), response };
+    return Entry { sequence.value_or(0), request.release_value(), response };
 }
 
 bool Cache::store_serialized_entry(String const& key, String const& value)
@@ -279,11 +286,16 @@ void Cache::restore_entries()
         if (!value.has_value())
             continue;
         auto entry = deserialize_entry(key, value.value());
-        if (entry.has_value())
+        if (entry.has_value()) {
+            if (entry->sequence == 0)
+                entry->sequence = m_next_sequence++;
+            else if (entry->sequence >= m_next_sequence)
+                m_next_sequence = entry->sequence + 1;
             m_entries.append(entry.release_value());
-        else
+        } else
             m_storage_bottle->remove(key);
     }
+    quick_sort(m_entries, [](auto const& left, auto const& right) { return left.sequence < right.sequence; });
 }
 
 void Cache::remove_persisted_entries()
@@ -320,6 +332,8 @@ GC::Ref<WebIDL::Promise> Cache::persist_entry(Entry entry, GC::Ref<Fetch::Respon
                 WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache response body could not be read"sv));
                 return JS::js_undefined();
             }
+            if (entry.sequence == 0)
+                entry.sequence = m_next_sequence++;
             auto key = storage_key_for(*entry.request);
             auto serialized = serialize_entry(entry, bytes.value().bytes());
             if (!serialized.has_value() || !store_serialized_entry(key, serialized.value())) {
@@ -573,7 +587,7 @@ WebIDL::ExceptionOr<Cache::Entry> Cache::clone_entry(GC::Ref<Fetch::Request> req
     auto response_clone = response.clone();
     if (response_clone.is_exception())
         return response_clone.release_error();
-    return Entry { request_clone.release_value(), response_clone.release_value() };
+    return Entry { 0, request_clone.release_value(), response_clone.release_value() };
 }
 
 void Cache::commit_entry(Entry entry)

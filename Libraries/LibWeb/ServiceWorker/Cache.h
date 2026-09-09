@@ -46,6 +46,7 @@ public:
 
 private:
     struct Entry {
+        u64 sequence { 0 };
         GC::Ref<Fetch::Request> request;
         GC::Ref<Fetch::Response> response;
     };
@@ -70,6 +71,7 @@ private:
 
     String m_name;
     GC::Ptr<StorageAPI::StorageBottle> m_storage_bottle;
+    u64 m_next_sequence { 1 };
     Vector<Entry> m_entries;
 };
 
