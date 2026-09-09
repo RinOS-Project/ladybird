@@ -834,6 +834,29 @@ Web::PageClient::WorkerAgentResponse PageClient::request_worker_agent(Web::Bindi
     return { response->take_handle(), response->take_request_server_handle(), response->take_image_decoder_handle() };
 }
 
+Web::PageClient::ServiceWorkerOwnerResponse PageClient::request_service_worker_owner(
+    u32 operation, ByteString client_url, ByteString origin,
+    ByteString script_url, ByteString scope, u32 update_via_cache)
+{
+    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::RequestServiceWorkerOwner>(
+        m_id, operation, move(client_url), move(origin), move(script_url),
+        move(scope), update_via_cache);
+    if (!response) {
+        dbgln("WebContent client disconnected during RequestServiceWorkerOwner.");
+        return {};
+    }
+
+    return {
+        response->accepted(),
+        response->found(),
+        response->generation(),
+        response->state(),
+        response->take_response_origin(),
+        response->take_response_script_url(),
+        response->take_response_scope(),
+    };
+}
+
 void PageClient::page_did_mutate_dom(FlyString const& type, Web::DOM::Node const& target, Web::DOM::NodeList& added_nodes, Web::DOM::NodeList& removed_nodes, GC::Ptr<Web::DOM::Node>, GC::Ptr<Web::DOM::Node>, Optional<String> const& attribute_name)
 {
     Optional<WebView::Mutation::Type> mutation;

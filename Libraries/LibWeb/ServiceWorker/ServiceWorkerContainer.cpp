@@ -12,7 +12,9 @@
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/ServiceWorker/Job.h>
 #include <LibWeb/ServiceWorker/Registration.h>
 #include <LibWeb/ServiceWorker/ServiceWorker.h>
@@ -26,6 +28,21 @@
 namespace Web::ServiceWorker {
 
 GC_DEFINE_ALLOCATOR(ServiceWorkerContainer);
+
+static constexpr u32 service_worker_owner_register_operation = 1u;
+
+static Web::PageClient::ServiceWorkerOwnerResponse request_service_worker_owner(
+    HTML::EnvironmentSettingsObject& client, u32 operation,
+    ByteString client_url, ByteString origin, ByteString script_url,
+    ByteString scope, u32 update_via_cache)
+{
+    auto& global_object = client.global_object();
+    if (!is<HTML::Window>(global_object))
+        return {};
+    return as<HTML::Window>(global_object).page().client().request_service_worker_owner(
+        operation, move(client_url), move(origin), move(script_url),
+        move(scope), update_via_cache);
+}
 
 ServiceWorkerContainer::ServiceWorkerContainer(JS::Realm& realm)
     : DOM::EventTarget(realm)
@@ -271,6 +288,22 @@ void ServiceWorkerContainer::start_register(Optional<URL::URL> scope_url, Option
     // FIXME: Ad-Hoc. Spec should handle this failure here, or earlier.
     if (!storage_key.has_value()) {
         WebIDL::reject_promise(realm, promise, JS::TypeError::create(realm, "Failed to obtain a storage key"sv));
+        return;
+    }
+
+    /* Registration records belong to the Browser profile owner.  Keep this
+     * synchronous request inside Start Register so the owner transaction is
+     * completed before the renderer creates any process-local Job state. */
+    auto owner_response = request_service_worker_owner(
+        client, service_worker_owner_register_operation,
+        client.creation_url.serialize(URL::ExcludeFragment::Yes).to_byte_string(),
+        {}, script_url->serialize(URL::ExcludeFragment::Yes).to_byte_string(),
+        scope_url->serialize(URL::ExcludeFragment::Yes).to_byte_string(),
+        static_cast<u32>(update_via_cache));
+    if (!owner_response.accepted) {
+        WebIDL::reject_promise(realm, promise,
+            WebIDL::InvalidStateError::create(realm,
+                "The Browser profile owner rejected the ServiceWorker registration"_utf16));
         return;
     }
 

@@ -70,6 +70,7 @@ void rin_log(char const* msg);
 class BridgeApplication;
 struct PageSession;
 static PageSession* find_page(u32 page_id);
+static int s_service_worker_owner_fd = -1;
 
 static constexpr u64 s_load_start_retry_interval_ms = 250;
 static constexpr u64 s_load_start_retry_budget_ms = 10000;
@@ -763,6 +764,15 @@ struct PageSession {
             mark_dirty();
         };
 
+        view->on_service_worker_owner_request =
+            [this](u32 operation, ByteString client_url, ByteString origin,
+                   ByteString script_url, ByteString scope,
+                   u32 update_via_cache) {
+                return service_worker_owner_request(
+                    operation, move(client_url), move(origin),
+                    move(script_url), move(scope), update_via_cache);
+            };
+
         view->initialize_bridge_client();
         kick_first_frame_if_needed("create-page"sv, true);
     }
@@ -770,6 +780,85 @@ struct PageSession {
     ~PageSession()
     {
         close_paint_shm();
+    }
+
+    WebView::ViewImplementation::ServiceWorkerOwnerResponse
+    service_worker_owner_request(u32 operation, ByteString client_url,
+                                 ByteString origin, ByteString script_url,
+                                 ByteString scope, u32 update_via_cache)
+    {
+        WebView::ViewImplementation::ServiceWorkerOwnerResponse result;
+        if (s_service_worker_owner_fd < 0 ||
+            client_url.length() >= RIN_WEBCONTENT_URL_MAX ||
+            origin.length() >= RIN_WEBCONTENT_URL_MAX ||
+            script_url.length() >= RIN_WEBCONTENT_URL_MAX ||
+            scope.length() >= RIN_WEBCONTENT_URL_MAX)
+            return result;
+
+        RinWebContentServiceWorkerOwnerRequestV1 request {};
+        request.struct_size = sizeof(request);
+        request.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        request.operation = static_cast<u16>(operation);
+        request.update_via_cache = update_via_cache;
+        copy_c_string(request.client_url, sizeof(request.client_url), client_url);
+        copy_c_string(request.origin, sizeof(request.origin), origin);
+        copy_c_string(request.script_url, sizeof(request.script_url), script_url);
+        copy_c_string(request.scope, sizeof(request.scope), scope);
+        if (!rin_webcontent_client_service_worker_owner_request_valid(&request))
+            return result;
+
+        u64 deadline_ms;
+        if (!client_rpc_deadline_create(&deadline_ms))
+            return result;
+        RinWebContentMsgHeader request_header {};
+        request_header.magic = RIN_WEBCONTENT_MAGIC;
+        request_header.version = RIN_WEBCONTENT_VERSION;
+        request_header.command = RIN_WEBCONTENT_CMD_SERVICE_WORKER_OWNER_V1;
+        request_header.page_id = page_id;
+        request_header.payload_len = sizeof(request);
+        if (!send_all(s_service_worker_owner_fd, &request_header,
+                      sizeof(request_header), deadline_ms) ||
+            !send_all(s_service_worker_owner_fd, &request, sizeof(request),
+                      deadline_ms) ||
+            !recv_all(s_service_worker_owner_fd, &request_header,
+                      sizeof(request_header), deadline_ms)) {
+            ::close(s_service_worker_owner_fd);
+            s_service_worker_owner_fd = -1;
+            return result;
+        }
+
+        auto validation = rin_webcontent_client_response_header_validate(
+            &request_header,
+            RIN_WEBCONTENT_CMD_SERVICE_WORKER_OWNER_V1,
+            page_id,
+            sizeof(RinWebContentServiceWorkerOwnerResponseV1));
+        if (validation != RIN_WEBCONTENT_CLIENT_VALID) {
+            ::close(s_service_worker_owner_fd);
+            s_service_worker_owner_fd = -1;
+            return result;
+        }
+        if (request_header.status != 0)
+            return result;
+
+        RinWebContentServiceWorkerOwnerResponseV1 response {};
+        if (!recv_all(s_service_worker_owner_fd, &response, sizeof(response),
+                      deadline_ms) ||
+            !rin_webcontent_client_service_worker_owner_response_valid(&response)) {
+            ::close(s_service_worker_owner_fd);
+            s_service_worker_owner_fd = -1;
+            return result;
+        }
+        result.accepted =
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED ||
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_NOT_FOUND;
+        result.found =
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED;
+        result.generation = response.generation;
+        result.state = response.state;
+        result.origin = ByteString { response.origin };
+        result.script_url = ByteString { response.script_url };
+        result.scope = ByteString { response.scope };
+        return result;
     }
 
     void mark_dirty()
@@ -2638,6 +2727,21 @@ static void handle_client(int client_fd)
     if (!rin_webcontent_service_request_payload_length_valid(&header))
         return;
 
+    if (header.command == RIN_WEBCONTENT_CMD_OPEN_SERVICE_WORKER_OWNER_V1) {
+        if (s_service_worker_owner_fd >= 0) {
+            (void)send_message(client_fd, header.command, -EALREADY, 0,
+                               nullptr, 0, deadline_ms);
+            return;
+        }
+        if (!rin_webcontent_service_request_valid(&header, nullptr) ||
+            !send_message(client_fd, header.command, 0, 0, nullptr, 0,
+                          deadline_ms))
+            return;
+        s_service_worker_owner_fd = client_fd;
+        rin_log("[webcontent] ServiceWorker owner channel connected\n");
+        return;
+    }
+
     Vector<u8> payload;
     int received_descriptor = -1;
     int received_descriptors[RIN_WEBCONTENT_FILE_PICKER_MAX_SELECTIONS] {};
@@ -2677,6 +2781,9 @@ static void handle_client(int client_fd)
             (void)send_message(client_fd, header.command, -EINVAL, header.page_id, nullptr, 0, deadline_ms);
             return;
         }
+        if (s_service_worker_owner_fd >= 0)
+            capabilities.capabilities |=
+                RIN_WEBCONTENT_CAPABILITY_SERVICE_WORKER_OWNER_V1;
         (void)send_message(client_fd, header.command, 0, 0, &capabilities, sizeof(capabilities), deadline_ms);
         return;
     }
@@ -2847,6 +2954,10 @@ static ErrorOr<int> run_bridge()
 
     auto cleanup_server_socket = [&] {
         s_server_notifier = nullptr;
+        if (s_service_worker_owner_fd >= 0) {
+            ::close(s_service_worker_owner_fd);
+            s_service_worker_owner_fd = -1;
+        }
         if (server_fd >= 0) {
             ::close(server_fd);
             server_fd = -1;
@@ -2954,7 +3065,8 @@ static ErrorOr<int> run_bridge()
                 rin_log("[webcontent] Browser peer authenticated\n");
             }
             handle_client(client_fd);
-            ::close(client_fd);
+            if (client_fd != s_service_worker_owner_fd)
+                ::close(client_fd);
             return;
         }
     };
@@ -2964,6 +3076,10 @@ static ErrorOr<int> run_bridge()
             return;
 
         s_pages.clear();
+        if (s_service_worker_owner_fd >= 0) {
+            ::close(s_service_worker_owner_fd);
+            s_service_worker_owner_fd = -1;
+        }
         s_server_notifier = nullptr;
         s_stop_timer = nullptr;
         unlink(RIN_WEBCONTENT_SOCKET_PATH);

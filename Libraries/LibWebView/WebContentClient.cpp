@@ -836,6 +836,21 @@ Messages::WebContentClient::RequestWorkerAgentResponse WebContentClient::request
     return { worker_handle.release_value(), request_server_handle.release_value(), image_decoder_handle.release_value() };
 }
 
+Messages::WebContentClient::RequestServiceWorkerOwnerResponse WebContentClient::request_service_worker_owner(
+    u64 page_id, u32 operation, ByteString client_url, ByteString origin,
+    ByteString script_url, ByteString scope, u32 update_via_cache)
+{
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_service_worker_owner_request)
+        return { false, false, 0, 0, {}, {}, {} };
+
+    auto result = view->on_service_worker_owner_request(
+        operation, move(client_url), move(origin), move(script_url),
+        move(scope), update_via_cache);
+    return { result.accepted, result.found, result.generation, result.state,
+             move(result.origin), move(result.script_url), move(result.scope) };
+}
+
 Optional<ViewImplementation&> WebContentClient::view_for_page_id(u64 page_id, SourceLocation location)
 {
     // Don't bother logging anything for the spare WebContent process. It will only receive a load notification for about:blank.

@@ -10,6 +10,7 @@
 #pragma once
 
 #include <AK/JsonValue.h>
+#include <AK/ByteString.h>
 #include <AK/Queue.h>
 #include <AK/Variant.h>
 #include <LibGC/Root.h>
@@ -480,6 +481,24 @@ public:
         IPC::TransportHandle image_decoder_handle;
     };
     virtual WorkerAgentResponse request_worker_agent([[maybe_unused]] Web::Bindings::AgentType worker_type) { return {}; }
+
+    struct ServiceWorkerOwnerResponse {
+        bool accepted { false };
+        bool found { false };
+        u64 generation { 0 };
+        u32 state { 0 };
+        ByteString origin;
+        ByteString script_url;
+        ByteString scope;
+    };
+    virtual ServiceWorkerOwnerResponse request_service_worker_owner(
+        [[maybe_unused]] u32 operation, [[maybe_unused]] ByteString client_url,
+        [[maybe_unused]] ByteString origin, [[maybe_unused]] ByteString script_url,
+        [[maybe_unused]] ByteString scope,
+        [[maybe_unused]] u32 update_via_cache)
+    {
+        return {};
+    }
 
     virtual void page_did_mutate_dom([[maybe_unused]] FlyString const& type, [[maybe_unused]] DOM::Node const& target, [[maybe_unused]] DOM::NodeList& added_nodes, [[maybe_unused]] DOM::NodeList& removed_nodes, [[maybe_unused]] GC::Ptr<DOM::Node> previous_sibling, [[maybe_unused]] GC::Ptr<DOM::Node> next_sibling, [[maybe_unused]] Optional<String> const& attribute_name) { }
 

@@ -49,6 +49,16 @@ class WEBVIEW_API ViewImplementation
     friend class WebContentClient;
 
 public:
+    struct ServiceWorkerOwnerResponse {
+        bool accepted { false };
+        bool found { false };
+        u64 generation { 0 };
+        u32 state { 0 };
+        ByteString origin;
+        ByteString script_url;
+        ByteString scope;
+    };
+
     virtual ~ViewImplementation();
 
     static void for_each_view(Function<IterationDecision(ViewImplementation&)>);
@@ -265,6 +275,10 @@ public:
     Function<void(Web::HTML::AudioPlayState)> on_audio_play_state_changed;
     Function<void()> on_web_content_crashed;
     Function<void()> on_web_content_process_change_for_cross_site_navigation;
+    Function<ServiceWorkerOwnerResponse(u32 operation, ByteString client_url,
+                                        ByteString origin, ByteString script_url,
+                                        ByteString scope, u32 update_via_cache)>
+        on_service_worker_owner_request;
 
     Menu& page_context_menu() { return *m_page_context_menu; }
     Menu& link_context_menu() { return *m_link_context_menu; }
