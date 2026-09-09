@@ -2,32 +2,34 @@
 <script src="../include.js"></script>
 <script>
     asyncTest(async done => {
-        const context = new OfflineAudioContext(1, 128, 44100);
-        const bytes = new Uint8Array(46);
-        const view = new DataView(bytes.buffer);
-        const text = (offset, value) => [...value].forEach((character, index) => bytes[offset + index] = character.charCodeAt(0));
+        const bytes = new ArrayBuffer(52);
+        const view = new DataView(bytes);
+        const text = (offset, value) => [...value].forEach((character, index) => view.setUint8(offset + index, character.charCodeAt(0)));
         text(0, "RIFF");
-        view.setUint32(4, 38, true);
+        view.setUint32(4, 44, true);
         text(8, "WAVE");
         text(12, "fmt ");
         view.setUint32(16, 16, true);
         view.setUint16(20, 1, true);
         view.setUint16(22, 1, true);
-        view.setUint32(24, 44100, true);
-        view.setUint32(28, 88200, true);
+        view.setUint32(24, 8000, true);
+        view.setUint32(28, 16000, true);
         view.setUint16(32, 2, true);
         view.setUint16(34, 16, true);
         text(36, "data");
-        view.setUint32(40, 2, true);
-        view.setInt16(44, 16384, true);
-        const buffer = await context.decodeAudioData(bytes.buffer);
-        println(`decoded: ${buffer.numberOfChannels},${buffer.length},${buffer.sampleRate},${buffer.getChannelData(0)[0]}`);
-        try {
-            await context.decodeAudioData(new Uint8Array([1, 2, 3]).buffer);
-            println("FAIL: invalid data decoded");
-        } catch (error) {
-            println(`invalid: ${error.name}`);
-        }
+        view.setUint32(40, 8, true);
+        view.setInt16(44, -32768, true);
+        view.setInt16(46, -16384, true);
+        view.setInt16(48, 16384, true);
+        view.setInt16(50, 32767, true);
+
+        const context = new OfflineAudioContext(1, 8, 16000);
+        const buffer = await context.decodeAudioData(bytes);
+        if (buffer.numberOfChannels !== 1 || buffer.sampleRate !== 16000 || buffer.length !== 8)
+            throw new Error("decoded WAV metadata was not resampled");
+        if (buffer.getChannelData(0)[0] !== -1 || buffer.getChannelData(0)[7] < 0.99)
+            throw new Error("decoded WAV samples were not copied");
+        println("decodeAudioData RIFF/WAVE PCM and resampling passed");
         done();
     });
 </script>

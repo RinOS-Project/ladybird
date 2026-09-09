@@ -429,10 +429,10 @@ GC::Ref<WebIDL::Promise> BaseAudioContext::decode_audio_data(GC::Root<WebIDL::Bu
         queue_a_decoding_operation(promise, move(audio_data), success_callback, error_callback);
     }
 
-    // 4. Else, execute the following error steps:
+    // 4. If audioData is detached, execute the following error steps:
     else {
         // 4.1. Let error be a DataCloneError.
-        auto error = WebIDL::DataCloneError::create(realm, "Audio data is not detached."_utf16);
+        auto error = WebIDL::DataCloneError::create(realm, "Audio data is detached."_utf16);
 
         // 4.2. Reject promise with error, and remove it from [[pending promises]].
         WebIDL::reject_promise(realm, promise, error);
