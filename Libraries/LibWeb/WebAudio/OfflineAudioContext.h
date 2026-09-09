@@ -17,8 +17,8 @@ namespace Web::WebAudio {
 // https://webaudio.github.io/web-audio-api/#OfflineAudioContextOptions
 struct OfflineAudioContextOptions {
     WebIDL::UnsignedLong number_of_channels { 1 };
-    WebIDL::UnsignedLong length {};
-    float sample_rate {};
+    WebIDL::UnsignedLong length { };
+    float sample_rate { };
 };
 
 // https://webaudio.github.io/web-audio-api/#OfflineAudioContext
@@ -51,9 +51,10 @@ private:
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    WebIDL::UnsignedLong m_length {};
-    WebIDL::UnsignedLong m_number_of_channels {};
+    WebIDL::UnsignedLong m_length { };
+    WebIDL::UnsignedLong m_number_of_channels { };
     bool m_rendering_started { false };
+    Optional<double> m_pending_suspend_time;
 
     GC::Ptr<AudioBuffer> m_rendered_buffer;
 

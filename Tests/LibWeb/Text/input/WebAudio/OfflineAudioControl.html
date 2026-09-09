@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    asyncTest(async done => {
+        const context = new OfflineAudioContext(1, 128, 44100);
+        try {
+            await context.resume();
+            println("FAIL: resume before startRendering was accepted");
+        } catch (e) {
+            println(`resume before render: ${e}`);
+        }
+
+        await context.startRendering();
+        await context.suspend(0);
+        await context.resume();
+        println("offline suspend/resume control promises resolved");
+        done();
+    });
+</script>

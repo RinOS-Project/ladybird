@@ -16,6 +16,7 @@
 #include <LibWeb/WebAudio/AudioDestinationNode.h>
 #include <LibWeb/WebAudio/OfflineAudioCompletionEvent.h>
 #include <LibWeb/WebAudio/OfflineAudioContext.h>
+#include <math.h>
 
 namespace Web::WebAudio {
 
@@ -94,6 +95,8 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::start_renderi
 
     // 3. Set the [[rendering started]] slot of the OfflineAudioContext to true.
     m_rendering_started = true;
+    set_control_state(Bindings::AudioContextState::Running);
+    set_rendering_state(Bindings::AudioContextState::Running);
 
     // 4. Let promise be a new promise.
     auto promise = WebIDL::create_promise(realm);
@@ -159,13 +162,53 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
 
 WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::resume()
 {
-    return WebIDL::NotSupportedError::create(realm(), "FIXME: Implement OfflineAudioContext::resume"_utf16);
+    auto& realm = this->realm();
+    auto promise = WebIDL::create_promise(realm);
+
+    if (!m_rendering_started) {
+        return WebIDL::create_rejected_promise_from_exception(realm, WebIDL::InvalidStateError::create(realm, "Offline rendering has not started"_utf16));
+    }
+
+    m_pending_promises.append(promise);
+    m_pending_suspend_time.clear();
+    set_control_state(Bindings::AudioContextState::Running);
+    set_rendering_state(Bindings::AudioContextState::Running);
+    queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
+        WebIDL::resolve_promise(this->realm(), promise, JS::js_undefined());
+        m_pending_promises.remove_first_matching([&promise](auto& pending_promise) {
+            return pending_promise == promise;
+        });
+    }));
+    return promise;
 }
 
 WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> OfflineAudioContext::suspend(double suspend_time)
 {
-    (void)suspend_time;
-    return WebIDL::NotSupportedError::create(realm(), "FIXME: Implement OfflineAudioContext::suspend"_utf16);
+    auto& realm = this->realm();
+    auto promise = WebIDL::create_promise(realm);
+
+    if (!isfinite(suspend_time) || suspend_time < current_time()) {
+        return WebIDL::create_rejected_promise_from_exception(realm, WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "suspendTime must be finite and not precede currentTime"sv });
+    }
+    if (!m_rendering_started) {
+        return WebIDL::create_rejected_promise_from_exception(realm, WebIDL::InvalidStateError::create(realm, "Offline rendering has not started"_utf16));
+    }
+    if (m_pending_suspend_time.has_value()) {
+        return WebIDL::create_rejected_promise_from_exception(realm, WebIDL::InvalidStateError::create(realm, "An offline suspend is already pending"_utf16));
+    }
+
+    m_pending_promises.append(promise);
+    m_pending_suspend_time = suspend_time;
+    set_control_state(Bindings::AudioContextState::Suspended);
+    set_rendering_state(Bindings::AudioContextState::Suspended);
+    queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
+        WebIDL::resolve_promise(this->realm(), promise, JS::js_undefined());
+        m_pending_suspend_time.clear();
+        m_pending_promises.remove_first_matching([&promise](auto& pending_promise) {
+            return pending_promise == promise;
+        });
+    }));
+    return promise;
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-offlineaudiocontext-length
