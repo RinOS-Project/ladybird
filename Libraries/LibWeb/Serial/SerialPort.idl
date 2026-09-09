@@ -6,8 +6,10 @@ interface SerialPort : EventTarget {
     attribute EventHandler onconnect;
     attribute EventHandler ondisconnect;
     readonly attribute boolean connected;
-    readonly attribute ReadableStream readable;
-    readonly attribute WritableStream writable;
+    // Closed ports expose null streams; dereferencing an unconnected stream
+    // object would turn the portal-unavailable path into a renderer crash.
+    readonly attribute ReadableStream? readable;
+    readonly attribute WritableStream? writable;
 
     SerialPortInfo getInfo();
 
