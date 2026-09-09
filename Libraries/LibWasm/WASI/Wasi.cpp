@@ -1595,12 +1595,41 @@ ErrorOr<Result<void>> Implementation::impl$path_rename(Configuration& configurat
         return errno_value_from_errno(errno);
     return Result<void> {};
 }
-ErrorOr<Result<void>> Implementation::impl$path_symlink(Configuration&, Pointer<u8> old_path, Size old_path_len, FD new_fd, Pointer<u8> new_path, Size new_path_len)
+ErrorOr<Result<void>> Implementation::impl$path_symlink(Configuration& configuration, Pointer<u8> old_path, Size old_path_len, FD new_fd, Pointer<u8> new_path, Size new_path_len)
 {
     if (!has_right(new_fd, 1ull << 24))
         return Errno::NotCapable;
-    (void)old_path; (void)old_path_len; (void)new_path; (void)new_path_len;
-    return Errno::NoSys;
+#if defined(AK_OS_RINOS)
+    // RinOS keeps preopen traversal symlink-free. Allowing a guest-created
+    // link here would invalidate the beneath namespace invariant used by all
+    // other WASI path owners, so this is an explicit policy result rather
+    // than an unimplemented host fallback.
+    (void)configuration;
+    (void)old_path;
+    (void)old_path_len;
+    (void)new_path;
+    (void)new_path_len;
+    return Errno::NotCapable;
+#else
+    auto destination_fd = resolve_host_fd(new_fd);
+    if (destination_fd < 0)
+        return errno_value_from_errno(errno);
+    auto target_slice = TRY(slice_typed_memory(configuration, old_path, old_path_len));
+    auto link_slice = TRY(slice_typed_memory(configuration, new_path, new_path_len));
+    if (target_slice.is_empty() || link_slice.is_empty())
+        return Errno::Invalid;
+    for (auto byte : target_slice)
+        if (byte == 0)
+            return Errno::Invalid;
+    for (auto byte : link_slice)
+        if (byte == 0)
+            return Errno::Invalid;
+    auto target_string = ByteString::copy(target_slice);
+    auto link_string = ByteString::copy(link_slice);
+    if (symlinkat(target_string.characters(), destination_fd, link_string.characters()) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+#endif
 }
 ErrorOr<Result<void>> Implementation::impl$path_unlink_file(Configuration& configuration, FD fd, Pointer<u8> path, Size path_len)
 {
