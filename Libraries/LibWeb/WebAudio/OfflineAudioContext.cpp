@@ -532,6 +532,82 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             }
             return 0.0f;
         };
+        // Snapshot all direct source -> AudioParam edges before evaluating
+        // source parameters.  Without this bounded pre-pass, two source
+        // nodes modulating one parameter produced output that depended on
+        // vector iteration order (and therefore differed from online audio).
+        struct PrecollectedSource {
+            NodeID node_id { 0 };
+            float left { 0 };
+            float right { 0 };
+        };
+        Array<PrecollectedSource, 256> precollected_source_nodes { };
+        auto collect_direct_source_modulation = [&](NodeID node_id, float source_left, float source_right) {
+            for (auto const& param_connection : param_connections) {
+                if (param_connection.source_node_id == node_id && param_connection.output_index == 0)
+                    add_param_modulation(param_connection.destination_param_id, (source_left + source_right) * 0.5f);
+            }
+            if (precollected_source_nodes.size() < 256)
+                precollected_source_nodes.append({ node_id, source_left, source_right });
+        };
+        for (auto const& source : buffer_sources) {
+            if (now < source.start_time || source.stop_time.has_value() && now >= source.stop_time.value()
+                || source.duration.has_value() && now - source.start_time >= source.duration.value()
+                || !source.buffer || source.buffer->frame_count() == 0)
+                continue;
+            auto rate = max(static_cast<double>(source.playback_rate), 0.0) * pow(2.0, static_cast<double>(source.detune) / 1200.0);
+            auto source_frame = source.offset * source.buffer->sample_rate() + (now - source.start_time) * rate * source.buffer->sample_rate();
+            auto source_length = static_cast<double>(source.buffer->frame_count());
+            if (source.loop) {
+                auto loop_start = clamp(source.loop_start * source.buffer->sample_rate(), 0.0, source_length);
+                auto loop_end = source.loop_end > source.loop_start ? clamp(source.loop_end * source.buffer->sample_rate(), loop_start, source_length) : source_length;
+                auto loop_length = loop_end - loop_start;
+                if (loop_length > 0 && source_frame >= loop_end)
+                    source_frame = loop_start + fmod(source_frame - loop_start, loop_length);
+            }
+            if (source_frame < 0 || source_frame >= source_length)
+                continue;
+            auto first_frame = static_cast<u32>(source_frame);
+            auto next_frame = min(first_frame + 1, source.buffer->frame_count() - 1);
+            auto fraction = static_cast<float>(source_frame - first_frame);
+            auto sample_at = [&](u32 channel) {
+                auto first = source.buffer->sample(channel, first_frame);
+                auto next = source.buffer->sample(channel, next_frame);
+                return first + (next - first) * fraction;
+            };
+            auto sample = sample_at(0);
+            auto right = source.buffer->channel_count() == 1 ? sample : sample_at(1);
+            collect_direct_source_modulation(source.node_id, sample, right);
+        }
+        for (auto const& oscillator : oscillators) {
+            if (now < oscillator.start_time || oscillator.stop_time.has_value() && now >= oscillator.stop_time.value())
+                continue;
+            auto frequency = static_cast<double>(oscillator.frequency) * pow(2.0, static_cast<double>(oscillator.detune) / 1200.0);
+            if (!isfinite(frequency))
+                continue;
+            auto phase = fmod((now - oscillator.start_time) * frequency, 1.0);
+            if (phase < 0)
+                phase += 1.0;
+            float sample = 0.0f;
+            if (oscillator.periodic_wave) {
+                sample = oscillator.periodic_wave->sample_at(phase);
+            } else {
+                switch (oscillator.waveform) {
+                case OscillatorWaveform::Sine: sample = static_cast<float>(sin(phase * 2.0 * AK::Pi<double>)); break;
+                case OscillatorWaveform::Square: sample = phase < 0.5 ? 1.0f : -1.0f; break;
+                case OscillatorWaveform::Sawtooth: sample = static_cast<float>(2.0 * phase - 1.0); break;
+                case OscillatorWaveform::Triangle: sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5)); break;
+                }
+            }
+            collect_direct_source_modulation(oscillator.node_id, sample, sample);
+        }
+        for (auto const& source : constant_sources) {
+            if (now < source.start_time || source.stop_time.has_value() && now >= source.stop_time.value())
+                continue;
+            auto sample = source.offset;
+            if (isfinite(sample))
+                collect_direct_source_modulation(source.node_id, sample, sample);
+        }
         struct MergerFrame {
             NodeID node_id { 0 };
             Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> channels { };
@@ -544,9 +620,23 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             if (depth > 32)
                 return;
             auto right = right_sample.value_or(sample);
-            for (auto const& param_connection : param_connections) {
-                if (param_connection.source_node_id == source_node_id && param_connection.output_index == 0)
-                    add_param_modulation(param_connection.destination_param_id, (sample + right) * 0.5f);
+            bool direct_source_was_precollected = false;
+            for (auto const& precollected : precollected_source_nodes) {
+                if (precollected.node_id == source_node_id) {
+                    direct_source_was_precollected = true;
+                    for (auto const& param_connection : param_connections) {
+                        if (param_connection.source_node_id == source_node_id && param_connection.output_index == 0)
+                            add_param_modulation(param_connection.destination_param_id,
+                                ((sample - precollected.left) + (right - precollected.right)) * 0.5f);
+                    }
+                    break;
+                }
+            }
+            if (!direct_source_was_precollected) {
+                for (auto const& param_connection : param_connections) {
+                    if (param_connection.source_node_id == source_node_id && param_connection.output_index == 0)
+                        add_param_modulation(param_connection.destination_param_id, (sample + right) * 0.5f);
+                }
             }
             for (auto& connection : node_connections) {
                 if (connection.source_node_id != source_node_id)
