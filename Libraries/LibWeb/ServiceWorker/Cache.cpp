@@ -78,9 +78,11 @@ static String encode_headers(HTTP::HeaderList const& headers)
         if (!first)
             encoded.append(';');
         first = false;
-        encoded.append(hex_encode(header.name.bytes()));
+        auto encoded_name = hex_encode(header.name.bytes());
+        auto encoded_value = hex_encode(header.value.bytes());
+        encoded.append(encoded_name);
         encoded.append('=');
-        encoded.append(hex_encode(header.value.bytes()));
+        encoded.append(encoded_value);
     }
     return encoded.to_string_without_validation();
 }
@@ -159,9 +161,11 @@ String Cache::storage_key_for(Fetch::Request const& request) const
 {
     StringBuilder key;
     key.append(cache_entry_prefix);
-    key.append(hex_encode(m_name.bytes()));
+    auto encoded_name = hex_encode(m_name.bytes());
+    auto encoded_url = hex_encode(request.url().bytes());
+    key.append(encoded_name);
     key.append(':');
-    key.append(hex_encode(request.url().bytes()));
+    key.append(encoded_url);
     return key.to_string_without_validation();
 }
 
@@ -170,23 +174,31 @@ Optional<String> Cache::serialize_entry(Entry const& entry, ReadonlyBytes body) 
     StringBuilder value;
     value.append("RIN-CACHE-ENTRY-V2"sv);
     value.append('|');
-    value.append(hex_encode(entry.request->method().bytes()));
+    auto encoded_method = hex_encode(entry.request->method().bytes());
+    auto encoded_url = hex_encode(entry.request->url().bytes());
+    auto encoded_status_text = hex_encode(entry.response->status_text().bytes());
+    auto encoded_request_headers = encode_headers(*entry.request->request()->header_list());
+    auto encoded_response_headers = encode_headers(*entry.response->response()->header_list());
+    auto encoded_body = hex_encode(body);
+    auto type = String::number(static_cast<u8>(entry.response->response()->type()));
+    auto status = String::number(entry.response->status());
+    value.append(encoded_method);
     value.append('|');
-    value.append(hex_encode(entry.request->url().bytes()));
+    value.append(encoded_url);
     value.append('|');
-    value.append(String::number(static_cast<u8>(entry.response->response()->type())));
+    value.append(type);
     value.append('|');
-    value.append(String::number(entry.response->status()));
+    value.append(status);
     value.append('|');
-    value.append(hex_encode(entry.response->status_text().bytes()));
+    value.append(encoded_status_text);
     value.append('|');
     value.append(entry.response->body_impl() ? '1' : '0');
     value.append('|');
-    value.append(encode_headers(*entry.request->request()->header_list()));
+    value.append(encoded_request_headers);
     value.append('|');
-    value.append(encode_headers(*entry.response->response()->header_list()));
+    value.append(encoded_response_headers);
     value.append('|');
-    value.append(hex_encode(body));
+    value.append(encoded_body);
     return value.to_string_without_validation();
 }
 
@@ -280,7 +292,8 @@ void Cache::remove_persisted_entries()
         return;
     StringBuilder prefix;
     prefix.append(cache_entry_prefix);
-    prefix.append(hex_encode(m_name.bytes()));
+    auto encoded_name = hex_encode(m_name.bytes());
+    prefix.append(encoded_name);
     prefix.append(':');
     auto prefix_string = prefix.to_string_without_validation();
     for (auto const& key : m_storage_bottle->keys()) {
