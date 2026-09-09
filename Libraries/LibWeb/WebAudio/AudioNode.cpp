@@ -194,6 +194,10 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
             compressor_node.threshold()->value(), compressor_node.knee()->value(), compressor_node.ratio()->value(),
             compressor_node.attack()->value(), compressor_node.release()->value(), move(threshold_automation),
             move(knee_automation), move(ratio_automation), move(attack_automation), move(release_automation)));
+        // Keep the immutable render snapshot on the node as well as on the
+        // edge. The reduction attribute is read from this exact native state,
+        // so it must observe the same envelope that the renderer updates.
+        compressor_node.set_render_data(compressor);
         compressor_node.set_render_data(compressor);
     } else if (is<PannerNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Panner;
