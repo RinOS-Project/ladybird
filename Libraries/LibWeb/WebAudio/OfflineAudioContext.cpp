@@ -43,6 +43,7 @@ public:
         double loop_start { 0.0 };
         double loop_end { 0.0 };
         NodeID node_id { 0 };
+        bool ended_reported { false };
     };
     struct Oscillator {
         double start_time { 0.0 };
@@ -56,6 +57,7 @@ public:
         RefPtr<PeriodicWaveRenderData> periodic_wave;
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
         NodeID node_id { 0 };
+        bool ended_reported { false };
     };
     struct ConstantSource {
         double start_time { 0.0 };
@@ -64,6 +66,7 @@ public:
         RefPtr<AudioParamRenderData> offset_automation;
         AudioParamID offset_param_id { 0 };
         NodeID node_id { 0 };
+        bool ended_reported { false };
     };
     struct NodeConnection {
         NodeID source_node_id { 0 };
@@ -282,8 +285,6 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 }
             },
             [&](StartBufferSource const& start) {
-                if (!start.buffer || start.buffer->frame_count() == 0)
-                    return;
                 buffer_sources.append({
                     .buffer = start.buffer,
                     .start_time = start.when,
@@ -572,12 +573,25 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             }
         };
 
-        for (auto const& source : buffer_sources) {
-            if (now < source.start_time || (source.stop_time.has_value() && now >= source.stop_time.value()))
+        for (auto& source : buffer_sources) {
+            if (now < source.start_time)
                 continue;
+            if (source.stop_time.has_value() && now >= source.stop_time.value()) {
+                if (!source.ended_reported)
+                    source.ended_reported = queue_source_ended(source.node_id);
+                continue;
+            }
             auto elapsed = now - source.start_time;
-            if (source.duration.has_value() && elapsed >= source.duration.value())
+            if (source.duration.has_value() && elapsed >= source.duration.value()) {
+                if (!source.ended_reported)
+                    source.ended_reported = queue_source_ended(source.node_id);
                 continue;
+            }
+            if (!source.buffer || source.buffer->frame_count() == 0) {
+                if (!source.ended_reported)
+                    source.ended_reported = queue_source_ended(source.node_id);
+                continue;
+            }
             auto playback_rate = source.playback_rate_automation ? source.playback_rate_automation->value_at_time(now) : source.playback_rate;
             auto detune = source.detune_automation ? source.detune_automation->value_at_time(now) : source.detune;
             if (!isfinite(playback_rate) || !isfinite(detune))
@@ -592,8 +606,11 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 if (loop_length > 0 && source_frame >= loop_end)
                     source_frame = loop_start + fmod(source_frame - loop_start, loop_length);
             }
-            if (source_frame < 0 || source_frame >= source_length)
+            if (source_frame < 0 || source_frame >= source_length) {
+                if (!source.loop && !source.ended_reported)
+                    source.ended_reported = queue_source_ended(source.node_id);
                 continue;
+            }
             auto first_frame = static_cast<u32>(source_frame);
             auto next_frame = min(first_frame + 1, source.buffer->frame_count() - 1);
             auto fraction = static_cast<float>(source_frame - first_frame);
@@ -610,9 +627,14 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             }
         }
 
-        for (auto const& oscillator : oscillators) {
-            if (now < oscillator.start_time || (oscillator.stop_time.has_value() && now >= oscillator.stop_time.value()))
+        for (auto& oscillator : oscillators) {
+            if (now < oscillator.start_time)
                 continue;
+            if (oscillator.stop_time.has_value() && now >= oscillator.stop_time.value()) {
+                if (!oscillator.ended_reported)
+                    oscillator.ended_reported = queue_source_ended(oscillator.node_id);
+                continue;
+            }
             auto frequency_value = oscillator.frequency_automation ? oscillator.frequency_automation->value_at_time(now) : oscillator.frequency;
             auto detune_value = oscillator.detune_automation ? oscillator.detune_automation->value_at_time(now) : oscillator.detune;
             if (!isfinite(frequency_value) || !isfinite(detune_value))
@@ -643,11 +665,14 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             mix_source(mix_source, oscillator.node_id, sample, { }, 0);
         }
 
-        for (auto const& source : constant_sources) {
+        for (auto& source : constant_sources) {
             if (now < source.start_time)
                 continue;
-            if (source.stop_time.has_value() && now >= source.stop_time.value())
+            if (source.stop_time.has_value() && now >= source.stop_time.value()) {
+                if (!source.ended_reported)
+                    source.ended_reported = queue_source_ended(source.node_id);
                 continue;
+            }
             auto sample = source.offset_automation ? source.offset_automation->value_at_time(now) : source.offset;
             if (isfinite(sample))
                 mix_source(mix_source, source.node_id, sample, { }, 0);
@@ -700,6 +725,11 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
     // 4: Once the rendering is complete, queue a media element task to execute the following steps:
     queue_a_media_element_task(GC::create_function(heap(), [promise, this]() {
         HTML::TemporaryExecutionContext context(this->realm(), HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
+
+        // Source completion notifications are produced while rendering and
+        // dispatched on the control thread before the offline completion
+        // event, preserving WebAudio event ordering.
+        dispatch_source_ended_events();
 
         // 4.1 Resolve the promise created by startRendering() with [[rendered buffer]].
         WebIDL::resolve_promise(this->realm(), promise, this->m_rendered_buffer);

@@ -124,7 +124,8 @@ WebIDL::ExceptionOr<GC::Ref<AudioContext>> AudioContext::construct_impl(JS::Real
 
 AudioContext::~AudioContext()
 {
-    stop_source_ended_timer();
+    if (m_source_ended_timer)
+        m_source_ended_timer->stop();
 }
 
 void AudioContext::initialize(JS::Realm& realm)
@@ -516,8 +517,6 @@ void AudioContext::render_audio(Span<float> buffer)
                 }
             },
             [&](StartBufferSource const& start) {
-                if (!start.buffer || start.buffer->frame_count() == 0)
-                    return;
                 m_active_audio_sources.append({
                     .node_id = start.node_id,
                     .buffer = start.buffer,
@@ -792,14 +791,25 @@ void AudioContext::render_audio(Span<float> buffer)
             }
         };
 
-        for (auto const& source : m_active_audio_sources) {
-            if (!source.buffer || now < source.start_time)
+        for (auto& source : m_active_audio_sources) {
+            if (now < source.start_time)
                 continue;
-            if (source.stop_time.has_value() && now >= source.stop_time.value())
+            if (source.stop_time.has_value() && now >= source.stop_time.value()) {
+                if (!source.ended_reported)
+                    source.ended_reported = queue_source_ended(source.node_id);
                 continue;
+            }
             auto elapsed = now - source.start_time;
-            if (source.duration.has_value() && elapsed >= source.duration.value())
+            if (source.duration.has_value() && elapsed >= source.duration.value()) {
+                if (!source.ended_reported)
+                    source.ended_reported = queue_source_ended(source.node_id);
                 continue;
+            }
+            if (!source.buffer || source.buffer->frame_count() == 0) {
+                if (!source.ended_reported)
+                    source.ended_reported = queue_source_ended(source.node_id);
+                continue;
+            }
 
             auto playback_rate = source.playback_rate_automation ? source.playback_rate_automation->value_at_time(now) : source.playback_rate;
             auto detune = source.detune_automation ? source.detune_automation->value_at_time(now) : source.detune;
@@ -817,8 +827,11 @@ void AudioContext::render_audio(Span<float> buffer)
                 if (loop_length > 0 && source_frame >= loop_end)
                     source_frame = loop_start + fmod(source_frame - loop_start, loop_length);
             }
-            if (source_frame < 0 || source_frame >= source_length)
+            if (source_frame < 0 || source_frame >= source_length) {
+                if (!source.loop && !source.ended_reported)
+                    source.ended_reported = queue_source_ended(source.node_id);
                 continue;
+            }
 
             auto first_frame = static_cast<u32>(source_frame);
             auto next_frame = min(first_frame + 1, source.buffer->frame_count() - 1);
@@ -836,11 +849,14 @@ void AudioContext::render_audio(Span<float> buffer)
             }
         }
 
-        for (auto const& oscillator : m_active_oscillators) {
+        for (auto& oscillator : m_active_oscillators) {
             if (now < oscillator.start_time)
                 continue;
-            if (oscillator.stop_time.has_value() && now >= oscillator.stop_time.value())
+            if (oscillator.stop_time.has_value() && now >= oscillator.stop_time.value()) {
+                if (!oscillator.ended_reported)
+                    oscillator.ended_reported = queue_source_ended(oscillator.node_id);
                 continue;
+            }
 
             auto frequency_value = oscillator.frequency_automation ? oscillator.frequency_automation->value_at_time(now) : oscillator.frequency;
             auto detune_value = oscillator.detune_automation ? oscillator.detune_automation->value_at_time(now) : oscillator.detune;
@@ -872,11 +888,14 @@ void AudioContext::render_audio(Span<float> buffer)
             mix_source(mix_source, oscillator.node_id, sample, sample, 0);
         }
 
-        for (auto const& source : m_active_constant_sources) {
+        for (auto& source : m_active_constant_sources) {
             if (now < source.start_time)
                 continue;
-            if (source.stop_time.has_value() && now >= source.stop_time.value())
+            if (source.stop_time.has_value() && now >= source.stop_time.value()) {
+                if (!source.ended_reported)
+                    source.ended_reported = queue_source_ended(source.node_id);
                 continue;
+            }
             auto sample = source.offset_automation ? source.offset_automation->value_at_time(now) : source.offset;
             if (isfinite(sample))
                 mix_source(mix_source, source.node_id, sample, sample, 0);
@@ -904,26 +923,40 @@ void AudioContext::render_audio(Span<float> buffer)
 
     m_render_frame_position += frame_count;
     auto end_time = static_cast<double>(m_render_frame_position) / output_rate;
-    m_active_audio_sources.remove_all_matching([&](auto const& source) {
+    m_active_audio_sources.remove_all_matching([&](auto& source) {
+        bool finished = false;
         if (source.stop_time.has_value() && end_time >= source.stop_time.value())
-            return true;
+            finished = true;
         if (source.duration.has_value() && end_time >= source.start_time + source.duration.value())
-            return true;
-        if (source.loop)
+            finished = true;
+        if (!source.loop && !source.buffer)
+            finished = true;
+        if (!source.loop && source.buffer) {
+            auto playback_rate = source.playback_rate_automation ? source.playback_rate_automation->value_at_time(end_time) : source.playback_rate;
+            auto detune = source.detune_automation ? source.detune_automation->value_at_time(end_time) : source.detune;
+            auto rate = max(static_cast<double>(playback_rate), 0.0) * pow(2.0, static_cast<double>(detune) / 1200.0);
+            auto end_frame = source.offset * source.buffer->sample_rate() + (end_time - source.start_time) * rate * source.buffer->sample_rate();
+            finished = finished || end_frame >= source.buffer->frame_count();
+        }
+        if (!finished)
             return false;
-        if (!source.buffer)
-            return true;
-        auto playback_rate = source.playback_rate_automation ? source.playback_rate_automation->value_at_time(end_time) : source.playback_rate;
-        auto detune = source.detune_automation ? source.detune_automation->value_at_time(end_time) : source.detune;
-        auto rate = max(static_cast<double>(playback_rate), 0.0) * pow(2.0, static_cast<double>(detune) / 1200.0);
-        auto end_frame = source.offset * source.buffer->sample_rate() + (end_time - source.start_time) * rate * source.buffer->sample_rate();
-        return end_frame >= source.buffer->frame_count();
+        if (!source.ended_reported)
+            source.ended_reported = queue_source_ended(source.node_id);
+        return source.ended_reported;
     });
-    m_active_oscillators.remove_all_matching([&](auto const& oscillator) {
-        return oscillator.stop_time.has_value() && end_time >= oscillator.stop_time.value();
+    m_active_oscillators.remove_all_matching([&](auto& oscillator) {
+        if (!oscillator.stop_time.has_value() || end_time < oscillator.stop_time.value())
+            return false;
+        if (!oscillator.ended_reported)
+            oscillator.ended_reported = queue_source_ended(oscillator.node_id);
+        return oscillator.ended_reported;
     });
-    m_active_constant_sources.remove_all_matching([&](auto const& source) {
-        return source.stop_time.has_value() && end_time >= source.stop_time.value();
+    m_active_constant_sources.remove_all_matching([&](auto& source) {
+        if (!source.stop_time.has_value() || end_time < source.stop_time.value())
+            return false;
+        if (!source.ended_reported)
+            source.ended_reported = queue_source_ended(source.node_id);
+        return source.ended_reported;
     });
 }
 

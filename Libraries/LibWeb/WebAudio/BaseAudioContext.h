@@ -8,7 +8,10 @@
 
 #pragma once
 
+#include <AK/Array.h>
+#include <AK/Atomic.h>
 #include <AK/Function.h>
+#include <LibGC/Weak.h>
 #include <LibWeb/Bindings/BaseAudioContextPrototype.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/WebAudio/AnalyserNode.h>
@@ -29,6 +32,7 @@ namespace Web::WebAudio {
 
 class AudioDestinationNode;
 class AudioParam;
+class AudioNode;
 class ControlMessageQueue;
 
 // https://webaudio.github.io/web-audio-api/#BaseAudioContext
@@ -94,6 +98,13 @@ public:
 
     void queue_control_message(ControlMessage);
 
+    // Scheduled-source completion is reported by the render callback through
+    // a bounded SPSC queue. The callback never enters the GC heap; the main
+    // thread drains the queue and dispatches the DOM events.
+    void register_scheduled_source(AudioNode&);
+    bool queue_source_ended(NodeID);
+    void dispatch_source_ended_events();
+
     NodeID next_node_id(Badge<AudioNode>) { return ++m_next_node_id; }
     AudioParamID next_audio_param_id(Badge<AudioParam>) { return ++m_next_audio_param_id; }
 
@@ -132,6 +143,17 @@ private:
     HTML::UniqueTaskSource m_media_element_event_task_source {};
 
     NonnullOwnPtr<ControlMessageQueue> m_control_message_queue;
+
+    struct ScheduledSource {
+        NodeID node_id { 0 };
+        GC::Weak<AudioNode> node;
+    };
+
+    static constexpr size_t SOURCE_ENDED_QUEUE_CAPACITY = 1024;
+    Vector<ScheduledSource> m_scheduled_sources;
+    Array<Atomic<NodeID>, SOURCE_ENDED_QUEUE_CAPACITY> m_source_ended_queue {};
+    Atomic<u64> m_source_ended_write { 0 };
+    Atomic<u64> m_source_ended_read { 0 };
 };
 
 }

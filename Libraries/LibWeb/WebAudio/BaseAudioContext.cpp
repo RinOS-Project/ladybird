@@ -17,6 +17,8 @@
 #include <LibWeb/WebAudio/AudioBuffer.h>
 #include <LibWeb/WebAudio/AudioBufferSourceNode.h>
 #include <LibWeb/WebAudio/AudioDestinationNode.h>
+#include <LibWeb/WebAudio/AudioNode.h>
+#include <LibWeb/WebAudio/AudioScheduledSourceNode.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/BiquadFilterNode.h>
 #include <LibWeb/WebAudio/ChannelMergerNode.h>
@@ -397,6 +399,46 @@ void BaseAudioContext::queue_a_media_element_task(GC::Ref<GC::Function<void()>> 
 void BaseAudioContext::queue_control_message(ControlMessage message)
 {
     m_control_message_queue->enqueue(move(message));
+}
+
+void BaseAudioContext::register_scheduled_source(AudioNode& node)
+{
+    m_scheduled_sources.remove_all_matching([&](auto const& source) {
+        return !source.node || source.node_id == node.node_id();
+    });
+    m_scheduled_sources.append({ node.node_id(), GC::Weak { node } });
+}
+
+bool BaseAudioContext::queue_source_ended(NodeID node_id)
+{
+    auto write = m_source_ended_write.load(MemoryOrder::memory_order_relaxed);
+    auto read = m_source_ended_read.load(MemoryOrder::memory_order_acquire);
+    if (write - read >= SOURCE_ENDED_QUEUE_CAPACITY)
+        return false;
+
+    m_source_ended_queue[write % SOURCE_ENDED_QUEUE_CAPACITY].store(node_id, MemoryOrder::memory_order_relaxed);
+    m_source_ended_write.store(write + 1, MemoryOrder::memory_order_release);
+    return true;
+}
+
+void BaseAudioContext::dispatch_source_ended_events()
+{
+    auto read = m_source_ended_read.load(MemoryOrder::memory_order_relaxed);
+    auto write = m_source_ended_write.load(MemoryOrder::memory_order_acquire);
+    while (read != write) {
+        auto node_id = m_source_ended_queue[read % SOURCE_ENDED_QUEUE_CAPACITY].load(MemoryOrder::memory_order_relaxed);
+        for (auto const& source : m_scheduled_sources) {
+            if (source.node && source.node_id == node_id) {
+                source.node->dispatch_event(DOM::Event::create(realm(), HTML::EventNames::ended));
+                break;
+            }
+        }
+        ++read;
+    }
+    m_source_ended_read.store(read, MemoryOrder::memory_order_release);
+    m_scheduled_sources.remove_all_matching([](auto const& source) {
+        return !source.node;
+    });
 }
 
 Vector<ControlMessage> BaseAudioContext::drain_control_messages()

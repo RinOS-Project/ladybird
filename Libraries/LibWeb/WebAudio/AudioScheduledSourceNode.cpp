@@ -19,6 +19,7 @@ GC_DEFINE_ALLOCATOR(AudioScheduledSourceNode);
 AudioScheduledSourceNode::AudioScheduledSourceNode(JS::Realm& realm, GC::Ref<BaseAudioContext> context)
     : AudioNode(realm, context)
 {
+    context->register_scheduled_source(*this);
 }
 
 AudioScheduledSourceNode::~AudioScheduledSourceNode() = default;
