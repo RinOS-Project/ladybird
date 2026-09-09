@@ -69,6 +69,7 @@ private:
     bool store_serialized_entry(String const& key, String const& value);
     GC::Ref<WebIDL::Promise> persist_entry(Entry, GC::Ref<Fetch::Response>);
     bool owner_is_current() const;
+    bool owner_fetch_is_current(Fetch::Request const&) const;
     GC::Ref<WebIDL::Promise> owner_rejected_promise() const;
     void restore_entries();
     void commit_entry(Entry);

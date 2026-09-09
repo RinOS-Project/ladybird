@@ -515,7 +515,7 @@ GC::Ref<WebIDL::Promise> Cache::add(Fetch::RequestInfo const& input)
     // The fetch must be admitted by the same live page/profile owner as the
     // cache. The network IPC carries the page id; this generation check closes
     // the gap where a revoked profile could otherwise start a new fetch.
-    if (!owner_is_current())
+    if (!owner_fetch_is_current(*request.value()))
         return owner_rejected_promise();
     auto fetch_promise = Fetch::fetch(realm().vm(), input);
     WebIDL::react_to_promise(
