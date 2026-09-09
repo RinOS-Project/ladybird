@@ -199,8 +199,8 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
         realm(),
         fetch_promises,
         [this, promise, requests = move(requests)](Vector<JS::Value> const& values) mutable {
-            Vector<GC::Ref<WebIDL::Promise>> put_promises;
-            put_promises.ensure_capacity(values.size());
+            Vector<Entry> staged_entries;
+            staged_entries.ensure_capacity(values.size());
             for (size_t i = 0; i < values.size(); ++i) {
                 if (!values[i].is<Fetch::Response>()) {
                     WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.addAll() fetch did not produce a Response"sv));
@@ -211,17 +211,20 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
                     WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.addAll() received a non-success response"sv));
                     return;
                 }
-                put_promises.append(put_normalized(requests[i], response));
+                auto staged = clone_entry(requests[i], response);
+                if (staged.is_exception()) {
+                    WebIDL::reject_promise(realm(), promise, staged.release_error());
+                    return;
+                }
+                staged_entries.append(staged.release_value());
             }
-            WebIDL::wait_for_all(
-                realm(),
-                put_promises,
-                [this, promise](Vector<JS::Value> const&) {
-                    WebIDL::resolve_promise(realm(), promise);
-                },
-                [this, promise](JS::Value reason) {
-                    WebIDL::reject_promise(realm(), promise, reason);
-                });
+            // Publish the complete batch only after every request/response
+            // clone succeeded. A failed clone therefore cannot leave a
+            // partially committed addAll() result in the cache.
+            m_entries.ensure_capacity(m_entries.size() + staged_entries.size());
+            for (auto& entry : staged_entries)
+                commit_entry(move(entry));
+            WebIDL::resolve_promise(realm(), promise);
         },
         [this, promise](JS::Value reason) {
             WebIDL::reject_promise(realm(), promise, reason);
@@ -244,22 +247,33 @@ GC::Ref<WebIDL::Promise> Cache::put_normalized(GC::Ref<Fetch::Request> request, 
     if (response->type() == Bindings::ResponseType::Error)
         return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "A network error response cannot be stored in a Cache"sv));
 
+    auto entry = clone_entry(request, response);
+    if (entry.is_exception())
+        return WebIDL::create_rejected_promise_from_exception(realm(), entry.release_error());
+    commit_entry(entry.release_value());
+    return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
+}
+
+WebIDL::ExceptionOr<Cache::Entry> Cache::clone_entry(GC::Ref<Fetch::Request> request, GC::Ref<Fetch::Response> response) const
+{
     auto request_clone = request->clone();
     if (request_clone.is_exception())
-        return WebIDL::create_rejected_promise_from_exception(realm(), request_clone.release_error());
+        return request_clone.release_error();
     auto response_clone = response->clone();
     if (response_clone.is_exception())
-        return WebIDL::create_rejected_promise_from_exception(realm(), response_clone.release_error());
+        return response_clone.release_error();
+    return Entry { request_clone.release_value(), response_clone.release_value() };
+}
 
-    auto existing = m_entries.find_if([&](auto const& entry) {
-        return entry.request->method() == request_clone.value()->method() && entry.request->url() == request_clone.value()->url();
+void Cache::commit_entry(Entry entry)
+{
+    auto existing = m_entries.find_if([&](auto const& candidate) {
+        return candidate.request->method() == entry.request->method() && candidate.request->url() == entry.request->url();
     });
-    Entry entry { request_clone.release_value(), response_clone.release_value() };
     if (existing != m_entries.end())
         *existing = move(entry);
     else
         m_entries.append(move(entry));
-    return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
 }
 
 GC::Ref<WebIDL::Promise> Cache::delete_(Fetch::RequestInfo const& input, CacheQueryOptions const& options)
