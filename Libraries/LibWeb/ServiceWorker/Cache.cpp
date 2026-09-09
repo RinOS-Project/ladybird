@@ -187,8 +187,13 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
         if (request.value()->method() != "GET"_string)
             return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only GET requests can be added to a Cache"sv));
         requests.append(request.release_value());
-        fetch_promises.append(Fetch::fetch(realm().vm(), input));
     }
+
+    // Start network work only after the complete input list has been
+    // normalized and admitted.  A malformed or non-GET later entry therefore
+    // cannot leave earlier entries with an in-flight fetch.
+    for (auto const& input : inputs)
+        fetch_promises.append(Fetch::fetch(realm().vm(), input));
 
     WebIDL::wait_for_all(
         realm(),
