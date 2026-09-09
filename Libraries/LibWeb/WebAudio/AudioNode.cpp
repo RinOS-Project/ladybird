@@ -12,6 +12,7 @@
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/BiquadFilterNode.h>
 #include <LibWeb/WebAudio/ControlMessage.h>
+#include <LibWeb/WebAudio/DelayNode.h>
 #include <LibWeb/WebAudio/GainNode.h>
 #include <LibWeb/WebAudio/StereoPannerNode.h>
 
@@ -93,6 +94,8 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     AudioParamID biquad_q_param_id { 0 };
     AudioParamID biquad_gain_param_id { 0 };
     RefPtr<AnalyserRenderData> analyser;
+    RefPtr<DelayRenderData> delay;
+    AudioParamID delay_param_id { 0 };
     RefPtr<AudioParamRenderData> stereo_panner_automation;
     AudioParamID stereo_panner_param_id { 0 };
     auto destination_kind = AudioNodeRenderKind::Unknown;
@@ -149,6 +152,12 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         auto pan = as<StereoPannerNode>(*destination_node).pan();
         stereo_panner_automation = TRY(pan->create_render_data());
         stereo_panner_param_id = pan->param_id();
+    } else if (is<DelayNode>(*destination_node)) {
+        destination_kind = AudioNodeRenderKind::Delay;
+        auto const& delay_node = as<DelayNode>(*destination_node);
+        auto delay_automation = TRY(delay_node.delay_time()->create_render_data());
+        delay_param_id = delay_node.delay_time()->param_id();
+        delay = TRY(DelayRenderData::create(delay_node.max_delay_time(), m_context->sample_rate(), move(delay_automation)));
     } else if (is<AudioDestinationNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Destination;
     }
@@ -166,6 +175,8 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         .analyser = move(analyser),
         .stereo_panner_automation = move(stereo_panner_automation),
         .stereo_panner_param_id = stereo_panner_param_id,
+        .delay = move(delay),
+        .delay_param_id = delay_param_id,
     });
 
     // Publish the JS graph only after all render-side snapshots were built.

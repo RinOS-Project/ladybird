@@ -182,6 +182,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         RefPtr<AnalyserRenderData> analyser;
         RefPtr<AudioParamRenderData> stereo_panner_automation;
         AudioParamID stereo_panner_param_id { 0 };
+        RefPtr<DelayRenderData> delay;
+        AudioParamID delay_param_id { 0 };
         float x1[2] { 0, 0 };
         float x2[2] { 0, 0 };
         float y1[2] { 0, 0 };
@@ -279,6 +281,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .analyser = connect.analyser,
                     .stereo_panner_automation = connect.stereo_panner_automation,
                     .stereo_panner_param_id = connect.stereo_panner_param_id,
+                    .delay = connect.delay,
+                    .delay_param_id = connect.delay_param_id,
                 });
             },
             [&](DisconnectNode const& disconnect) {
@@ -319,6 +323,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     }
                     if (connection.stereo_panner_param_id == update.param_id)
                         connection.stereo_panner_automation = update.render_data;
+                    if (connection.delay && connection.delay_param_id == update.param_id)
+                        connection.delay->update_automation(update.render_data);
                 }
             });
     }
@@ -379,6 +385,11 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     auto angle = (static_cast<double>(pan) + 1.0) * AK::Pi<double> / 4.0;
                     auto mono = (sample + right) * 0.5f;
                     self(self, connection.destination_node_id, mono * static_cast<float>(cos(angle)), mono * static_cast<float>(sin(angle)), depth + 1);
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::Delay && connection.delay) {
+                    connection.delay->process(sample, right, now);
+                    self(self, connection.destination_node_id, sample, right, depth + 1);
                 }
             }
         };

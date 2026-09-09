@@ -540,6 +540,8 @@ void AudioContext::render_audio(Span<float> buffer)
                     .analyser = connect.analyser,
                     .stereo_panner_automation = connect.stereo_panner_automation,
                     .stereo_panner_param_id = connect.stereo_panner_param_id,
+                    .delay = connect.delay,
+                    .delay_param_id = connect.delay_param_id,
                 });
             },
             [&](DisconnectNode const& disconnect) {
@@ -580,6 +582,8 @@ void AudioContext::render_audio(Span<float> buffer)
                     }
                     if (connection.stereo_panner_param_id == update.param_id)
                         connection.stereo_panner_automation = update.render_data;
+                    if (connection.delay && connection.delay_param_id == update.param_id)
+                        connection.delay->update_automation(update.render_data);
                 }
             });
     }
@@ -635,6 +639,11 @@ void AudioContext::render_audio(Span<float> buffer)
                     auto angle = (static_cast<double>(pan) + 1.0) * AK::Pi<double> / 4.0;
                     auto mono = (source_left + source_right) * 0.5f;
                     self(self, connection.destination_node_id, mono * static_cast<float>(cos(angle)), mono * static_cast<float>(sin(angle)), depth + 1);
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::Delay && connection.delay) {
+                    connection.delay->process(source_left, source_right, now);
+                    self(self, connection.destination_node_id, source_left, source_right, depth + 1);
                 }
             }
         };

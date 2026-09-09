@@ -14,6 +14,7 @@
 #include <LibWeb/WebAudio/AudioParamRenderData.h>
 #include <LibWeb/WebAudio/BiquadFilterRenderData.h>
 #include <LibWeb/WebAudio/PeriodicWaveRenderData.h>
+#include <LibWeb/WebAudio/DelayRenderData.h>
 #include <LibWeb/WebAudio/Types.h>
 
 namespace Web::WebAudio {
@@ -91,6 +92,8 @@ struct ConnectNode {
     AudioParamID biquad_q_param_id { 0 };
     AudioParamID biquad_gain_param_id { 0 };
     RefPtr<AnalyserRenderData> analyser;
+    RefPtr<DelayRenderData> delay;
+    AudioParamID delay_param_id { 0 };
     RefPtr<AudioParamRenderData> stereo_panner_automation;
     AudioParamID stereo_panner_param_id { 0 };
 };

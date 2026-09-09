@@ -31,6 +31,7 @@ public:
     virtual WebIDL::UnsignedLong number_of_outputs() override { return 1; }
 
     GC::Ref<AudioParam const> delay_time() const { return m_delay_time; }
+    double max_delay_time() const { return m_max_delay_time; }
 
 private:
     DelayNode(JS::Realm&, GC::Ref<BaseAudioContext>, DelayOptions const&);
@@ -40,6 +41,7 @@ private:
 
     // https://webaudio.github.io/web-audio-api/#dom-delaynode-delaytime
     GC::Ref<AudioParam> m_delay_time;
+    double m_max_delay_time { 1.0 };
 };
 
 }

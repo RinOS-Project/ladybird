@@ -14,6 +14,7 @@
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/AudioBufferRenderData.h>
 #include <LibWeb/WebAudio/AnalyserRenderData.h>
+#include <LibWeb/WebAudio/DelayRenderData.h>
 #include <LibWeb/WebAudio/MediaElementAudioSourceNode.h>
 #include <LibWeb/WebAudio/PeriodicWaveRenderData.h>
 
@@ -121,6 +122,8 @@ private:
         RefPtr<AnalyserRenderData> analyser;
         RefPtr<AudioParamRenderData> stereo_panner_automation;
         AudioParamID stereo_panner_param_id { 0 };
+        RefPtr<DelayRenderData> delay;
+        AudioParamID delay_param_id { 0 };
         float x1[2] { 0, 0 };
         float x2[2] { 0, 0 };
         float y1[2] { 0, 0 };

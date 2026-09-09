@@ -1115,6 +1115,7 @@ set(SOURCES
     WebAudio/AnalyserNode.cpp
     WebAudio/AudioBuffer.cpp
     WebAudio/AudioBufferRenderData.cpp
+    WebAudio/DelayRenderData.cpp
     WebAudio/AnalyserRenderData.cpp
     WebAudio/AudioParamRenderData.cpp
     WebAudio/BiquadFilterRenderData.cpp

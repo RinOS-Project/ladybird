@@ -16,6 +16,7 @@ GC_DEFINE_ALLOCATOR(DelayNode);
 DelayNode::DelayNode(JS::Realm& realm, GC::Ref<BaseAudioContext> context, DelayOptions const& options)
     : AudioNode(realm, context)
     , m_delay_time(AudioParam::create(realm, context, options.delay_time, 0, options.max_delay_time, Bindings::AutomationRate::ARate))
+    , m_max_delay_time(options.max_delay_time)
 {
 }
 
