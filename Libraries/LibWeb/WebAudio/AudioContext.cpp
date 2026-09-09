@@ -523,18 +523,9 @@ void AudioContext::render_audio(Span<float> buffer)
         auto left = 0.0f;
         auto right = 0.0f;
 
-        auto mix_source = [&](NodeID source_node_id, float source_left, float source_right) {
-            auto process_biquad = [&](NodeConnection& connection, float input, u32 channel) {
-                auto coefficients = connection.biquad->coefficients_at_time(now, static_cast<float>(output_rate));
-                auto output = coefficients.b0 * input + coefficients.b1 * connection.x1[channel] + coefficients.b2 * connection.x2[channel]
-                    - coefficients.a1 * connection.y1[channel] - coefficients.a2 * connection.y2[channel];
-                connection.x2[channel] = connection.x1[channel];
-                connection.x1[channel] = input;
-                connection.y2[channel] = connection.y1[channel];
-                connection.y1[channel] = output;
-                return output;
-            };
-
+        auto mix_source = [&](auto&& self, NodeID source_node_id, float source_left, float source_right, u32 depth) -> void {
+            if (depth > 32)
+                return;
             for (auto& connection : m_node_connections) {
                 if (connection.source_node_id != source_node_id)
                     continue;
@@ -544,25 +535,23 @@ void AudioContext::render_audio(Span<float> buffer)
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Gain) {
-                    for (auto const& downstream : m_node_connections) {
-                        if (downstream.source_node_id != connection.destination_node_id
-                            || downstream.destination_kind != AudioNodeRenderKind::Destination)
-                            continue;
-                        auto gain = connection.gain_automation ? connection.gain_automation->value_at_time(now) : 1.0f;
-                        if (!isfinite(gain))
-                            continue;
-                        left += source_left * gain;
-                        right += source_right * gain;
-                    }
+                    auto gain = connection.gain_automation ? connection.gain_automation->value_at_time(now) : 1.0f;
+                    if (isfinite(gain))
+                        self(self, connection.destination_node_id, source_left * gain, source_right * gain, depth + 1);
+                    continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Biquad && connection.biquad) {
-                    for (auto const& downstream : m_node_connections) {
-                        if (downstream.source_node_id != connection.destination_node_id
-                            || downstream.destination_kind != AudioNodeRenderKind::Destination)
-                            continue;
-                        left += process_biquad(connection, source_left, 0);
-                        right += process_biquad(connection, source_right, 1);
-                    }
+                    auto coefficients = connection.biquad->coefficients_at_time(now, static_cast<float>(output_rate));
+                    auto process = [&](float input, u32 channel) {
+                        auto output = coefficients.b0 * input + coefficients.b1 * connection.x1[channel] + coefficients.b2 * connection.x2[channel]
+                            - coefficients.a1 * connection.y1[channel] - coefficients.a2 * connection.y2[channel];
+                        connection.x2[channel] = connection.x1[channel];
+                        connection.x1[channel] = input;
+                        connection.y2[channel] = connection.y1[channel];
+                        connection.y1[channel] = output;
+                        return output;
+                    };
+                    self(self, connection.destination_node_id, process(source_left, 0), process(source_right, 1), depth + 1);
                 }
             }
         };
@@ -605,9 +594,9 @@ void AudioContext::render_audio(Span<float> buffer)
             };
             if (source.buffer->channel_count() == 1) {
                 auto sample = sample_at(0);
-                mix_source(source.node_id, sample, sample);
+                mix_source(mix_source, source.node_id, sample, sample, 0);
             } else {
-                mix_source(source.node_id, sample_at(0), sample_at(1));
+                mix_source(mix_source, source.node_id, sample_at(0), sample_at(1), 0);
             }
         }
 
@@ -640,7 +629,7 @@ void AudioContext::render_audio(Span<float> buffer)
                 sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5));
                 break;
             }
-            mix_source(oscillator.node_id, sample, sample);
+            mix_source(mix_source, oscillator.node_id, sample, sample, 0);
         }
 
         buffer[frame * 2] = clamp(left, -1.0f, 1.0f);

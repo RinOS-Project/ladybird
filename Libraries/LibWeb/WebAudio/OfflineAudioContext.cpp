@@ -244,19 +244,10 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         auto now = frame / output_rate;
         Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> mixed_samples { };
 
-        auto mix_source = [&](NodeID source_node_id, float sample, Optional<float> right_sample = {}) {
+        auto mix_source = [&](auto&& self, NodeID source_node_id, float sample, Optional<float> right_sample, u32 depth) -> void {
+            if (depth > 32)
+                return;
             auto right = right_sample.value_or(sample);
-            auto process_biquad = [&](OfflineNodeConnection& connection, float input, u32 channel) {
-                auto coefficients = connection.biquad->coefficients_at_time(now, static_cast<float>(output_rate));
-                auto output = coefficients.b0 * input + coefficients.b1 * connection.x1[channel] + coefficients.b2 * connection.x2[channel]
-                    - coefficients.a1 * connection.y1[channel] - coefficients.a2 * connection.y2[channel];
-                connection.x2[channel] = connection.x1[channel];
-                connection.x1[channel] = input;
-                connection.y2[channel] = connection.y1[channel];
-                connection.y1[channel] = output;
-                return output;
-            };
-
             for (auto& connection : node_connections) {
                 if (connection.source_node_id != source_node_id)
                     continue;
@@ -266,27 +257,23 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Gain) {
-                    for (auto const& downstream : node_connections) {
-                        if (downstream.source_node_id != connection.destination_node_id
-                            || downstream.destination_kind != AudioNodeRenderKind::Destination)
-                            continue;
-                        auto gain = connection.gain_automation ? connection.gain_automation->value_at_time(now) : 1.0f;
-                        if (!isfinite(gain))
-                            continue;
-                        for (u32 channel = 0; channel < m_number_of_channels; ++channel)
-                            mixed_samples[channel] += (channel == 1 ? right : sample) * gain;
-                    }
+                    auto gain = connection.gain_automation ? connection.gain_automation->value_at_time(now) : 1.0f;
+                    if (isfinite(gain))
+                        self(self, connection.destination_node_id, sample * gain, right * gain, depth + 1);
+                    continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Biquad && connection.biquad) {
-                    for (auto const& downstream : node_connections) {
-                        if (downstream.source_node_id != connection.destination_node_id
-                            || downstream.destination_kind != AudioNodeRenderKind::Destination)
-                            continue;
-                        auto filtered_left = process_biquad(connection, sample, 0);
-                        auto filtered_right = process_biquad(connection, right, 1);
-                        for (u32 channel = 0; channel < m_number_of_channels; ++channel)
-                            mixed_samples[channel] += channel == 1 ? filtered_right : filtered_left;
-                    }
+                    auto coefficients = connection.biquad->coefficients_at_time(now, static_cast<float>(output_rate));
+                    auto process = [&](float input, u32 channel) {
+                        auto output = coefficients.b0 * input + coefficients.b1 * connection.x1[channel] + coefficients.b2 * connection.x2[channel]
+                            - coefficients.a1 * connection.y1[channel] - coefficients.a2 * connection.y2[channel];
+                        connection.x2[channel] = connection.x1[channel];
+                        connection.x1[channel] = input;
+                        connection.y2[channel] = connection.y1[channel];
+                        connection.y1[channel] = output;
+                        return output;
+                    };
+                    self(self, connection.destination_node_id, process(sample, 0), process(right, 1), depth + 1);
                 }
             }
         };
@@ -323,9 +310,9 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             };
             if (source.buffer->channel_count() == 1) {
                 auto sample = sample_at(0);
-                mix_source(source.node_id, sample);
+                mix_source(mix_source, source.node_id, sample, { }, 0);
             } else {
-                mix_source(source.node_id, sample_at(0), sample_at(1));
+                mix_source(mix_source, source.node_id, sample_at(0), sample_at(1), 0);
             }
         }
 
@@ -355,7 +342,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5));
                 break;
             }
-            mix_source(oscillator.node_id, sample);
+            mix_source(mix_source, oscillator.node_id, sample, { }, 0);
         }
 
         for (u32 channel = 0; channel < m_number_of_channels; ++channel)
