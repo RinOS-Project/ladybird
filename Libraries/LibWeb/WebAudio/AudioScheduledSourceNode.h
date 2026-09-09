@@ -21,7 +21,7 @@ public:
     GC::Ptr<WebIDL::CallbackType> onended();
     void set_onended(GC::Ptr<WebIDL::CallbackType>);
 
-    WebIDL::ExceptionOr<void> start(double when = 0);
+    virtual WebIDL::ExceptionOr<void> start(double when = 0);
     WebIDL::ExceptionOr<void> stop(double when = 0);
 
 protected:

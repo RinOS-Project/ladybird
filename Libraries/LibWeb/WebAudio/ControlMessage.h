@@ -19,6 +19,21 @@ struct StartSource {
     double when { 0.0 };
 };
 
+enum class OscillatorWaveform : u8 {
+    Sine,
+    Square,
+    Sawtooth,
+    Triangle,
+};
+
+struct StartOscillator {
+    NodeID node_id { 0 };
+    double when { 0.0 };
+    float frequency { 440.0f };
+    float detune { 0.0f };
+    OscillatorWaveform waveform { OscillatorWaveform::Sine };
+};
+
 struct StartBufferSource {
     NodeID node_id { 0 };
     double when { 0.0 };
@@ -40,6 +55,6 @@ struct StopSource {
 // FIXME: add more message types
 
 // https://webaudio.github.io/web-audio-api/#control-message
-using ControlMessage = Variant<StartSource, StartBufferSource, StopSource>;
+using ControlMessage = Variant<StartSource, StartOscillator, StartBufferSource, StopSource>;
 
 }

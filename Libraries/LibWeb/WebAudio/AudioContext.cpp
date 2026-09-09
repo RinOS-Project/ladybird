@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Math.h>
 #include <LibWeb/Bindings/AudioContextPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Document.h>
@@ -452,8 +453,17 @@ void AudioContext::render_audio(Span<float> buffer)
         message.visit(
             [&](StartSource const&) {
                 // Oscillator and other scheduled sources are not represented by
-                // an immutable PCM snapshot yet; they therefore contribute no
-                // samples until their native renderer is connected.
+                // an immutable native snapshot; unknown scheduled sources stay
+                // silent until their renderer is connected.
+            },
+            [&](StartOscillator const& start) {
+                m_active_oscillators.append({
+                    .node_id = start.node_id,
+                    .start_time = start.when,
+                    .frequency = start.frequency,
+                    .detune = start.detune,
+                    .waveform = start.waveform,
+                });
             },
             [&](StartBufferSource const& start) {
                 if (!start.buffer || start.buffer->frame_count() == 0)
@@ -475,6 +485,10 @@ void AudioContext::render_audio(Span<float> buffer)
                 for (auto& source : m_active_audio_sources) {
                     if (source.node_id == stop.node_id)
                         source.stop_time = stop.when;
+                }
+                for (auto& oscillator : m_active_oscillators) {
+                    if (oscillator.node_id == stop.node_id)
+                        oscillator.stop_time = stop.when;
                 }
             });
     }
@@ -528,6 +542,35 @@ void AudioContext::render_audio(Span<float> buffer)
             }
         }
 
+        for (auto const& oscillator : m_active_oscillators) {
+            if (now < oscillator.start_time)
+                continue;
+            if (oscillator.stop_time.has_value() && now >= oscillator.stop_time.value())
+                continue;
+
+            auto frequency = static_cast<double>(oscillator.frequency) * pow(2.0, static_cast<double>(oscillator.detune) / 1200.0);
+            auto phase = fmod((now - oscillator.start_time) * frequency, 1.0);
+            if (phase < 0)
+                phase += 1.0;
+            float sample = 0.0f;
+            switch (oscillator.waveform) {
+            case OscillatorWaveform::Sine:
+                sample = static_cast<float>(sin(phase * 2.0 * AK::Pi<double>));
+                break;
+            case OscillatorWaveform::Square:
+                sample = phase < 0.5 ? 1.0f : -1.0f;
+                break;
+            case OscillatorWaveform::Sawtooth:
+                sample = static_cast<float>(2.0 * phase - 1.0);
+                break;
+            case OscillatorWaveform::Triangle:
+                sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5));
+                break;
+            }
+            left += sample;
+            right += sample;
+        }
+
         buffer[frame * 2] = clamp(left, -1.0f, 1.0f);
         buffer[frame * 2 + 1] = clamp(right, -1.0f, 1.0f);
     }
@@ -546,6 +589,9 @@ void AudioContext::render_audio(Span<float> buffer)
         auto rate = max(static_cast<double>(source.playback_rate), 0.0) * pow(2.0, static_cast<double>(source.detune) / 1200.0);
         auto end_frame = source.offset * source.buffer->sample_rate() + (end_time - source.start_time) * rate * source.buffer->sample_rate();
         return end_frame >= source.buffer->frame_count();
+    });
+    m_active_oscillators.remove_all_matching([&](auto const& oscillator) {
+        return oscillator.stop_time.has_value() && end_time >= oscillator.stop_time.value();
     });
 }
 

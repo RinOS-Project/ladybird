@@ -10,13 +10,53 @@
 #include <LibWeb/Bindings/OscillatorNodePrototype.h>
 #include <LibWeb/WebAudio/AudioParam.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
+#include <LibWeb/WebAudio/ControlMessage.h>
 #include <LibWeb/WebAudio/OscillatorNode.h>
+#include <math.h>
 
 namespace Web::WebAudio {
 
 GC_DEFINE_ALLOCATOR(OscillatorNode);
 
 OscillatorNode::~OscillatorNode() = default;
+
+WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
+{
+    if (source_started())
+        return WebIDL::InvalidStateError::create(realm(), "Oscillator source has already started"_utf16);
+    if (!isfinite(when) || when < 0)
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "when must be finite and non-negative"sv };
+
+    OscillatorWaveform waveform = OscillatorWaveform::Sine;
+    switch (m_type) {
+    case Bindings::OscillatorType::Square:
+        waveform = OscillatorWaveform::Square;
+        break;
+    case Bindings::OscillatorType::Sawtooth:
+        waveform = OscillatorWaveform::Sawtooth;
+        break;
+    case Bindings::OscillatorType::Triangle:
+        waveform = OscillatorWaveform::Triangle;
+        break;
+    case Bindings::OscillatorType::Sine:
+    case Bindings::OscillatorType::Custom:
+        // Custom PeriodicWave rendering is a separate native table snapshot;
+        // keep the source audible with the defined sine fallback until that
+        // table is connected rather than treating start() as a no-op.
+        waveform = OscillatorWaveform::Sine;
+        break;
+    }
+
+    set_source_started(true);
+    context()->queue_control_message(StartOscillator {
+        .node_id = node_id(),
+        .when = when,
+        .frequency = m_frequency->value(),
+        .detune = m_detune->value(),
+        .waveform = waveform,
+    });
+    return {};
+}
 
 WebIDL::ExceptionOr<GC::Ref<OscillatorNode>> OscillatorNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, OscillatorOptions const& options)
 {

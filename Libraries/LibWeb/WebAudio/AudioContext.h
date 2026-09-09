@@ -80,7 +80,16 @@ private:
         double loop_start { 0.0 };
         double loop_end { 0.0 };
     };
+    struct ActiveOscillator {
+        NodeID node_id { 0 };
+        double start_time { 0.0 };
+        Optional<double> stop_time;
+        float frequency { 440.0f };
+        float detune { 0.0f };
+        OscillatorWaveform waveform { OscillatorWaveform::Sine };
+    };
     Vector<ActiveAudioSource> m_active_audio_sources;
+    Vector<ActiveOscillator> m_active_oscillators;
     u64 m_render_frame_position { 0 };
     u32 m_output_sample_rate { 48'000 };
 

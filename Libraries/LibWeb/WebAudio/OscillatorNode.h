@@ -32,6 +32,7 @@ public:
 
     Bindings::OscillatorType type() const;
     WebIDL::ExceptionOr<void> set_type(Bindings::OscillatorType);
+    virtual WebIDL::ExceptionOr<void> start(double when = 0) override;
 
     void set_periodic_wave(GC::Ptr<PeriodicWave>);
 
