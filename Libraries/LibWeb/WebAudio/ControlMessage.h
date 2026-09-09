@@ -7,7 +7,9 @@
 #pragma once
 
 #include <AK/Optional.h>
+#include <AK/RefPtr.h>
 #include <AK/Variant.h>
+#include <LibWeb/WebAudio/AudioBufferRenderData.h>
 #include <LibWeb/WebAudio/Types.h>
 
 namespace Web::WebAudio {
@@ -22,6 +24,12 @@ struct StartBufferSource {
     double when { 0.0 };
     double offset { 0.0 };
     Optional<double> duration;
+    RefPtr<AudioBufferRenderData> buffer;
+    float playback_rate { 1.0f };
+    float detune { 0.0f };
+    bool loop { false };
+    double loop_start { 0.0 };
+    double loop_end { 0.0 };
 };
 
 struct StopSource {

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Vector.h>
+#include <AK/Span.h>
 #include <LibJS/Forward.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/WebIDL/Buffers.h>
@@ -36,6 +37,7 @@ public:
     WebIDL::UnsignedLong length() const;
     double duration() const;
     WebIDL::UnsignedLong number_of_channels() const;
+    ReadonlySpan<float> channel_data(WebIDL::UnsignedLong channel) const;
     WebIDL::ExceptionOr<GC::Ref<JS::Float32Array>> get_channel_data(WebIDL::UnsignedLong channel) const;
     WebIDL::ExceptionOr<void> copy_from_channel(GC::Root<WebIDL::BufferSource> const&, WebIDL::UnsignedLong channel_number, WebIDL::UnsignedLong buffer_offset = 0) const;
     WebIDL::ExceptionOr<void> copy_to_channel(GC::Root<WebIDL::BufferSource> const&, WebIDL::UnsignedLong channel_number, WebIDL::UnsignedLong buffer_offset = 0);

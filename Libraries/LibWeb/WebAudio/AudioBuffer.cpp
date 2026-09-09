@@ -72,6 +72,12 @@ WebIDL::UnsignedLong AudioBuffer::number_of_channels() const
     return m_channels.size();
 }
 
+ReadonlySpan<float> AudioBuffer::channel_data(WebIDL::UnsignedLong channel) const
+{
+    VERIFY(channel < m_channels.size());
+    return m_channels[channel]->data();
+}
+
 // https://webaudio.github.io/web-audio-api/#dom-audiobuffer-getchanneldata
 WebIDL::ExceptionOr<GC::Ref<JS::Float32Array>> AudioBuffer::get_channel_data(WebIDL::UnsignedLong channel) const
 {

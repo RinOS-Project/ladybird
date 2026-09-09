@@ -16,8 +16,10 @@
 #include <LibWeb/HighResolutionTime/TimeOrigin.h>
 #include <LibWeb/WebAudio/AudioContext.h>
 #include <LibWeb/WebAudio/AudioDestinationNode.h>
+#include <LibWeb/WebAudio/ControlMessage.h>
 #include <LibWeb/WebIDL/Promise.h>
 #include <LibMedia/Audio/PlaybackStream.h>
+#include <math.h>
 
 namespace Web::WebAudio {
 
@@ -377,16 +379,16 @@ bool AudioContext::start_rendering_audio_graph()
     m_backend_start_pending = true;
     GC::Ref<AudioContext> self = *this;
     auto data_callback = [self](Span<float> buffer) -> ReadonlySpan<float> {
-        // The graph mixer is not connected yet. Keep the real device callback
-        // fed with explicit silence rather than treating an empty callback as
-        // an underrun.
-        buffer.fill(0.0f);
+        // Render-side state is published through the control-message queue;
+        // the callback never reaches into JavaScript-owned AudioBuffer data.
+        self->render_audio(buffer);
         return buffer;
     };
     auto create_promise = Audio::PlaybackStream::create(Audio::OutputState::Suspended, 100, move(data_callback));
     create_promise->when_resolved([self](auto& stream) {
         self->m_backend_start_pending = false;
         self->m_playback_stream = stream;
+        self->m_output_sample_rate = stream->sample_specification().sample_rate();
         if (self->state() == Bindings::AudioContextState::Running)
             (void)self->m_playback_stream->resume();
     });
@@ -398,6 +400,119 @@ bool AudioContext::start_rendering_audio_graph()
         }
     });
     return true;
+}
+
+void AudioContext::render_audio(Span<float> buffer)
+{
+    // PlaybackStream currently exposes interleaved stereo samples to WebAudio.
+    // Keep the callback bounded even if a platform backend supplies a partial
+    // frame or a future backend changes its channel count.
+    auto frame_count = buffer.size() / 2;
+    buffer = buffer.slice(0, frame_count * 2);
+    buffer.fill(0.0f);
+
+    // Control messages are the only cross-thread publication point. Once a
+    // message is drained, the immutable AudioBufferRenderData can safely be
+    // read without entering the JavaScript heap from this callback.
+    for (auto message : drain_control_messages()) {
+        message.visit(
+            [&](StartSource const&) {
+                // Oscillator and other scheduled sources are not represented by
+                // an immutable PCM snapshot yet; they therefore contribute no
+                // samples until their native renderer is connected.
+            },
+            [&](StartBufferSource const& start) {
+                if (!start.buffer || start.buffer->frame_count() == 0)
+                    return;
+                m_active_audio_sources.append({
+                    .node_id = start.node_id,
+                    .buffer = start.buffer,
+                    .start_time = start.when,
+                    .offset = start.offset,
+                    .duration = start.duration,
+                    .playback_rate = start.playback_rate,
+                    .detune = start.detune,
+                    .loop = start.loop,
+                    .loop_start = start.loop_start,
+                    .loop_end = start.loop_end,
+                });
+            },
+            [&](StopSource const& stop) {
+                for (auto& source : m_active_audio_sources) {
+                    if (source.node_id == stop.node_id)
+                        source.stop_time = stop.when;
+                }
+            });
+    }
+
+    auto output_rate = max(m_output_sample_rate, 1u);
+    auto const render_start_frame = m_render_frame_position;
+    for (size_t frame = 0; frame < frame_count; ++frame) {
+        auto now = static_cast<double>(render_start_frame + frame) / output_rate;
+        auto left = 0.0f;
+        auto right = 0.0f;
+
+        for (auto const& source : m_active_audio_sources) {
+            if (!source.buffer || now < source.start_time)
+                continue;
+            if (source.stop_time.has_value() && now >= source.stop_time.value())
+                continue;
+            auto elapsed = now - source.start_time;
+            if (source.duration.has_value() && elapsed >= source.duration.value())
+                continue;
+
+            auto rate = max(static_cast<double>(source.playback_rate), 0.0) * pow(2.0, static_cast<double>(source.detune) / 1200.0);
+            auto source_frame = source.offset * source.buffer->sample_rate() + elapsed * rate * source.buffer->sample_rate();
+            auto source_length = static_cast<double>(source.buffer->frame_count());
+            if (source.loop) {
+                auto loop_start = clamp(source.loop_start * source.buffer->sample_rate(), 0.0, source_length);
+                auto loop_end = source.loop_end > source.loop_start
+                    ? clamp(source.loop_end * source.buffer->sample_rate(), loop_start, source_length)
+                    : source_length;
+                auto loop_length = loop_end - loop_start;
+                if (loop_length > 0 && source_frame >= loop_end)
+                    source_frame = loop_start + fmod(source_frame - loop_start, loop_length);
+            }
+            if (source_frame < 0 || source_frame >= source_length)
+                continue;
+
+            auto first_frame = static_cast<u32>(source_frame);
+            auto next_frame = min(first_frame + 1, source.buffer->frame_count() - 1);
+            auto fraction = static_cast<float>(source_frame - first_frame);
+            auto sample_at = [&](u32 channel) {
+                auto first = source.buffer->sample(channel, first_frame);
+                auto next = source.buffer->sample(channel, next_frame);
+                return first + (next - first) * fraction;
+            };
+            if (source.buffer->channel_count() == 1) {
+                auto sample = sample_at(0);
+                left += sample;
+                right += sample;
+            } else {
+                left += sample_at(0);
+                right += sample_at(1);
+            }
+        }
+
+        buffer[frame * 2] = clamp(left, -1.0f, 1.0f);
+        buffer[frame * 2 + 1] = clamp(right, -1.0f, 1.0f);
+    }
+
+    m_render_frame_position += frame_count;
+    auto end_time = static_cast<double>(m_render_frame_position) / output_rate;
+    m_active_audio_sources.remove_all_matching([&](auto const& source) {
+        if (source.stop_time.has_value() && end_time >= source.stop_time.value())
+            return true;
+        if (source.duration.has_value() && end_time >= source.start_time + source.duration.value())
+            return true;
+        if (source.loop)
+            return false;
+        if (!source.buffer)
+            return true;
+        auto rate = max(static_cast<double>(source.playback_rate), 0.0) * pow(2.0, static_cast<double>(source.detune) / 1200.0);
+        auto end_frame = source.offset * source.buffer->sample_rate() + (end_time - source.start_time) * rate * source.buffer->sample_rate();
+        return end_frame >= source.buffer->frame_count();
+    });
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audiocontext-createmediaelementsource

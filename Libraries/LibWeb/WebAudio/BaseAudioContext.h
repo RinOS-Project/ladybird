@@ -102,6 +102,10 @@ protected:
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
+    // Called by the rendering backend to atomically consume control messages
+    // published by the script/control thread.
+    Vector<ControlMessage> drain_control_messages();
+
     GC::Ptr<AudioDestinationNode> m_destination;
     Vector<GC::Ref<WebIDL::Promise>> m_pending_promises;
 

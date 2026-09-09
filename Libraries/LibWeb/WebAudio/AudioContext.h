@@ -12,6 +12,7 @@
 #include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibMedia/Audio/PlaybackStream.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
+#include <LibWeb/WebAudio/AudioBufferRenderData.h>
 #include <LibWeb/WebAudio/MediaElementAudioSourceNode.h>
 
 namespace Web::WebAudio {
@@ -62,8 +63,25 @@ private:
     bool m_suspended_by_user = false;
     RefPtr<Audio::PlaybackStream> m_playback_stream;
     bool m_backend_start_pending { false };
+    struct ActiveAudioSource {
+        NodeID node_id { 0 };
+        RefPtr<AudioBufferRenderData> buffer;
+        double start_time { 0.0 };
+        double offset { 0.0 };
+        Optional<double> duration;
+        Optional<double> stop_time;
+        float playback_rate { 1.0f };
+        float detune { 0.0f };
+        bool loop { false };
+        double loop_start { 0.0 };
+        double loop_end { 0.0 };
+    };
+    Vector<ActiveAudioSource> m_active_audio_sources;
+    u64 m_render_frame_position { 0 };
+    u32 m_output_sample_rate { 48'000 };
 
     bool start_rendering_audio_graph();
+    void render_audio(Span<float>);
 };
 
 }

@@ -7,6 +7,7 @@
 #include <LibWeb/Bindings/AudioScheduledSourceNodePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/WebAudio/AudioBuffer.h>
+#include <LibWeb/WebAudio/AudioBufferRenderData.h>
 #include <LibWeb/WebAudio/AudioBufferSourceNode.h>
 #include <LibWeb/WebAudio/AudioParam.h>
 #include <LibWeb/WebAudio/AudioScheduledSourceNode.h>
@@ -129,6 +130,13 @@ WebIDL::ExceptionOr<void> AudioBufferSourceNode::start(Optional<double> when, Op
     if (duration.has_value() && (!isfinite(duration.value()) || duration.value() < 0))
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "duration must not be negative"sv };
 
+    // Snapshot the JavaScript-owned AudioBuffer before handing the source to a
+    // real-time callback. The callback is not allowed to touch GC objects or
+    // typed-array storage from the rendering thread.
+    RefPtr<AudioBufferRenderData> render_data;
+    if (m_buffer)
+        render_data = TRY(AudioBufferRenderData::create(*m_buffer));
+
     // 3. Set the internal slot [[source started]] on this AudioBufferSourceNode to true.
     set_source_started(true);
 
@@ -138,9 +146,16 @@ WebIDL::ExceptionOr<void> AudioBufferSourceNode::start(Optional<double> when, Op
         .when = when.value_or(0),
         .offset = offset.value_or(0),
         .duration = duration,
+        .buffer = move(render_data),
+        .playback_rate = m_playback_rate->value(),
+        .detune = m_detune->value(),
+        .loop = m_loop,
+        .loop_start = m_loop_start,
+        .loop_end = m_loop_end,
     });
-    // FIXME: 5. Acquire the contents of the buffer if the buffer has been set.
-    // FIXME: 6. Send a control message to the associated AudioContext to start running its rendering thread only when all the following conditions are met:
+    // 5. The buffer contents are already acquired by the immutable render-data
+    // snapshot above. The associated AudioContext starts its rendering stream
+    // when resume() is requested.
     return { };
 }
 

@@ -397,7 +397,11 @@ void BaseAudioContext::queue_a_media_element_task(GC::Ref<GC::Function<void()>> 
 void BaseAudioContext::queue_control_message(ControlMessage message)
 {
     m_control_message_queue->enqueue(move(message));
-    // FIXME: Should signal the rendering thread when implemented
+}
+
+Vector<ControlMessage> BaseAudioContext::drain_control_messages()
+{
+    return m_control_message_queue->drain();
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-baseaudiocontext-decodeaudiodata
