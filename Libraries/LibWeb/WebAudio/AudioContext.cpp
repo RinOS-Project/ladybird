@@ -494,6 +494,24 @@ void AudioContext::render_audio(Span<float> buffer)
                     if (oscillator.node_id == stop.node_id)
                         oscillator.stop_time = stop.when;
                 }
+            },
+            [&](ConnectNode const& connect) {
+                m_node_connections.remove_all_matching([&](auto const& existing) {
+                    return existing.source_node_id == connect.source_node_id
+                        && existing.destination_node_id == connect.destination_node_id;
+                });
+                m_node_connections.append({
+                    .source_node_id = connect.source_node_id,
+                    .destination_node_id = connect.destination_node_id,
+                    .destination_kind = connect.destination_kind,
+                    .gain_automation = connect.gain_automation,
+                });
+            },
+            [&](DisconnectNode const& disconnect) {
+                m_node_connections.remove_all_matching([&](auto const& existing) {
+                    return existing.source_node_id == disconnect.source_node_id
+                        && existing.destination_node_id == disconnect.destination_node_id;
+                });
             });
     }
 
@@ -503,6 +521,30 @@ void AudioContext::render_audio(Span<float> buffer)
         auto now = static_cast<double>(render_start_frame + frame) / output_rate;
         auto left = 0.0f;
         auto right = 0.0f;
+
+        auto mix_source = [&](NodeID source_node_id, float source_left, float source_right) {
+            for (auto const& connection : m_node_connections) {
+                if (connection.source_node_id != source_node_id)
+                    continue;
+                if (connection.destination_kind == AudioNodeRenderKind::Destination) {
+                    left += source_left;
+                    right += source_right;
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::Gain) {
+                    for (auto const& downstream : m_node_connections) {
+                        if (downstream.source_node_id != connection.destination_node_id
+                            || downstream.destination_kind != AudioNodeRenderKind::Destination)
+                            continue;
+                        auto gain = connection.gain_automation ? connection.gain_automation->value_at_time(now) : 1.0f;
+                        if (!isfinite(gain))
+                            continue;
+                        left += source_left * gain;
+                        right += source_right * gain;
+                    }
+                }
+            }
+        };
 
         for (auto const& source : m_active_audio_sources) {
             if (!source.buffer || now < source.start_time)
@@ -542,11 +584,9 @@ void AudioContext::render_audio(Span<float> buffer)
             };
             if (source.buffer->channel_count() == 1) {
                 auto sample = sample_at(0);
-                left += sample;
-                right += sample;
+                mix_source(source.node_id, sample, sample);
             } else {
-                left += sample_at(0);
-                right += sample_at(1);
+                mix_source(source.node_id, sample_at(0), sample_at(1));
             }
         }
 
@@ -579,8 +619,7 @@ void AudioContext::render_audio(Span<float> buffer)
                 sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5));
                 break;
             }
-            left += sample;
-            right += sample;
+            mix_source(oscillator.node_id, sample, sample);
         }
 
         buffer[frame * 2] = clamp(left, -1.0f, 1.0f);

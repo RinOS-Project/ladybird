@@ -13,4 +13,10 @@ namespace Web::WebAudio {
 // Stable identifier for AudioNode instances within a BaseAudioContext.
 AK_TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, NodeID, CastToUnderlying);
 
+enum class AudioNodeRenderKind : u8 {
+    Unknown,
+    Gain,
+    Destination,
+};
+
 }

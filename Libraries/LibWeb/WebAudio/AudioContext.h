@@ -92,8 +92,15 @@ private:
         RefPtr<AudioParamRenderData> detune_automation;
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
     };
+    struct NodeConnection {
+        NodeID source_node_id { 0 };
+        NodeID destination_node_id { 0 };
+        AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
+        RefPtr<AudioParamRenderData> gain_automation;
+    };
     Vector<ActiveAudioSource> m_active_audio_sources;
     Vector<ActiveOscillator> m_active_oscillators;
+    Vector<NodeConnection> m_node_connections;
     u64 m_render_frame_position { 0 };
     u32 m_output_sample_rate { 48'000 };
 

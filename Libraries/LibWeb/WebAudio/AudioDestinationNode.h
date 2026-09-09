@@ -25,6 +25,7 @@ public:
     WebIDL::UnsignedLong max_channel_count();
     WebIDL::UnsignedLong number_of_inputs() override { return 1; }
     WebIDL::UnsignedLong number_of_outputs() override { return 1; }
+    AudioNodeRenderKind render_kind() const override { return AudioNodeRenderKind::Destination; }
     WebIDL::ExceptionOr<void> set_channel_count(WebIDL::UnsignedLong) override;
 
     static WebIDL::ExceptionOr<GC::Ref<AudioDestinationNode>> construct_impl(JS::Realm& realm, GC::Ref<BaseAudioContext> context, WebIDL::UnsignedLong channel_count = 2);

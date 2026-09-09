@@ -75,6 +75,7 @@ public:
     virtual WebIDL::UnsignedLong number_of_inputs() = 0;
     // https://webaudio.github.io/web-audio-api/#dom-audionode-numberofoutputs
     virtual WebIDL::UnsignedLong number_of_outputs() = 0;
+    virtual AudioNodeRenderKind render_kind() const { return AudioNodeRenderKind::Unknown; }
 
     // https://webaudio.github.io/web-audio-api/#dom-audionode-channelcount
     virtual WebIDL::ExceptionOr<void> set_channel_count(WebIDL::UnsignedLong);

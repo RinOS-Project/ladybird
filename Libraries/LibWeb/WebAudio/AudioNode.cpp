@@ -6,8 +6,11 @@
  */
 
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/WebAudio/AudioDestinationNode.h>
 #include <LibWeb/WebAudio/AudioNode.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
+#include <LibWeb/WebAudio/ControlMessage.h>
+#include <LibWeb/WebAudio/GainNode.h>
 
 namespace Web::WebAudio {
 
@@ -84,6 +87,21 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     // Connect destination_node input to node's output.
     destination_node->m_input_connections.append(input_connection);
 
+    RefPtr<AudioParamRenderData> gain_automation;
+    auto destination_kind = AudioNodeRenderKind::Unknown;
+    if (is<GainNode>(*destination_node)) {
+        destination_kind = AudioNodeRenderKind::Gain;
+        gain_automation = TRY(as<GainNode>(*destination_node).gain()->create_render_data());
+    } else if (is<AudioDestinationNode>(*destination_node)) {
+        destination_kind = AudioNodeRenderKind::Destination;
+    }
+    m_context->queue_control_message(ConnectNode {
+        .source_node_id = node_id(),
+        .destination_node_id = destination_node->node_id(),
+        .destination_kind = destination_kind,
+        .gain_automation = move(gain_automation),
+    });
+
     return destination_node;
 }
 
@@ -124,6 +142,11 @@ void AudioNode::disconnect()
         auto connection = m_output_connections.take_last();
         auto destination = connection.destination_node;
 
+        m_context->queue_control_message(DisconnectNode {
+            .source_node_id = node_id(),
+            .destination_node_id = destination->node_id(),
+        });
+
         destination->m_input_connections.remove_all_matching([&](AudioNodeConnection& input_connection) {
             return input_connection.destination_node.ptr() == this;
         });
@@ -145,6 +168,11 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(WebIDL::UnsignedLong output)
     m_output_connections.remove_all_matching([&](AudioNodeConnection& connection) {
         if (connection.output != output)
             return false;
+
+        m_context->queue_control_message(DisconnectNode {
+            .source_node_id = node_id(),
+            .destination_node_id = connection.destination_node->node_id(),
+        });
 
         connection.destination_node->m_input_connections.remove_all_matching([&](AudioNodeConnection& reverse_connection) {
             return reverse_connection.destination_node.ptr() == this && reverse_connection.output == output;
@@ -169,6 +197,11 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(GC::Ref<AudioNode> destination_n
     m_output_connections.remove_all_matching([&](AudioNodeConnection& connection) {
         if (connection.destination_node != destination_node)
             return false;
+
+        m_context->queue_control_message(DisconnectNode {
+            .source_node_id = node_id(),
+            .destination_node_id = destination_node->node_id(),
+        });
 
         connection.destination_node->m_input_connections.remove_all_matching([&](AudioNodeConnection& reverse_connection) {
             return reverse_connection.destination_node.ptr() == this;
@@ -198,6 +231,11 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(GC::Ref<AudioNode> destination_n
     m_output_connections.remove_all_matching([&](AudioNodeConnection& connection) {
         if (connection.destination_node != destination_node || connection.output != output)
             return false;
+
+        m_context->queue_control_message(DisconnectNode {
+            .source_node_id = node_id(),
+            .destination_node_id = destination_node->node_id(),
+        });
 
         connection.destination_node->m_input_connections.remove_all_matching([&](AudioNodeConnection& reverse_connection) {
             return reverse_connection.destination_node.ptr() == this && reverse_connection.output == output;
@@ -234,6 +272,11 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(GC::Ref<AudioNode> destination_n
     m_output_connections.remove_all_matching([&](AudioNodeConnection& connection) {
         if (connection.destination_node != destination_node || connection.output != output || connection.input != input)
             return false;
+
+        m_context->queue_control_message(DisconnectNode {
+            .source_node_id = node_id(),
+            .destination_node_id = destination_node->node_id(),
+        });
 
         connection.destination_node->m_input_connections.remove_all_matching([&](AudioNodeConnection& reverse_connection) {
             return reverse_connection.destination_node.ptr() == this && reverse_connection.output == output && reverse_connection.input == input;

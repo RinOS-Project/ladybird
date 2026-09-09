@@ -57,9 +57,19 @@ struct StopSource {
     double when { 0.0 };
 };
 
-// FIXME: add more message types
+struct ConnectNode {
+    NodeID source_node_id { 0 };
+    NodeID destination_node_id { 0 };
+    AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
+    RefPtr<AudioParamRenderData> gain_automation;
+};
+
+struct DisconnectNode {
+    NodeID source_node_id { 0 };
+    NodeID destination_node_id { 0 };
+};
 
 // https://webaudio.github.io/web-audio-api/#control-message
-using ControlMessage = Variant<StartSource, StartOscillator, StartBufferSource, StopSource>;
+using ControlMessage = Variant<StartSource, StartOscillator, StartBufferSource, StopSource, ConnectNode, DisconnectNode>;
 
 }

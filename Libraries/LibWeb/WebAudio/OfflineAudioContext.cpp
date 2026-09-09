@@ -155,9 +155,16 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
         NodeID node_id { 0 };
     };
+    struct OfflineNodeConnection {
+        NodeID source_node_id { 0 };
+        NodeID destination_node_id { 0 };
+        AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
+        RefPtr<AudioParamRenderData> gain_automation;
+    };
 
     Vector<OfflineBufferSource> buffer_sources;
     Vector<OfflineOscillator> oscillators;
+    Vector<OfflineNodeConnection> node_connections;
     for (auto message : drain_control_messages()) {
         message.visit(
             [&](StartSource const&) { },
@@ -199,6 +206,24 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     if (oscillator.node_id == stop.node_id)
                         oscillator.stop_time = stop.when;
                 }
+            },
+            [&](ConnectNode const& connect) {
+                node_connections.remove_all_matching([&](auto const& existing) {
+                    return existing.source_node_id == connect.source_node_id
+                        && existing.destination_node_id == connect.destination_node_id;
+                });
+                node_connections.append({
+                    .source_node_id = connect.source_node_id,
+                    .destination_node_id = connect.destination_node_id,
+                    .destination_kind = connect.destination_kind,
+                    .gain_automation = connect.gain_automation,
+                });
+            },
+            [&](DisconnectNode const& disconnect) {
+                node_connections.remove_all_matching([&](auto const& existing) {
+                    return existing.source_node_id == disconnect.source_node_id
+                        && existing.destination_node_id == disconnect.destination_node_id;
+                });
             });
     }
 
@@ -212,6 +237,31 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
     for (u32 frame = 0; frame < frame_count; ++frame) {
         auto now = frame / output_rate;
         Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> mixed_samples { };
+
+        auto mix_source = [&](NodeID source_node_id, float sample, Optional<float> right_sample = {}) {
+            auto right = right_sample.value_or(sample);
+            for (auto const& connection : node_connections) {
+                if (connection.source_node_id != source_node_id)
+                    continue;
+                if (connection.destination_kind == AudioNodeRenderKind::Destination) {
+                    for (u32 channel = 0; channel < m_number_of_channels; ++channel)
+                        mixed_samples[channel] += channel == 1 ? right : sample;
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::Gain) {
+                    for (auto const& downstream : node_connections) {
+                        if (downstream.source_node_id != connection.destination_node_id
+                            || downstream.destination_kind != AudioNodeRenderKind::Destination)
+                            continue;
+                        auto gain = connection.gain_automation ? connection.gain_automation->value_at_time(now) : 1.0f;
+                        if (!isfinite(gain))
+                            continue;
+                        for (u32 channel = 0; channel < m_number_of_channels; ++channel)
+                            mixed_samples[channel] += (channel == 1 ? right : sample) * gain;
+                    }
+                }
+            }
+        };
 
         for (auto const& source : buffer_sources) {
             if (now < source.start_time || (source.stop_time.has_value() && now >= source.stop_time.value()))
@@ -245,13 +295,9 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             };
             if (source.buffer->channel_count() == 1) {
                 auto sample = sample_at(0);
-                for (u32 channel = 0; channel < m_number_of_channels; ++channel)
-                    mixed_samples[channel] += sample;
+                mix_source(source.node_id, sample);
             } else {
-                if (m_number_of_channels > 0)
-                    mixed_samples[0] += sample_at(0);
-                if (m_number_of_channels > 1)
-                    mixed_samples[1] += sample_at(1);
+                mix_source(source.node_id, sample_at(0), sample_at(1));
             }
         }
 
@@ -281,8 +327,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5));
                 break;
             }
-            for (u32 channel = 0; channel < m_number_of_channels; ++channel)
-                mixed_samples[channel] += sample;
+            mix_source(oscillator.node_id, sample);
         }
 
         for (u32 channel = 0; channel < m_number_of_channels; ++channel)
