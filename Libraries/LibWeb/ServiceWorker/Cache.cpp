@@ -129,6 +129,12 @@ GC::Ref<WebIDL::Promise> Cache::add(Fetch::RequestInfo const& input)
     if (request.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
 
+    // Cache.add() is defined only for GET requests.  Reject before starting
+    // the fetch so a caller cannot trigger an external request that can never
+    // be committed to this cache.
+    if (request.value()->method() != "GET"_string)
+        return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only GET requests can be added to a Cache"sv));
+
     auto promise = WebIDL::create_promise(realm());
     auto fetch_promise = Fetch::fetch(realm().vm(), input);
     WebIDL::react_to_promise(
@@ -175,6 +181,11 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
         auto request = normalize_request(input);
         if (request.is_exception())
             return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
+        // Validate the complete request list before starting any fetch.  This
+        // keeps addAll() failure-atomic with respect to network side effects:
+        // one unsupported method must not start earlier requests.
+        if (request.value()->method() != "GET"_string)
+            return WebIDL::create_rejected_promise_from_exception(realm(), JS::TypeError::create(realm(), "Only GET requests can be added to a Cache"sv));
         requests.append(request.release_value());
         fetch_promises.append(Fetch::fetch(realm().vm(), input));
     }
