@@ -41,6 +41,7 @@ private:
     // ^DOM::Element
     virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
     virtual void inserted() override;
+    virtual void removed_from(DOM::Node* old_parent, DOM::Node& old_root) override;
 
     GC::Ptr<TextTrack> m_track;
     GC::Ptr<TextTrackObserver> m_track_observer;

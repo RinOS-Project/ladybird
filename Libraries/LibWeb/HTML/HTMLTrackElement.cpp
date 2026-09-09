@@ -6,7 +6,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Math.h>
+#include <AK/StringBuilder.h>
+#include <LibTextCodec/Decoder.h>
 #include <LibURL/Parser.h>
+#include <LibGC/RootVector.h>
 #include <LibWeb/Bindings/HTMLTrackElementPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Document.h>
@@ -21,9 +25,180 @@
 #include <LibWeb/HTML/PotentialCORSRequest.h>
 #include <LibWeb/HTML/TextTrack.h>
 #include <LibWeb/HTML/TextTrackObserver.h>
+#include <LibWeb/Infra/CharacterTypes.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
+#include <LibWeb/WebVTT/VTTCue.h>
 
 namespace Web::HTML {
+
+namespace {
+
+struct ParsedWebVTTCue {
+    String id;
+    double start_time { 0 };
+    double end_time { 0 };
+    String text;
+};
+
+static Optional<double> parse_webvtt_timestamp(StringView input)
+{
+    auto timestamp = input.trim_whitespace();
+    auto fields = timestamp.split_view(':', SplitBehavior::KeepEmpty);
+    if (fields.size() != 2 && fields.size() != 3)
+        return {};
+
+    auto parse_unsigned = [](StringView value, size_t minimum_digits) -> Optional<u64> {
+        if (value.length() < minimum_digits)
+            return {};
+        for (auto code_unit : value) {
+            if (!is_ascii_digit(code_unit))
+                return {};
+        }
+        return value.to_number<u64>();
+    };
+
+    auto seconds_field = fields[fields.size() - 1];
+    auto seconds_parts = seconds_field.split_view('.', SplitBehavior::KeepEmpty);
+    if (seconds_parts.size() != 2 || seconds_parts[1].length() != 3)
+        return {};
+
+    auto seconds = parse_unsigned(seconds_parts[0], 2);
+    auto milliseconds = parse_unsigned(seconds_parts[1], 3);
+    if (!seconds.has_value() || !milliseconds.has_value() || seconds.value() >= 60)
+        return {};
+
+    u64 minutes = 0;
+    u64 hours = 0;
+    if (fields.size() == 2) {
+        auto parsed_minutes = parse_unsigned(fields[0], 2);
+        if (!parsed_minutes.has_value() || parsed_minutes.value() >= 60)
+            return {};
+        minutes = parsed_minutes.value();
+    } else {
+        auto parsed_hours = parse_unsigned(fields[0], 2);
+        auto parsed_minutes = parse_unsigned(fields[1], 2);
+        if (!parsed_hours.has_value() || !parsed_minutes.has_value() || parsed_minutes.value() >= 60)
+            return {};
+        hours = parsed_hours.value();
+        minutes = parsed_minutes.value();
+    }
+
+    auto result = (static_cast<double>(hours) * 3600.0)
+        + (static_cast<double>(minutes) * 60.0)
+        + static_cast<double>(seconds.value())
+        + (static_cast<double>(milliseconds.value()) / 1000.0);
+    if (!isfinite(result))
+        return {};
+    return result;
+}
+
+static StringView strip_webvtt_line_ending(StringView line)
+{
+    if (line.ends_with('\r'))
+        return line.substring_view(0, line.length() - 1);
+    return line;
+}
+
+static bool is_webvtt_block_start(StringView line, StringView name)
+{
+    if (!line.starts_with_bytes(name))
+        return false;
+    if (line.length() == name.length())
+        return true;
+    auto separator = line.code_unit_at(name.length());
+    return separator == ' ' || separator == '\t';
+}
+
+static ErrorOr<Vector<ParsedWebVTTCue>> parse_webvtt(String const& source)
+{
+    auto lines = source.bytes_as_string_view().split_view('\n', SplitBehavior::KeepEmpty);
+    if (lines.is_empty())
+        return Error::from_string_literal("empty WebVTT resource");
+
+    auto header = strip_webvtt_line_ending(lines[0]);
+    if (!header.starts_with_bytes("WEBVTT"sv)
+        || (header.length() > 6 && header.code_unit_at(6) != ' ' && header.code_unit_at(6) != '\t'))
+        return Error::from_string_literal("invalid WebVTT header");
+
+    Vector<ParsedWebVTTCue> cues;
+    constexpr size_t max_cues = 4096;
+    constexpr size_t max_cue_text_bytes = 1024 * 1024;
+    size_t total_text_bytes = 0;
+
+    size_t index = 1;
+    while (index < lines.size()) {
+        auto line = strip_webvtt_line_ending(lines[index]);
+        if (line.trim_whitespace().is_empty()) {
+            ++index;
+            continue;
+        }
+
+        // NOTE/STYLE/REGION blocks are metadata and do not publish cues.
+        if (is_webvtt_block_start(line, "NOTE"sv)
+            || is_webvtt_block_start(line, "STYLE"sv)
+            || is_webvtt_block_start(line, "REGION"sv)) {
+            do {
+                ++index;
+            } while (index < lines.size() && !strip_webvtt_line_ending(lines[index]).trim_whitespace().is_empty());
+            continue;
+        }
+
+        if (cues.size() >= max_cues)
+            return Error::from_string_literal("WebVTT cue limit exceeded");
+
+        String id;
+        auto timing_line = line;
+        auto timing_marker = timing_line.find(" --> "sv);
+        if (!timing_marker.has_value()) {
+            id = TRY(line.to_string());
+            ++index;
+            if (index >= lines.size())
+                return Error::from_string_literal("WebVTT cue has no timing line");
+            timing_line = strip_webvtt_line_ending(lines[index]);
+            timing_marker = timing_line.find(" --> "sv);
+        }
+
+        if (!timing_marker.has_value())
+            return Error::from_string_literal("WebVTT cue has invalid timing");
+
+        auto start = parse_webvtt_timestamp(timing_line.substring_view(0, timing_marker.value()));
+        auto settings = timing_line.substring_view(timing_marker.value() + 5).trim_whitespace();
+        auto setting_tokens = settings.split_view_if(Infra::is_ascii_whitespace);
+        if (!start.has_value() || setting_tokens.is_empty())
+            return Error::from_string_literal("WebVTT cue has invalid timing");
+        auto end = parse_webvtt_timestamp(setting_tokens[0]);
+        if (!end.has_value() || end.value() <= start.value())
+            return Error::from_string_literal("WebVTT cue has invalid interval");
+
+        ++index;
+        StringBuilder text_builder;
+        bool first_text_line = true;
+        while (index < lines.size()) {
+            auto text_line = strip_webvtt_line_ending(lines[index]);
+            if (text_line.trim_whitespace().is_empty())
+                break;
+            if (!first_text_line)
+                TRY(text_builder.try_append("\n"sv));
+            TRY(text_builder.try_append(text_line));
+            first_text_line = false;
+            total_text_bytes += text_line.length();
+            if (total_text_bytes > max_cue_text_bytes)
+                return Error::from_string_literal("WebVTT text limit exceeded");
+            ++index;
+        }
+
+        TRY(cues.try_append(ParsedWebVTTCue {
+            .id = move(id),
+            .start_time = start.value(),
+            .end_time = end.value(),
+            .text = TRY(text_builder.to_string()),
+        }));
+    }
+
+    return cues;
+}
+
+}
 
 GC_DEFINE_ALLOCATOR(HTMLTrackElement);
 
@@ -96,12 +271,23 @@ void HTMLTrackElement::inserted()
 {
     HTMLElement::inserted();
 
+    if (is<HTMLMediaElement>(parent_element().ptr()))
+        as<HTMLMediaElement>(parent_element())->add_text_track_element(*m_track);
+
     // AD-HOC: This is a hack to allow tracks to start loading, without needing to implement the entire
     //         "honor user preferences for automatic text track selection" AO detailed here:
     //         https://html.spec.whatwg.org/multipage/media.html#honor-user-preferences-for-automatic-text-track-selection
     m_track->set_mode(Bindings::TextTrackMode::Hidden);
 
     start_the_track_processing_model();
+}
+
+void HTMLTrackElement::removed_from(DOM::Node* old_parent, DOM::Node& old_root)
+{
+    if (is<HTMLMediaElement>(old_parent))
+        as<HTMLMediaElement>(old_parent)->remove_text_track_element(*m_track);
+
+    HTMLElement::removed_from(old_parent, old_root);
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-track-readystate
@@ -227,22 +413,57 @@ void HTMLTrackElement::start_the_track_processing_model_parallel_steps()
                 return;
             }
 
-            // If fetching does not fail, but the type of the resource is not a supported text track format, or the file was not successfully processed
-            // (e.g., the format in question is an XML format and the file contained a well-formedness error that XML requires be detected and reported to the application),
-            // then the task that is queued on the networking task source in which the aforementioned problem is found must change the text track readiness state to failed to
-            // load and fire an event named error at the track element.
-            // FIXME: Currently we always fail here, since we don't support loading any track formats.
-            track_failed_to_load();
-
-            // If fetching does not fail, and the file was successfully processed, then the final task that is queued by the networking task source,
-            // after it has finished parsing the data, must change the text track readiness state to loaded, and fire an event named load at the track element.
-            // FIXME: Enable this once we support processing track files
-            if (false) {
-                queue_an_element_task(Task::Source::Networking, [this, &realm]() {
-                    m_track->set_readiness_state(TextTrack::ReadinessState::Loaded);
-                    dispatch_event(DOM::Event::create(realm, HTML::EventNames::load));
-                });
+            auto* bytes = body_bytes.template get_pointer<ByteBuffer>();
+            if (!bytes || bytes->size() > 4 * 1024 * 1024) {
+                track_failed_to_load();
+                return;
             }
+
+            auto decoder = TextCodec::decoder_for("UTF-8"sv);
+            if (!decoder.has_value()) {
+                track_failed_to_load();
+                return;
+            }
+            auto source_text = TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, *bytes);
+            if (source_text.is_error()) {
+                track_failed_to_load();
+                return;
+            }
+
+            auto parsed_cues = parse_webvtt(source_text.release_value());
+            if (parsed_cues.is_error()) {
+                track_failed_to_load();
+                return;
+            }
+
+            // Construct every cue before publishing any of them. A malformed cue
+            // must not leave a partially replaced track visible to script.
+            GC::RootVector<GC::Ref<WebVTT::VTTCue>> new_cues(realm.heap());
+            for (auto const& parsed : parsed_cues.value()) {
+                auto cue = WebVTT::VTTCue::construct_impl(realm, parsed.start_time, parsed.end_time, parsed.text);
+                if (cue.is_error()) {
+                    track_failed_to_load();
+                    return;
+                }
+                cue.value()->set_id(parsed.id);
+                if (new_cues.try_append(cue.release_value()).is_error()) {
+                    track_failed_to_load();
+                    return;
+                }
+            }
+
+            m_track->clear_cues();
+            for (auto cue : new_cues) {
+                if (m_track->add_cue(cue).is_error()) {
+                    track_failed_to_load();
+                    return;
+                }
+            }
+
+            queue_an_element_task(Task::Source::Networking, [this, &realm]() {
+                m_track->set_readiness_state(TextTrack::ReadinessState::Loaded);
+                dispatch_event(DOM::Event::create(realm, HTML::EventNames::load));
+            });
         };
 
         // 4. Fetch request.

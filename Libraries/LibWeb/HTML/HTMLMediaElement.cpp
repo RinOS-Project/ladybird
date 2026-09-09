@@ -612,6 +612,35 @@ GC::Ref<TextTrack> HTMLMediaElement::add_text_track(Bindings::TextTrackKind kind
     return text_track;
 }
 
+void HTMLMediaElement::add_text_track_element(GC::Ref<TextTrack> text_track)
+{
+    if (m_text_tracks->contains(*text_track))
+        return;
+
+    m_text_tracks->add_track({}, text_track, *this);
+    queue_a_media_element_task([this, text_track] {
+        TrackEventInit event_init {};
+        event_init.track = GC::make_root(text_track);
+
+        auto event = TrackEvent::create(this->realm(), HTML::EventNames::addtrack, move(event_init));
+        m_text_tracks->dispatch_event(event);
+    });
+}
+
+void HTMLMediaElement::remove_text_track_element(TextTrack& text_track)
+{
+    if (!m_text_tracks->remove_track({}, text_track))
+        return;
+
+    queue_a_media_element_task([this, track = GC::make_root(text_track)] {
+        TrackEventInit event_init {};
+        event_init.track = track;
+
+        auto event = TrackEvent::create(this->realm(), HTML::EventNames::removetrack, move(event_init));
+        m_text_tracks->dispatch_event(event);
+    });
+}
+
 // https://html.spec.whatwg.org/multipage/media.html#media-element-load-algorithm
 WebIDL::ExceptionOr<void> HTMLMediaElement::load_element()
 {

@@ -175,6 +175,16 @@ void TextTrack::remove_cue(GC::Ref<TextTrackCue> cue)
         m_media_element->text_track_cues_changed();
 }
 
+void TextTrack::clear_cues()
+{
+    for (size_t index = 0; index < m_cues->length(); ++index)
+        m_cues->at(index)->set_track(nullptr);
+    m_cues->clear();
+    m_active_cues->clear();
+    if (m_media_element)
+        m_media_element->text_track_cues_changed();
+}
+
 void TextTrack::cue_time_changed(TextTrackCue& cue)
 {
     if (!m_cues->contains(cue))

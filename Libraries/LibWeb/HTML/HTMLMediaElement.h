@@ -146,6 +146,11 @@ public:
 
     GC::Ref<TextTrack> add_text_track(Bindings::TextTrackKind kind, String const& label, String const& language);
 
+    // Attach/detach a <track> element's already-created TextTrack. This keeps
+    // parser-created tracks on the same owner path as addTextTrack().
+    void add_text_track_element(GC::Ref<TextTrack>);
+    void remove_text_track_element(TextTrack&);
+
     // Re-run the text-track timing algorithm after a cue or track mode mutation.
     void text_track_cues_changed();
 
