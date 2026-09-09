@@ -101,11 +101,11 @@ static StringView strip_webvtt_line_ending(StringView line)
 
 static bool is_webvtt_block_start(StringView line, StringView name)
 {
-    if (!line.starts_with_bytes(name))
+    if (!line.starts_with(name))
         return false;
     if (line.length() == name.length())
         return true;
-    auto separator = line.code_unit_at(name.length());
+    auto separator = line[name.length()];
     return separator == ' ' || separator == '\t';
 }
 
@@ -116,8 +116,8 @@ static ErrorOr<Vector<ParsedWebVTTCue>> parse_webvtt(String const& source)
         return Error::from_string_literal("empty WebVTT resource");
 
     auto header = strip_webvtt_line_ending(lines[0]);
-    if (!header.starts_with_bytes("WEBVTT"sv)
-        || (header.length() > 6 && header.code_unit_at(6) != ' ' && header.code_unit_at(6) != '\t'))
+    if (!header.starts_with("WEBVTT"sv)
+        || (header.length() > 6 && header[6] != ' ' && header[6] != '\t'))
         return Error::from_string_literal("invalid WebVTT header");
 
     Vector<ParsedWebVTTCue> cues;
@@ -150,7 +150,7 @@ static ErrorOr<Vector<ParsedWebVTTCue>> parse_webvtt(String const& source)
         auto timing_line = line;
         auto timing_marker = timing_line.find(" --> "sv);
         if (!timing_marker.has_value()) {
-            id = TRY(line.to_string());
+            id = TRY(String::from_utf8(line));
             ++index;
             if (index >= lines.size())
                 return Error::from_string_literal("WebVTT cue has no timing line");
@@ -277,7 +277,7 @@ void HTMLTrackElement::inserted()
     HTMLElement::inserted();
 
     if (is<HTMLMediaElement>(parent_element().ptr()))
-        as<HTMLMediaElement>(parent_element())->add_text_track_element(*m_track);
+        as<HTMLMediaElement>(parent_element().ptr())->add_text_track_element(*m_track);
 
     // AD-HOC: This is a hack to allow tracks to start loading, without needing to implement the entire
     //         "honor user preferences for automatic text track selection" AO detailed here:

@@ -39,6 +39,7 @@
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/TextTrack.h>
 #include <LibWeb/HTML/TextTrackCue.h>
+#include <LibWeb/HTML/TextTrackCueList.h>
 #include <LibWeb/HTML/TextTrackList.h>
 #include <LibWeb/HTML/TimeRanges.h>
 #include <LibWeb/HTML/TrackEvent.h>
@@ -2410,7 +2411,8 @@ void HTMLMediaElement::time_marches_on(TimeMarchesOnReason reason)
         GC::RootVector<GC::Ref<TextTrackCue>> cues(heap());
         Vector<CueEvent> events;
         Vector<size_t> affected_track_indices;
-        Vector<u8> affected_tracks(m_text_tracks->length(), 0);
+        Vector<u8> affected_tracks;
+        affected_tracks.resize_with_default_value(m_text_tracks->length(), 0);
         bool should_pause = false;
 
         auto add_event = [&](size_t cue_index, size_t track_index, size_t cue_order, double event_time, bool enter) {
