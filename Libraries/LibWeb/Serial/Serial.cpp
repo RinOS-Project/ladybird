@@ -49,12 +49,12 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> Serial::request_port(SerialPortReq
     if (options.filters.has_value()) {
         if (options.filters->is_empty() || options.filters->size() > 16u)
             return WebIDL::create_rejected_promise_from_exception(realm,
-                JS::TypeError::create(realm, "Serial filters must not be empty or oversized"sv));
+                JS::throw_completion(JS::TypeError::create(realm, "Serial filters must not be empty or oversized"sv)));
         for (auto const& filter : *options.filters) {
             if (!filter.usb_vendor_id.has_value() && !filter.usb_product_id.has_value() &&
                 !filter.bluetooth_service_class_id.has_value())
                 return WebIDL::create_rejected_promise_from_exception(realm,
-                    JS::TypeError::create(realm, "A serial filter must select a device"sv));
+                    JS::throw_completion(JS::TypeError::create(realm, "A serial filter must select a device"sv)));
             if (filter.bluetooth_service_class_id.has_value())
                 return WebIDL::create_rejected_promise_from_exception(realm,
                     WebIDL::NotSupportedError::create(realm, "Bluetooth serial is not supported"_utf16));
@@ -75,7 +75,7 @@ GC::Ref<WebIDL::Promise> Serial::get_ports()
     if (HTML::is_non_secure_context(HTML::relevant_settings_object(*this)))
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::SecurityError::create(realm, "Web Serial requires a secure context"_utf16));
-    return WebIDL::create_resolved_promise(realm, JS::Array::create(realm, 0));
+    return WebIDL::create_resolved_promise(realm, MUST(JS::Array::create(realm, 0)));
 }
 
 // https://wicg.github.io/serial/#onconnect-attribute

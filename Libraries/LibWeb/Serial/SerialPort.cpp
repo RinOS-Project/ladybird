@@ -42,13 +42,13 @@ GC::Ref<WebIDL::Promise> SerialPort::open(SerialOptions options)
     auto baud_rate = options.baud_rate.value_or(9600u);
     if (data_bits != 7u && data_bits != 8u)
         return WebIDL::create_rejected_promise_from_exception(realm,
-            JS::TypeError::create(realm, "dataBits must be 7 or 8"sv));
+            JS::throw_completion(JS::TypeError::create(realm, "dataBits must be 7 or 8"sv)));
     if (stop_bits != 1u && stop_bits != 2u)
         return WebIDL::create_rejected_promise_from_exception(realm,
-            JS::TypeError::create(realm, "stopBits must be 1 or 2"sv));
+            JS::throw_completion(JS::TypeError::create(realm, "stopBits must be 1 or 2"sv)));
     if (buffer_size == 0u || buffer_size > 4096u || baud_rate == 0u || baud_rate > 4000000u)
         return WebIDL::create_rejected_promise_from_exception(realm,
-            JS::TypeError::create(realm, "Serial options exceed the bounded backend limits"sv));
+            JS::throw_completion(JS::TypeError::create(realm, "Serial options exceed the bounded backend limits"sv)));
     if (options.flow_control.value_or(Bindings::FlowControlType::None) == Bindings::FlowControlType::Hardware)
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::NotSupportedError::create(realm, "Hardware flow control is unavailable"_utf16));
