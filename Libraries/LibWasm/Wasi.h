@@ -847,6 +847,10 @@ struct WASM_API Implementation {
         m_fd_map.insert(0, details.stdin_fd);
         m_fd_map.insert(1, details.stdout_fd);
         m_fd_map.insert(2, details.stderr_fd);
+        auto all_rights = Rights { .data = all_rights_mask };
+        install_rights(0, all_rights, all_rights);
+        install_rights(1, all_rights, all_rights);
+        install_rights(2, all_rights, all_rights);
     }
 
     ErrorOr<HostFunction> function_by_name(StringView);
@@ -911,8 +915,17 @@ private:
     using MappedDescriptor = Variant<u32, PreopenedDirectoryDescriptor>;
     using Descriptor = Variant<u32, PreopenedDirectoryDescriptor, UnmappedDescriptor>;
 
+    struct DescriptorRights {
+        Rights base { .data = 0 };
+        Rights inheriting { .data = 0 };
+    };
+    static constexpr u64 all_rights_mask = (1ull << 30) - 1;
+
     Descriptor map_fd(FD);
     int resolve_host_fd(FD);
+    DescriptorRights* rights_for_fd(FD);
+    bool has_right(FD, u64 right);
+    void install_rights(u32, Rights base, Rights inheriting);
 
 public:
     Function<Vector<AK::String>()> provide_arguments;
@@ -929,6 +942,7 @@ private:
     mutable Cache cache {};
 
     RedBlackTree<u32, MappedDescriptor> m_fd_map;
+    RedBlackTree<u32, DescriptorRights> m_fd_rights;
     size_t m_first_unmapped_preopened_directory_index { 0 };
 };
 

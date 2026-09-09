@@ -18,8 +18,13 @@
 // ABI. Keep the ABI declarations explicit here so WASI does not depend on a
 // host libc implementation when it is built for RinOS.
 #if defined(AK_OS_RINOS)
+#    include <dirent.h>
+#    include <poll.h>
+#    include <signal.h>
 #    include <sys/random.h>
 #    include <sys/syscall.h>
+#    include <sys/socket.h>
+#    include <utime.h>
 #endif
 
 #include <fcntl.h>
@@ -385,6 +390,27 @@ Vector<Implementation::MappedPath> const& Implementation::preopened_directories(
     });
 }
 
+Implementation::DescriptorRights* Implementation::rights_for_fd(FD fd)
+{
+    return m_fd_rights.find(fd.value());
+}
+
+bool Implementation::has_right(FD fd, u64 right)
+{
+    auto* rights = rights_for_fd(fd);
+    return rights && (rights->base.data.value() & right) == right;
+}
+
+void Implementation::install_rights(u32 fd, Rights base, Rights inheriting)
+{
+    if (auto* rights = m_fd_rights.find(fd)) {
+        rights->base = base;
+        rights->inheriting = inheriting;
+        return;
+    }
+    m_fd_rights.insert(fd, DescriptorRights { base, inheriting });
+}
+
 Implementation::Descriptor Implementation::map_fd(FD fd)
 {
     u32 fd_value = fd.value();
@@ -505,6 +531,7 @@ ErrorOr<Result<void>> Implementation::impl$fd_close(Configuration&, FD fd)
             // closed WASI descriptor unmapped so it cannot acquire authority
             // over an unrelated object that later receives the same number.
             m_fd_map.remove(fd.value());
+            m_fd_rights.remove(fd.value());
             return {};
         },
         [&](PreopenedDirectoryDescriptor) -> Result<void> {
@@ -517,6 +544,8 @@ ErrorOr<Result<void>> Implementation::impl$fd_close(Configuration&, FD fd)
 
 ErrorOr<Result<Size>> Implementation::impl$fd_write(Configuration& configuration, FD fd, Pointer<CIOVec> iovs, Size iovs_len)
 {
+    if (!has_right(fd, 1ull << 6))
+        return Errno::NotCapable;
     auto mapped_fd = map_fd(fd);
     if (!mapped_fd.has<u32>())
         return errno_value_from_errno(EBADF);
@@ -544,6 +573,7 @@ ErrorOr<Result<PreStat>> Implementation::impl$fd_prestat_get(Configuration&, FD 
 
             auto index = m_first_unmapped_preopened_directory_index++;
             m_fd_map.insert(unmapped_fd.value(), PreopenedDirectoryDescriptor(index));
+            install_rights(unmapped_fd.value(), Rights { .data = all_rights_mask }, Rights { .data = all_rights_mask });
             return PreStat {
                 .type = PreOpenType::Dir,
                 .dir = PreStatDir {
@@ -580,6 +610,8 @@ ErrorOr<Result<void>> Implementation::impl$fd_prestat_dir_name(Configuration& co
 
 ErrorOr<Result<FileStat>> Implementation::impl$path_filestat_get(Configuration& configuration, FD fd, LookupFlags flags, ConstPointer<u8> path, Size path_len)
 {
+    if (!has_right(fd, 1ull << 18))
+        return Errno::NotCapable;
     auto dir_fd = resolve_host_fd(fd);
     if (dir_fd < 0)
         return errno_value_from_errno(errno);
@@ -635,6 +667,8 @@ ErrorOr<Result<FileStat>> Implementation::impl$path_filestat_get(Configuration& 
 
 ErrorOr<Result<void>> Implementation::impl$path_create_directory(Configuration& configuration, FD fd, Pointer<u8> path, Size path_len)
 {
+    if (!has_right(fd, 1ull << 9))
+        return Errno::NotCapable;
     auto dir_fd = resolve_host_fd(fd);
     if (dir_fd < 0)
         return errno_value_from_errno(errno);
@@ -656,8 +690,18 @@ ErrorOr<Result<void>> Implementation::impl$path_create_directory(Configuration& 
     return Result<void> {};
 }
 
-ErrorOr<Result<FD>> Implementation::impl$path_open(Configuration& configuration, FD fd, LookupFlags lookup_flags, Pointer<u8> path, Size path_len, OFlags o_flags, Rights fs_rights_base, Rights, FDFlags fd_flags)
+ErrorOr<Result<FD>> Implementation::impl$path_open(Configuration& configuration, FD fd, LookupFlags lookup_flags, Pointer<u8> path, Size path_len, OFlags o_flags, Rights fs_rights_base, Rights fs_rights_inheriting, FDFlags fd_flags)
 {
+    auto* parent_rights = rights_for_fd(fd);
+    if (!parent_rights || (parent_rights->base.data.value() & (1ull << 13)) == 0)
+        return Errno::NotCapable;
+    if ((fs_rights_base.data.value() & ~all_rights_mask) != 0 || (fs_rights_inheriting.data.value() & ~all_rights_mask) != 0)
+        return Errno::Invalid;
+    if ((fs_rights_base.data.value() & ~parent_rights->inheriting.data.value()) != 0
+        || (fs_rights_inheriting.data.value() & ~parent_rights->inheriting.data.value()) != 0)
+        return Errno::NotCapable;
+    if (o_flags.bits.creat && (parent_rights->base.data.value() & (1ull << 10)) == 0)
+        return Errno::NotCapable;
     auto dir_fd = resolve_host_fd(fd);
     if (dir_fd < 0)
         return errno_value_from_errno(errno);
@@ -719,9 +763,8 @@ ErrorOr<Result<FD>> Implementation::impl$path_open(Configuration& configuration,
     if (opened_fd < 0)
         return errno_value_from_errno(errno);
 
-    // FIXME: Implement Rights and RightsInheriting.
-
     m_fd_map.insert(opened_fd, static_cast<u32>(opened_fd));
+    install_rights(opened_fd, fs_rights_base, fs_rights_inheriting);
 
     return FD(opened_fd);
 }
@@ -766,6 +809,8 @@ ErrorOr<Result<Timestamp>> Implementation::impl$clock_time_get(Configuration&, C
 
 ErrorOr<Result<FileStat>> Implementation::impl$fd_filestat_get(Configuration&, FD fd)
 {
+    if (!has_right(fd, 1ull << 21))
+        return Errno::NotCapable;
     auto resolved_fd = resolve_host_fd(fd);
     if (resolved_fd < 0)
         return errno_value_from_errno(errno);
@@ -845,6 +890,8 @@ ErrorOr<Result<void>> Implementation::impl$random_get(Configuration& configurati
 
 ErrorOr<Result<Size>> Implementation::impl$fd_read(Configuration& configuration, FD fd, Pointer<IOVec> iovs, Size iovs_len)
 {
+    if (!has_right(fd, 1ull << 1))
+        return Errno::NotCapable;
     auto mapped_fd = map_fd(fd);
     if (!mapped_fd.has<u32>())
         return errno_value_from_errno(EBADF);
@@ -863,6 +910,9 @@ ErrorOr<Result<Size>> Implementation::impl$fd_read(Configuration& configuration,
 
 ErrorOr<Result<FDStat>> Implementation::impl$fd_fdstat_get(Configuration&, FD fd)
 {
+    auto* rights = rights_for_fd(fd);
+    if (!rights)
+        return errno_value_from_errno(EBADF);
     auto resolved_fd = resolve_host_fd(fd);
     if (resolved_fd < 0)
         return errno_value_from_errno(errno);
@@ -885,13 +935,15 @@ ErrorOr<Result<FDStat>> Implementation::impl$fd_fdstat_get(Configuration&, FD fd
     return FDStat {
         .fs_filetype = file_type_of(stat_buf),
         .fs_flags = wasi_flags,
-        .fs_rights_base = Rights { .data = 0 },
-        .fs_rights_inheriting = Rights { .data = 0 },
+        .fs_rights_base = rights->base,
+        .fs_rights_inheriting = rights->inheriting,
     };
 }
 
 ErrorOr<Result<FileSize>> Implementation::impl$fd_seek(Configuration&, FD fd, FileDelta offset, Whence whence)
 {
+    if (!has_right(fd, 1ull << 2))
+        return Errno::NotCapable;
     auto mapped_fd = map_fd(fd);
     if (!mapped_fd.has<u32>())
         return errno_value_from_errno(EBADF);
@@ -939,10 +991,64 @@ ErrorOr<Result<Timestamp>> Implementation::impl$clock_res_get(Configuration&, Cl
     return Errno::NoSys;
 #endif
 }
-ErrorOr<Result<void>> Implementation::impl$fd_advise(Configuration&, FD, FileSize offset, FileSize len, Advice) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$fd_allocate(Configuration&, FD, FileSize offset, FileSize len) { return Errno::NoSys; }
+ErrorOr<Result<void>> Implementation::impl$fd_advise(Configuration&, FD fd, FileSize offset, FileSize len, Advice advice)
+{
+    if (!has_right(fd, 1ull << 7))
+        return Errno::NotCapable;
+#if defined(AK_OS_RINOS)
+    if (offset.value() > static_cast<u64>(NumericLimits<off_t>::max())
+        || len.value() > static_cast<u64>(NumericLimits<off_t>::max()))
+        return Errno::Overflow;
+    int native_advice;
+    switch (advice) {
+    case Advice::Normal: native_advice = POSIX_FADV_NORMAL; break;
+    case Advice::Sequential: native_advice = POSIX_FADV_SEQUENTIAL; break;
+    case Advice::Random: native_advice = POSIX_FADV_RANDOM; break;
+    case Advice::WillNeed: native_advice = POSIX_FADV_WILLNEED; break;
+    case Advice::DontNeed: native_advice = POSIX_FADV_DONTNEED; break;
+    case Advice::NoReuse: native_advice = POSIX_FADV_NOREUSE; break;
+    default: return Errno::Invalid;
+    }
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    auto result = posix_fadvise(host_fd, static_cast<off_t>(offset.value()), static_cast<off_t>(len.value()), native_advice);
+    if (result != 0)
+        return errno_value_from_errno(result);
+    return Result<void> {};
+#else
+    (void)offset;
+    (void)len;
+    (void)advice;
+    return Errno::NoSys;
+#endif
+}
+ErrorOr<Result<void>> Implementation::impl$fd_allocate(Configuration&, FD fd, FileSize offset, FileSize len)
+{
+    if (!has_right(fd, 1ull << 8))
+        return Errno::NotCapable;
+#if defined(AK_OS_RINOS)
+    if (offset.value() > static_cast<u64>(NumericLimits<off_t>::max())
+        || len.value() > static_cast<u64>(NumericLimits<off_t>::max())
+        || len.value() > static_cast<u64>(NumericLimits<off_t>::max()) - offset.value())
+        return Errno::Overflow;
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    auto result = posix_fallocate(host_fd, static_cast<off_t>(offset.value()), static_cast<off_t>(len.value()));
+    if (result != 0)
+        return errno_value_from_errno(result);
+    return Result<void> {};
+#else
+    (void)offset;
+    (void)len;
+    return Errno::NoSys;
+#endif
+}
 ErrorOr<Result<void>> Implementation::impl$fd_datasync(Configuration&, FD fd)
 {
+    if (!has_right(fd, 1ull << 0))
+        return Errno::NotCapable;
 #if defined(AK_OS_RINOS)
     auto host_fd = resolve_host_fd(fd);
     if (host_fd < 0)
@@ -957,6 +1063,8 @@ ErrorOr<Result<void>> Implementation::impl$fd_datasync(Configuration&, FD fd)
 }
 ErrorOr<Result<void>> Implementation::impl$fd_fdstat_set_flags(Configuration&, FD fd, FDFlags fd_flags)
 {
+    if (!has_right(fd, 1ull << 3))
+        return Errno::NotCapable;
 #if defined(AK_OS_RINOS)
     constexpr u16 wasi_append_flag = 1u << 0;
     constexpr u16 wasi_dsync_flag = 1u << 1;
@@ -993,9 +1101,26 @@ ErrorOr<Result<void>> Implementation::impl$fd_fdstat_set_flags(Configuration&, F
     return Errno::NoSys;
 #endif
 }
-ErrorOr<Result<void>> Implementation::impl$fd_fdstat_set_rights(Configuration&, FD, Rights fs_rights_base, Rights fs_rights_inheriting) { return Errno::NoSys; }
+ErrorOr<Result<void>> Implementation::impl$fd_fdstat_set_rights(Configuration&, FD fd, Rights fs_rights_base, Rights fs_rights_inheriting)
+{
+    auto* current = rights_for_fd(fd);
+    if (!current)
+        return errno_value_from_errno(EBADF);
+
+    auto base = fs_rights_base.data.value();
+    auto inheriting = fs_rights_inheriting.data.value();
+    if ((base & ~all_rights_mask) != 0 || (inheriting & ~all_rights_mask) != 0)
+        return Errno::Invalid;
+    if ((base & ~current->base.data.value()) != 0 || (inheriting & ~current->inheriting.data.value()) != 0)
+        return Errno::NotCapable;
+
+    install_rights(fd.value(), fs_rights_base, fs_rights_inheriting);
+    return Result<void> {};
+}
 ErrorOr<Result<void>> Implementation::impl$fd_filestat_set_size(Configuration&, FD fd, FileSize size)
 {
+    if (!has_right(fd, 1ull << 22))
+        return Errno::NotCapable;
 #if defined(AK_OS_RINOS)
     auto requested_size = size.value();
     if (requested_size > static_cast<u64>(NumericLimits<off_t>::max()))
@@ -1012,9 +1137,58 @@ ErrorOr<Result<void>> Implementation::impl$fd_filestat_set_size(Configuration&, 
     return Errno::NoSys;
 #endif
 }
-ErrorOr<Result<void>> Implementation::impl$fd_filestat_set_times(Configuration&, FD, Timestamp atim, Timestamp mtim, FSTFlags) { return Errno::NoSys; }
+ErrorOr<Result<void>> Implementation::impl$fd_filestat_set_times(Configuration&, FD fd, Timestamp atim, Timestamp mtim, FSTFlags flags)
+{
+    if (!has_right(fd, 1ull << 23))
+        return Errno::NotCapable;
+#if defined(AK_OS_RINOS)
+    constexpr u16 known_flags = 0x0f;
+    if ((flags.data.value() & ~known_flags) != 0
+        || (flags.bits.atim && flags.bits.atim_now)
+        || (flags.bits.mtim && flags.bits.mtim_now))
+        return Errno::Invalid;
+    constexpr u64 nanoseconds_per_second = 1'000'000'000ull;
+    auto to_timespec = [&](Timestamp timestamp, struct timespec& output) {
+        auto nanoseconds = timestamp.value();
+        auto seconds = nanoseconds / nanoseconds_per_second;
+        if (seconds > static_cast<u64>(NumericLimits<time_t>::max()))
+            return false;
+        output.tv_sec = static_cast<time_t>(seconds);
+        output.tv_nsec = static_cast<long>(nanoseconds % nanoseconds_per_second);
+        return true;
+    };
+    struct timespec times[2] {};
+    if (flags.bits.atim_now)
+        times[0].tv_nsec = UTIME_NOW;
+    else if (flags.bits.atim) {
+        if (!to_timespec(atim, times[0]))
+            return Errno::Overflow;
+    } else
+        times[0].tv_nsec = UTIME_OMIT;
+    if (flags.bits.mtim_now)
+        times[1].tv_nsec = UTIME_NOW;
+    else if (flags.bits.mtim) {
+        if (!to_timespec(mtim, times[1]))
+            return Errno::Overflow;
+    } else
+        times[1].tv_nsec = UTIME_OMIT;
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    if (futimens(host_fd, times) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+#else
+    (void)atim;
+    (void)mtim;
+    (void)flags;
+    return Errno::NoSys;
+#endif
+}
 ErrorOr<Result<Size>> Implementation::impl$fd_pread(Configuration& configuration, FD fd, Pointer<IOVec> iovs, Size iovs_len, FileSize offset)
 {
+    if (!has_right(fd, 1ull << 1) || !has_right(fd, 1ull << 2))
+        return Errno::NotCapable;
 #if defined(AK_OS_RINOS)
     auto requested_offset = offset.value();
     if (requested_offset > static_cast<u64>(NumericLimits<off_t>::max()))
@@ -1061,6 +1235,8 @@ ErrorOr<Result<Size>> Implementation::impl$fd_pread(Configuration& configuration
 
 ErrorOr<Result<Size>> Implementation::impl$fd_pwrite(Configuration& configuration, FD fd, Pointer<CIOVec> iovs, Size iovs_len, FileSize offset)
 {
+    if (!has_right(fd, 1ull << 6) || !has_right(fd, 1ull << 2))
+        return Errno::NotCapable;
 #if defined(AK_OS_RINOS)
     auto requested_offset = offset.value();
     if (requested_offset > static_cast<u64>(NumericLimits<off_t>::max()))
@@ -1104,10 +1280,147 @@ ErrorOr<Result<Size>> Implementation::impl$fd_pwrite(Configuration& configuratio
     return Errno::NoSys;
 #endif
 }
-ErrorOr<Result<Size>> Implementation::impl$fd_readdir(Configuration&, FD, Pointer<u8> buf, Size buf_len, DirCookie cookie) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$fd_renumber(Configuration&, FD from, FD to) { return Errno::NoSys; }
+ErrorOr<Result<Size>> Implementation::impl$fd_readdir(Configuration& configuration, FD fd, Pointer<u8> buf, Size buf_len, DirCookie cookie)
+{
+    if (!has_right(fd, 1ull << 14))
+        return Errno::NotCapable;
+#if defined(AK_OS_RINOS)
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    struct stat stat_buf;
+    if (fstat(host_fd, &stat_buf) < 0)
+        return errno_value_from_errno(errno);
+    if (!S_ISDIR(stat_buf.st_mode))
+        return Errno::NotDirectory;
+
+    auto buffer = TRY(slice_typed_memory(configuration, buf, buf_len));
+    if (static_cast<u64>(cookie) > static_cast<u64>(NumericLimits<long>::max()))
+        return Errno::Overflow;
+    auto duplicate_fd = dup(host_fd);
+    if (duplicate_fd < 0)
+        return errno_value_from_errno(errno);
+    auto* directory = fdopendir(duplicate_fd);
+    if (!directory) {
+        auto saved_errno = errno;
+        close(duplicate_fd);
+        return errno_value_from_errno(saved_errno);
+    }
+    auto fail_and_clear = [&](int error) -> ErrorOr<Result<Size>> {
+        if (!buffer.is_empty())
+            __builtin_memset(buffer.data(), 0, buffer.size());
+        auto saved_errno = error > 0 ? error : EIO;
+        closedir(directory);
+        return errno_value_from_errno(saved_errno);
+    };
+    errno = 0;
+    seekdir(directory, static_cast<long>(static_cast<u64>(cookie)));
+    if (errno != 0)
+        return fail_and_clear(errno);
+
+    auto file_type_of_dirent = [](unsigned char native_type) {
+        switch (native_type) {
+        case DT_BLK: return FileType::BlockDevice;
+        case DT_CHR: return FileType::CharacterDevice;
+        case DT_DIR: return FileType::Directory;
+        case DT_REG: return FileType::RegularFile;
+        case DT_LNK: return FileType::SymbolicLink;
+        case DT_SOCK: return FileType::SocketStream;
+        default: return FileType::Unknown;
+        }
+    };
+    size_t offset = 0;
+    while (offset < buffer.size()) {
+        errno = 0;
+        auto entry_cookie = telldir(directory);
+        if (entry_cookie < 0)
+            return fail_and_clear(errno);
+        auto* entry = readdir(directory);
+        if (!entry) {
+            if (errno != 0)
+                return fail_and_clear(errno);
+            break;
+        }
+        size_t name_length = 0;
+        while (name_length < NAME_MAX + 1 && entry->d_name[name_length] != '\0')
+            ++name_length;
+        if (name_length > NAME_MAX)
+            return fail_and_clear(EIO);
+        if (name_length > NumericLimits<u32>::max())
+            return fail_and_clear(EOVERFLOW);
+        if (sizeof(DirEnt) > buffer.size() - offset
+            || name_length > buffer.size() - offset - sizeof(DirEnt)) {
+            errno = 0;
+            seekdir(directory, entry_cookie);
+            if (errno != 0)
+                return fail_and_clear(errno);
+            if (offset == 0)
+                return fail_and_clear(EOVERFLOW);
+            break;
+        }
+        errno = 0;
+        auto next_cookie = telldir(directory);
+        if (next_cookie < 0)
+            return fail_and_clear(errno);
+        auto* header = buffer.data() + offset;
+        ABI::serialize(static_cast<u64>(next_cookie), Array { Bytes { header + 0, sizeof(u64) } });
+        ABI::serialize(static_cast<u64>(entry->d_ino), Array { Bytes { header + 8, sizeof(u64) } });
+        ABI::serialize(static_cast<u32>(name_length), Array { Bytes { header + 16, sizeof(u32) } });
+        header[20] = static_cast<u8>(file_type_of_dirent(entry->d_type));
+        header[21] = 0;
+        header[22] = 0;
+        header[23] = 0;
+        ReadonlyBytes { reinterpret_cast<u8 const*>(entry->d_name), name_length }.copy_to(Bytes { buffer.data() + offset + sizeof(DirEnt), name_length });
+        offset += sizeof(DirEnt) + name_length;
+    }
+    if (closedir(directory) < 0) {
+        if (!buffer.is_empty())
+            __builtin_memset(buffer.data(), 0, buffer.size());
+        return errno_value_from_errno(errno);
+    }
+    return Size(static_cast<u32>(offset));
+#else
+    (void)configuration;
+    (void)buf;
+    (void)buf_len;
+    (void)cookie;
+    return Errno::NoSys;
+#endif
+}
+ErrorOr<Result<void>> Implementation::impl$fd_renumber(Configuration&, FD from, FD to)
+{
+    auto source = map_fd(from);
+    if (source.has<UnmappedDescriptor>())
+        return errno_value_from_errno(EBADF);
+    auto* source_rights = rights_for_fd(from);
+    if (!source_rights)
+        return errno_value_from_errno(EBADF);
+    auto rights_to_transfer = *source_rights;
+    if (from == to)
+        return Result<void> {};
+
+    auto target = map_fd(to);
+    if (target.has<u32>()) {
+        auto target_host_fd = target.get<u32>();
+        bool aliases_source = source.has<u32>() && source.get<u32>() == target_host_fd;
+        if (!aliases_source && close(static_cast<int>(target_host_fd)) < 0)
+            return errno_value_from_errno(errno);
+    }
+    m_fd_map.remove(to.value());
+    m_fd_rights.remove(to.value());
+    m_fd_map.remove(from.value());
+    m_fd_rights.remove(from.value());
+    source.visit(
+        [&](u32 host_fd) { m_fd_map.insert(to.value(), host_fd); },
+        [&](PreopenedDirectoryDescriptor directory) { m_fd_map.insert(to.value(), directory); },
+        [](UnmappedDescriptor) { });
+    install_rights(to.value(), rights_to_transfer.base, rights_to_transfer.inheriting);
+    return Result<void> {};
+}
 ErrorOr<Result<void>> Implementation::impl$fd_sync(Configuration&, FD fd)
 {
+    if (!has_right(fd, 1ull << 4))
+        return Errno::NotCapable;
 #if defined(AK_OS_RINOS)
     auto host_fd = resolve_host_fd(fd);
     if (host_fd < 0)
@@ -1122,6 +1435,8 @@ ErrorOr<Result<void>> Implementation::impl$fd_sync(Configuration&, FD fd)
 }
 ErrorOr<Result<FileSize>> Implementation::impl$fd_tell(Configuration&, FD fd)
 {
+    if (!has_right(fd, 1ull << 5))
+        return Errno::NotCapable;
 #if defined(AK_OS_RINOS)
     auto host_fd = resolve_host_fd(fd);
     if (host_fd < 0)
@@ -1135,15 +1450,380 @@ ErrorOr<Result<FileSize>> Implementation::impl$fd_tell(Configuration&, FD fd)
     return Errno::NoSys;
 #endif
 }
-ErrorOr<Result<void>> Implementation::impl$path_filestat_set_times(Configuration&, FD, LookupFlags, Pointer<u8> path, Size path_len, Timestamp atim, Timestamp mtim, FSTFlags) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$path_link(Configuration&, FD, LookupFlags, Pointer<u8> old_path, Size old_path_len, FD, Pointer<u8> new_path, Size new_path_len) { return Errno::NoSys; }
-ErrorOr<Result<Size>> Implementation::impl$path_readlink(Configuration&, FD, LookupFlags, Pointer<u8> path, Size path_len, Pointer<u8> buf, Size buf_len) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$path_remove_directory(Configuration&, FD, Pointer<u8> path, Size path_len) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$path_rename(Configuration&, FD, Pointer<u8> old_path, Size old_path_len, FD, Pointer<u8> new_path, Size new_path_len) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$path_symlink(Configuration&, Pointer<u8> old_path, Size old_path_len, FD, Pointer<u8> new_path, Size new_path_len) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$path_unlink_file(Configuration&, FD, Pointer<u8> path, Size path_len) { return Errno::NoSys; }
-ErrorOr<Result<Size>> Implementation::impl$poll_oneoff(Configuration&, ConstPointer<Subscription> in, Pointer<Event> out, Size nsubscriptions) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$proc_raise(Configuration&, Signal) { return Errno::NoSys; }
+ErrorOr<Result<void>> Implementation::impl$path_filestat_set_times(Configuration& configuration, FD fd, LookupFlags lookup_flags, Pointer<u8> path, Size path_len, Timestamp atim, Timestamp mtim, FSTFlags flags)
+{
+    if (!has_right(fd, 1ull << 20))
+        return Errno::NotCapable;
+#if defined(AK_OS_RINOS)
+    auto dir_fd = resolve_host_fd(fd);
+    if (dir_fd < 0)
+        return errno_value_from_errno(errno);
+    auto slice = TRY(slice_typed_memory(configuration, path, path_len));
+#if defined(AK_OS_RINOS)
+    if (auto error = validate_beneath_path(slice); error.has_value())
+        return Result<void> { Errno { error.value() } };
+#endif
+    constexpr u16 known_flags = 0x0f;
+    if ((flags.data.value() & ~known_flags) != 0
+        || (flags.bits.atim && flags.bits.atim_now)
+        || (flags.bits.mtim && flags.bits.mtim_now))
+        return Errno::Invalid;
+    constexpr u64 nanoseconds_per_second = 1'000'000'000ull;
+    auto to_timespec = [&](Timestamp timestamp, struct timespec& output) {
+        auto nanoseconds = timestamp.value();
+        auto seconds = nanoseconds / nanoseconds_per_second;
+        if (seconds > static_cast<u64>(NumericLimits<time_t>::max()))
+            return false;
+        output.tv_sec = static_cast<time_t>(seconds);
+        output.tv_nsec = static_cast<long>(nanoseconds % nanoseconds_per_second);
+        return true;
+    };
+    struct timespec times[2] {};
+    if (flags.bits.atim_now)
+        times[0].tv_nsec = UTIME_NOW;
+    else if (flags.bits.atim) {
+        if (!to_timespec(atim, times[0]))
+            return Errno::Overflow;
+    } else
+        times[0].tv_nsec = UTIME_OMIT;
+    if (flags.bits.mtim_now)
+        times[1].tv_nsec = UTIME_NOW;
+    else if (flags.bits.mtim) {
+        if (!to_timespec(mtim, times[1]))
+            return Errno::Overflow;
+    } else
+        times[1].tv_nsec = UTIME_OMIT;
+    auto path_string = ByteString::copy(slice);
+    auto native_flags = lookup_flags.bits.symlink_follow ? 0 : AT_SYMLINK_NOFOLLOW;
+    if (utimensat(dir_fd, path_string.characters(), times, native_flags) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+#else
+    (void)configuration;
+    (void)fd;
+    (void)lookup_flags;
+    (void)path;
+    (void)path_len;
+    (void)atim;
+    (void)mtim;
+    (void)flags;
+    return Errno::NoSys;
+#endif
+}
+ErrorOr<Result<void>> Implementation::impl$path_link(Configuration& configuration, FD fd, LookupFlags lookup_flags, Pointer<u8> old_path, Size old_path_len, FD new_fd, Pointer<u8> new_path, Size new_path_len)
+{
+    if (!has_right(fd, 1ull << 11) || !has_right(new_fd, 1ull << 12))
+        return Errno::NotCapable;
+    auto source_fd = resolve_host_fd(fd);
+    auto destination_fd = resolve_host_fd(new_fd);
+    if (source_fd < 0 || destination_fd < 0)
+        return errno_value_from_errno(errno);
+    auto old_slice = TRY(slice_typed_memory(configuration, old_path, old_path_len));
+    auto new_slice = TRY(slice_typed_memory(configuration, new_path, new_path_len));
+#if defined(AK_OS_RINOS)
+    if (auto error = validate_beneath_path(old_slice); error.has_value())
+        return Result<void> { Errno { error.value() } };
+    if (auto error = validate_beneath_path(new_slice); error.has_value())
+        return Result<void> { Errno { error.value() } };
+#endif
+    auto old_string = ByteString::copy(old_slice);
+    auto new_string = ByteString::copy(new_slice);
+    auto native_flags = lookup_flags.bits.symlink_follow ? AT_SYMLINK_FOLLOW : 0;
+    if (linkat(source_fd, old_string.characters(), destination_fd, new_string.characters(), native_flags) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+}
+ErrorOr<Result<Size>> Implementation::impl$path_readlink(Configuration& configuration, FD fd, LookupFlags, Pointer<u8> path, Size path_len, Pointer<u8> buf, Size buf_len)
+{
+    if (!has_right(fd, 1ull << 15))
+        return Errno::NotCapable;
+    auto dir_fd = resolve_host_fd(fd);
+    if (dir_fd < 0)
+        return errno_value_from_errno(errno);
+    auto path_slice = TRY(slice_typed_memory(configuration, path, path_len));
+    auto output = TRY(slice_typed_memory(configuration, buf, buf_len));
+#if defined(AK_OS_RINOS)
+    if (auto error = validate_beneath_path(path_slice); error.has_value())
+        return Result<Size> { Errno { error.value() } };
+#endif
+    if (output.is_empty())
+        return Errno::Invalid;
+    auto path_string = ByteString::copy(path_slice);
+    auto result = readlinkat(dir_fd, path_string.characters(), reinterpret_cast<char*>(output.data()), output.size());
+    if (result < 0)
+        return errno_value_from_errno(errno);
+    if (static_cast<u64>(result) > NumericLimits<u32>::max())
+        return Errno::Overflow;
+    return Size(static_cast<u32>(result));
+}
+ErrorOr<Result<void>> Implementation::impl$path_remove_directory(Configuration& configuration, FD fd, Pointer<u8> path, Size path_len)
+{
+    if (!has_right(fd, 1ull << 25))
+        return Errno::NotCapable;
+    auto dir_fd = resolve_host_fd(fd);
+    if (dir_fd < 0)
+        return errno_value_from_errno(errno);
+    auto slice = TRY(slice_typed_memory(configuration, path, path_len));
+#if defined(AK_OS_RINOS)
+    if (auto error = validate_beneath_path(slice); error.has_value())
+        return Result<void> { Errno { error.value() } };
+#endif
+    auto path_string = ByteString::copy(slice);
+    if (unlinkat(dir_fd, path_string.characters(), AT_REMOVEDIR) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+}
+ErrorOr<Result<void>> Implementation::impl$path_rename(Configuration& configuration, FD old_fd, Pointer<u8> old_path, Size old_path_len, FD new_fd, Pointer<u8> new_path, Size new_path_len)
+{
+    if (!has_right(old_fd, 1ull << 16) || !has_right(new_fd, 1ull << 17))
+        return Errno::NotCapable;
+    auto source_fd = resolve_host_fd(old_fd);
+    auto destination_fd = resolve_host_fd(new_fd);
+    if (source_fd < 0 || destination_fd < 0)
+        return errno_value_from_errno(errno);
+    auto old_slice = TRY(slice_typed_memory(configuration, old_path, old_path_len));
+    auto new_slice = TRY(slice_typed_memory(configuration, new_path, new_path_len));
+#if defined(AK_OS_RINOS)
+    if (auto error = validate_beneath_path(old_slice); error.has_value())
+        return Result<void> { Errno { error.value() } };
+    if (auto error = validate_beneath_path(new_slice); error.has_value())
+        return Result<void> { Errno { error.value() } };
+#endif
+    auto old_string = ByteString::copy(old_slice);
+    auto new_string = ByteString::copy(new_slice);
+    if (renameat(source_fd, old_string.characters(), destination_fd, new_string.characters()) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+}
+ErrorOr<Result<void>> Implementation::impl$path_symlink(Configuration&, Pointer<u8> old_path, Size old_path_len, FD new_fd, Pointer<u8> new_path, Size new_path_len)
+{
+    if (!has_right(new_fd, 1ull << 24))
+        return Errno::NotCapable;
+    (void)old_path; (void)old_path_len; (void)new_path; (void)new_path_len;
+    return Errno::NoSys;
+}
+ErrorOr<Result<void>> Implementation::impl$path_unlink_file(Configuration& configuration, FD fd, Pointer<u8> path, Size path_len)
+{
+    if (!has_right(fd, 1ull << 26))
+        return Errno::NotCapable;
+    auto dir_fd = resolve_host_fd(fd);
+    if (dir_fd < 0)
+        return errno_value_from_errno(errno);
+    auto slice = TRY(slice_typed_memory(configuration, path, path_len));
+#if defined(AK_OS_RINOS)
+    if (auto error = validate_beneath_path(slice); error.has_value())
+        return Result<void> { Errno { error.value() } };
+#endif
+    auto path_string = ByteString::copy(slice);
+    if (unlinkat(dir_fd, path_string.characters(), 0) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+}
+ErrorOr<Result<Size>> Implementation::impl$poll_oneoff(Configuration& configuration, ConstPointer<Subscription> in, Pointer<Event> out, Size nsubscriptions)
+{
+    if (nsubscriptions.value() == 0 || nsubscriptions.value() > 64)
+        return Errno::TooBig;
+#if defined(AK_OS_RINOS)
+    auto count = nsubscriptions.value();
+    auto subscriptions = TRY(copy_typed_array(configuration, Pointer<Subscription> { in.value() }, nsubscriptions));
+    auto events = TRY(slice_typed_memory(configuration, out, nsubscriptions));
+    struct pollfd poll_fds[64] {};
+    u32 poll_indexes[64];
+    bool is_clock[64] {};
+    bool clock_absolute[64] {};
+    ClockID clock_ids[64] {};
+    u64 clock_start[64] {};
+    u64 clock_timeout[64] {};
+    for (u32 index = 0; index < count; ++index)
+        poll_indexes[index] = NumericLimits<u32>::max();
+
+    auto native_clock_id = [](ClockID id) -> Optional<clockid_t> {
+        switch (id) {
+        case ClockID::Realtime: return CLOCK_REALTIME;
+        case ClockID::Monotonic: return CLOCK_MONOTONIC;
+        case ClockID::ProcessCPUTimeID:
+        case ClockID::ThreadCPUTimeID: return {};
+        }
+        return {};
+    };
+    auto read_clock = [&](ClockID id) -> ErrorOr<u64> {
+        auto native_id = native_clock_id(id);
+        if (!native_id.has_value())
+            return Errno::Invalid;
+        struct timespec now {};
+        if (clock_gettime(native_id.value(), &now) < 0)
+            return errno_value_from_errno(errno);
+        if (now.tv_sec < 0 || now.tv_nsec < 0 || now.tv_nsec >= 1'000'000'000)
+            return Errno::Overflow;
+        auto seconds = static_cast<u64>(now.tv_sec);
+        auto nanos = static_cast<u64>(now.tv_nsec);
+        if (seconds > (NumericLimits<u64>::max() - nanos) / 1'000'000'000ull)
+            return Errno::Overflow;
+        return seconds * 1'000'000'000ull + nanos;
+    };
+
+    u32 poll_count = 0;
+    for (u32 index = 0; index < count; ++index) {
+        auto const& subscription = subscriptions[index];
+        switch (subscription.type) {
+        case EventType::Clock: {
+            if ((subscription.u.clock.flags.data.value() & ~1u) != 0)
+                return Errno::Invalid;
+            auto now = TRY(read_clock(subscription.u.clock.id));
+            is_clock[index] = true;
+            clock_absolute[index] = subscription.u.clock.flags.bits.subscription_clock_abstime;
+            clock_ids[index] = subscription.u.clock.id;
+            clock_start[index] = now;
+            clock_timeout[index] = subscription.u.clock.timeout.value();
+            break;
+        }
+        case EventType::FDRead:
+        case EventType::FDWrite: {
+            auto watched_fd = subscription.type == EventType::FDRead
+                ? subscription.u.fd_read.file_descriptor
+                : subscription.u.fd_write.file_descriptor;
+            if (!has_right(watched_fd, 1ull << 27))
+                return Errno::NotCapable;
+            if (poll_count >= 64)
+                return Errno::TooBig;
+            auto host_fd = resolve_host_fd(watched_fd);
+            if (host_fd < 0)
+                return errno_value_from_errno(errno);
+            poll_indexes[index] = poll_count;
+            poll_fds[poll_count].fd = host_fd;
+            poll_fds[poll_count].events = subscription.type == EventType::FDRead ? POLLIN : POLLOUT;
+            ++poll_count;
+            break;
+        }
+        default:
+            return Errno::Invalid;
+        }
+    }
+
+    for (;;) {
+        u64 minimum_wait = NumericLimits<u64>::max();
+        bool have_clock = false;
+        for (u32 index = 0; index < count; ++index) {
+            if (!is_clock[index])
+                continue;
+            have_clock = true;
+            auto now = TRY(read_clock(clock_ids[index]));
+            u64 wait = 0;
+            if (clock_absolute[index])
+                wait = clock_timeout[index] > now ? clock_timeout[index] - now : 0;
+            else {
+                auto elapsed = now >= clock_start[index] ? now - clock_start[index] : 0;
+                wait = clock_timeout[index] > elapsed ? clock_timeout[index] - elapsed : 0;
+            }
+            if (wait < minimum_wait)
+                minimum_wait = wait;
+        }
+        int timeout_ms = -1;
+        if (have_clock) {
+            constexpr u64 nanos_per_millisecond = 1'000'000ull;
+            constexpr u64 max_timeout_ms = static_cast<u64>(NumericLimits<int>::max());
+            auto rounded = minimum_wait > NumericLimits<u64>::max() - (nanos_per_millisecond - 1)
+                ? NumericLimits<u64>::max()
+                : minimum_wait + nanos_per_millisecond - 1;
+            auto milliseconds = rounded / nanos_per_millisecond;
+            timeout_ms = milliseconds > max_timeout_ms ? NumericLimits<int>::max() : static_cast<int>(milliseconds);
+        }
+        auto poll_result = poll(poll_fds, poll_count, timeout_ms);
+        if (poll_result < 0)
+            return errno_value_from_errno(errno);
+
+        u32 event_count = 0;
+        for (u32 index = 0; index < count; ++index) {
+            auto const& subscription = subscriptions[index];
+            bool ready = false;
+            Errno event_errno = Errno::Success;
+            EventRWFlags event_flags { .data = 0 };
+            if (is_clock[index]) {
+                auto now = TRY(read_clock(clock_ids[index]));
+                if (clock_absolute[index])
+                    ready = now >= clock_timeout[index];
+                else
+                    ready = now >= clock_start[index] && now - clock_start[index] >= clock_timeout[index];
+            } else {
+                auto revents = poll_fds[poll_indexes[index]].revents;
+                if ((revents & POLLNVAL) != 0) {
+                    ready = true;
+                    event_errno = Errno::BadF;
+                } else if ((revents & POLLERR) != 0) {
+                    ready = true;
+                    event_errno = Errno::IO;
+                } else if ((revents & (POLLIN | POLLOUT | POLLHUP)) != 0) {
+                    ready = true;
+                    event_flags.bits.fd_readwrite_hangup = (revents & POLLHUP) != 0;
+                }
+            }
+            if (!ready)
+                continue;
+            Event event {};
+            event.userdata = subscription.userdata;
+            event.errno_ = event_errno;
+            event.type = subscription.type;
+            event.fd_readwrite.nbytes = FileSize(0);
+            event.fd_readwrite.flags = event_flags;
+            events[event_count++] = event;
+        }
+        if (event_count != 0)
+            return Size(event_count);
+    }
+#else
+    (void)configuration;
+    (void)in;
+    (void)out;
+    (void)nsubscriptions;
+    return Errno::NoSys;
+#endif
+}
+ErrorOr<Result<void>> Implementation::impl$proc_raise(Configuration&, Signal signal)
+{
+#if defined(AK_OS_RINOS)
+    int native_signal;
+    switch (signal) {
+    case Signal::None: native_signal = 0; break;
+    case Signal::HUP: native_signal = SIGHUP; break;
+    case Signal::INT: native_signal = SIGINT; break;
+    case Signal::QUIT: native_signal = SIGQUIT; break;
+    case Signal::ILL: native_signal = SIGILL; break;
+    case Signal::TRAP: native_signal = SIGTRAP; break;
+    case Signal::ABRT: native_signal = SIGABRT; break;
+    case Signal::BUS: native_signal = SIGBUS; break;
+    case Signal::FPE: native_signal = SIGFPE; break;
+    case Signal::KILL: native_signal = SIGKILL; break;
+    case Signal::USR1: native_signal = SIGUSR1; break;
+    case Signal::SEGV: native_signal = SIGSEGV; break;
+    case Signal::USR2: native_signal = SIGUSR2; break;
+    case Signal::PIPE: native_signal = SIGPIPE; break;
+    case Signal::ALRM: native_signal = SIGALRM; break;
+    case Signal::TERM: native_signal = SIGTERM; break;
+    case Signal::CHLD: native_signal = SIGCHLD; break;
+    case Signal::CONT: native_signal = SIGCONT; break;
+    case Signal::STOP: native_signal = SIGSTOP; break;
+    case Signal::TSTP: native_signal = SIGTSTP; break;
+    case Signal::TTIN: native_signal = SIGTTIN; break;
+    case Signal::TTOU: native_signal = SIGTTOU; break;
+    case Signal::URG: native_signal = SIGURG; break;
+    case Signal::XCPU: native_signal = SIGXCPU; break;
+    case Signal::XFSZ: native_signal = SIGXFSZ; break;
+    case Signal::VTALRM: native_signal = SIGVTALRM; break;
+    case Signal::PROF: native_signal = SIGPROF; break;
+    case Signal::WINCH: native_signal = SIGWINCH; break;
+    case Signal::POLL: native_signal = SIGPOLL; break;
+    case Signal::PWR: native_signal = SIGPWR; break;
+    case Signal::SYS: native_signal = SIGSYS; break;
+    default: return Errno::Invalid;
+    }
+    if (raise(native_signal) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+#else
+    (void)signal;
+    return Errno::NoSys;
+#endif
+}
 ErrorOr<Result<void>> Implementation::impl$sched_yield(Configuration&)
 {
 #if defined(AK_OS_RINOS)
@@ -1154,10 +1834,149 @@ ErrorOr<Result<void>> Implementation::impl$sched_yield(Configuration&)
     return Errno::NoSys;
 #endif
 }
-ErrorOr<Result<FD>> Implementation::impl$sock_accept(Configuration&, FD fd, FDFlags fd_flags) { return Errno::NoSys; }
-ErrorOr<Result<SockRecvResult>> Implementation::impl$sock_recv(Configuration&, FD fd, Pointer<IOVec> ri_data, Size ri_data_len, RIFlags ri_flags) { return Errno::NoSys; }
-ErrorOr<Result<Size>> Implementation::impl$sock_send(Configuration&, FD fd, Pointer<CIOVec> si_data, Size si_data_len, SIFlags si_flags) { return Errno::NoSys; }
-ErrorOr<Result<void>> Implementation::impl$sock_shutdown(Configuration&, FD fd, SDFlags how) { return Errno::NoSys; }
+ErrorOr<Result<FD>> Implementation::impl$sock_accept(Configuration&, FD fd, FDFlags fd_flags)
+{
+    if (!has_right(fd, 1ull << 29))
+        return Errno::NotCapable;
+#if defined(AK_OS_RINOS)
+    constexpr u16 supported_flags = 1u << 2;
+    if ((fd_flags.data.value() & ~supported_flags) != 0)
+        return Errno::Invalid;
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    int accept_flags = SOCK_CLOEXEC;
+    if (fd_flags.bits.nonblock)
+        accept_flags |= SOCK_NONBLOCK;
+    auto accepted_fd = accept4(host_fd, nullptr, nullptr, accept_flags);
+    if (accepted_fd < 0)
+        return errno_value_from_errno(errno);
+    if (static_cast<u64>(accepted_fd) > NumericLimits<u32>::max()) {
+        close(accepted_fd);
+        return Errno::Overflow;
+    }
+    m_fd_map.insert(static_cast<u32>(accepted_fd), static_cast<u32>(accepted_fd));
+    install_rights(static_cast<u32>(accepted_fd), Rights { .data = all_rights_mask }, Rights { .data = all_rights_mask });
+    return FD(static_cast<u32>(accepted_fd));
+#else
+    (void)fd_flags;
+    return Errno::NoSys;
+#endif
+}
+ErrorOr<Result<SockRecvResult>> Implementation::impl$sock_recv(Configuration& configuration, FD fd, Pointer<IOVec> ri_data, Size ri_data_len, RIFlags ri_flags)
+{
+    if (!has_right(fd, 1ull << 1))
+        return Errno::NotCapable;
+#if defined(AK_OS_RINOS)
+    if ((ri_flags.data.value() & ~0x3u) != 0)
+        return Errno::Invalid;
+    auto guest_iovecs = TRY(copy_typed_array(configuration, ri_data, ri_data_len));
+    if (guest_iovecs.size() > 64)
+        return Errno::TooBig;
+    Vector<struct iovec> host_iovecs;
+    TRY(host_iovecs.try_ensure_capacity(guest_iovecs.size()));
+    u64 requested_bytes = 0;
+    for (auto const& iovec : guest_iovecs) {
+        auto slice = TRY(slice_typed_memory(configuration, iovec.buf, iovec.buf_len));
+        if (iovec.buf_len.value() > NumericLimits<u32>::max() - requested_bytes)
+            return Errno::TooBig;
+        requested_bytes += iovec.buf_len.value();
+        struct iovec host_iovec { .iov_base = slice.data(), .iov_len = slice.size() };
+        host_iovecs.unchecked_append(host_iovec);
+    }
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    struct msghdr message {};
+    message.msg_iov = host_iovecs.data();
+    message.msg_iovlen = host_iovecs.size();
+    int native_flags = 0;
+    if (ri_flags.bits.recv_peek)
+        native_flags |= MSG_PEEK;
+    if (ri_flags.bits.recv_waitall)
+        native_flags |= MSG_WAITALL;
+    auto received = recvmsg(host_fd, &message, native_flags);
+    if (received < 0)
+        return errno_value_from_errno(errno);
+    if (static_cast<u64>(received) > requested_bytes)
+        return Errno::IO;
+    ROFlags ro_flags { .data = 0 };
+    ro_flags.bits.recv_data_truncated = (message.msg_flags & MSG_TRUNC) != 0;
+    return Result<SockRecvResult> { SockRecvResult { .size = Size(static_cast<u32>(received)), .roflags = ro_flags } };
+#else
+    (void)configuration;
+    (void)ri_data;
+    (void)ri_data_len;
+    (void)ri_flags;
+    return Errno::NoSys;
+#endif
+}
+ErrorOr<Result<Size>> Implementation::impl$sock_send(Configuration& configuration, FD fd, Pointer<CIOVec> si_data, Size si_data_len, SIFlags si_flags)
+{
+    if (!has_right(fd, 1ull << 6))
+        return Errno::NotCapable;
+#if defined(AK_OS_RINOS)
+    if (si_flags.value() != 0)
+        return Errno::Invalid;
+    auto guest_iovecs = TRY(copy_typed_array(configuration, si_data, si_data_len));
+    if (guest_iovecs.size() > 64)
+        return Errno::TooBig;
+    Vector<struct iovec> host_iovecs;
+    TRY(host_iovecs.try_ensure_capacity(guest_iovecs.size()));
+    u64 requested_bytes = 0;
+    for (auto const& iovec : guest_iovecs) {
+        auto slice = TRY(slice_typed_memory(configuration, iovec.buf, iovec.buf_len));
+        if (iovec.buf_len.value() > NumericLimits<u32>::max() - requested_bytes)
+            return Errno::TooBig;
+        requested_bytes += iovec.buf_len.value();
+        struct iovec host_iovec { .iov_base = const_cast<u8*>(slice.data()), .iov_len = slice.size() };
+        host_iovecs.unchecked_append(host_iovec);
+    }
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    struct msghdr message {};
+    message.msg_iov = host_iovecs.data();
+    message.msg_iovlen = host_iovecs.size();
+    auto sent = sendmsg(host_fd, &message, MSG_NOSIGNAL);
+    if (sent < 0)
+        return errno_value_from_errno(errno);
+    if (static_cast<u64>(sent) > requested_bytes)
+        return Errno::IO;
+    return Size(static_cast<u32>(sent));
+#else
+    (void)configuration;
+    (void)si_data;
+    (void)si_data_len;
+    (void)si_flags;
+    return Errno::NoSys;
+#endif
+}
+ErrorOr<Result<void>> Implementation::impl$sock_shutdown(Configuration&, FD fd, SDFlags how)
+{
+    if (!has_right(fd, 1ull << 28))
+        return Errno::NotCapable;
+#if defined(AK_OS_RINOS)
+    if ((how.data.value() & ~0x3u) != 0 || how.data.value() == 0)
+        return Errno::Invalid;
+    int native_how;
+    switch (how.data.value()) {
+    case 1: native_how = SHUT_RD; break;
+    case 2: native_how = SHUT_WR; break;
+    case 3: native_how = SHUT_RDWR; break;
+    default: return Errno::Invalid;
+    }
+    auto host_fd = resolve_host_fd(fd);
+    if (host_fd < 0)
+        return errno_value_from_errno(errno);
+    if (shutdown(host_fd, native_how) < 0)
+        return errno_value_from_errno(errno);
+    return Result<void> {};
+#else
+    (void)how;
+    return Errno::NoSys;
+#endif
+}
 
 #pragma GCC diagnostic pop
 
