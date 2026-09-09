@@ -13,6 +13,7 @@
 #include <LibMedia/Audio/PlaybackStream.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/AudioBufferRenderData.h>
+#include <LibWeb/WebAudio/AnalyserRenderData.h>
 #include <LibWeb/WebAudio/MediaElementAudioSourceNode.h>
 #include <LibWeb/WebAudio/PeriodicWaveRenderData.h>
 
@@ -100,6 +101,7 @@ private:
         AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
         RefPtr<AudioParamRenderData> gain_automation;
         RefPtr<BiquadFilterRenderData> biquad;
+        RefPtr<AnalyserRenderData> analyser;
         float x1[2] { 0, 0 };
         float x2[2] { 0, 0 };
         float y1[2] { 0, 0 };

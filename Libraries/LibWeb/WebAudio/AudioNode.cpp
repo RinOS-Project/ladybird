@@ -8,6 +8,7 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/WebAudio/AudioDestinationNode.h>
 #include <LibWeb/WebAudio/AudioNode.h>
+#include <LibWeb/WebAudio/AnalyserNode.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/BiquadFilterNode.h>
 #include <LibWeb/WebAudio/ControlMessage.h>
@@ -83,13 +84,9 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     if (input >= destination_node->number_of_inputs()) {
         return WebIDL::IndexSizeError::create(realm(), Utf16String::formatted("Input index '{}' exceeds number of inputs", input));
     }
-    // Connect node's output to destination_node input.
-    m_output_connections.append(output_connection);
-    // Connect destination_node input to node's output.
-    destination_node->m_input_connections.append(input_connection);
-
     RefPtr<AudioParamRenderData> gain_automation;
     RefPtr<BiquadFilterRenderData> biquad;
+    RefPtr<AnalyserRenderData> analyser;
     auto destination_kind = AudioNodeRenderKind::Unknown;
     if (is<GainNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Gain;
@@ -130,6 +127,9 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         auto gain_automation_for_filter = TRY(filter.gain()->create_render_data());
         biquad = TRY(BiquadFilterRenderData::create(filter_kind, filter.frequency()->value(), filter.detune()->value(), filter.q()->value(), filter.gain()->value(),
             move(frequency_automation), move(detune_automation), move(q_automation), move(gain_automation_for_filter)));
+    } else if (is<AnalyserNode>(*destination_node)) {
+        destination_kind = AudioNodeRenderKind::Analyser;
+        analyser = TRY(as<AnalyserNode>(*destination_node).ensure_render_data());
     } else if (is<AudioDestinationNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Destination;
     }
@@ -139,7 +139,13 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         .destination_kind = destination_kind,
         .gain_automation = move(gain_automation),
         .biquad = move(biquad),
+        .analyser = move(analyser),
     });
+
+    // Publish the JS graph only after all render-side snapshots were built.
+    // A failed snapshot must not leave a connection that the renderer cannot consume.
+    m_output_connections.append(output_connection);
+    destination_node->m_input_connections.append(input_connection);
 
     return destination_node;
 }

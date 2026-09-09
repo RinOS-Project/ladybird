@@ -9,6 +9,7 @@
 #include <LibJS/Forward.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/WebAudio/AudioNode.h>
+#include <LibWeb/WebAudio/AnalyserRenderData.h>
 #include <LibWeb/WebIDL/Buffers.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
@@ -44,6 +45,8 @@ public:
     double min_decibels() const { return m_min_decibels; }
     double smoothing_time_constant() const { return m_smoothing_time_constant; }
 
+    ErrorOr<RefPtr<AnalyserRenderData>> ensure_render_data();
+
     WebIDL::ExceptionOr<void> set_fft_size(unsigned long);
     WebIDL::ExceptionOr<void> set_max_decibels(double);
     WebIDL::ExceptionOr<void> set_min_decibels(double);
@@ -62,6 +65,7 @@ private:
     double m_max_decibels;
     double m_min_decibels;
     double m_smoothing_time_constant;
+    RefPtr<AnalyserRenderData> m_render_data;
 
     // https://webaudio.github.io/web-audio-api/#current-frequency-data
     Vector<f32> current_frequency_data();

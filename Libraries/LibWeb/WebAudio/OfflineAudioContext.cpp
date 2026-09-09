@@ -162,6 +162,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
         RefPtr<AudioParamRenderData> gain_automation;
         RefPtr<BiquadFilterRenderData> biquad;
+        RefPtr<AnalyserRenderData> analyser;
         float x1[2] { 0, 0 };
         float x2[2] { 0, 0 };
         float y1[2] { 0, 0 };
@@ -225,6 +226,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .destination_kind = connect.destination_kind,
                     .gain_automation = connect.gain_automation,
                     .biquad = connect.biquad,
+                    .analyser = connect.analyser,
                 });
             },
             [&](DisconnectNode const& disconnect) {
@@ -276,8 +278,18 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                         return output;
                     };
                     self(self, connection.destination_node_id, process(sample, 0), process(right, 1), depth + 1);
+                    }
                 }
-            }
+                if (connection.destination_kind == AudioNodeRenderKind::Analyser && connection.analyser) {
+                    connection.analyser->push_frame(sample, right);
+                    for (auto const& downstream : node_connections) {
+                        if (downstream.source_node_id != connection.destination_node_id
+                            || downstream.destination_kind != AudioNodeRenderKind::Destination)
+                            continue;
+                        for (u32 channel = 0; channel < m_number_of_channels; ++channel)
+                            mixed_samples[channel] += channel == 1 ? right : sample;
+                    }
+                }
         };
 
         for (auto const& source : buffer_sources) {

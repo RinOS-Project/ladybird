@@ -17,6 +17,7 @@ enum class AudioNodeRenderKind : u8 {
     Unknown,
     Gain,
     Biquad,
+    Analyser,
     Destination,
 };
 

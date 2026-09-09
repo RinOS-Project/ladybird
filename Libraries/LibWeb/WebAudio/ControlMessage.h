@@ -10,6 +10,7 @@
 #include <AK/RefPtr.h>
 #include <AK/Variant.h>
 #include <LibWeb/WebAudio/AudioBufferRenderData.h>
+#include <LibWeb/WebAudio/AnalyserRenderData.h>
 #include <LibWeb/WebAudio/AudioParamRenderData.h>
 #include <LibWeb/WebAudio/BiquadFilterRenderData.h>
 #include <LibWeb/WebAudio/PeriodicWaveRenderData.h>
@@ -66,6 +67,7 @@ struct ConnectNode {
     AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
     RefPtr<AudioParamRenderData> gain_automation;
     RefPtr<BiquadFilterRenderData> biquad;
+    RefPtr<AnalyserRenderData> analyser;
 };
 
 struct DisconnectNode {

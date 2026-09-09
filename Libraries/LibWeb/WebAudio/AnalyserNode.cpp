@@ -31,6 +31,13 @@ AnalyserNode::AnalyserNode(JS::Realm& realm, GC::Ref<BaseAudioContext> context, 
 
 AnalyserNode::~AnalyserNode() = default;
 
+ErrorOr<RefPtr<AnalyserRenderData>> AnalyserNode::ensure_render_data()
+{
+    if (!m_render_data || m_render_data->frame_count() != m_fft_size)
+        m_render_data = TRY(AnalyserRenderData::create(m_fft_size));
+    return m_render_data;
+}
+
 WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> AnalyserNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, AnalyserOptions const& options)
 {
     return construct_impl(realm, context, options);
@@ -46,8 +53,11 @@ Vector<f32> AnalyserNode::current_time_domain_data()
     // FIXME: definition of "input signal" above unclear
     //        need to implement up/down mixing somewhere
     //        https://webaudio.github.io/web-audio-api/#channel-up-mixing-and-down-mixing
+    if (m_render_data)
+        return m_render_data->snapshot();
     Vector<f32> result;
     result.resize(m_fft_size);
+    result.fill(0.0f);
     return result;
 }
 
@@ -321,11 +331,14 @@ WebIDL::ExceptionOr<void> AnalyserNode::set_fft_size(unsigned long fft_size)
     if (fft_size < 32 || fft_size > 32768 || !is_power_of_two(fft_size))
         return WebIDL::IndexSizeError::create(realm(), "Analyser node fftSize not a power of 2 between 32 and 32768"_utf16);
 
+    auto render_data = TRY(AnalyserRenderData::create(fft_size));
+
     // reset previous block to 0s
     m_previous_block = Vector<f32>();
     m_previous_block.resize(fft_size);
 
     m_fft_size = fft_size;
+    m_render_data = move(render_data);
 
     // FIXME: Check this:
     // Note that increasing fftSize does mean that the current time-domain data must be expanded

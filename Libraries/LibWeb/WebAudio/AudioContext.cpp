@@ -507,6 +507,7 @@ void AudioContext::render_audio(Span<float> buffer)
                     .destination_kind = connect.destination_kind,
                     .gain_automation = connect.gain_automation,
                     .biquad = connect.biquad,
+                    .analyser = connect.analyser,
                 });
             },
             [&](DisconnectNode const& disconnect) {
@@ -553,6 +554,11 @@ void AudioContext::render_audio(Span<float> buffer)
                         return output;
                     };
                     self(self, connection.destination_node_id, process(source_left, 0), process(source_right, 1), depth + 1);
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::Analyser && connection.analyser) {
+                    connection.analyser->push_frame(source_left, source_right);
+                    self(self, connection.destination_node_id, source_left, source_right, depth + 1);
                 }
             }
         };
