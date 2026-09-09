@@ -50,7 +50,7 @@ CacheStorage::CacheStorage(JS::Realm& realm)
         auto marker = m_storage_bottle->get(cache_name);
         if (!marker.has_value() || marker.value() != cache_storage_marker)
             continue;
-        m_caches.set(cache_name, Cache::create(realm, cache_name));
+        m_caches.set(cache_name, Cache::create(realm, cache_name, m_storage_bottle));
     }
 }
 
@@ -78,7 +78,7 @@ GC::Ref<WebIDL::Promise> CacheStorage::open(String const& cache_name)
     }
 
     auto cache = m_caches.ensure(cache_name, [this, &cache_name] {
-        return Cache::create(realm(), cache_name);
+        return Cache::create(realm(), cache_name, m_storage_bottle);
     });
     return WebIDL::create_resolved_promise(realm(), cache);
 }
@@ -92,6 +92,8 @@ GC::Ref<WebIDL::Promise> CacheStorage::has(String const& cache_name)
 // https://w3c.github.io/ServiceWorker/#cache-storage-delete
 GC::Ref<WebIDL::Promise> CacheStorage::delete_(String const& cache_name)
 {
+    if (auto cache = m_caches.get(cache_name); cache.has_value())
+        cache.value()->remove_persisted_entries();
     const bool removed = m_caches.remove(cache_name);
     if (removed && m_storage_bottle)
         m_storage_bottle->remove(cache_name);

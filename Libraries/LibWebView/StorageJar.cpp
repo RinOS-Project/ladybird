@@ -14,6 +14,11 @@ namespace WebView {
 // Quota size is specified in https://storage.spec.whatwg.org/#registered-storage-endpoints
 static constexpr size_t LOCAL_STORAGE_QUOTA = 5 * MiB;
 
+static constexpr size_t quota_for_endpoint(StorageEndpointType endpoint)
+{
+    return endpoint == StorageEndpointType::Caches ? 64 * MiB : LOCAL_STORAGE_QUOTA;
+}
+
 // Increment this version when needing to alter the WebStorage schema.
 static constexpr u32 WEB_STORAGE_VERSION = 2u;
 
@@ -180,7 +185,7 @@ StorageSetResult StorageJar::TransientStorage::set_item(StorageLocation const& k
     }
 
     auto new_size = key.bottle_key.bytes().size() + value.bytes().size();
-    if (current_size + new_size > LOCAL_STORAGE_QUOTA)
+    if (current_size + new_size > quota_for_endpoint(key.storage_endpoint))
         return StorageOperationError::QuotaExceededError;
 
     m_storage_items.set(key, { value, UnixDateTime::now() });
@@ -279,7 +284,7 @@ StorageSetResult StorageJar::PersistedStorage::set_item(StorageLocation const& k
         key.bottle_key);
 
     auto new_size = key.bottle_key.bytes().size() + value.bytes().size();
-    if (current_size + new_size > LOCAL_STORAGE_QUOTA)
+    if (current_size + new_size > quota_for_endpoint(key.storage_endpoint))
         return StorageOperationError::QuotaExceededError;
 
     database.execute_statement(

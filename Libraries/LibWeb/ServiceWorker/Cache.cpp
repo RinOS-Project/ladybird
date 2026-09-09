@@ -5,25 +5,120 @@
  */
 
 #include <AK/TypeCasts.h>
+#include <AK/ByteBuffer.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Bindings/CachePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Fetch/BodyInit.h>
 #include <LibWeb/Fetch/FetchMethod.h>
 #include <LibWeb/Fetch/Infrastructure/URL.h>
 #include <LibWeb/Fetch/Request.h>
 #include <LibWeb/Fetch/Response.h>
 #include <LibWeb/ServiceWorker/Cache.h>
+#include <LibWeb/WebIDL/AbstractOperations.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
+#include <LibWeb/WebIDL/QuotaExceededError.h>
+#include <LibWebView/StorageSetResult.h>
 
 namespace Web::ServiceWorker {
 
 GC_DEFINE_ALLOCATOR(Cache);
 
-Cache::Cache(JS::Realm& realm, String name)
+static constexpr StringView cache_entry_prefix = "RIN-CACHE-ENTRY-V2:"sv;
+
+static char hex_digit(u8 value)
+{
+    return value < 10 ? static_cast<char>('0' + value) : static_cast<char>('a' + (value - 10));
+}
+
+static String hex_encode(ReadonlyBytes bytes)
+{
+    StringBuilder builder;
+    builder.ensure_capacity(bytes.size() * 2);
+    for (auto byte : bytes) {
+        builder.append(hex_digit(byte >> 4));
+        builder.append(hex_digit(byte & 0xf));
+    }
+    return builder.to_string_without_validation();
+}
+
+static Optional<ByteBuffer> hex_decode(StringView encoded)
+{
+    if (encoded.length() % 2 != 0)
+        return {};
+    auto bytes = ByteBuffer::create_zeroed(encoded.length() / 2);
+    if (bytes.is_error())
+        return {};
+    auto buffer = bytes.release_value();
+    auto nibble = [](char c) -> Optional<u8> {
+        if (c >= '0' && c <= '9')
+            return static_cast<u8>(c - '0');
+        if (c >= 'a' && c <= 'f')
+            return static_cast<u8>(c - 'a' + 10);
+        if (c >= 'A' && c <= 'F')
+            return static_cast<u8>(c - 'A' + 10);
+        return {};
+    };
+    for (size_t i = 0; i < buffer.size(); ++i) {
+        auto high = nibble(encoded[i * 2]);
+        auto low = nibble(encoded[i * 2 + 1]);
+        if (!high.has_value() || !low.has_value())
+            return {};
+        buffer[i] = static_cast<u8>((*high << 4) | *low);
+    }
+    return buffer;
+}
+
+static String encode_headers(HTTP::HeaderList const& headers)
+{
+    StringBuilder encoded;
+    bool first = true;
+    for (auto const& header : headers.headers()) {
+        if (!first)
+            encoded.append(';');
+        first = false;
+        encoded.append(hex_encode(header.name.bytes()));
+        encoded.append('=');
+        encoded.append(hex_encode(header.value.bytes()));
+    }
+    return encoded.to_string_without_validation();
+}
+
+static bool decode_headers(StringView encoded, HTTP::HeaderList& headers)
+{
+    for (auto item : encoded.split_view(';', SplitBehavior::KeepEmpty)) {
+        if (item.is_empty())
+            continue;
+        auto separator = item.find_byte_offset('=');
+        if (!separator.has_value())
+            return false;
+        auto name = hex_decode(item.substring_view(0, separator.value()));
+        auto value = hex_decode(item.substring_view(separator.value() + 1));
+        if (!name.has_value() || !value.has_value())
+            return false;
+        headers.append({ ByteString(name->bytes()), ByteString(value->bytes()) });
+    }
+    return true;
+}
+
+static Optional<String> decode_string(StringView encoded)
+{
+    auto bytes = hex_decode(encoded);
+    if (!bytes.has_value())
+        return {};
+    auto string = String::from_utf8(bytes->bytes());
+    if (string.is_error())
+        return {};
+    return string.release_value();
+}
+
+Cache::Cache(JS::Realm& realm, String name, GC::Ptr<StorageAPI::StorageBottle> storage_bottle)
     : Bindings::PlatformObject(realm)
     , m_name(move(name))
+    , m_storage_bottle(storage_bottle)
 {
+    restore_entries();
 }
 
 void Cache::initialize(JS::Realm& realm)
@@ -35,6 +130,7 @@ void Cache::initialize(JS::Realm& realm)
 void Cache::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
+    visitor.visit(m_storage_bottle);
     for (auto& entry : m_entries) {
         visitor.visit(entry.request);
         visitor.visit(entry.response);
@@ -57,6 +153,175 @@ String Cache::match_url(String const& url, bool ignore_search)
     if (!question_mark.has_value())
         return url;
     return MUST(url.substring_from_byte_offset(0, question_mark.value()));
+}
+
+String Cache::storage_key_for(Fetch::Request const& request) const
+{
+    StringBuilder key;
+    key.append(cache_entry_prefix);
+    key.append(hex_encode(m_name.bytes()));
+    key.append(':');
+    key.append(hex_encode(request.url().bytes()));
+    return key.to_string_without_validation();
+}
+
+Optional<String> Cache::serialize_entry(Entry const& entry, ReadonlyBytes body) const
+{
+    StringBuilder value;
+    value.append("RIN-CACHE-ENTRY-V2"sv);
+    value.append('|');
+    value.append(hex_encode(entry.request->method().bytes()));
+    value.append('|');
+    value.append(hex_encode(entry.request->url().bytes()));
+    value.append('|');
+    value.append(String::number(static_cast<u8>(entry.response->response()->type())));
+    value.append('|');
+    value.append(String::number(entry.response->status()));
+    value.append('|');
+    value.append(hex_encode(entry.response->status_text().bytes()));
+    value.append('|');
+    value.append(entry.response->body_impl() ? '1' : '0');
+    value.append('|');
+    value.append(encode_headers(*entry.request->request()->header_list()));
+    value.append('|');
+    value.append(encode_headers(*entry.response->response()->header_list()));
+    value.append('|');
+    value.append(hex_encode(body));
+    return value.to_string_without_validation();
+}
+
+Optional<Cache::Entry> Cache::deserialize_entry(String const& key, String const& value)
+{
+    if (!key.bytes_as_string_view().starts_with(cache_entry_prefix))
+        return {};
+    auto fields = value.bytes_as_string_view().split_view('|', SplitBehavior::KeepEmpty);
+    if (fields.size() != 10 || fields[0] != "RIN-CACHE-ENTRY-V2"sv)
+        return {};
+
+    auto method = decode_string(fields[1]);
+    auto url = decode_string(fields[2]);
+    auto status = fields[4].to_number<u16>();
+    auto status_text = hex_decode(fields[5]);
+    auto body = hex_decode(fields[9]);
+    auto body_present = fields[6] == "1"sv;
+    auto response_type = fields[3].to_number<u8>();
+    if (!method.has_value() || !url.has_value() || !status.has_value() || !status_text.has_value() || !body.has_value() || !response_type.has_value() || *response_type > static_cast<u8>(Fetch::Infrastructure::Response::Type::OpaqueRedirect) || (*response_type == static_cast<u8>(Fetch::Infrastructure::Response::Type::Error)) || (fields[6] != "0"sv && fields[6] != "1"sv))
+        return {};
+    if (*status > 599)
+        return {};
+
+    Fetch::RequestInit request_init;
+    request_init.method = method.release_value();
+    auto request = Fetch::Request::construct_impl(realm(), url.release_value(), request_init);
+    if (request.is_exception())
+        return {};
+    if (!decode_headers(fields[7], *request.value()->request()->header_list()))
+        return {};
+
+    auto response = Fetch::Response::create(realm(), Fetch::Infrastructure::Response::create(realm().vm()), Fetch::Headers::Guard::Response);
+    response->response()->set_type(static_cast<Fetch::Infrastructure::Response::Type>(*response_type));
+    response->response()->set_status(*status);
+    response->response()->set_status_message(ByteString(status_text->bytes()));
+    if (!decode_headers(fields[8], *response->response()->header_list()))
+        return {};
+    if (body_present) {
+        auto extracted = Fetch::extract_body(realm(), Fetch::BodyInitOrReadableBytes { body->bytes() });
+        if (extracted.is_exception())
+            return {};
+        response->response()->set_body(extracted.value().body);
+    }
+    return Entry { request.release_value(), response };
+}
+
+bool Cache::store_serialized_entry(String const& key, String const& value)
+{
+    if (!m_storage_bottle)
+        return true;
+
+    auto result = m_storage_bottle->set(key, value);
+    if (!result.has<WebView::StorageOperationError>())
+        return true;
+
+    // Cache endpoint storage is quota-bound in the browser owner. Evict the
+    // oldest entries from this cache and retry, preserving the operation's
+    // failure-atomic behavior when even an empty cache cannot fit the value.
+    while (!m_entries.is_empty()) {
+        auto victim_key = storage_key_for(*m_entries[0].request);
+        m_storage_bottle->remove(victim_key);
+        m_entries.remove(0);
+        result = m_storage_bottle->set(key, value);
+        if (!result.has<WebView::StorageOperationError>())
+            return true;
+    }
+    return false;
+}
+
+void Cache::restore_entries()
+{
+    if (!m_storage_bottle)
+        return;
+    for (auto const& key : m_storage_bottle->keys()) {
+        if (!key.bytes_as_string_view().starts_with(cache_entry_prefix))
+            continue;
+        auto value = m_storage_bottle->get(key);
+        if (!value.has_value())
+            continue;
+        auto entry = deserialize_entry(key, value.value());
+        if (entry.has_value())
+            m_entries.append(entry.release_value());
+        else
+            m_storage_bottle->remove(key);
+    }
+}
+
+void Cache::remove_persisted_entries()
+{
+    if (!m_storage_bottle)
+        return;
+    StringBuilder prefix;
+    prefix.append(cache_entry_prefix);
+    prefix.append(hex_encode(m_name.bytes()));
+    prefix.append(':');
+    auto prefix_string = prefix.to_string_without_validation();
+    for (auto const& key : m_storage_bottle->keys()) {
+        if (key.bytes_as_string_view().starts_with(prefix_string.bytes_as_string_view()))
+            m_storage_bottle->remove(key);
+    }
+}
+
+GC::Ref<WebIDL::Promise> Cache::persist_entry(Entry entry, GC::Ref<Fetch::Response> response)
+{
+    auto promise = WebIDL::create_promise(realm());
+    auto bytes_promise = response->bytes();
+    if (bytes_promise.is_exception())
+        return WebIDL::create_rejected_promise_from_exception(realm(), bytes_promise.release_error());
+    WebIDL::react_to_promise(
+        *bytes_promise.value(),
+        GC::create_function(realm().heap(), [this, promise, entry = move(entry)](JS::Value value) mutable -> WebIDL::ExceptionOr<JS::Value> {
+            if (!value.is_object()) {
+                WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache response body is not a byte sequence"sv));
+                return JS::js_undefined();
+            }
+            auto bytes = WebIDL::get_buffer_source_copy(value.as_object());
+            if (bytes.is_error()) {
+                WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache response body could not be read"sv));
+                return JS::js_undefined();
+            }
+            auto key = storage_key_for(*entry.request);
+            auto serialized = serialize_entry(entry, bytes.value().bytes());
+            if (!serialized.has_value() || !store_serialized_entry(key, serialized.value())) {
+                WebIDL::reject_promise(realm(), promise, WebIDL::QuotaExceededError::create(realm(), "Cache storage quota exceeded"_utf16));
+                return JS::js_undefined();
+            }
+            commit_entry(move(entry));
+            WebIDL::resolve_promise(realm(), promise);
+            return JS::js_undefined();
+        }),
+        GC::create_function(realm().heap(), [this, promise](JS::Value reason) -> WebIDL::ExceptionOr<JS::Value> {
+            WebIDL::reject_promise(realm(), promise, reason);
+            return JS::js_undefined();
+        }));
+    return promise;
 }
 
 static bool is_cacheable_request(Fetch::Request const& request)
@@ -230,13 +495,30 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
                 }
                 staged_entries.append(staged.release_value());
             }
-            // Publish the complete batch only after every request/response
-            // clone succeeded. A failed clone therefore cannot leave a
-            // partially committed addAll() result in the cache.
-            m_entries.ensure_capacity(m_entries.size() + staged_entries.size());
-            for (auto& entry : staged_entries)
-                commit_entry(move(entry));
-            WebIDL::resolve_promise(realm(), promise);
+            // Persist every cloned entry before resolving addAll(). Clones
+            // are still staged until all fetches and response cloning have
+            // succeeded, so malformed input and non-cacheable responses do
+            // not publish a partial batch.
+            Vector<GC::Ref<WebIDL::Promise>> persist_promises;
+            persist_promises.ensure_capacity(staged_entries.size());
+            for (auto& entry : staged_entries) {
+                auto persistence_response = entry.response->clone();
+                if (persistence_response.is_exception()) {
+                    auto completion = Bindings::exception_to_throw_completion(realm().vm(), persistence_response.release_error());
+                    WebIDL::reject_promise(realm(), promise, completion.release_value());
+                    return;
+                }
+                persist_promises.append(persist_entry(move(entry), persistence_response.release_value()));
+            }
+            WebIDL::wait_for_all(
+                realm(),
+                persist_promises,
+                [this, promise](Vector<JS::Value> const&) {
+                    WebIDL::resolve_promise(realm(), promise);
+                },
+                [this, promise](JS::Value reason) {
+                    WebIDL::reject_promise(realm(), promise, reason);
+                });
         },
         [this, promise](JS::Value reason) {
             WebIDL::reject_promise(realm(), promise, reason);
@@ -264,8 +546,10 @@ GC::Ref<WebIDL::Promise> Cache::put_normalized(GC::Ref<Fetch::Request> request, 
     auto entry = clone_entry(request, *response);
     if (entry.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), entry.release_error());
-    commit_entry(entry.release_value());
-    return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
+    auto persistence_response = response->clone();
+    if (persistence_response.is_exception())
+        return WebIDL::create_rejected_promise_from_exception(realm(), persistence_response.release_error());
+    return persist_entry(entry.release_value(), persistence_response.release_value());
 }
 
 WebIDL::ExceptionOr<Cache::Entry> Cache::clone_entry(GC::Ref<Fetch::Request> request, Fetch::Response const& response) const
@@ -295,7 +579,17 @@ GC::Ref<WebIDL::Promise> Cache::delete_(Fetch::RequestInfo const& input, CacheQu
     auto request = normalize_request(input);
     if (request.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
-    auto removed = m_entries.remove_all_matching([&](auto const& entry) { return matches(entry, *request.value(), options); });
+    Vector<String> removed_keys;
+    auto removed = m_entries.remove_all_matching([&](auto const& entry) {
+        if (!matches(entry, *request.value(), options))
+            return false;
+        removed_keys.append(storage_key_for(*entry.request));
+        return true;
+    });
+    if (m_storage_bottle) {
+        for (auto const& key : removed_keys)
+            m_storage_bottle->remove(key);
+    }
     return WebIDL::create_resolved_promise(realm(), JS::Value(removed));
 }
 
@@ -321,9 +615,9 @@ GC::Ref<WebIDL::Promise> Cache::keys(Optional<Fetch::RequestInfo> const& input, 
     return WebIDL::create_resolved_promise(realm(), JS::Array::create_from(realm(), requests));
 }
 
-GC::Ref<Cache> Cache::create(JS::Realm& realm, String name)
+GC::Ref<Cache> Cache::create(JS::Realm& realm, String name, GC::Ptr<StorageAPI::StorageBottle> storage_bottle)
 {
-    return realm.create<Cache>(realm, move(name));
+    return realm.create<Cache>(realm, move(name), storage_bottle);
 }
 
 }

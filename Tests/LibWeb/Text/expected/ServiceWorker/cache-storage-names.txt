@@ -1,5 +1,8 @@
 opened: rinos-cache
 has: true
 keys: rinos-cache
+entry-status: 201
+entry-header: durable
+entry-body: 0,255,65
 deleted: true
 has-after: false

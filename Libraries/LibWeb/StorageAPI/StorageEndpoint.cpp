@@ -13,7 +13,7 @@ ReadonlySpan<StorageEndpoint> StorageEndpoint::registered_endpoints()
 {
     // https://storage.spec.whatwg.org/#registered-storage-endpoints
     static auto const endpoints = to_array<StorageEndpoint>({
-        { StorageEndpointType::Caches, StorageType::Local, {} },
+        { StorageEndpointType::Caches, StorageType::Local, CACHES_QUOTA },
         { StorageEndpointType::IndexedDB, StorageType::Local, {} },
         { StorageEndpointType::LocalStorage, StorageType::Local, LOCAL_STORAGE_QUOTA },
         { StorageEndpointType::ServiceWorkerRegistrations, StorageType::Local, {} },

@@ -30,6 +30,10 @@ enum class StorageEndpointType : u8 {
 // standard, most notably storage bottles, to keep track of its storage needs.
 struct StorageEndpoint {
     static constexpr u64 LOCAL_STORAGE_QUOTA = 5 * MiB;
+    // CacheStorage uses the same owner-enforced byte accounting as the
+    // browser cache policy, while keeping its quota independent from
+    // localStorage and other endpoints.
+    static constexpr u64 CACHES_QUOTA = 64 * MiB;
     static constexpr u64 SESSION_STORAGE_QUOTA = 5 * MiB;
 
     // https://storage.spec.whatwg.org/#storage-endpoint-identifier

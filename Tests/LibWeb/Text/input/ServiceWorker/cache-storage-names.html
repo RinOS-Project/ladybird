@@ -8,6 +8,16 @@
             println(`opened: ${cache.name}`);
             println(`has: ${await caches.has("rinos-cache")}`);
             println(`keys: ${(await caches.keys()).join(",")}`);
+            await cache.put("https://example.com/cache-entry", new Response(new Uint8Array([0, 255, 65]), {
+                status: 201,
+                statusText: "Created",
+                headers: { "X-RinOS-Cache": "durable" },
+            }));
+            const cached = await cache.match("https://example.com/cache-entry");
+            const cachedBytes = new Uint8Array(await cached.arrayBuffer());
+            println(`entry-status: ${cached.status}`);
+            println(`entry-header: ${cached.headers.get("X-RinOS-Cache")}`);
+            println(`entry-body: ${Array.from(cachedBytes).join(",")}`);
             println(`deleted: ${await caches.delete("rinos-cache")}`);
             println(`has-after: ${await caches.has("rinos-cache")}`);
             done();

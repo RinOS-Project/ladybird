@@ -10,6 +10,7 @@
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Fetch/Request.h>
 #include <LibWeb/Fetch/Response.h>
+#include <LibWeb/StorageAPI/StorageBottle.h>
 #include <LibWeb/WebIDL/Promise.h>
 
 namespace Web::ServiceWorker {
@@ -30,9 +31,10 @@ class Cache final : public Bindings::PlatformObject {
     GC_DECLARE_ALLOCATOR(Cache);
 
 public:
-    static GC::Ref<Cache> create(JS::Realm&, String name);
+    static GC::Ref<Cache> create(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle> = {});
 
     String const& name() const { return m_name; }
+    void remove_persisted_entries();
 
     GC::Ref<WebIDL::Promise> match(Fetch::RequestInfo const&, CacheQueryOptions const& = {});
     GC::Ref<WebIDL::Promise> match_all(Optional<Fetch::RequestInfo> const&, CacheQueryOptions const& = {});
@@ -48,19 +50,26 @@ private:
         GC::Ref<Fetch::Response> response;
     };
 
-    Cache(JS::Realm&, String name);
+    Cache(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle>);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     WebIDL::ExceptionOr<GC::Ref<Fetch::Request>> normalize_request(Fetch::RequestInfo const&) const;
     WebIDL::ExceptionOr<Entry> clone_entry(GC::Ref<Fetch::Request>, Fetch::Response const&) const;
+    String storage_key_for(Fetch::Request const&) const;
+    Optional<String> serialize_entry(Entry const&, ReadonlyBytes) const;
+    Optional<Entry> deserialize_entry(String const& key, String const& value);
+    bool store_serialized_entry(String const& key, String const& value);
+    GC::Ref<WebIDL::Promise> persist_entry(Entry, GC::Ref<Fetch::Response>);
+    void restore_entries();
     void commit_entry(Entry);
     GC::Ref<WebIDL::Promise> put_normalized(GC::Ref<Fetch::Request>, GC::Ref<Fetch::Response>);
     bool matches(Entry const&, Fetch::Request const&, CacheQueryOptions const&) const;
     static String match_url(String const&, bool ignore_search);
 
     String m_name;
+    GC::Ptr<StorageAPI::StorageBottle> m_storage_bottle;
     Vector<Entry> m_entries;
 };
 
