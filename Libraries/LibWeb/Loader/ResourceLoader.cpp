@@ -67,8 +67,8 @@ ResourceLoader::ResourceLoader(GC::Heap& heap, NonnullRefPtr<Requests::RequestCl
 void ResourceLoader::set_client(NonnullRefPtr<Requests::RequestClient> request_client)
 {
     m_request_client = move(request_client);
-    if (m_client_certificate_provider)
-        m_request_client->set_client_certificate_provider(
+    if (m_client_certificate_provider) {
+        Requests::RequestClient::ClientCertificateProvider provider(
             [this](URL::URL const& url, u64& connection_generation,
                    ByteBuffer& certificate_list,
                    ByteBuffer& signer_capability) {
@@ -78,6 +78,8 @@ void ResourceLoader::set_client(NonnullRefPtr<Requests::RequestClient> request_c
                     url, connection_generation, certificate_list,
                     signer_capability);
             });
+        m_request_client->set_client_certificate_provider(move(provider));
+    }
     m_request_client->on_request_server_died = [this]() {
         m_request_client = nullptr;
     };
@@ -92,8 +94,8 @@ void ResourceLoader::set_client_certificate_provider(
         m_client_certificate_provider = adopt_own_if_nonnull(new (nothrow)
             Requests::RequestClient::ClientCertificateProvider(move(provider)));
     }
-    if (m_request_client)
-        m_request_client->set_client_certificate_provider(
+    if (m_request_client) {
+        Requests::RequestClient::ClientCertificateProvider forwarding_provider(
             [this](URL::URL const& url, u64& connection_generation,
                    ByteBuffer& certificate_list,
                    ByteBuffer& signer_capability) {
@@ -103,6 +105,9 @@ void ResourceLoader::set_client_certificate_provider(
                     url, connection_generation, certificate_list,
                     signer_capability);
             });
+        m_request_client->set_client_certificate_provider(
+            move(forwarding_provider));
+    }
 }
 
 void ResourceLoader::prefetch_dns(URL::URL const& url)
