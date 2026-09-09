@@ -41,8 +41,7 @@ static char hex_digit(u8 value)
 
 static String hex_encode(ReadonlyBytes bytes)
 {
-    StringBuilder builder;
-    builder.ensure_capacity(bytes.size() * 2);
+    StringBuilder builder(bytes.size() * 2);
     for (auto byte : bytes) {
         builder.append(hex_digit(byte >> 4));
         builder.append(hex_digit(byte & 0xf));
@@ -99,7 +98,7 @@ static bool decode_headers(StringView encoded, HTTP::HeaderList& headers)
     for (auto item : encoded.split_view(';', SplitBehavior::KeepEmpty)) {
         if (item.is_empty())
             continue;
-        auto separator = item.find_byte_offset('=');
+        auto separator = item.find('=');
         if (!separator.has_value())
             return false;
         auto name = hex_decode(item.substring_view(0, separator.value()));
@@ -233,7 +232,8 @@ String Cache::storage_key_for(Fetch::Request const& request) const
     StringBuilder key;
     key.append(cache_entry_prefix);
     auto encoded_name = hex_encode(m_name.bytes());
-    auto encoded_url = hex_encode(request.url().bytes());
+    auto request_url = request.url();
+    auto encoded_url = hex_encode(request_url.bytes());
     key.append(encoded_name);
     key.append(':');
     key.append(encoded_url);
@@ -245,9 +245,12 @@ Optional<String> Cache::serialize_entry(Entry const& entry, ReadonlyBytes body) 
     StringBuilder value;
     value.append("RIN-CACHE-ENTRY-V2"sv);
     value.append('|');
-    auto encoded_method = hex_encode(entry.request->method().bytes());
-    auto encoded_url = hex_encode(entry.request->url().bytes());
-    auto encoded_status_text = hex_encode(entry.response->status_text().bytes());
+    auto method = entry.request->method();
+    auto url = entry.request->url();
+    auto status_text = entry.response->status_text();
+    auto encoded_method = hex_encode(method.bytes());
+    auto encoded_url = hex_encode(url.bytes());
+    auto encoded_status_text = hex_encode(status_text.bytes());
     auto encoded_request_headers = encode_headers(*entry.request->request()->header_list());
     auto encoded_response_headers = encode_headers(*entry.response->response()->header_list());
     auto encoded_body = hex_encode(body);
