@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Vector.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Fetch/Request.h>

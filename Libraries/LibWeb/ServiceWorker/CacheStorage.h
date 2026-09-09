@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/HashMap.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/WebIDL/Promise.h>
