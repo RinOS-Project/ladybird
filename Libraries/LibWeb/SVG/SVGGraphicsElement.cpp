@@ -48,8 +48,11 @@ void SVGGraphicsElement::attribute_changed(FlyString const& name, Optional<Strin
 
     if (name == "transform"sv) {
         auto transform_list = AttributeParser::parse_transform(value.value_or(String {}));
-        if (transform_list.has_value())
+        m_transform_attribute_present = transform_list.has_value() && value.has_value();
+        if (m_transform_attribute_present)
             m_transform = transform_from_transform_list(*transform_list);
+        else
+            m_transform = {};
         set_needs_layout_update(DOM::SetNeedsLayoutReason::SVGGraphicsElementTransformChange);
     }
 }
@@ -385,8 +388,13 @@ WebIDL::ExceptionOr<GC::Ref<Geometry::DOMRect>> SVGGraphicsElement::get_b_box(Op
 
 GC::Ref<SVGAnimatedTransformList> SVGGraphicsElement::transform() const
 {
-    dbgln("(STUBBED) SVGGraphicsElement::transform(). Called on: {}", debug_description());
-    auto base_val = SVGTransformList::create(realm(), ReadOnlyList::Yes);
+    Vector<GC::Ref<SVGTransform>> transforms;
+    if (m_transform_attribute_present) {
+        auto transform = SVGTransform::create(realm());
+        transform->set_matrix(m_transform.a(), m_transform.b(), m_transform.c(), m_transform.d(), m_transform.e(), m_transform.f());
+        transforms.append(transform);
+    }
+    auto base_val = SVGTransformList::create(realm(), move(transforms), ReadOnlyList::Yes);
     auto anim_val = SVGTransformList::create(realm(), ReadOnlyList::Yes);
     return SVGAnimatedTransformList::create(realm(), base_val, anim_val);
 }

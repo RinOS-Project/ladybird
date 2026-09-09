@@ -102,4 +102,13 @@ void SVGTransform::set_skew_y(float angle)
     m_angle = angle;
 }
 
+void SVGTransform::set_matrix(float a, float b, float c, float d, float e, float f)
+{
+    if (!isfinite(a) || !isfinite(b) || !isfinite(c) || !isfinite(d) || !isfinite(e) || !isfinite(f))
+        return;
+    m_matrix = Gfx::AffineTransform { a, b, c, d, e, f };
+    m_type = Type::Matrix;
+    m_angle = 0.0f;
+}
+
 }

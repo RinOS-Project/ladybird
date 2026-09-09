@@ -90,6 +90,7 @@ protected:
     Optional<Painting::PaintStyle> svg_paint_computed_value_to_gfx_paint_style(SVGPaintContext const& paint_context, Optional<CSS::SVGPaint> const& paint_value, DisplayListRecordingContext* = nullptr) const;
 
     Gfx::AffineTransform m_transform = {};
+    bool m_transform_attribute_present { false };
 
     GC::Ptr<DOM::Element> resolve_url_to_element(CSS::URL const& url) const;
 
