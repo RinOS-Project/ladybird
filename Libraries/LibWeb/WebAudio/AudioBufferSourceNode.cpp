@@ -155,6 +155,8 @@ WebIDL::ExceptionOr<void> AudioBufferSourceNode::start(Optional<double> when, Op
         .detune = m_detune->value(),
         .playback_rate_automation = move(playback_rate_automation),
         .detune_automation = move(detune_automation),
+        .playback_rate_param_id = m_playback_rate->param_id(),
+        .detune_param_id = m_detune->param_id(),
         .loop = m_loop,
         .loop_start = m_loop_start,
         .loop_end = m_loop_end,

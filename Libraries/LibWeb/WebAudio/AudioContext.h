@@ -80,6 +80,8 @@ private:
         float detune { 0.0f };
         RefPtr<AudioParamRenderData> playback_rate_automation;
         RefPtr<AudioParamRenderData> detune_automation;
+        AudioParamID playback_rate_param_id { 0 };
+        AudioParamID detune_param_id { 0 };
         bool loop { false };
         double loop_start { 0.0 };
         double loop_end { 0.0 };
@@ -92,6 +94,8 @@ private:
         float detune { 0.0f };
         RefPtr<AudioParamRenderData> frequency_automation;
         RefPtr<AudioParamRenderData> detune_automation;
+        AudioParamID frequency_param_id { 0 };
+        AudioParamID detune_param_id { 0 };
         RefPtr<PeriodicWaveRenderData> periodic_wave;
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
     };
@@ -100,7 +104,12 @@ private:
         NodeID destination_node_id { 0 };
         AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
         RefPtr<AudioParamRenderData> gain_automation;
+        AudioParamID gain_param_id { 0 };
         RefPtr<BiquadFilterRenderData> biquad;
+        AudioParamID biquad_frequency_param_id { 0 };
+        AudioParamID biquad_detune_param_id { 0 };
+        AudioParamID biquad_q_param_id { 0 };
+        AudioParamID biquad_gain_param_id { 0 };
         RefPtr<AnalyserRenderData> analyser;
         float x1[2] { 0, 0 };
         float x2[2] { 0, 0 };

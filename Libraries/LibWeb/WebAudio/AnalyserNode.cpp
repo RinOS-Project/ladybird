@@ -177,9 +177,10 @@ Vector<f32> AnalyserNode::conversion_to_dB(Vector<f32> const& X_hat) const
 {
     Vector<f32> result;
     result.ensure_capacity(X_hat.size());
-    // FIXME: Naive
     for (auto x : X_hat)
-        result.unchecked_append(20.0f * AK::log(x));
+        result.unchecked_append(x > 0.0f && isfinite(x)
+                ? clamp(20.0f * AK::log10(x), static_cast<f32>(m_min_decibels), static_cast<f32>(m_max_decibels))
+                : static_cast<f32>(m_min_decibels));
 
     return result;
 }
@@ -222,7 +223,7 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_float_frequency_data(GC::Root<WebIDL
         return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "Float32Array");
     auto& output_array = static_cast<JS::Float32Array&>(*array->raw_object());
 
-    size_t floats_to_write = min(output_array.data().size(), frequency_bin_count());
+    size_t floats_to_write = min(output_array.data().size(), static_cast<size_t>(frequency_bin_count()));
     for (size_t i = 0; i < floats_to_write; i++) {
         output_array.data()[i] = frequency_data[i];
     }
@@ -287,7 +288,7 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_float_time_domain_data(GC::Root<WebI
         return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "Float32Array");
     auto& output_array = static_cast<JS::Float32Array&>(*array->raw_object());
 
-    size_t floats_to_write = min(output_array.data().size(), frequency_bin_count());
+    size_t floats_to_write = min(output_array.data().size(), static_cast<size_t>(m_fft_size));
     for (size_t i = 0; i < floats_to_write; i++) {
         output_array.data()[i] = time_domain_data[i];
     }

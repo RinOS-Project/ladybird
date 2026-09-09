@@ -140,6 +140,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         float detune { 0.0f };
         RefPtr<AudioParamRenderData> playback_rate_automation;
         RefPtr<AudioParamRenderData> detune_automation;
+        AudioParamID playback_rate_param_id { 0 };
+        AudioParamID detune_param_id { 0 };
         bool loop { false };
         double loop_start { 0.0 };
         double loop_end { 0.0 };
@@ -152,6 +154,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         float detune { 0.0f };
         RefPtr<AudioParamRenderData> frequency_automation;
         RefPtr<AudioParamRenderData> detune_automation;
+        AudioParamID frequency_param_id { 0 };
+        AudioParamID detune_param_id { 0 };
         RefPtr<PeriodicWaveRenderData> periodic_wave;
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
         NodeID node_id { 0 };
@@ -161,7 +165,12 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         NodeID destination_node_id { 0 };
         AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
         RefPtr<AudioParamRenderData> gain_automation;
+        AudioParamID gain_param_id { 0 };
         RefPtr<BiquadFilterRenderData> biquad;
+        AudioParamID biquad_frequency_param_id { 0 };
+        AudioParamID biquad_detune_param_id { 0 };
+        AudioParamID biquad_q_param_id { 0 };
+        AudioParamID biquad_gain_param_id { 0 };
         RefPtr<AnalyserRenderData> analyser;
         float x1[2] { 0, 0 };
         float x2[2] { 0, 0 };
@@ -182,6 +191,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .detune = start.detune,
                     .frequency_automation = start.frequency_automation,
                     .detune_automation = start.detune_automation,
+                    .frequency_param_id = start.frequency_param_id,
+                    .detune_param_id = start.detune_param_id,
                     .periodic_wave = start.periodic_wave,
                     .waveform = start.waveform,
                     .node_id = start.node_id,
@@ -199,6 +210,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .detune = start.detune,
                     .playback_rate_automation = start.playback_rate_automation,
                     .detune_automation = start.detune_automation,
+                    .playback_rate_param_id = start.playback_rate_param_id,
+                    .detune_param_id = start.detune_param_id,
                     .loop = start.loop,
                     .loop_start = start.loop_start,
                     .loop_end = start.loop_end,
@@ -225,7 +238,12 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .destination_node_id = connect.destination_node_id,
                     .destination_kind = connect.destination_kind,
                     .gain_automation = connect.gain_automation,
+                    .gain_param_id = connect.gain_param_id,
                     .biquad = connect.biquad,
+                    .biquad_frequency_param_id = connect.biquad_frequency_param_id,
+                    .biquad_detune_param_id = connect.biquad_detune_param_id,
+                    .biquad_q_param_id = connect.biquad_q_param_id,
+                    .biquad_gain_param_id = connect.biquad_gain_param_id,
                     .analyser = connect.analyser,
                 });
             },
@@ -234,6 +252,34 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     return existing.source_node_id == disconnect.source_node_id
                         && existing.destination_node_id == disconnect.destination_node_id;
                 });
+            },
+            [&](UpdateAudioParam const& update) {
+                for (auto& source : buffer_sources) {
+                    if (source.playback_rate_param_id == update.param_id)
+                        source.playback_rate_automation = update.render_data;
+                    if (source.detune_param_id == update.param_id)
+                        source.detune_automation = update.render_data;
+                }
+                for (auto& oscillator : oscillators) {
+                    if (oscillator.frequency_param_id == update.param_id)
+                        oscillator.frequency_automation = update.render_data;
+                    if (oscillator.detune_param_id == update.param_id)
+                        oscillator.detune_automation = update.render_data;
+                }
+                for (auto& connection : node_connections) {
+                    if (connection.gain_param_id == update.param_id)
+                        connection.gain_automation = update.render_data;
+                    if (connection.biquad) {
+                        if (connection.biquad_frequency_param_id == update.param_id)
+                            connection.biquad->update_frequency_automation(update.render_data);
+                        if (connection.biquad_detune_param_id == update.param_id)
+                            connection.biquad->update_detune_automation(update.render_data);
+                        if (connection.biquad_q_param_id == update.param_id)
+                            connection.biquad->update_q_automation(update.render_data);
+                        if (connection.biquad_gain_param_id == update.param_id)
+                            connection.biquad->update_gain_automation(update.render_data);
+                    }
+                }
             });
     }
 

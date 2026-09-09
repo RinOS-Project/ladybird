@@ -28,6 +28,7 @@
 namespace Web::WebAudio {
 
 class AudioDestinationNode;
+class AudioParam;
 class ControlMessageQueue;
 
 // https://webaudio.github.io/web-audio-api/#BaseAudioContext
@@ -94,6 +95,7 @@ public:
     void queue_control_message(ControlMessage);
 
     NodeID next_node_id(Badge<AudioNode>) { return ++m_next_node_id; }
+    AudioParamID next_audio_param_id(Badge<AudioParam>) { return ++m_next_audio_param_id; }
 
 protected:
     explicit BaseAudioContext(JS::Realm&, float m_sample_rate = 0);
@@ -117,6 +119,7 @@ private:
     void queue_a_decoding_operation(GC::Ref<JS::PromiseCapability>, GC::Root<WebIDL::BufferSource>, GC::Ptr<WebIDL::CallbackType>, GC::Ptr<WebIDL::CallbackType>);
 
     u64 m_next_node_id { 0 };
+    u64 m_next_audio_param_id { 0 };
 
     float m_sample_rate { 0 };
     double m_current_time { 0 };

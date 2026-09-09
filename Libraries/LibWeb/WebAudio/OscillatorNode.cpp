@@ -66,6 +66,8 @@ WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
         .detune = m_detune->value(),
         .frequency_automation = move(frequency_automation),
         .detune_automation = move(detune_automation),
+        .frequency_param_id = m_frequency->param_id(),
+        .detune_param_id = m_detune->param_id(),
         .periodic_wave = move(periodic_wave),
         .waveform = waveform,
     });

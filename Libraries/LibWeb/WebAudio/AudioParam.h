@@ -12,6 +12,7 @@
 #include <LibJS/Forward.h>
 #include <LibWeb/Bindings/AudioParamPrototype.h>
 #include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/WebAudio/Types.h>
 
 namespace Web::WebAudio {
 
@@ -35,6 +36,7 @@ public:
 
     float value() const;
     void set_value(float);
+    AudioParamID param_id() const { return m_param_id; }
 
     // Returns the value produced by the automation timeline at the supplied
     // audio time.  The renderer uses this instead of reading the base value
@@ -83,8 +85,10 @@ private:
 
     void insert_event(AutomationEvent&&);
     float evaluate_event(AutomationEvent const&, double) const;
+    void publish_render_update() const;
 
     GC::Ref<BaseAudioContext> m_context;
+    AudioParamID m_param_id { 0 };
 
     // https://webaudio.github.io/web-audio-api/#dom-audioparam-current-value-slot
     float m_current_value { }; //  [[current value]]

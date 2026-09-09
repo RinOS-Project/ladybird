@@ -86,11 +86,18 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     }
     RefPtr<AudioParamRenderData> gain_automation;
     RefPtr<BiquadFilterRenderData> biquad;
+    AudioParamID gain_param_id { 0 };
+    AudioParamID biquad_frequency_param_id { 0 };
+    AudioParamID biquad_detune_param_id { 0 };
+    AudioParamID biquad_q_param_id { 0 };
+    AudioParamID biquad_gain_param_id { 0 };
     RefPtr<AnalyserRenderData> analyser;
     auto destination_kind = AudioNodeRenderKind::Unknown;
     if (is<GainNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Gain;
-        gain_automation = TRY(as<GainNode>(*destination_node).gain()->create_render_data());
+        auto gain = as<GainNode>(*destination_node).gain();
+        gain_automation = TRY(gain->create_render_data());
+        gain_param_id = gain->param_id();
     } else if (is<BiquadFilterNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Biquad;
         auto const& filter = as<BiquadFilterNode>(*destination_node);
@@ -125,6 +132,10 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         auto detune_automation = TRY(filter.detune()->create_render_data());
         auto q_automation = TRY(filter.q()->create_render_data());
         auto gain_automation_for_filter = TRY(filter.gain()->create_render_data());
+        biquad_frequency_param_id = filter.frequency()->param_id();
+        biquad_detune_param_id = filter.detune()->param_id();
+        biquad_q_param_id = filter.q()->param_id();
+        biquad_gain_param_id = filter.gain()->param_id();
         biquad = TRY(BiquadFilterRenderData::create(filter_kind, filter.frequency()->value(), filter.detune()->value(), filter.q()->value(), filter.gain()->value(),
             move(frequency_automation), move(detune_automation), move(q_automation), move(gain_automation_for_filter)));
     } else if (is<AnalyserNode>(*destination_node)) {
@@ -138,7 +149,12 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         .destination_node_id = destination_node->node_id(),
         .destination_kind = destination_kind,
         .gain_automation = move(gain_automation),
+        .gain_param_id = gain_param_id,
         .biquad = move(biquad),
+        .biquad_frequency_param_id = biquad_frequency_param_id,
+        .biquad_detune_param_id = biquad_detune_param_id,
+        .biquad_q_param_id = biquad_q_param_id,
+        .biquad_gain_param_id = biquad_gain_param_id,
         .analyser = move(analyser),
     });
 

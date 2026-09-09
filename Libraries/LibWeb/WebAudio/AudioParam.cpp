@@ -9,6 +9,7 @@
 #include <LibWeb/WebAudio/AudioParam.h>
 #include <LibWeb/WebAudio/AudioParamRenderData.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
+#include <LibWeb/WebAudio/ControlMessage.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 #include <math.h>
 
@@ -19,6 +20,7 @@ GC_DEFINE_ALLOCATOR(AudioParam);
 AudioParam::AudioParam(JS::Realm& realm, GC::Ref<BaseAudioContext> context, float default_value, float min_value, float max_value, Bindings::AutomationRate automation_rate, FixedAutomationRate fixed_automation_rate)
     : Bindings::PlatformObject(realm)
     , m_context(context)
+    , m_param_id(context->next_audio_param_id({}))
     , m_current_value(default_value)
     , m_default_value(default_value)
     , m_min_value(min_value)
@@ -48,6 +50,7 @@ float AudioParam::value() const
 void AudioParam::set_value(float value)
 {
     m_current_value = value;
+    publish_render_update();
 }
 
 float AudioParam::value_at_time(double time) const
@@ -157,6 +160,17 @@ ErrorOr<NonnullRefPtr<AudioParamRenderData>> AudioParam::create_render_data() co
     return AudioParamRenderData::create(m_current_value, move(events));
 }
 
+void AudioParam::publish_render_update() const
+{
+    auto render_data = create_render_data();
+    if (render_data.is_error())
+        return;
+    m_context->queue_control_message(UpdateAudioParam {
+        .param_id = m_param_id,
+        .render_data = render_data.release_value(),
+    });
+}
+
 void AudioParam::insert_event(AutomationEvent&& event)
 {
     size_t index = 0;
@@ -242,6 +256,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::set_value_at_time(float val
     event.value = value;
     event.start_value = value_at_time(start_time);
     insert_event(move(event));
+    publish_render_update();
     return GC::Ref { *this };
 }
 
@@ -257,6 +272,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::linear_ramp_to_value_at_tim
     event.value = value;
     event.start_value = value_at_time(end_time);
     insert_event(move(event));
+    publish_render_update();
     return GC::Ref { *this };
 }
 
@@ -276,6 +292,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::exponential_ramp_to_value_a
     event.value = value;
     event.start_value = start_value;
     insert_event(move(event));
+    publish_render_update();
     return GC::Ref { *this };
 }
 
@@ -292,6 +309,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::set_target_at_time(float ta
     event.start_value = value_at_time(start_time);
     event.time_constant = time_constant;
     insert_event(move(event));
+    publish_render_update();
     return GC::Ref { *this };
 }
 
@@ -316,6 +334,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::set_value_curve_at_time(Spa
     for (auto value : values)
         event.curve.append(value);
     insert_event(move(event));
+    publish_render_update();
     return GC::Ref { *this };
 }
 
@@ -329,6 +348,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::cancel_scheduled_values(dou
         if (m_automation_events[i - 1].time >= cancel_time)
             m_automation_events.remove(i - 1);
     }
+    publish_render_update();
     return GC::Ref { *this };
 }
 
@@ -350,6 +370,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioParam>> AudioParam::cancel_and_hold_at_time(dou
     event.value = held_value;
     event.start_value = held_value;
     insert_event(move(event));
+    publish_render_update();
     return GC::Ref { *this };
 }
 

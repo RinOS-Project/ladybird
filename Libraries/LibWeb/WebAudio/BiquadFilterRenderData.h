@@ -46,6 +46,10 @@ public:
         RefPtr<AudioParamRenderData> gain_automation);
 
     BiquadFilterCoefficients coefficients_at_time(double, float sample_rate) const;
+    void update_frequency_automation(RefPtr<AudioParamRenderData> data) { m_frequency_automation = move(data); }
+    void update_detune_automation(RefPtr<AudioParamRenderData> data) { m_detune_automation = move(data); }
+    void update_q_automation(RefPtr<AudioParamRenderData> data) { m_q_automation = move(data); }
+    void update_gain_automation(RefPtr<AudioParamRenderData> data) { m_gain_automation = move(data); }
 
 private:
     BiquadFilterRenderData(BiquadFilterKind type, float frequency, float detune, float q, float gain,
