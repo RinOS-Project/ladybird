@@ -138,6 +138,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         Optional<double> stop_time;
         float playback_rate { 1.0f };
         float detune { 0.0f };
+        RefPtr<AudioParamRenderData> playback_rate_automation;
+        RefPtr<AudioParamRenderData> detune_automation;
         bool loop { false };
         double loop_start { 0.0 };
         double loop_end { 0.0 };
@@ -148,6 +150,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         Optional<double> stop_time;
         float frequency { 440.0f };
         float detune { 0.0f };
+        RefPtr<AudioParamRenderData> frequency_automation;
+        RefPtr<AudioParamRenderData> detune_automation;
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
         NodeID node_id { 0 };
     };
@@ -162,6 +166,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .start_time = start.when,
                     .frequency = start.frequency,
                     .detune = start.detune,
+                    .frequency_automation = start.frequency_automation,
+                    .detune_automation = start.detune_automation,
                     .waveform = start.waveform,
                     .node_id = start.node_id,
                 });
@@ -176,6 +182,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .duration = start.duration,
                     .playback_rate = start.playback_rate,
                     .detune = start.detune,
+                    .playback_rate_automation = start.playback_rate_automation,
+                    .detune_automation = start.detune_automation,
                     .loop = start.loop,
                     .loop_start = start.loop_start,
                     .loop_end = start.loop_end,
@@ -211,7 +219,11 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             auto elapsed = now - source.start_time;
             if (source.duration.has_value() && elapsed >= source.duration.value())
                 continue;
-            auto rate = max(static_cast<double>(source.playback_rate), 0.0) * pow(2.0, static_cast<double>(source.detune) / 1200.0);
+            auto playback_rate = source.playback_rate_automation ? source.playback_rate_automation->value_at_time(now) : source.playback_rate;
+            auto detune = source.detune_automation ? source.detune_automation->value_at_time(now) : source.detune;
+            if (!isfinite(playback_rate) || !isfinite(detune))
+                continue;
+            auto rate = max(static_cast<double>(playback_rate), 0.0) * pow(2.0, static_cast<double>(detune) / 1200.0);
             auto source_frame = source.offset * source.buffer->sample_rate() + elapsed * rate * source.buffer->sample_rate();
             auto source_length = static_cast<double>(source.buffer->frame_count());
             if (source.loop) {
@@ -246,7 +258,11 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         for (auto const& oscillator : oscillators) {
             if (now < oscillator.start_time || (oscillator.stop_time.has_value() && now >= oscillator.stop_time.value()))
                 continue;
-            auto frequency = static_cast<double>(oscillator.frequency) * pow(2.0, static_cast<double>(oscillator.detune) / 1200.0);
+            auto frequency_value = oscillator.frequency_automation ? oscillator.frequency_automation->value_at_time(now) : oscillator.frequency;
+            auto detune_value = oscillator.detune_automation ? oscillator.detune_automation->value_at_time(now) : oscillator.detune;
+            if (!isfinite(frequency_value) || !isfinite(detune_value))
+                continue;
+            auto frequency = static_cast<double>(frequency_value) * pow(2.0, static_cast<double>(detune_value) / 1200.0);
             auto phase = fmod((now - oscillator.start_time) * frequency, 1.0);
             if (phase < 0)
                 phase += 1.0;

@@ -136,6 +136,10 @@ WebIDL::ExceptionOr<void> AudioBufferSourceNode::start(Optional<double> when, Op
     RefPtr<AudioBufferRenderData> render_data;
     if (m_buffer)
         render_data = TRY(AudioBufferRenderData::create(*m_buffer));
+    RefPtr<AudioParamRenderData> playback_rate_automation;
+    playback_rate_automation = TRY(m_playback_rate->create_render_data());
+    RefPtr<AudioParamRenderData> detune_automation;
+    detune_automation = TRY(m_detune->create_render_data());
 
     // 3. Set the internal slot [[source started]] on this AudioBufferSourceNode to true.
     set_source_started(true);
@@ -149,6 +153,8 @@ WebIDL::ExceptionOr<void> AudioBufferSourceNode::start(Optional<double> when, Op
         .buffer = move(render_data),
         .playback_rate = m_playback_rate->value(),
         .detune = m_detune->value(),
+        .playback_rate_automation = move(playback_rate_automation),
+        .detune_automation = move(detune_automation),
         .loop = m_loop,
         .loop_start = m_loop_start,
         .loop_end = m_loop_end,

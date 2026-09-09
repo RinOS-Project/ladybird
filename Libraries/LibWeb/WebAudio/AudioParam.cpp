@@ -7,6 +7,7 @@
 #include <LibWeb/Bindings/AudioParamPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/WebAudio/AudioParam.h>
+#include <LibWeb/WebAudio/AudioParamRenderData.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 #include <math.h>
@@ -120,6 +121,40 @@ float AudioParam::value_at_time(double time) const
     if (active_event.has_value())
         return evaluate_event(m_automation_events[active_event.value()], time);
     return current_value;
+}
+
+ErrorOr<NonnullRefPtr<AudioParamRenderData>> AudioParam::create_render_data() const
+{
+    Vector<AudioParamRenderData::Event> events;
+    TRY(events.try_ensure_capacity(m_automation_events.size()));
+    for (auto const& event : m_automation_events) {
+        AudioParamRenderData::Event snapshot;
+        switch (event.type) {
+        case AutomationEventType::SetValue:
+            snapshot.type = AudioParamRenderData::EventType::SetValue;
+            break;
+        case AutomationEventType::LinearRamp:
+            snapshot.type = AudioParamRenderData::EventType::LinearRamp;
+            break;
+        case AutomationEventType::ExponentialRamp:
+            snapshot.type = AudioParamRenderData::EventType::ExponentialRamp;
+            break;
+        case AutomationEventType::SetTarget:
+            snapshot.type = AudioParamRenderData::EventType::SetTarget;
+            break;
+        case AutomationEventType::SetValueCurve:
+            snapshot.type = AudioParamRenderData::EventType::SetValueCurve;
+            break;
+        }
+        snapshot.time = event.time;
+        snapshot.value = event.value;
+        snapshot.start_value = event.start_value;
+        snapshot.time_constant = event.time_constant;
+        snapshot.duration = event.duration;
+        TRY(snapshot.curve.try_extend(event.curve));
+        TRY(events.try_append(move(snapshot)));
+    }
+    return AudioParamRenderData::create(m_current_value, move(events));
 }
 
 void AudioParam::insert_event(AutomationEvent&& event)

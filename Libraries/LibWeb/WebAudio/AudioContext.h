@@ -76,6 +76,8 @@ private:
         Optional<double> stop_time;
         float playback_rate { 1.0f };
         float detune { 0.0f };
+        RefPtr<AudioParamRenderData> playback_rate_automation;
+        RefPtr<AudioParamRenderData> detune_automation;
         bool loop { false };
         double loop_start { 0.0 };
         double loop_end { 0.0 };
@@ -86,6 +88,8 @@ private:
         Optional<double> stop_time;
         float frequency { 440.0f };
         float detune { 0.0f };
+        RefPtr<AudioParamRenderData> frequency_automation;
+        RefPtr<AudioParamRenderData> detune_automation;
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
     };
     Vector<ActiveAudioSource> m_active_audio_sources;

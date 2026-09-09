@@ -10,6 +10,7 @@
 #include <AK/RefPtr.h>
 #include <AK/Variant.h>
 #include <LibWeb/WebAudio/AudioBufferRenderData.h>
+#include <LibWeb/WebAudio/AudioParamRenderData.h>
 #include <LibWeb/WebAudio/Types.h>
 
 namespace Web::WebAudio {
@@ -31,6 +32,8 @@ struct StartOscillator {
     double when { 0.0 };
     float frequency { 440.0f };
     float detune { 0.0f };
+    RefPtr<AudioParamRenderData> frequency_automation;
+    RefPtr<AudioParamRenderData> detune_automation;
     OscillatorWaveform waveform { OscillatorWaveform::Sine };
 };
 
@@ -42,6 +45,8 @@ struct StartBufferSource {
     RefPtr<AudioBufferRenderData> buffer;
     float playback_rate { 1.0f };
     float detune { 0.0f };
+    RefPtr<AudioParamRenderData> playback_rate_automation;
+    RefPtr<AudioParamRenderData> detune_automation;
     bool loop { false };
     double loop_start { 0.0 };
     double loop_end { 0.0 };

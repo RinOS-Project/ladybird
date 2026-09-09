@@ -31,6 +31,11 @@ WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
     if (m_type == Bindings::OscillatorType::Custom)
         return WebIDL::NotSupportedError::create(realm(), "Custom PeriodicWave rendering is not connected"_utf16);
 
+    RefPtr<AudioParamRenderData> frequency_automation;
+    frequency_automation = TRY(m_frequency->create_render_data());
+    RefPtr<AudioParamRenderData> detune_automation;
+    detune_automation = TRY(m_detune->create_render_data());
+
     OscillatorWaveform waveform = OscillatorWaveform::Sine;
     switch (m_type) {
     case Bindings::OscillatorType::Square:
@@ -56,6 +61,8 @@ WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
         .when = when,
         .frequency = m_frequency->value(),
         .detune = m_detune->value(),
+        .frequency_automation = move(frequency_automation),
+        .detune_automation = move(detune_automation),
         .waveform = waveform,
     });
     return { };

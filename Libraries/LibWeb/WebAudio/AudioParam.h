@@ -6,12 +6,16 @@
 
 #pragma once
 
+#include <AK/Error.h>
+#include <AK/RefPtr.h>
 #include <AK/Vector.h>
 #include <LibJS/Forward.h>
 #include <LibWeb/Bindings/AudioParamPrototype.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::WebAudio {
+
+class AudioParamRenderData;
 
 // https://webaudio.github.io/web-audio-api/#AudioParam
 class AudioParam final : public Bindings::PlatformObject {
@@ -36,6 +40,10 @@ public:
     // audio time.  The renderer uses this instead of reading the base value
     // directly so scheduled events are observable by every node.
     float value_at_time(double) const;
+
+    // Publish an immutable automation snapshot for a rendering control
+    // message. The snapshot is safe to evaluate from a real-time callback.
+    ErrorOr<NonnullRefPtr<AudioParamRenderData>> create_render_data() const;
 
     Bindings::AutomationRate automation_rate() const;
     WebIDL::ExceptionOr<void> set_automation_rate(Bindings::AutomationRate);
