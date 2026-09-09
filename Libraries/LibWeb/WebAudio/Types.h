@@ -24,6 +24,8 @@ enum class AudioNodeRenderKind : u8 {
     Delay,
     DynamicsCompressor,
     Panner,
+    ChannelMerger,
+    ChannelSplitter,
     Destination,
 };
 

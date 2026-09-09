@@ -112,7 +112,10 @@ private:
     struct NodeConnection {
         NodeID source_node_id { 0 };
         NodeID destination_node_id { 0 };
+        AudioNodeRenderKind source_kind { AudioNodeRenderKind::Unknown };
         AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
+        u32 output_index { 0 };
+        u32 input_index { 0 };
         RefPtr<AudioParamRenderData> gain_automation;
         AudioParamID gain_param_id { 0 };
         RefPtr<BiquadFilterRenderData> biquad;

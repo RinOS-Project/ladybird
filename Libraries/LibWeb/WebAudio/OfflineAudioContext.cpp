@@ -68,7 +68,10 @@ public:
     struct NodeConnection {
         NodeID source_node_id { 0 };
         NodeID destination_node_id { 0 };
+        AudioNodeRenderKind source_kind { AudioNodeRenderKind::Unknown };
         AudioNodeRenderKind destination_kind { AudioNodeRenderKind::Unknown };
+        u32 output_index { 0 };
+        u32 input_index { 0 };
         RefPtr<AudioParamRenderData> gain_automation;
         AudioParamID gain_param_id { 0 };
         RefPtr<BiquadFilterRenderData> biquad;
@@ -308,7 +311,10 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 node_connections.append({
                     .source_node_id = connect.source_node_id,
                     .destination_node_id = connect.destination_node_id,
+                    .source_kind = connect.source_kind,
                     .destination_kind = connect.destination_kind,
+                    .output_index = connect.output_index,
+                    .input_index = connect.input_index,
                     .gain_automation = connect.gain_automation,
                     .gain_param_id = connect.gain_param_id,
                     .biquad = connect.biquad,
@@ -417,6 +423,13 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
     for (u32 frame = render_start; frame < render_end; ++frame) {
         auto now = frame / output_rate;
         Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> mixed_samples { };
+        struct MergerFrame {
+            NodeID node_id { 0 };
+            Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> channels { };
+            bool used { false };
+            bool emitted { false };
+        };
+        Array<MergerFrame, 32> merger_frames { };
 
         auto mix_source = [&](auto&& self, NodeID source_node_id, float sample, Optional<float> right_sample, u32 depth) -> void {
             if (depth > 32)
@@ -425,15 +438,42 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             for (auto& connection : node_connections) {
                 if (connection.source_node_id != source_node_id)
                     continue;
+                auto routed_sample = sample;
+                auto routed_right = right;
+                if (connection.source_kind == AudioNodeRenderKind::ChannelSplitter) {
+                    routed_sample = connection.output_index == 0 ? sample : connection.output_index == 1 ? right : 0.0f;
+                    routed_right = routed_sample;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::ChannelMerger) {
+                    MergerFrame* merger = nullptr;
+                    for (auto& candidate : merger_frames) {
+                        if (candidate.used && candidate.node_id == connection.destination_node_id) {
+                            merger = &candidate;
+                            break;
+                        }
+                        if (!candidate.used && !merger)
+                            merger = &candidate;
+                    }
+                    if (merger && connection.input_index < BaseAudioContext::MAX_NUMBER_OF_CHANNELS) {
+                        merger->node_id = connection.destination_node_id;
+                        merger->used = true;
+                        merger->channels[connection.input_index] += routed_sample;
+                    }
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::ChannelSplitter) {
+                    self(self, connection.destination_node_id, routed_sample, routed_right, depth + 1);
+                    continue;
+                }
                 if (connection.destination_kind == AudioNodeRenderKind::Destination) {
                     for (u32 channel = 0; channel < m_number_of_channels; ++channel)
-                        mixed_samples[channel] += channel == 1 ? right : sample;
+                        mixed_samples[channel] += channel == 1 ? routed_right : routed_sample;
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Gain) {
                     auto gain = connection.gain_automation ? connection.gain_automation->value_at_time(now) : 1.0f;
                     if (isfinite(gain))
-                        self(self, connection.destination_node_id, sample * gain, right * gain, depth + 1);
+                        self(self, connection.destination_node_id, routed_sample * gain, routed_right * gain, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Biquad && connection.biquad) {
@@ -447,12 +487,12 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                         connection.y1[channel] = output;
                         return output;
                     };
-                    self(self, connection.destination_node_id, process(sample, 0), process(right, 1), depth + 1);
+                    self(self, connection.destination_node_id, process(routed_sample, 0), process(routed_right, 1), depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Analyser && connection.analyser) {
-                    connection.analyser->push_frame(sample, right);
-                    self(self, connection.destination_node_id, sample, right, depth + 1);
+                    connection.analyser->push_frame(routed_sample, routed_right);
+                    self(self, connection.destination_node_id, routed_sample, routed_right, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::StereoPanner) {
@@ -461,23 +501,23 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                         continue;
                     pan = clamp(pan, -1.0f, 1.0f);
                     auto angle = (static_cast<double>(pan) + 1.0) * AK::Pi<double> / 4.0;
-                    auto mono = (sample + right) * 0.5f;
+                    auto mono = (routed_sample + routed_right) * 0.5f;
                     self(self, connection.destination_node_id, mono * static_cast<float>(cos(angle)), mono * static_cast<float>(sin(angle)), depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Delay && connection.delay) {
-                    connection.delay->process(sample, right, now);
-                    self(self, connection.destination_node_id, sample, right, depth + 1);
+                    connection.delay->process(routed_sample, routed_right, now);
+                    self(self, connection.destination_node_id, routed_sample, routed_right, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Panner && connection.panner) {
-                    connection.panner->process(sample, right, now);
-                    self(self, connection.destination_node_id, sample, right, depth + 1);
+                    connection.panner->process(routed_sample, routed_right, now);
+                    self(self, connection.destination_node_id, routed_sample, routed_right, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::DynamicsCompressor && connection.compressor) {
-                    auto compressed_sample = connection.compressor->process(sample, now);
-                    auto compressed_right = connection.compressor->process(right, now);
+                    auto compressed_sample = connection.compressor->process(routed_sample, now);
+                    auto compressed_right = connection.compressor->process(routed_right, now);
                     self(self, connection.destination_node_id, compressed_sample, compressed_right, depth + 1);
                 }
             }
@@ -562,6 +602,19 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             auto sample = source.offset_automation ? source.offset_automation->value_at_time(now) : source.offset;
             if (isfinite(sample))
                 mix_source(mix_source, source.node_id, sample, { }, 0);
+        }
+
+        for (u32 pass = 0; pass < 32; ++pass) {
+            bool emitted = false;
+            for (auto& merger : merger_frames) {
+                if (!merger.used || merger.emitted)
+                    continue;
+                merger.emitted = true;
+                mix_source(mix_source, merger.node_id, merger.channels[0], merger.channels[1], 0);
+                emitted = true;
+            }
+            if (!emitted)
+                break;
         }
 
         for (u32 channel = 0; channel < m_number_of_channels; ++channel)

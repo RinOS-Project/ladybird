@@ -28,6 +28,7 @@ public:
 
     WebIDL::UnsignedLong number_of_inputs() override { return m_number_of_inputs; }
     WebIDL::UnsignedLong number_of_outputs() override { return 1; }
+    AudioNodeRenderKind render_kind() const override { return AudioNodeRenderKind::ChannelMerger; }
 
     // ^AudioNode
     virtual WebIDL::ExceptionOr<void> set_channel_count(WebIDL::UnsignedLong) override;

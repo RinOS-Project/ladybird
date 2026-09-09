@@ -11,6 +11,8 @@
 #include <LibWeb/WebAudio/AnalyserNode.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/BiquadFilterNode.h>
+#include <LibWeb/WebAudio/ChannelMergerNode.h>
+#include <LibWeb/WebAudio/ChannelSplitterNode.h>
 #include <LibWeb/WebAudio/ControlMessage.h>
 #include <LibWeb/WebAudio/DelayNode.h>
 #include <LibWeb/WebAudio/DynamicsCompressorNode.h>
@@ -211,13 +213,20 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         panner_position_y_param_id = panner_node.position_y()->param_id();
         panner_position_z_param_id = panner_node.position_z()->param_id();
         panner = TRY(PannerRenderData::create(distance_model, panner_node.ref_distance(), panner_node.max_distance(), panner_node.rolloff_factor(), move(position_x), move(position_y), move(position_z)));
+    } else if (is<ChannelMergerNode>(*destination_node)) {
+        destination_kind = AudioNodeRenderKind::ChannelMerger;
+    } else if (is<ChannelSplitterNode>(*destination_node)) {
+        destination_kind = AudioNodeRenderKind::ChannelSplitter;
     } else if (is<AudioDestinationNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Destination;
     }
     m_context->queue_control_message(ConnectNode {
         .source_node_id = node_id(),
         .destination_node_id = destination_node->node_id(),
+        .source_kind = render_kind(),
         .destination_kind = destination_kind,
+        .output_index = output,
+        .input_index = input,
         .gain_automation = move(gain_automation),
         .gain_param_id = gain_param_id,
         .biquad = move(biquad),

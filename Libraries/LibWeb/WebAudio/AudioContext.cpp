@@ -529,7 +529,10 @@ void AudioContext::render_audio(Span<float> buffer)
                 m_node_connections.append({
                     .source_node_id = connect.source_node_id,
                     .destination_node_id = connect.destination_node_id,
+                    .source_kind = connect.source_kind,
                     .destination_kind = connect.destination_kind,
+                    .output_index = connect.output_index,
+                    .input_index = connect.input_index,
                     .gain_automation = connect.gain_automation,
                     .gain_param_id = connect.gain_param_id,
                     .biquad = connect.biquad,
@@ -624,6 +627,13 @@ void AudioContext::render_audio(Span<float> buffer)
         auto now = static_cast<double>(render_start_frame + frame) / output_rate;
         auto left = 0.0f;
         auto right = 0.0f;
+        struct MergerFrame {
+            NodeID node_id { 0 };
+            Array<float, BaseAudioContext::MAX_NUMBER_OF_CHANNELS> channels { };
+            bool used { false };
+            bool emitted { false };
+        };
+        Array<MergerFrame, 32> merger_frames { };
 
         auto mix_source = [&](auto&& self, NodeID source_node_id, float source_left, float source_right, u32 depth) -> void {
             if (depth > 32)
@@ -631,15 +641,43 @@ void AudioContext::render_audio(Span<float> buffer)
             for (auto& connection : m_node_connections) {
                 if (connection.source_node_id != source_node_id)
                     continue;
+                auto routed_left = source_left;
+                auto routed_right = source_right;
+                if (connection.source_kind == AudioNodeRenderKind::ChannelSplitter) {
+                    auto split_sample = connection.output_index == 0 ? source_left : connection.output_index == 1 ? source_right : 0.0f;
+                    routed_left = split_sample;
+                    routed_right = split_sample;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::ChannelMerger) {
+                    MergerFrame* merger = nullptr;
+                    for (auto& candidate : merger_frames) {
+                        if (candidate.used && candidate.node_id == connection.destination_node_id) {
+                            merger = &candidate;
+                            break;
+                        }
+                        if (!candidate.used && !merger)
+                            merger = &candidate;
+                    }
+                    if (merger && connection.input_index < BaseAudioContext::MAX_NUMBER_OF_CHANNELS) {
+                        merger->node_id = connection.destination_node_id;
+                        merger->used = true;
+                        merger->channels[connection.input_index] += routed_left;
+                    }
+                    continue;
+                }
+                if (connection.destination_kind == AudioNodeRenderKind::ChannelSplitter) {
+                    self(self, connection.destination_node_id, routed_left, routed_right, depth + 1);
+                    continue;
+                }
                 if (connection.destination_kind == AudioNodeRenderKind::Destination) {
-                    left += source_left;
-                    right += source_right;
+                    left += routed_left;
+                    right += routed_right;
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Gain) {
                     auto gain = connection.gain_automation ? connection.gain_automation->value_at_time(now) : 1.0f;
                     if (isfinite(gain))
-                        self(self, connection.destination_node_id, source_left * gain, source_right * gain, depth + 1);
+                        self(self, connection.destination_node_id, routed_left * gain, routed_right * gain, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Biquad && connection.biquad) {
@@ -653,12 +691,12 @@ void AudioContext::render_audio(Span<float> buffer)
                         connection.y1[channel] = output;
                         return output;
                     };
-                    self(self, connection.destination_node_id, process(source_left, 0), process(source_right, 1), depth + 1);
+                    self(self, connection.destination_node_id, process(routed_left, 0), process(routed_right, 1), depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Analyser && connection.analyser) {
-                    connection.analyser->push_frame(source_left, source_right);
-                    self(self, connection.destination_node_id, source_left, source_right, depth + 1);
+                    connection.analyser->push_frame(routed_left, routed_right);
+                    self(self, connection.destination_node_id, routed_left, routed_right, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::StereoPanner) {
@@ -667,23 +705,23 @@ void AudioContext::render_audio(Span<float> buffer)
                         continue;
                     pan = clamp(pan, -1.0f, 1.0f);
                     auto angle = (static_cast<double>(pan) + 1.0) * AK::Pi<double> / 4.0;
-                    auto mono = (source_left + source_right) * 0.5f;
+                    auto mono = (routed_left + routed_right) * 0.5f;
                     self(self, connection.destination_node_id, mono * static_cast<float>(cos(angle)), mono * static_cast<float>(sin(angle)), depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Delay && connection.delay) {
-                    connection.delay->process(source_left, source_right, now);
-                    self(self, connection.destination_node_id, source_left, source_right, depth + 1);
+                    connection.delay->process(routed_left, routed_right, now);
+                    self(self, connection.destination_node_id, routed_left, routed_right, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::Panner && connection.panner) {
-                    connection.panner->process(source_left, source_right, now);
-                    self(self, connection.destination_node_id, source_left, source_right, depth + 1);
+                    connection.panner->process(routed_left, routed_right, now);
+                    self(self, connection.destination_node_id, routed_left, routed_right, depth + 1);
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::DynamicsCompressor && connection.compressor) {
-                    auto compressed_left = connection.compressor->process(source_left, now);
-                    auto compressed_right = connection.compressor->process(source_right, now);
+                    auto compressed_left = connection.compressor->process(routed_left, now);
+                    auto compressed_right = connection.compressor->process(routed_right, now);
                     self(self, connection.destination_node_id, compressed_left, compressed_right, depth + 1);
                 }
             }
@@ -777,6 +815,22 @@ void AudioContext::render_audio(Span<float> buffer)
             auto sample = source.offset_automation ? source.offset_automation->value_at_time(now) : source.offset;
             if (isfinite(sample))
                 mix_source(mix_source, source.node_id, sample, sample, 0);
+        }
+
+        // Flush bounded ChannelMerger outputs after all source inputs for this
+        // frame have been collected. Repeating the pass handles a merger fed
+        // by another merger without unbounded graph work.
+        for (u32 pass = 0; pass < 32; ++pass) {
+            bool emitted = false;
+            for (auto& merger : merger_frames) {
+                if (!merger.used || merger.emitted)
+                    continue;
+                merger.emitted = true;
+                mix_source(mix_source, merger.node_id, merger.channels[0], merger.channels[1], 0);
+                emitted = true;
+            }
+            if (!emitted)
+                break;
         }
 
         buffer[frame * 2] = clamp(left, -1.0f, 1.0f);
