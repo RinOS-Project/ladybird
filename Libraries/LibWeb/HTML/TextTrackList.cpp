@@ -8,11 +8,17 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/TextTrackListPrototype.h>
 #include <LibWeb/HTML/EventNames.h>
+#include <LibWeb/HTML/HTMLMediaElement.h>
 #include <LibWeb/HTML/TextTrackList.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(TextTrackList);
+
+GC::Ref<TextTrackList> TextTrackList::create(JS::Realm& realm)
+{
+    return realm.create<TextTrackList>(realm);
+}
 
 TextTrackList::TextTrackList(JS::Realm& realm)
     : DOM::EventTarget(realm, MayInterfereWithIndexedPropertyAccess::Yes)
@@ -70,6 +76,40 @@ GC::Ptr<TextTrack> TextTrackList::get_track_by_id(StringView id) const
         return nullptr;
 
     return *it;
+}
+
+bool TextTrackList::contains(TextTrack const& track) const
+{
+    return m_text_tracks.find_if([&](auto const& candidate) {
+               return candidate.ptr() == &track;
+           }) != m_text_tracks.end();
+}
+
+void TextTrackList::add_track(Badge<HTMLMediaElement>, GC::Ref<TextTrack> track,
+                              HTMLMediaElement& media_element)
+{
+    if (contains(*track))
+        return;
+    m_text_tracks.append(track);
+    track->set_media_element(media_element);
+}
+
+bool TextTrackList::remove_track(Badge<HTMLMediaElement>, TextTrack& track)
+{
+    auto removed = m_text_tracks.remove_first_matching([&](auto const& candidate) {
+        return candidate.ptr() == &track;
+    });
+    if (removed)
+        track.clear_media_element();
+    return removed;
+}
+
+size_t TextTrackList::index_of(TextTrack const& track) const
+{
+    for (size_t index = 0; index < m_text_tracks.size(); ++index)
+        if (m_text_tracks.at(index).ptr() == &track)
+            return index;
+    return m_text_tracks.size();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#handler-texttracklist-onchange

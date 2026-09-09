@@ -5,6 +5,8 @@
  */
 
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/HTML/HTMLMediaElement.h>
+#include <LibWeb/HTML/TextTrackList.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/WebVTT/VTTCue.h>
 
@@ -135,26 +137,27 @@ double VTTCue::computed_line()
     if (!m_snap_to_lines)
         return 100;
 
-    // FIXME: 4. Let cue be the WebVTT cue.
+    // 4-6. A cue without an owning track, or a track not attached to a media
+    // element, has no computed line. Do not synthesize a line for detached
+    // cues: layout must treat the value as the WebVTT sentinel -1.
+    auto track = m_track;
+    if (!track || !track->media_element())
+        return -1;
 
-    // FIXME: 5. If cue is not in a list of cues of a text track, or if that text track is not in the list of text tracks of
-    //    a media element, return −1 and abort these steps.
+    auto tracks = track->media_element()->text_tracks();
+    auto track_index = tracks->index_of(*track);
+    if (track_index == tracks->length())
+        return -1;
 
-    // FIXME: 6. Let track be the text track whose list of cues the cue is in.
-
-    // FIXME: 7. Let n be the number of text tracks whose text track mode is showing and that are in the media element’s list
-    //    of text tracks before track.
-    auto n = 0;
-
-    // 8. Increment n by one.
-    n++;
-
-    // 9. Negate n.
-    n = -n;
-
-    // 10. Return n.
-    dbgln("FIXME: Stubbed VTTCue.computed_line()");
-    return n;
+    // 7-10. Count only showing tracks before this track, then return the
+    // negative one-based line number required by the WebVTT algorithm.
+    int showing_before = 0;
+    for (size_t index = 0; index < track_index; ++index) {
+        auto preceding = tracks->at(index);
+        if (preceding->mode() == Bindings::TextTrackMode::Showing)
+            ++showing_before;
+    }
+    return -(showing_before + 1);
 }
 
 // https://w3c.github.io/webvtt/#cue-computed-position

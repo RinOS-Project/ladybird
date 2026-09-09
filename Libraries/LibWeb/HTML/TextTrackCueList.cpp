@@ -14,6 +14,11 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(TextTrackCueList);
 
+GC::Ref<TextTrackCueList> TextTrackCueList::create(JS::Realm& realm)
+{
+    return realm.create<TextTrackCueList>(realm);
+}
+
 TextTrackCueList::TextTrackCueList(JS::Realm& realm)
     : DOM::EventTarget(realm, MayInterfereWithIndexedPropertyAccess::Yes)
 {
@@ -74,6 +79,26 @@ GC::Ptr<TextTrackCue> TextTrackCueList::get_cue_by_id(StringView id) const
         return nullptr;
 
     return *it;
+}
+
+bool TextTrackCueList::contains(TextTrackCue const& cue) const
+{
+    return m_cues.find_if([&](auto const& candidate) {
+               return candidate.ptr() == &cue;
+           }) != m_cues.end();
+}
+
+void TextTrackCueList::append(GC::Ref<TextTrackCue> cue)
+{
+    if (!contains(*cue))
+        m_cues.append(cue);
+}
+
+bool TextTrackCueList::remove(TextTrackCue const& cue)
+{
+    return m_cues.remove_first_matching([&](auto const& candidate) {
+        return candidate.ptr() == &cue;
+    });
 }
 
 }

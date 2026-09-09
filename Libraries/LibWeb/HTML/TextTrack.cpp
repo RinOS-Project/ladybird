@@ -7,7 +7,10 @@
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/EventNames.h>
+#include <LibWeb/HTML/HTMLMediaElement.h>
 #include <LibWeb/HTML/TextTrack.h>
+#include <LibWeb/HTML/TextTrackCue.h>
+#include <LibWeb/HTML/TextTrackCueList.h>
 #include <LibWeb/HTML/TextTrackObserver.h>
 
 namespace Web::HTML {
@@ -16,7 +19,10 @@ GC_DEFINE_ALLOCATOR(TextTrack);
 
 GC::Ref<TextTrack> TextTrack::create(JS::Realm& realm)
 {
-    return realm.create<TextTrack>(realm);
+    auto text_track = realm.create<TextTrack>(realm);
+    text_track->m_cues = TextTrackCueList::create(realm);
+    text_track->m_active_cues = TextTrackCueList::create(realm);
+    return text_track;
 }
 
 TextTrack::TextTrack(JS::Realm& realm)
@@ -36,6 +42,9 @@ void TextTrack::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_observers);
+    visitor.visit(m_cues);
+    visitor.visit(m_active_cues);
+    visitor.visit(m_media_element);
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttrack-kind
@@ -113,6 +122,54 @@ void TextTrack::set_readiness_state(ReadinessState readiness_state)
         if (auto callback = observer->track_readiness_observer())
             callback->function()(m_readiness_state);
     }
+}
+
+GC::Ref<TextTrackCueList> TextTrack::cues() const
+{
+    VERIFY(m_cues);
+    return *m_cues;
+}
+
+GC::Ref<TextTrackCueList> TextTrack::active_cues() const
+{
+    VERIFY(m_active_cues);
+    m_active_cues->clear();
+    if (!m_media_element)
+        return *m_active_cues;
+
+    auto current_time = m_media_element->current_time();
+    if (!isfinite(current_time))
+        return *m_active_cues;
+
+    for (size_t index = 0; index < m_cues->length(); ++index) {
+        auto cue = m_cues->at(index);
+        if (cue->start_time() <= current_time && current_time < cue->end_time())
+            m_active_cues->append(cue);
+    }
+    return *m_active_cues;
+}
+
+WebIDL::ExceptionOr<void> TextTrack::add_cue(GC::Ref<TextTrackCue> cue)
+{
+    if (cue->track() && cue->track() != this)
+        return WebIDL::InvalidStateError::create(realm(), "Cue already belongs to another text track"_utf16);
+    if (!m_cues->contains(*cue)) {
+        m_cues->append(cue);
+        cue->set_track(this);
+    }
+    return {};
+}
+
+void TextTrack::remove_cue(GC::Ref<TextTrackCue> cue)
+{
+    if (!m_cues->remove(*cue))
+        return;
+    cue->set_track(nullptr);
+}
+
+void TextTrack::set_media_element(HTMLMediaElement& media_element)
+{
+    m_media_element = media_element;
 }
 
 void TextTrack::register_observer(Badge<TextTrackObserver>, TextTrackObserver& observer)

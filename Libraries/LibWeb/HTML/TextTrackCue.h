@@ -21,6 +21,7 @@ public:
     virtual ~TextTrackCue() override;
 
     GC::Ptr<TextTrack> track() { return m_track; }
+    void set_track(GC::Ptr<TextTrack> track) { m_track = track; }
 
     String const& id() const { return m_identifier; }
     void set_id(String const& id) { m_identifier = id; }

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Badge.h>
 #include <AK/String.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
@@ -15,6 +16,10 @@
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::HTML {
+
+class HTMLMediaElement;
+class TextTrackCue;
+class TextTrackCueList;
 
 class TextTrack final : public DOM::EventTarget {
     WEB_PLATFORM_OBJECT(TextTrack, DOM::EventTarget);
@@ -53,6 +58,15 @@ public:
     ReadinessState readiness_state() { return m_readiness_state; }
     void set_readiness_state(ReadinessState readiness_state);
 
+    GC::Ref<TextTrackCueList> cues() const;
+    GC::Ref<TextTrackCueList> active_cues() const;
+    WebIDL::ExceptionOr<void> add_cue(GC::Ref<TextTrackCue>);
+    void remove_cue(GC::Ref<TextTrackCue>);
+
+    GC::Ptr<HTMLMediaElement> media_element() const { return m_media_element; }
+    void set_media_element(HTMLMediaElement&);
+    void clear_media_element() { m_media_element = nullptr; }
+
     void register_observer(Badge<TextTrackObserver>, TextTrackObserver&);
     void unregister_observer(Badge<TextTrackObserver>, TextTrackObserver&);
 
@@ -71,6 +85,10 @@ private:
     Bindings::TextTrackMode m_mode { Bindings::TextTrackMode::Disabled };
 
     ReadinessState m_readiness_state { ReadinessState::NotLoaded };
+
+    GC::Ptr<TextTrackCueList> m_cues;
+    GC::Ptr<TextTrackCueList> m_active_cues;
+    GC::Ptr<HTMLMediaElement> m_media_element;
 
     HashTable<GC::Ref<TextTrackObserver>> m_observers;
 };

@@ -18,11 +18,19 @@ class TextTrackCueList final : public DOM::EventTarget {
     GC_DECLARE_ALLOCATOR(TextTrackCueList);
 
 public:
+    static GC::Ref<TextTrackCueList> create(JS::Realm&);
     virtual ~TextTrackCueList() override;
 
     size_t length() const;
 
+    GC::Ref<TextTrackCue> at(size_t index) const { return m_cues.at(index); }
+
     GC::Ptr<TextTrackCue> get_cue_by_id(StringView id) const;
+
+    bool contains(TextTrackCue const&) const;
+    void append(GC::Ref<TextTrackCue>);
+    bool remove(TextTrackCue const&);
+    void clear() { m_cues.clear(); }
 
 private:
     TextTrackCueList(JS::Realm&);
