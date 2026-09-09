@@ -105,6 +105,17 @@ PeriodicWave::PeriodicWave(JS::Realm& realm)
 
 PeriodicWave::~PeriodicWave() = default;
 
+ErrorOr<NonnullRefPtr<PeriodicWaveRenderData>> PeriodicWave::create_render_data() const
+{
+    if (!m_real || !m_imag)
+        return Error::from_errno(EINVAL);
+    auto real = m_real->data();
+    auto imag = m_imag->data();
+    if (real.is_empty() || imag.is_empty())
+        return Error::from_errno(EINVAL);
+    return PeriodicWaveRenderData::create(real, imag, m_normalize);
+}
+
 void PeriodicWave::initialize(JS::Realm& realm)
 {
     WEB_SET_PROTOTYPE_FOR_INTERFACE(PeriodicWave);

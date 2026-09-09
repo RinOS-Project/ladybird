@@ -12,6 +12,7 @@
 #include <LibWeb/WebAudio/AudioBufferRenderData.h>
 #include <LibWeb/WebAudio/AudioParamRenderData.h>
 #include <LibWeb/WebAudio/BiquadFilterRenderData.h>
+#include <LibWeb/WebAudio/PeriodicWaveRenderData.h>
 #include <LibWeb/WebAudio/Types.h>
 
 namespace Web::WebAudio {
@@ -35,6 +36,7 @@ struct StartOscillator {
     float detune { 0.0f };
     RefPtr<AudioParamRenderData> frequency_automation;
     RefPtr<AudioParamRenderData> detune_automation;
+    RefPtr<PeriodicWaveRenderData> periodic_wave;
     OscillatorWaveform waveform { OscillatorWaveform::Sine };
 };
 

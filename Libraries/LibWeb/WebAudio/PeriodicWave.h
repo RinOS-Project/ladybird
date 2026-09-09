@@ -9,6 +9,7 @@
 #include <AK/Vector.h>
 #include <LibJS/Forward.h>
 #include <LibWeb/Bindings/PlatformObject.h>
+#include <LibWeb/WebAudio/PeriodicWaveRenderData.h>
 
 namespace Web::WebAudio {
 
@@ -33,6 +34,8 @@ public:
 
     explicit PeriodicWave(JS::Realm&);
     virtual ~PeriodicWave() override;
+
+    ErrorOr<NonnullRefPtr<PeriodicWaveRenderData>> create_render_data() const;
 
 protected:
     virtual void initialize(JS::Realm&) override;

@@ -152,6 +152,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         float detune { 0.0f };
         RefPtr<AudioParamRenderData> frequency_automation;
         RefPtr<AudioParamRenderData> detune_automation;
+        RefPtr<PeriodicWaveRenderData> periodic_wave;
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
         NodeID node_id { 0 };
     };
@@ -180,6 +181,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .detune = start.detune,
                     .frequency_automation = start.frequency_automation,
                     .detune_automation = start.detune_automation,
+                    .periodic_wave = start.periodic_wave,
                     .waveform = start.waveform,
                     .node_id = start.node_id,
                 });
@@ -328,19 +330,23 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             if (phase < 0)
                 phase += 1.0;
             float sample = 0;
-            switch (oscillator.waveform) {
-            case OscillatorWaveform::Sine:
-                sample = static_cast<float>(sin(phase * 2.0 * AK::Pi<double>));
-                break;
-            case OscillatorWaveform::Square:
-                sample = phase < 0.5 ? 1.0f : -1.0f;
-                break;
-            case OscillatorWaveform::Sawtooth:
-                sample = static_cast<float>(2.0 * phase - 1.0);
-                break;
-            case OscillatorWaveform::Triangle:
-                sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5));
-                break;
+            if (oscillator.periodic_wave) {
+                sample = oscillator.periodic_wave->sample_at(phase);
+            } else {
+                switch (oscillator.waveform) {
+                case OscillatorWaveform::Sine:
+                    sample = static_cast<float>(sin(phase * 2.0 * AK::Pi<double>));
+                    break;
+                case OscillatorWaveform::Square:
+                    sample = phase < 0.5 ? 1.0f : -1.0f;
+                    break;
+                case OscillatorWaveform::Sawtooth:
+                    sample = static_cast<float>(2.0 * phase - 1.0);
+                    break;
+                case OscillatorWaveform::Triangle:
+                    sample = static_cast<float>(1.0 - 4.0 * fabs(phase - 0.5));
+                    break;
+                }
             }
             mix_source(mix_source, oscillator.node_id, sample, { }, 0);
         }

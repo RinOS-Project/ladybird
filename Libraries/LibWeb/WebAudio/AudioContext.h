@@ -14,6 +14,7 @@
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/AudioBufferRenderData.h>
 #include <LibWeb/WebAudio/MediaElementAudioSourceNode.h>
+#include <LibWeb/WebAudio/PeriodicWaveRenderData.h>
 
 namespace Web::WebAudio {
 
@@ -90,6 +91,7 @@ private:
         float detune { 0.0f };
         RefPtr<AudioParamRenderData> frequency_automation;
         RefPtr<AudioParamRenderData> detune_automation;
+        RefPtr<PeriodicWaveRenderData> periodic_wave;
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
     };
     struct NodeConnection {

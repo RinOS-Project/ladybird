@@ -28,13 +28,16 @@ WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "when must be finite and non-negative"sv };
     if (!isfinite(m_frequency->value()) || !isfinite(m_detune->value()))
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Oscillator parameters must be finite"sv };
-    if (m_type == Bindings::OscillatorType::Custom)
-        return WebIDL::NotSupportedError::create(realm(), "Custom PeriodicWave rendering is not connected"_utf16);
-
     RefPtr<AudioParamRenderData> frequency_automation;
     frequency_automation = TRY(m_frequency->create_render_data());
     RefPtr<AudioParamRenderData> detune_automation;
     detune_automation = TRY(m_detune->create_render_data());
+    RefPtr<PeriodicWaveRenderData> periodic_wave;
+    if (m_type == Bindings::OscillatorType::Custom) {
+        if (!m_periodic_wave)
+            return WebIDL::InvalidStateError::create(realm(), "Custom oscillator has no PeriodicWave"_utf16);
+        periodic_wave = TRY(m_periodic_wave->create_render_data());
+    }
 
     OscillatorWaveform waveform = OscillatorWaveform::Sine;
     switch (m_type) {
@@ -63,6 +66,7 @@ WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
         .detune = m_detune->value(),
         .frequency_automation = move(frequency_automation),
         .detune_automation = move(detune_automation),
+        .periodic_wave = move(periodic_wave),
         .waveform = waveform,
     });
     return { };
