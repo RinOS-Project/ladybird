@@ -10,6 +10,7 @@
 #include <AK/ByteString.h>
 #include <AK/Function.h>
 #include <AK/HashTable.h>
+#include <AK/OwnPtr.h>
 #include <LibCore/EventReceiver.h>
 #include <LibGC/Function.h>
 #include <LibHTTP/HeaderList.h>
@@ -96,7 +97,10 @@ private:
 
     GC::Heap& m_heap;
     RefPtr<Requests::RequestClient> m_request_client;
-    Requests::RequestClient::ClientCertificateProvider m_client_certificate_provider;
+    /* AK::Function is move-only. Keep the provider in one owned cell and
+     * install a lightweight forwarding closure into each RequestClient so a
+     * reconnect can rebind it without copying the callback object. */
+    OwnPtr<Requests::RequestClient::ClientCertificateProvider> m_client_certificate_provider;
     HashTable<NonnullRefPtr<Requests::Request>> m_active_requests;
 
     String m_user_agent;
