@@ -16,6 +16,13 @@ struct StartSource {
     double when { 0.0 };
 };
 
+struct StartBufferSource {
+    NodeID node_id { 0 };
+    double when { 0.0 };
+    double offset { 0.0 };
+    Optional<double> duration;
+};
+
 struct StopSource {
     NodeID node_id { 0 };
     double when { 0.0 };
@@ -24,6 +31,6 @@ struct StopSource {
 // FIXME: add more message types
 
 // https://webaudio.github.io/web-audio-api/#control-message
-using ControlMessage = Variant<StartSource, StopSource>;
+using ControlMessage = Variant<StartSource, StartBufferSource, StopSource>;
 
 }

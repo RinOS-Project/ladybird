@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    test(() => {
+        const context = new OfflineAudioContext(1, 128, 44100);
+        const source = context.createBufferSource();
+        source.start(0.25, 0.1, 0.5);
+        println("queued buffer-source start");
+
+        try {
+            context.createBufferSource().start(-1);
+            println("FAIL: negative when was accepted");
+        } catch (e) {
+            println(`invalid when: ${e}`);
+        }
+    });
+</script>

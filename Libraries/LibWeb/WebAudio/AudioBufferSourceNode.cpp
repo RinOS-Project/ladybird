@@ -10,6 +10,7 @@
 #include <LibWeb/WebAudio/AudioBufferSourceNode.h>
 #include <LibWeb/WebAudio/AudioParam.h>
 #include <LibWeb/WebAudio/AudioScheduledSourceNode.h>
+#include <math.h>
 
 namespace Web::WebAudio {
 
@@ -47,7 +48,7 @@ WebIDL::ExceptionOr<void> AudioBufferSourceNode::set_buffer(GC::Ptr<AudioBuffer>
 
     // FIXME: 5. If start() has previously been called on this node, perform the operation acquire the content on buffer.
 
-    return {};
+    return { };
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audiobuffersourcenode-buffer
@@ -72,7 +73,7 @@ GC::Ref<AudioParam> AudioBufferSourceNode::detune() const
 WebIDL::ExceptionOr<void> AudioBufferSourceNode::set_loop(bool loop)
 {
     m_loop = loop;
-    return {};
+    return { };
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audiobuffersourcenode-loop
@@ -85,7 +86,7 @@ bool AudioBufferSourceNode::loop() const
 WebIDL::ExceptionOr<void> AudioBufferSourceNode::set_loop_start(double loop_start)
 {
     m_loop_start = loop_start;
-    return {};
+    return { };
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audiobuffersourcenode-loopstart
@@ -98,7 +99,7 @@ double AudioBufferSourceNode::loop_start() const
 WebIDL::ExceptionOr<void> AudioBufferSourceNode::set_loop_end(double loop_end)
 {
     m_loop_end = loop_end;
-    return {};
+    return { };
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audiobuffersourcenode-loopend
@@ -107,7 +108,7 @@ double AudioBufferSourceNode::loop_end() const
     return m_loop_end;
 }
 
-// https://webaudio.github.io/web-audio-api/#dom-audiobuffersourcenode-start`
+// https://webaudio.github.io/web-audio-api/#dom-audiobuffersourcenode-start
 WebIDL::ExceptionOr<void> AudioBufferSourceNode::start(Optional<double> when, Optional<double> offset, Optional<double> duration)
 {
     // 1. If this AudioBufferSourceNode internal slot [[source started]] is true, an InvalidStateError exception MUST be thrown.
@@ -116,26 +117,30 @@ WebIDL::ExceptionOr<void> AudioBufferSourceNode::start(Optional<double> when, Op
 
     // 2. Check for any errors that must be thrown due to parameter constraints described below. If any exception is thrown during this step, abort those steps.
     // A RangeError exception MUST be thrown if when is negative.
-    if (when.has_value() && when.value() < 0)
+    if (when.has_value() && (!isfinite(when.value()) || when.value() < 0))
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "when must not be negative"sv };
 
     // A RangeError exception MUST be thrown if offset is negative
-    if (offset.has_value() && offset.value() < 0)
+    if (offset.has_value() && (!isfinite(offset.value()) || offset.value() < 0))
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "offset must not be negative"sv };
 
     // A RangeError exception MUST be thrown if duration is negative.
-    if (duration.has_value() && duration.value() < 0)
+    if (duration.has_value() && (!isfinite(duration.value()) || duration.value() < 0))
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "duration must not be negative"sv };
 
     // 3. Set the internal slot [[source started]] on this AudioBufferSourceNode to true.
     set_source_started(true);
 
-    // FIXME: 4. Queue a control message to start the AudioBufferSourceNode, including the parameter values in the message.
+    // 4. Queue a control message to start the AudioBufferSourceNode, including the parameter values in the message.
+    context()->queue_control_message(StartBufferSource {
+        .node_id = node_id(),
+        .when = when.value_or(0),
+        .offset = offset.value_or(0),
+        .duration = duration,
+    });
     // FIXME: 5. Acquire the contents of the buffer if the buffer has been set.
     // FIXME: 6. Send a control message to the associated AudioContext to start running its rendering thread only when all the following conditions are met:
-
-    dbgln("FIXME: Implement AudioBufferSourceNode::start(when, offset, duration)");
-    return {};
+    return { };
 }
 
 WebIDL::ExceptionOr<GC::Ref<AudioBufferSourceNode>> AudioBufferSourceNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, AudioBufferSourceOptions const& options)
