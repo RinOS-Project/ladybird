@@ -375,7 +375,11 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             [&](DisconnectNode const& disconnect) {
                 node_connections.remove_all_matching([&](auto const& existing) {
                     return existing.source_node_id == disconnect.source_node_id
-                        && existing.destination_node_id == disconnect.destination_node_id;
+                        && existing.destination_node_id == disconnect.destination_node_id
+                        && (disconnect.output_index == DisconnectNode::wildcard_index
+                            || existing.output_index == disconnect.output_index)
+                        && (disconnect.input_index == DisconnectNode::wildcard_index
+                            || existing.input_index == disconnect.input_index);
                 });
             },
             [&](ConnectParam const& connect) {

@@ -131,8 +131,14 @@ struct UpdateAudioParam {
 };
 
 struct DisconnectNode {
+    static constexpr u32 wildcard_index = 0xffffffffu;
     NodeID source_node_id { 0 };
     NodeID destination_node_id { 0 };
+    // A wildcard preserves the no-argument disconnect() operation.  The
+    // overloads that name an output/input carry exact indices so unrelated
+    // fan-out edges are never removed by the render-thread transaction.
+    u32 output_index { wildcard_index };
+    u32 input_index { wildcard_index };
 };
 
 // A node-to-parameter edge is kept separate from the node graph. The render

@@ -398,6 +398,8 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(WebIDL::UnsignedLong output)
         m_context->queue_control_message(DisconnectNode {
             .source_node_id = node_id(),
             .destination_node_id = connection.destination_node->node_id(),
+            .output_index = connection.output,
+            .input_index = connection.input,
         });
 
         connection.destination_node->m_input_connections.remove_all_matching([&](AudioNodeConnection& reverse_connection) {
@@ -434,6 +436,8 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(GC::Ref<AudioNode> destination_n
         m_context->queue_control_message(DisconnectNode {
             .source_node_id = node_id(),
             .destination_node_id = destination_node->node_id(),
+            .output_index = connection.output,
+            .input_index = connection.input,
         });
 
         connection.destination_node->m_input_connections.remove_all_matching([&](AudioNodeConnection& reverse_connection) {
@@ -468,6 +472,8 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(GC::Ref<AudioNode> destination_n
         m_context->queue_control_message(DisconnectNode {
             .source_node_id = node_id(),
             .destination_node_id = destination_node->node_id(),
+            .output_index = connection.output,
+            .input_index = connection.input,
         });
 
         connection.destination_node->m_input_connections.remove_all_matching([&](AudioNodeConnection& reverse_connection) {
@@ -509,6 +515,8 @@ WebIDL::ExceptionOr<void> AudioNode::disconnect(GC::Ref<AudioNode> destination_n
         m_context->queue_control_message(DisconnectNode {
             .source_node_id = node_id(),
             .destination_node_id = destination_node->node_id(),
+            .output_index = connection.output,
+            .input_index = connection.input,
         });
 
         connection.destination_node->m_input_connections.remove_all_matching([&](AudioNodeConnection& reverse_connection) {
