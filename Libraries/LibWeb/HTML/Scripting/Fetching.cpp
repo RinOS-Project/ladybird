@@ -624,14 +624,14 @@ WebIDL::ExceptionOr<GC::Ref<ClassicScript>> fetch_a_classic_worker_imported_scri
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-module-worker-script-tree
-WebIDL::ExceptionOr<void> fetch_module_worker_script_graph(URL::URL const& url, EnvironmentSettingsObject& fetch_client, Fetch::Infrastructure::Request::Destination destination, EnvironmentSettingsObject& settings_object, PerformTheFetchHook perform_fetch, OnFetchScriptComplete on_complete)
+WebIDL::ExceptionOr<void> fetch_module_worker_script_graph(URL::URL const& url, EnvironmentSettingsObject& fetch_client, Fetch::Infrastructure::Request::Destination destination, EnvironmentSettingsObject& settings_object, PerformTheFetchHook perform_fetch, OnFetchScriptComplete on_complete, Fetch::Infrastructure::Request::CredentialsMode credentials_mode)
 {
-    return fetch_worklet_module_worker_script_graph(url, fetch_client, destination, settings_object, move(perform_fetch), move(on_complete));
+    return fetch_worklet_module_worker_script_graph(url, fetch_client, destination, settings_object, move(perform_fetch), move(on_complete), credentials_mode);
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-worklet/module-worker-script-graph
 // https://whatpr.org/html/9893/webappapis.html#fetch-a-worklet/module-worker-script-graph
-WebIDL::ExceptionOr<void> fetch_worklet_module_worker_script_graph(URL::URL const& url, EnvironmentSettingsObject& fetch_client, Fetch::Infrastructure::Request::Destination destination, EnvironmentSettingsObject& settings_object, PerformTheFetchHook perform_fetch, OnFetchScriptComplete on_complete)
+WebIDL::ExceptionOr<void> fetch_worklet_module_worker_script_graph(URL::URL const& url, EnvironmentSettingsObject& fetch_client, Fetch::Infrastructure::Request::Destination destination, EnvironmentSettingsObject& settings_object, PerformTheFetchHook perform_fetch, OnFetchScriptComplete on_complete, Fetch::Infrastructure::Request::CredentialsMode credentials_mode)
 {
     auto& realm = settings_object.realm();
     auto& vm = realm.vm();
@@ -644,7 +644,7 @@ WebIDL::ExceptionOr<void> fetch_worklet_module_worker_script_graph(URL::URL cons
         .cryptographic_nonce = String {},
         .integrity_metadata = String {},
         .parser_metadata = Fetch::Infrastructure::Request::ParserMetadata::NotParserInserted,
-        .credentials_mode = Fetch::Infrastructure::Request::CredentialsMode::SameOrigin,
+        .credentials_mode = credentials_mode,
         .referrer_policy = ReferrerPolicy::ReferrerPolicy::EmptyString,
         .fetch_priority = Fetch::Infrastructure::Request::Priority::Auto
     };
