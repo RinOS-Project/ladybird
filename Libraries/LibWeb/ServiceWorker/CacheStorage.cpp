@@ -110,9 +110,12 @@ GC::Ref<WebIDL::Promise> CacheStorage::open(String const& cache_name)
         return owner_rejected_promise();
     if (!m_caches.contains(cache_name) && m_storage_bottle) {
         auto result = m_storage_bottle->set(cache_name, cache_storage_marker);
-        if (result.has<WebView::StorageOperationError>())
+        if (result.has<WebView::StorageOperationError>()) {
+            auto quota_error = WebIDL::QuotaExceededError::create(
+                realm(), "Cache storage quota exceeded"_utf16);
             return WebIDL::create_rejected_promise_from_exception(
-                realm(), WebIDL::QuotaExceededError::create(realm(), "Cache storage quota exceeded"_utf16));
+                realm(), GC::Ref<WebIDL::DOMException>(*quota_error));
+        }
     }
 
     auto cache = m_caches.ensure(cache_name, [this, &cache_name] {
