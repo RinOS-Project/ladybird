@@ -88,7 +88,7 @@ void DynamicsCompressorRenderData::process_stereo(float& left, float& right, dou
     if (!isfinite(gain))
         return;
     gain = clamp(gain, 0.0f, 1.0f);
-    m_reduction_bits.store(bit_cast<u32>(20.0f * log10(max(gain, 1e-12f))));
+    m_reduction_bits.store(bit_cast<u32>(static_cast<float>(20.0f * log10(max(gain, 1e-12f)))));
     left *= gain;
     right *= gain;
 }

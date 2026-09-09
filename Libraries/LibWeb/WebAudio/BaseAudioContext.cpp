@@ -416,7 +416,7 @@ bool BaseAudioContext::queue_source_ended(NodeID node_id)
     if (write - read >= SOURCE_ENDED_QUEUE_CAPACITY)
         return false;
 
-    m_source_ended_queue[write % SOURCE_ENDED_QUEUE_CAPACITY].store(node_id, MemoryOrder::memory_order_relaxed);
+    m_source_ended_queue[write % SOURCE_ENDED_QUEUE_CAPACITY].store(node_id.value(), MemoryOrder::memory_order_relaxed);
     m_source_ended_write.store(write + 1, MemoryOrder::memory_order_release);
     return true;
 }
@@ -428,7 +428,7 @@ void BaseAudioContext::dispatch_source_ended_events()
     while (read != write) {
         auto node_id = m_source_ended_queue[read % SOURCE_ENDED_QUEUE_CAPACITY].load(MemoryOrder::memory_order_relaxed);
         for (auto const& source : m_scheduled_sources) {
-            if (source.node && source.node_id == node_id) {
+            if (source.node && source.node_id.value() == node_id) {
                 source.node->dispatch_event(DOM::Event::create(realm(), HTML::EventNames::ended));
                 break;
             }

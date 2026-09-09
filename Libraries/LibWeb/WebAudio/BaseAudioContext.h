@@ -151,7 +151,10 @@ private:
 
     static constexpr size_t SOURCE_ENDED_QUEUE_CAPACITY = 1024;
     Vector<ScheduledSource> m_scheduled_sources;
-    Array<Atomic<NodeID>, SOURCE_ENDED_QUEUE_CAPACITY> m_source_ended_queue {};
+    // Atomic only supports primitive/enum storage. Keep the distinct NodeID
+    // wrapper at the API boundary and store its underlying value in the SPSC
+    // completion queue.
+    Array<Atomic<u64>, SOURCE_ENDED_QUEUE_CAPACITY> m_source_ended_queue {};
     Atomic<u64> m_source_ended_write { 0 };
     Atomic<u64> m_source_ended_read { 0 };
 };

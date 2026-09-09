@@ -75,7 +75,7 @@ private:
     RefPtr<AudioParamRenderData> m_release_automation;
     mutable float m_envelope { 0.0f };
     mutable double m_last_time { -1.0 };
-    Atomic<u32> m_reduction_bits { 0 };
+    mutable Atomic<u32> m_reduction_bits { 0 };
 };
 
 }
