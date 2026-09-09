@@ -164,13 +164,14 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::resume()
         return promise;
     }
 
-    // 4. Set [[suspended by user]] to true.
-    m_suspended_by_user = true;
+    // 4. Set [[suspended by user]] to false.
+    m_suspended_by_user = false;
 
     // 5. If the context is not allowed to start, append promise to [[pending promises]] and [[pending resume promises]] and abort these steps, returning promise.
-    if (m_allowed_to_start) {
+    if (!m_allowed_to_start) {
         m_pending_promises.append(promise);
         m_pending_resume_promises.append(promise);
+        return promise;
     }
 
     // 6. Set the [[control thread state]] on the AudioContext to running.
@@ -192,7 +193,7 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::resume()
 
             // 7.4.1: Reject all promises from [[pending resume promises]] in order, then clear [[pending resume promises]].
             for (auto const& promise : m_pending_resume_promises) {
-                WebIDL::reject_promise(realm, promise, JS::js_null());
+                WebIDL::reject_promise(realm, promise, WebIDL::InvalidStateError::create(realm, "Unable to start the audio rendering backend."_utf16));
 
                 // 7.4.2: Additionally, remove those promises from [[pending promises]].
                 m_pending_promises.remove_first_matching([&promise](auto& pending_promise) {
