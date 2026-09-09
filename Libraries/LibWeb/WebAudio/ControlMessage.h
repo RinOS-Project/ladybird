@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Optional.h>
 #include <AK/Variant.h>
 #include <LibWeb/WebAudio/Types.h>
 
