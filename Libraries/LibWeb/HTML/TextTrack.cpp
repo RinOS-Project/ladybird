@@ -99,7 +99,11 @@ Bindings::TextTrackMode TextTrack::mode()
 
 void TextTrack::set_mode(Bindings::TextTrackMode mode)
 {
+    if (m_mode == mode)
+        return;
     m_mode = mode;
+    if (m_media_element)
+        m_media_element->text_track_cues_changed();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#handler-texttrack-oncuechange
@@ -134,7 +138,7 @@ GC::Ref<TextTrackCueList> TextTrack::active_cues() const
 {
     VERIFY(m_active_cues);
     m_active_cues->clear();
-    if (!m_media_element)
+    if (!m_media_element || m_mode == Bindings::TextTrackMode::Disabled)
         return *m_active_cues;
 
     auto current_time = m_media_element->current_time();
@@ -154,8 +158,10 @@ WebIDL::ExceptionOr<void> TextTrack::add_cue(GC::Ref<TextTrackCue> cue)
     if (cue->track() && cue->track() != this)
         return WebIDL::InvalidStateError::create(realm(), "Cue already belongs to another text track"_utf16);
     if (!m_cues->contains(*cue)) {
-        m_cues->append(cue);
+        m_cues->insert_sorted_by_start_time(cue);
         cue->set_track(this);
+        if (m_media_element)
+            m_media_element->text_track_cues_changed();
     }
     return {};
 }
@@ -165,11 +171,33 @@ void TextTrack::remove_cue(GC::Ref<TextTrackCue> cue)
     if (!m_cues->remove(*cue))
         return;
     cue->set_track(nullptr);
+    if (m_media_element)
+        m_media_element->text_track_cues_changed();
+}
+
+void TextTrack::clear_cues()
+{
+    for (size_t index = 0; index < m_cues->length(); ++index)
+        m_cues->at(index)->set_track(nullptr);
+    m_cues->clear();
+    m_active_cues->clear();
+    if (m_media_element)
+        m_media_element->text_track_cues_changed();
+}
+
+void TextTrack::cue_time_changed(TextTrackCue& cue)
+{
+    if (!m_cues->contains(cue))
+        return;
+    m_cues->resort_by_start_time();
+    if (m_media_element)
+        m_media_element->text_track_cues_changed();
 }
 
 void TextTrack::set_media_element(HTMLMediaElement& media_element)
 {
     m_media_element = media_element;
+    media_element.text_track_cues_changed();
 }
 
 void TextTrack::register_observer(Badge<TextTrackObserver>, TextTrackObserver& observer)

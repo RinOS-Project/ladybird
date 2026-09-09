@@ -32,6 +32,9 @@ public:
     double end_time() const { return m_end_time; }
     WebIDL::ExceptionOr<void> set_end_time(double end_time);
 
+    bool is_active() const { return m_active; }
+    void set_active(bool active) { m_active = active; }
+
     bool pause_on_exit() const { return m_pause_on_exit; }
     void set_pause_on_exit(bool pause_on_exit) { m_pause_on_exit = pause_on_exit; }
 
@@ -60,6 +63,9 @@ protected:
 
     // https://html.spec.whatwg.org/multipage/media.html#text-track-cue-pause-on-exit-flag
     bool m_pause_on_exit;
+
+    // https://html.spec.whatwg.org/multipage/media.html#text-track-cue-active-flag
+    bool m_active { false };
 };
 
 }

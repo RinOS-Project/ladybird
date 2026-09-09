@@ -80,16 +80,9 @@ bool MediaSource::is_type_supported(JS::VM&, String const& type)
     if (!mime_type.has_value())
         return false;
 
-    // FIXME: 3. If type contains a media type or media subtype that the MediaSource does not support, then
-    //    return false.
-
-    // FIXME: 4. If type contains a codec that the MediaSource does not support, then return false.
-
-    // FIXME: 5. If the MediaSource does not support the specified combination of media type, media
-    //    subtype, and codecs then return false.
-
-    // 6. Return true.
-    return true;
+    // No SourceBuffer parser/decoder capability is connected yet. A syntactically
+    // valid MIME type must not be advertised as supported without that owner.
+    return false;
 }
 
 }

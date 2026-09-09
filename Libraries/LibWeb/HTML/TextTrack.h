@@ -62,6 +62,8 @@ public:
     GC::Ref<TextTrackCueList> active_cues() const;
     WebIDL::ExceptionOr<void> add_cue(GC::Ref<TextTrackCue>);
     void remove_cue(GC::Ref<TextTrackCue>);
+    void clear_cues();
+    void cue_time_changed(TextTrackCue&);
 
     GC::Ptr<HTMLMediaElement> media_element() const { return m_media_element; }
     void set_media_element(HTMLMediaElement&);

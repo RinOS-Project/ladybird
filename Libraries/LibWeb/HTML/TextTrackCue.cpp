@@ -9,6 +9,7 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/TextTrackCuePrototype.h>
 #include <LibWeb/HTML/EventNames.h>
+#include <LibWeb/HTML/HTMLMediaElement.h>
 #include <LibWeb/HTML/TextTrackCue.h>
 
 namespace Web::HTML {
@@ -44,6 +45,8 @@ void TextTrackCue::set_start_time(double start_time)
     // FIXME: then, if the TextTrackCue object's text track cue is in a text track's list of cues, and that text track is in a media
     //        element's list of text tracks, and the media element's show poster flag is not set, then run the time marches on steps
     //        for that media element.
+    if (m_track)
+        m_track->cue_time_changed(*this);
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttrackcue-endtime
@@ -59,6 +62,8 @@ WebIDL::ExceptionOr<void> TextTrackCue::set_end_time(double end_time)
     // FIXME: Then, if the TextTrackCue object's text track cue is in a text track's list of cues, and that text track is in a media
     //        element's list of text tracks, and the media element's show poster flag is not set, then run the time marches on steps
     //        for that media element.
+    if (m_track && m_track->media_element())
+        m_track->media_element()->text_track_cues_changed();
     return {};
 }
 
