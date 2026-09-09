@@ -7,6 +7,7 @@
  */
 
 #include <LibJS/Runtime/Promise.h>
+#include <AK/QuickSort.h>
 #include <LibMedia/IncrementallyPopulatedStream.h>
 #include <LibMedia/PlaybackManager.h>
 #include <LibMedia/Sinks/DisplayingVideoSink.h>
@@ -37,6 +38,7 @@
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/TextTrack.h>
+#include <LibWeb/HTML/TextTrackCue.h>
 #include <LibWeb/HTML/TextTrackList.h>
 #include <LibWeb/HTML/TimeRanges.h>
 #include <LibWeb/HTML/TrackEvent.h>
@@ -390,6 +392,11 @@ void HTMLMediaElement::set_current_playback_position(double playback_position)
         reached_end_of_media_playback();
 
     upon_has_ended_playback_possibly_changed();
+}
+
+void HTMLMediaElement::text_track_cues_changed()
+{
+    time_marches_on(TimeMarchesOnReason::Other);
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-media-duration
@@ -2348,6 +2355,104 @@ void HTMLMediaElement::dispatch_time_update_event()
 // https://html.spec.whatwg.org/multipage/media.html#time-marches-on
 void HTMLMediaElement::time_marches_on(TimeMarchesOnReason reason)
 {
+    if (isfinite(m_current_playback_position)) {
+        struct CueEvent {
+            size_t cue_index { 0 };
+            size_t track_index { 0 };
+            size_t cue_order { 0 };
+            double event_time { 0 };
+            bool enter { false };
+        };
+
+        GC::RootVector<GC::Ref<TextTrackCue>> cues(heap());
+        Vector<CueEvent> events;
+        Vector<size_t> affected_track_indices;
+        Vector<u8> affected_tracks(m_text_tracks->length(), 0);
+        bool should_pause = false;
+
+        auto add_event = [&](size_t cue_index, size_t track_index, size_t cue_order, double event_time, bool enter) {
+            if (!isfinite(event_time))
+                return;
+            events.append({ cue_index, track_index, cue_order, event_time, enter });
+            if (!affected_tracks[track_index]) {
+                affected_tracks[track_index] = 1;
+                affected_track_indices.append(track_index);
+            }
+        };
+
+        for (size_t track_index = 0; track_index < m_text_tracks->length(); ++track_index) {
+            auto track = m_text_tracks->at(track_index);
+            auto track_is_enabled = track->mode() != Bindings::TextTrackMode::Disabled;
+
+            for (size_t cue_order = 0; cue_order < track->cues()->length(); ++cue_order) {
+                auto cue = track->cues()->at(cue_order);
+                auto cue_index = cues.size();
+                cues.append(cue);
+
+                auto start = cue->start_time();
+                auto end = cue->end_time();
+                auto valid_interval = isfinite(start) && isfinite(end) && end >= start;
+                auto current = track_is_enabled && valid_interval && start <= m_current_playback_position && m_current_playback_position < end;
+                auto was_active = cue->is_active();
+                auto missed = false;
+                if (track_is_enabled && valid_interval && reason == TimeMarchesOnReason::NormalPlayback && m_last_time_marches_on_position.has_value()) {
+                    auto last = *m_last_time_marches_on_position;
+                    missed = !current && m_current_playback_position > last && start >= last && end <= m_current_playback_position;
+                }
+
+                if (was_active && !current) {
+                    add_event(cue_index, track_index, cue_order, max(start, end), false);
+                    if (reason == TimeMarchesOnReason::NormalPlayback && cue->pause_on_exit())
+                        should_pause = true;
+                }
+                if ((!was_active && current) || missed)
+                    add_event(cue_index, track_index, cue_order, start, true);
+                if (missed) {
+                    add_event(cue_index, track_index, cue_order, max(start, end), false);
+                    if (cue->pause_on_exit())
+                        should_pause = true;
+                }
+
+                cue->set_active(current);
+            }
+        }
+
+        m_last_time_marches_on_position = m_current_playback_position;
+
+        if (should_pause && reason == TimeMarchesOnReason::NormalPlayback && !paused())
+            pause();
+
+        AK::quick_sort(events, [](auto const& lhs, auto const& rhs) {
+            if (lhs.event_time != rhs.event_time)
+                return lhs.event_time < rhs.event_time;
+            if (lhs.track_index != rhs.track_index)
+                return lhs.track_index < rhs.track_index;
+            if (lhs.cue_order != rhs.cue_order)
+                return lhs.cue_order < rhs.cue_order;
+            return lhs.enter && !rhs.enter;
+        });
+
+        for (auto const& event : events) {
+            auto cue = cues.at(event.cue_index);
+            if (event.enter) {
+                queue_a_media_element_task(GC::weak_callback(*cue, [](auto& cue) {
+                    cue.dispatch_event(DOM::Event::create(cue.realm(), HTML::EventNames::enter));
+                }));
+            } else {
+                queue_a_media_element_task(GC::weak_callback(*cue, [](auto& cue) {
+                    cue.dispatch_event(DOM::Event::create(cue.realm(), HTML::EventNames::exit));
+                }));
+            }
+        }
+
+        for (auto track_index : affected_track_indices) {
+            auto track = m_text_tracks->at(track_index);
+            queue_a_media_element_task(GC::weak_callback(*track, [](auto& track) {
+                track.dispatch_event(DOM::Event::create(track.realm(), HTML::EventNames::cuechange));
+            }));
+        }
+    }
+
     // FIXME: 1. Let current cues be a list of cues, initialized to contain all the cues of all the hidden or showing text tracks
     //           of the media element (not the disabled ones) whose start times are less than or equal to the current playback
     //           position and whose end times are greater than the current playback position.

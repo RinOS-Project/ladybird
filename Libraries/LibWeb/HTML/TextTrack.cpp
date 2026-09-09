@@ -99,7 +99,11 @@ Bindings::TextTrackMode TextTrack::mode()
 
 void TextTrack::set_mode(Bindings::TextTrackMode mode)
 {
+    if (m_mode == mode)
+        return;
     m_mode = mode;
+    if (m_media_element)
+        m_media_element->text_track_cues_changed();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#handler-texttrack-oncuechange
@@ -134,7 +138,7 @@ GC::Ref<TextTrackCueList> TextTrack::active_cues() const
 {
     VERIFY(m_active_cues);
     m_active_cues->clear();
-    if (!m_media_element)
+    if (!m_media_element || m_mode == Bindings::TextTrackMode::Disabled)
         return *m_active_cues;
 
     auto current_time = m_media_element->current_time();
@@ -156,6 +160,8 @@ WebIDL::ExceptionOr<void> TextTrack::add_cue(GC::Ref<TextTrackCue> cue)
     if (!m_cues->contains(*cue)) {
         m_cues->append(cue);
         cue->set_track(this);
+        if (m_media_element)
+            m_media_element->text_track_cues_changed();
     }
     return {};
 }
@@ -165,11 +171,14 @@ void TextTrack::remove_cue(GC::Ref<TextTrackCue> cue)
     if (!m_cues->remove(*cue))
         return;
     cue->set_track(nullptr);
+    if (m_media_element)
+        m_media_element->text_track_cues_changed();
 }
 
 void TextTrack::set_media_element(HTMLMediaElement& media_element)
 {
     m_media_element = media_element;
+    media_element.text_track_cues_changed();
 }
 
 void TextTrack::register_observer(Badge<TextTrackObserver>, TextTrackObserver& observer)

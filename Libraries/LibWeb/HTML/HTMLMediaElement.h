@@ -146,6 +146,9 @@ public:
 
     GC::Ref<TextTrack> add_text_track(Bindings::TextTrackKind kind, String const& label, String const& language);
 
+    // Re-run the text-track timing algorithm after a cue or track mode mutation.
+    void text_track_cues_changed();
+
     void create_controls();
     void destroy_controls();
 
@@ -279,6 +282,7 @@ private:
 
     // https://html.spec.whatwg.org/multipage/media.html#current-playback-position
     double m_current_playback_position { 0 };
+    Optional<double> m_last_time_marches_on_position;
 
     // https://html.spec.whatwg.org/multipage/media.html#official-playback-position
     double m_official_playback_position { 0 };
