@@ -25,6 +25,7 @@ public:
 
     static WebIDL::ExceptionOr<GC::Ref<ConstantSourceNode>> create(JS::Realm&, GC::Ref<BaseAudioContext>, ConstantSourceOptions const& = {});
     static WebIDL::ExceptionOr<GC::Ref<ConstantSourceNode>> construct_impl(JS::Realm&, GC::Ref<BaseAudioContext>, ConstantSourceOptions const& = {});
+    virtual WebIDL::ExceptionOr<void> start(double when = 0) override;
 
     virtual WebIDL::UnsignedLong number_of_inputs() override { return 0; }
     virtual WebIDL::UnsignedLong number_of_outputs() override { return 1; }

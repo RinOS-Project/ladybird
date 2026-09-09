@@ -99,6 +99,14 @@ private:
         RefPtr<PeriodicWaveRenderData> periodic_wave;
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
     };
+    struct ActiveConstantSource {
+        NodeID node_id { 0 };
+        double start_time { 0.0 };
+        Optional<double> stop_time;
+        float offset { 1.0f };
+        RefPtr<AudioParamRenderData> offset_automation;
+        AudioParamID offset_param_id { 0 };
+    };
     struct NodeConnection {
         NodeID source_node_id { 0 };
         NodeID destination_node_id { 0 };
@@ -118,6 +126,7 @@ private:
     };
     Vector<ActiveAudioSource> m_active_audio_sources;
     Vector<ActiveOscillator> m_active_oscillators;
+    Vector<ActiveConstantSource> m_active_constant_sources;
     Vector<NodeConnection> m_node_connections;
     u64 m_render_frame_position { 0 };
     u32 m_output_sample_rate { 48'000 };

@@ -160,6 +160,14 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         OscillatorWaveform waveform { OscillatorWaveform::Sine };
         NodeID node_id { 0 };
     };
+    struct OfflineConstantSource {
+        double start_time { 0.0 };
+        Optional<double> stop_time;
+        float offset { 1.0f };
+        RefPtr<AudioParamRenderData> offset_automation;
+        AudioParamID offset_param_id { 0 };
+        NodeID node_id { 0 };
+    };
     struct OfflineNodeConnection {
         NodeID source_node_id { 0 };
         NodeID destination_node_id { 0 };
@@ -180,6 +188,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
 
     Vector<OfflineBufferSource> buffer_sources;
     Vector<OfflineOscillator> oscillators;
+    Vector<OfflineConstantSource> constant_sources;
     Vector<OfflineNodeConnection> node_connections;
     for (auto message : drain_control_messages()) {
         message.visit(
@@ -195,6 +204,15 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .detune_param_id = start.detune_param_id,
                     .periodic_wave = start.periodic_wave,
                     .waveform = start.waveform,
+                    .node_id = start.node_id,
+                });
+            },
+            [&](StartConstantSource const& start) {
+                constant_sources.append({
+                    .start_time = start.when,
+                    .offset = start.offset,
+                    .offset_automation = start.offset_automation,
+                    .offset_param_id = start.offset_param_id,
                     .node_id = start.node_id,
                 });
             },
@@ -226,6 +244,10 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 for (auto& oscillator : oscillators) {
                     if (oscillator.node_id == stop.node_id)
                         oscillator.stop_time = stop.when;
+                }
+                for (auto& source : constant_sources) {
+                    if (source.node_id == stop.node_id)
+                        source.stop_time = stop.when;
                 }
             },
             [&](ConnectNode const& connect) {
@@ -265,6 +287,10 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                         oscillator.frequency_automation = update.render_data;
                     if (oscillator.detune_param_id == update.param_id)
                         oscillator.detune_automation = update.render_data;
+                }
+                for (auto& source : constant_sources) {
+                    if (source.offset_param_id == update.param_id)
+                        source.offset_automation = update.render_data;
                 }
                 for (auto& connection : node_connections) {
                     if (connection.gain_param_id == update.param_id)
@@ -402,6 +428,16 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 }
             }
             mix_source(mix_source, oscillator.node_id, sample, { }, 0);
+        }
+
+        for (auto const& source : constant_sources) {
+            if (now < source.start_time)
+                continue;
+            if (source.stop_time.has_value() && now >= source.stop_time.value())
+                continue;
+            auto sample = source.offset_automation ? source.offset_automation->value_at_time(now) : source.offset;
+            if (isfinite(sample))
+                mix_source(mix_source, source.node_id, sample, { }, 0);
         }
 
         for (u32 channel = 0; channel < m_number_of_channels; ++channel)

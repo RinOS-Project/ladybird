@@ -9,6 +9,9 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/ConstantSourceNode.h>
+#include <LibWeb/WebAudio/AudioParamRenderData.h>
+#include <LibWeb/WebAudio/ControlMessage.h>
+#include <math.h>
 
 namespace Web::WebAudio {
 
@@ -21,6 +24,26 @@ ConstantSourceNode::ConstantSourceNode(JS::Realm& realm, GC::Ref<BaseAudioContex
 }
 
 ConstantSourceNode::~ConstantSourceNode() = default;
+
+WebIDL::ExceptionOr<void> ConstantSourceNode::start(double when)
+{
+    if (source_started())
+        return WebIDL::InvalidStateError::create(realm(), "ConstantSourceNode source has already started"_utf16);
+    if (!isfinite(when) || when < 0)
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "when must be finite and non-negative"sv };
+    if (!isfinite(m_offset->value()))
+        return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Constant source offset must be finite"sv };
+    auto automation = TRY(m_offset->create_render_data());
+    set_source_started(true);
+    context()->queue_control_message(StartConstantSource {
+        .node_id = node_id(),
+        .when = when,
+        .offset = m_offset->value(),
+        .offset_automation = move(automation),
+        .offset_param_id = m_offset->param_id(),
+    });
+    return {};
+}
 
 WebIDL::ExceptionOr<GC::Ref<ConstantSourceNode>> ConstantSourceNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, ConstantSourceOptions const& options)
 {

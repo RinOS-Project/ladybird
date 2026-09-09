@@ -470,6 +470,15 @@ void AudioContext::render_audio(Span<float> buffer)
                     .waveform = start.waveform,
                 });
             },
+            [&](StartConstantSource const& start) {
+                m_active_constant_sources.append({
+                    .node_id = start.node_id,
+                    .start_time = start.when,
+                    .offset = start.offset,
+                    .offset_automation = start.offset_automation,
+                    .offset_param_id = start.offset_param_id,
+                });
+            },
             [&](StartBufferSource const& start) {
                 if (!start.buffer || start.buffer->frame_count() == 0)
                     return;
@@ -498,6 +507,10 @@ void AudioContext::render_audio(Span<float> buffer)
                 for (auto& oscillator : m_active_oscillators) {
                     if (oscillator.node_id == stop.node_id)
                         oscillator.stop_time = stop.when;
+                }
+                for (auto& source : m_active_constant_sources) {
+                    if (source.node_id == stop.node_id)
+                        source.stop_time = stop.when;
                 }
             },
             [&](ConnectNode const& connect) {
@@ -537,6 +550,10 @@ void AudioContext::render_audio(Span<float> buffer)
                         oscillator.frequency_automation = update.render_data;
                     if (oscillator.detune_param_id == update.param_id)
                         oscillator.detune_automation = update.render_data;
+                }
+                for (auto& source : m_active_constant_sources) {
+                    if (source.offset_param_id == update.param_id)
+                        source.offset_automation = update.render_data;
                 }
                 for (auto& connection : m_node_connections) {
                     if (connection.gain_param_id == update.param_id)
@@ -680,6 +697,16 @@ void AudioContext::render_audio(Span<float> buffer)
             mix_source(mix_source, oscillator.node_id, sample, sample, 0);
         }
 
+        for (auto const& source : m_active_constant_sources) {
+            if (now < source.start_time)
+                continue;
+            if (source.stop_time.has_value() && now >= source.stop_time.value())
+                continue;
+            auto sample = source.offset_automation ? source.offset_automation->value_at_time(now) : source.offset;
+            if (isfinite(sample))
+                mix_source(mix_source, source.node_id, sample, sample, 0);
+        }
+
         buffer[frame * 2] = clamp(left, -1.0f, 1.0f);
         buffer[frame * 2 + 1] = clamp(right, -1.0f, 1.0f);
     }
@@ -703,6 +730,9 @@ void AudioContext::render_audio(Span<float> buffer)
     });
     m_active_oscillators.remove_all_matching([&](auto const& oscillator) {
         return oscillator.stop_time.has_value() && end_time >= oscillator.stop_time.value();
+    });
+    m_active_constant_sources.remove_all_matching([&](auto const& source) {
+        return source.stop_time.has_value() && end_time >= source.stop_time.value();
     });
 }
 

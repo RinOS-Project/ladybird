@@ -43,6 +43,14 @@ struct StartOscillator {
     OscillatorWaveform waveform { OscillatorWaveform::Sine };
 };
 
+struct StartConstantSource {
+    NodeID node_id { 0 };
+    double when { 0.0 };
+    float offset { 1.0f };
+    RefPtr<AudioParamRenderData> offset_automation;
+    AudioParamID offset_param_id { 0 };
+};
+
 struct StartBufferSource {
     NodeID node_id { 0 };
     double when { 0.0 };
@@ -90,6 +98,6 @@ struct DisconnectNode {
 };
 
 // https://webaudio.github.io/web-audio-api/#control-message
-using ControlMessage = Variant<StartSource, StartOscillator, StartBufferSource, StopSource, ConnectNode, DisconnectNode, UpdateAudioParam>;
+using ControlMessage = Variant<StartSource, StartOscillator, StartConstantSource, StartBufferSource, StopSource, ConnectNode, DisconnectNode, UpdateAudioParam>;
 
 }
