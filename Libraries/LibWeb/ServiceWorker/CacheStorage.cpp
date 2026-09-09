@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibJS/Runtime/Array.h>
 #include <LibWeb/Bindings/CacheStoragePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibJS/Runtime/Array.h>
 #include <LibWeb/ServiceWorker/Cache.h>
 #include <LibWeb/ServiceWorker/CacheStorage.h>
 #include <LibWeb/WebIDL/Promise.h>
