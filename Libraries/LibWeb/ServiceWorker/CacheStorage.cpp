@@ -6,6 +6,7 @@
 
 #include <LibWeb/Bindings/CacheStoragePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibJS/Runtime/Array.h>
 #include <LibWeb/ServiceWorker/Cache.h>
 #include <LibWeb/ServiceWorker/CacheStorage.h>
 #include <LibWeb/WebIDL/Promise.h>
@@ -44,6 +45,22 @@ GC::Ref<WebIDL::Promise> CacheStorage::open(String const& cache_name)
 GC::Ref<WebIDL::Promise> CacheStorage::has(String const& cache_name)
 {
     return WebIDL::create_resolved_promise(realm(), JS::Value(m_caches.contains(cache_name)));
+}
+
+// https://w3c.github.io/ServiceWorker/#cache-storage-delete
+GC::Ref<WebIDL::Promise> CacheStorage::delete_(String const& cache_name)
+{
+    return WebIDL::create_resolved_promise(realm(), JS::Value(m_caches.remove(cache_name)));
+}
+
+// https://w3c.github.io/ServiceWorker/#cache-storage-keys
+GC::Ref<WebIDL::Promise> CacheStorage::keys()
+{
+    Vector<String> cache_names;
+    cache_names.ensure_capacity(m_caches.size());
+    for (auto const& entry : m_caches)
+        cache_names.append(entry.key);
+    return WebIDL::create_resolved_promise(realm(), JS::Array::create_from(realm(), cache_names));
 }
 
 }
