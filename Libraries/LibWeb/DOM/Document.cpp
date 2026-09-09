@@ -4292,9 +4292,13 @@ WebIDL::ExceptionOr<void> Document::set_domain(String const& domain)
 
     // FIXME: 6. If the surrounding agent's agent cluster's is origin-keyed is true, then return.
 
-    // FIXME: 7. Set this's origin's domain to the result of parsing the given value.
-
-    dbgln("(STUBBED) Document::set_domain(domain='{}')", domain);
+    // 7. Parse the supplied host and commit the domain to this document's
+    // tuple origin. Keep the original scheme, host, and port: document.domain
+    // only changes the domain component used by same-origin-domain checks.
+    auto parsed_domain = URL::Parser::parse_host(domain);
+    if (!parsed_domain.has_value())
+        return WebIDL::SecurityError::create(realm, "Document.domain setter received an invalid host"_utf16);
+    set_origin(URL::Origin(origin().scheme(), origin().host(), origin().port(), parsed_domain->serialize()));
     return {};
 }
 
