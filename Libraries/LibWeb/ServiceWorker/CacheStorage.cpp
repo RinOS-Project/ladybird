@@ -16,6 +16,7 @@
 #include <LibWeb/StorageAPI/StorageKey.h>
 #include <LibWeb/ServiceWorker/Cache.h>
 #include <LibWeb/ServiceWorker/CacheStorage.h>
+#include <LibWeb/WebIDL/DOMException.h>
 #include <LibWeb/WebIDL/QuotaExceededError.h>
 #include <LibWeb/WebIDL/Promise.h>
 
@@ -44,6 +45,19 @@ CacheStorage::CacheStorage(JS::Realm& realm)
     if (!storage_key.has_value() || !page)
         return;
 
+    /* The durable Caches bottle is owned by Browser.  Do not restore names or
+     * create a writable bottle until the current WebContent page has been
+     * admitted by that owner.  This is deliberately a separate owner RPC
+     * from ServiceWorker registration: a renderer that can register a worker
+     * must still prove its profile before touching CacheStorage. */
+    auto owner_response = page->client().request_service_worker_owner(
+        4u, {}, storage_key.value().to_string().to_byte_string(), {}, {}, 0u);
+    if (!owner_response.accepted || !owner_response.found ||
+        owner_response.generation == 0u)
+        return;
+    m_owner_authorized = true;
+    m_owner_generation = owner_response.generation;
+
     m_storage_bottle = StorageAPI::LocalStorageBottle::create(
         heap(), *page, storage_key.value(), {}, StorageAPI::StorageEndpointType::Caches);
     for (auto const& cache_name : m_storage_bottle->keys()) {
@@ -70,6 +84,10 @@ void CacheStorage::visit_edges(JS::Cell::Visitor& visitor)
 // https://w3c.github.io/ServiceWorker/#cache-storage-open
 GC::Ref<WebIDL::Promise> CacheStorage::open(String const& cache_name)
 {
+    if (!m_owner_authorized)
+        return WebIDL::create_rejected_promise_from_exception(
+            realm(), WebIDL::InvalidStateError::create(
+                realm(), "CacheStorage profile owner rejected the page"_utf16));
     if (!m_caches.contains(cache_name) && m_storage_bottle) {
         auto result = m_storage_bottle->set(cache_name, cache_storage_marker);
         if (result.has<WebView::StorageOperationError>())
@@ -86,12 +104,16 @@ GC::Ref<WebIDL::Promise> CacheStorage::open(String const& cache_name)
 // https://w3c.github.io/ServiceWorker/#cache-storage-has
 GC::Ref<WebIDL::Promise> CacheStorage::has(String const& cache_name)
 {
+    if (!m_owner_authorized)
+        return WebIDL::create_resolved_promise(realm(), JS::Value(false));
     return WebIDL::create_resolved_promise(realm(), JS::Value(m_caches.contains(cache_name)));
 }
 
 // https://w3c.github.io/ServiceWorker/#cache-storage-delete
 GC::Ref<WebIDL::Promise> CacheStorage::delete_(String const& cache_name)
 {
+    if (!m_owner_authorized)
+        return WebIDL::create_resolved_promise(realm(), JS::Value(false));
     if (auto cache = m_caches.get(cache_name); cache.has_value())
         cache.value()->remove_persisted_entries();
     const bool removed = m_caches.remove(cache_name);

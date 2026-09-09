@@ -37,6 +37,8 @@ private:
 
     OrderedHashMap<String, GC::Ref<Cache>> m_caches;
     GC::Ptr<StorageAPI::StorageBottle> m_storage_bottle;
+    bool m_owner_authorized { false };
+    u64 m_owner_generation { 0 };
 };
 
 }
