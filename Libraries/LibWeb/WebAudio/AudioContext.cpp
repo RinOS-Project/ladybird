@@ -191,6 +191,7 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::resume()
         (void)m_playback_stream->resume();
 
     // 7.3: Start rendering the audio graph.
+    auto playback_stream_ready = m_playback_stream != nullptr;
     if (!start_rendering_audio_graph()) {
         // 7.4: In case of failure, queue a media element task to execute the following steps:
         queue_a_media_element_task(GC::create_function(heap(), [this]() {
@@ -208,6 +209,15 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> AudioContext::resume()
             }
             m_pending_resume_promises.clear();
         }));
+    }
+
+    // PlaybackStream creation is asynchronous. Keep the resume promise
+    // pending until the real output endpoint is ready instead of resolving it
+    // while only a policy flag has changed.
+    if (!playback_stream_ready && m_backend_start_pending) {
+        m_pending_promises.append(promise);
+        m_pending_resume_promises.append(promise);
+        return promise;
     }
 
     // 7.5: queue a media element task to execute the following steps:
@@ -391,6 +401,19 @@ bool AudioContext::start_rendering_audio_graph()
         self->m_output_sample_rate = stream->sample_specification().sample_rate();
         if (self->state() == Bindings::AudioContextState::Running)
             (void)self->m_playback_stream->resume();
+        if (!self->m_pending_resume_promises.is_empty()) {
+            self->queue_a_media_element_task(GC::create_function(self->heap(), [self]() {
+                auto& realm = self->realm();
+                HTML::TemporaryExecutionContext context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
+                for (auto const& promise : self->m_pending_resume_promises) {
+                    WebIDL::resolve_promise(realm, promise, JS::js_undefined());
+                    self->m_pending_promises.remove_first_matching([&promise](auto const& pending_promise) {
+                        return pending_promise == promise;
+                    });
+                }
+                self->m_pending_resume_promises.clear();
+            }));
+        }
     });
     create_promise->when_rejected([self](auto&) {
         self->m_backend_start_pending = false;
@@ -398,6 +421,17 @@ bool AudioContext::start_rendering_audio_graph()
             self->set_control_state(Bindings::AudioContextState::Suspended);
             self->set_rendering_state(Bindings::AudioContextState::Suspended);
         }
+        self->queue_a_media_element_task(GC::create_function(self->heap(), [self]() {
+            auto& realm = self->realm();
+            HTML::TemporaryExecutionContext context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
+            for (auto const& promise : self->m_pending_resume_promises) {
+                WebIDL::reject_promise(realm, promise, WebIDL::InvalidStateError::create(realm, "Unable to start the audio rendering backend."_utf16));
+                self->m_pending_promises.remove_first_matching([&promise](auto const& pending_promise) {
+                    return pending_promise == promise;
+                });
+            }
+            self->m_pending_resume_promises.clear();
+        }));
     });
     return true;
 }
