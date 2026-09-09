@@ -21,6 +21,7 @@
 #include <LibWeb/SVG/SVGSVGElement.h>
 #include <LibWeb/SVG/SVGViewElement.h>
 #include <LibWeb/Selection/Selection.h>
+#include <math.h>
 
 namespace Web::SVG {
 
@@ -232,16 +233,56 @@ GC::Ref<DOM::NodeList> SVGSVGElement::get_enclosure_list(GC::Ref<Geometry::DOMRe
     return DOM::StaticNodeList::create(realm(), {});
 }
 
-bool SVGSVGElement::check_intersection(GC::Ref<SVGElement>, GC::Ref<Geometry::DOMRectReadOnly>) const
+static bool normalized_rect_bounds(Geometry::DOMRectReadOnly const& rect,
+                                   double& left, double& top,
+                                   double& right, double& bottom)
 {
-    dbgln("(STUBBED) SVGSVGElement::check_intersection(). Called on: {}", debug_description());
-    return false;
+    left = rect.left();
+    top = rect.top();
+    right = rect.right();
+    bottom = rect.bottom();
+    return isfinite(left) && isfinite(top) && isfinite(right) && isfinite(bottom) && left < right && top < bottom;
 }
 
-bool SVGSVGElement::check_enclosure(GC::Ref<SVGElement>, GC::Ref<Geometry::DOMRectReadOnly>) const
+static Optional<Gfx::DoubleRect> graphics_bounding_rect(SVGElement& element)
 {
-    dbgln("(STUBBED) SVGSVGElement::check_enclosure(). Called on: {}", debug_description());
-    return false;
+    auto* graphics_element = as_if<SVGGraphicsElement>(element);
+    if (!graphics_element)
+        return {};
+    auto result = graphics_element->get_b_box({});
+    if (result.is_error())
+        return {};
+    auto bounding_box = result.release_value();
+    double left, top, right, bottom;
+    if (!normalized_rect_bounds(*bounding_box, left, top, right, bottom))
+        return {};
+    return Gfx::DoubleRect { left, top, right - left, bottom - top };
+}
+
+bool SVGSVGElement::check_intersection(GC::Ref<SVGElement> element, GC::Ref<Geometry::DOMRectReadOnly> rect) const
+{
+    double left, top, right, bottom;
+    if (!normalized_rect_bounds(*rect, left, top, right, bottom))
+        return false;
+    auto bounding_box = graphics_bounding_rect(*element);
+    if (!bounding_box.has_value())
+        return false;
+    auto const& box = *bounding_box;
+    auto box_right = box.right();
+    auto box_bottom = box.bottom();
+    return box.x() < right && box_right > left && box.y() < bottom && box_bottom > top;
+}
+
+bool SVGSVGElement::check_enclosure(GC::Ref<SVGElement> element, GC::Ref<Geometry::DOMRectReadOnly> rect) const
+{
+    double left, top, right, bottom;
+    if (!normalized_rect_bounds(*rect, left, top, right, bottom))
+        return false;
+    auto bounding_box = graphics_bounding_rect(*element);
+    if (!bounding_box.has_value())
+        return false;
+    auto const& box = *bounding_box;
+    return box.x() >= left && box.y() >= top && box.right() <= right && box.bottom() <= bottom;
 }
 
 void SVGSVGElement::deselect_all() const
