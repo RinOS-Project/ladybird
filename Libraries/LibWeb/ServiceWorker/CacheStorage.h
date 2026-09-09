@@ -6,10 +6,13 @@
 
 #pragma once
 
+#include <AK/HashMap.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/WebIDL/Promise.h>
 
 namespace Web::ServiceWorker {
+
+class Cache;
 
 // https://w3c.github.io/ServiceWorker/#cachestorage-interface
 class CacheStorage : public Bindings::PlatformObject {
@@ -24,6 +27,9 @@ private:
     explicit CacheStorage(JS::Realm&);
 
     virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(JS::Cell::Visitor&) override;
+
+    OrderedHashMap<String, GC::Ref<Cache>> m_caches;
 };
 
 }

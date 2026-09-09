@@ -6,6 +6,7 @@
 
 #include <LibWeb/Bindings/CacheStoragePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/ServiceWorker/Cache.h>
 #include <LibWeb/ServiceWorker/CacheStorage.h>
 #include <LibWeb/WebIDL/Promise.h>
 
@@ -24,17 +25,25 @@ void CacheStorage::initialize(JS::Realm& realm)
     WEB_SET_PROTOTYPE_FOR_INTERFACE(CacheStorage);
 }
 
-// https://w3c.github.io/ServiceWorker/#cache-storage-open
-GC::Ref<WebIDL::Promise> CacheStorage::open(String const&)
+void CacheStorage::visit_edges(JS::Cell::Visitor& visitor)
 {
-    return WebIDL::create_rejected_promise(realm(), WebIDL::NotSupportedError::create(realm(), "CacheStorage.open() is not yet implemented"_utf16));
+    Base::visit_edges(visitor);
+    visitor.visit(m_caches);
+}
+
+// https://w3c.github.io/ServiceWorker/#cache-storage-open
+GC::Ref<WebIDL::Promise> CacheStorage::open(String const& cache_name)
+{
+    auto cache = m_caches.ensure(cache_name, [this, &cache_name] {
+        return Cache::create(realm(), cache_name);
+    });
+    return WebIDL::create_resolved_promise(realm(), cache);
 }
 
 // https://w3c.github.io/ServiceWorker/#cache-storage-has
-GC::Ref<WebIDL::Promise> CacheStorage::has(String const&)
+GC::Ref<WebIDL::Promise> CacheStorage::has(String const& cache_name)
 {
-    dbgln("FIXME: CacheStorage::has() is not implemented yet");
-    return WebIDL::create_rejected_promise(realm(), JS::Value(false));
+    return WebIDL::create_resolved_promise(realm(), JS::Value(m_caches.contains(cache_name)));
 }
 
 }
