@@ -158,7 +158,7 @@ WebIDL::ExceptionOr<void> TextTrack::add_cue(GC::Ref<TextTrackCue> cue)
     if (cue->track() && cue->track() != this)
         return WebIDL::InvalidStateError::create(realm(), "Cue already belongs to another text track"_utf16);
     if (!m_cues->contains(*cue)) {
-        m_cues->append(cue);
+        m_cues->insert_sorted_by_start_time(cue);
         cue->set_track(this);
         if (m_media_element)
             m_media_element->text_track_cues_changed();

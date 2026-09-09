@@ -29,6 +29,7 @@ public:
 
     bool contains(TextTrackCue const&) const;
     void append(GC::Ref<TextTrackCue>);
+    void insert_sorted_by_start_time(GC::Ref<TextTrackCue>);
     bool remove(TextTrackCue const&);
     void clear() { m_cues.clear(); }
 

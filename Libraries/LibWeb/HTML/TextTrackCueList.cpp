@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Math.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/TextTrackCueListPrototype.h>
@@ -92,6 +93,26 @@ void TextTrackCueList::append(GC::Ref<TextTrackCue> cue)
 {
     if (!contains(*cue))
         m_cues.append(cue);
+}
+
+void TextTrackCueList::insert_sorted_by_start_time(GC::Ref<TextTrackCue> cue)
+{
+    if (contains(*cue))
+        return;
+
+    auto start_time = cue->start_time();
+    if (!isfinite(start_time)) {
+        m_cues.append(cue);
+        return;
+    }
+
+    size_t insertion_index = 0;
+    for (; insertion_index < m_cues.size(); ++insertion_index) {
+        auto existing_start_time = m_cues.at(insertion_index)->start_time();
+        if (isfinite(existing_start_time) && existing_start_time > start_time)
+            break;
+    }
+    m_cues.insert(insertion_index, cue);
 }
 
 bool TextTrackCueList::remove(TextTrackCue const& cue)
