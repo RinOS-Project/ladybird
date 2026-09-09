@@ -13,7 +13,7 @@ namespace Web::WebAudio {
 ErrorOr<NonnullRefPtr<PannerRenderData>> PannerRenderData::create(PannerDistanceModel distance_model, float ref_distance, float max_distance, float rolloff_factor,
     RefPtr<AudioParamRenderData> position_x, RefPtr<AudioParamRenderData> position_y, RefPtr<AudioParamRenderData> position_z)
 {
-    if (!isfinite(ref_distance) || !isfinite(max_distance) || !isfinite(rolloff_factor) || ref_distance <= 0 || max_distance <= 0 || rolloff_factor < 0 || max_distance < ref_distance)
+    if (!isfinite(ref_distance) || !isfinite(max_distance) || !isfinite(rolloff_factor) || ref_distance <= 0 || max_distance <= 0 || rolloff_factor < 0)
         return Error::from_errno(EINVAL);
     return adopt_nonnull_ref_or_enomem(new (nothrow) PannerRenderData(distance_model, ref_distance, max_distance, rolloff_factor, move(position_x), move(position_y), move(position_z)));
 }
@@ -27,7 +27,7 @@ void PannerRenderData::process(float& left, float& right, double time) const
         return;
 
     auto distance = sqrt(static_cast<double>(x) * x + static_cast<double>(y) * y + static_cast<double>(z) * z);
-    auto clamped_distance = clamp(distance, static_cast<double>(m_ref_distance), static_cast<double>(m_max_distance));
+    auto clamped_distance = max(static_cast<double>(m_ref_distance), min(distance, static_cast<double>(m_max_distance)));
     double gain = 1.0;
     switch (m_distance_model) {
     case PannerDistanceModel::Linear: {

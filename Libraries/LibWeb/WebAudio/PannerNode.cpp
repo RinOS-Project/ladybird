@@ -36,7 +36,7 @@ WebIDL::ExceptionOr<GC::Ref<PannerNode>> PannerNode::construct_impl(JS::Realm& r
 
     // https://webaudio.github.io/web-audio-api/#dom-pannernode-maxdistance
     // A RangeError exception MUST be thrown if this is set to a non-positive value.
-    if (options.max_distance < 0.0)
+    if (options.max_distance <= 0.0)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "maxDistance cannot be negative"sv };
 
     // https://webaudio.github.io/web-audio-api/#dom-pannernode-coneoutergain
@@ -99,7 +99,7 @@ void PannerNode::visit_edges(Cell::Visitor& visitor)
 WebIDL::ExceptionOr<void> PannerNode::set_ref_distance(double value)
 {
     // A RangeError exception MUST be thrown if this is set to a negative value.
-    if (value < 0.0)
+    if (value <= 0.0)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "refDistance cannot be negative"sv };
 
     m_ref_distance = value;
