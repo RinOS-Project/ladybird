@@ -216,6 +216,14 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .node_id = start.node_id,
                 });
             },
+            [&](UpdateOscillatorWaveform const& update) {
+                for (auto& oscillator : oscillators) {
+                    if (oscillator.node_id != update.node_id)
+                        continue;
+                    oscillator.periodic_wave = update.periodic_wave;
+                    oscillator.waveform = update.waveform;
+                }
+            },
             [&](StartBufferSource const& start) {
                 if (!start.buffer || start.buffer->frame_count() == 0)
                     return;

@@ -18,6 +18,22 @@ namespace Web::WebAudio {
 
 GC_DEFINE_ALLOCATOR(OscillatorNode);
 
+static OscillatorWaveform waveform_for_type(Bindings::OscillatorType type)
+{
+    switch (type) {
+    case Bindings::OscillatorType::Square:
+        return OscillatorWaveform::Square;
+    case Bindings::OscillatorType::Sawtooth:
+        return OscillatorWaveform::Sawtooth;
+    case Bindings::OscillatorType::Triangle:
+        return OscillatorWaveform::Triangle;
+    case Bindings::OscillatorType::Sine:
+    case Bindings::OscillatorType::Custom:
+        return OscillatorWaveform::Sine;
+    }
+    VERIFY_NOT_REACHED();
+}
+
 OscillatorNode::~OscillatorNode() = default;
 
 WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
@@ -123,10 +139,15 @@ WebIDL::ExceptionOr<void> OscillatorNode::set_type(Bindings::OscillatorType type
     if (type == Bindings::OscillatorType::Custom && m_type != Bindings::OscillatorType::Custom)
         return WebIDL::InvalidStateError::create(realm(), "Oscillator node type cannot be changed to 'custom'"_utf16);
 
-    // FIXME: An appropriate PeriodicWave should be set here based on the given type.
-    set_periodic_wave(nullptr);
-
+    m_periodic_wave = nullptr;
     m_type = type;
+    if (source_started()) {
+        context()->queue_control_message(UpdateOscillatorWaveform {
+            .node_id = node_id(),
+            .periodic_wave = nullptr,
+            .waveform = waveform_for_type(type),
+        });
+    }
     return {};
 }
 
@@ -135,6 +156,17 @@ void OscillatorNode::set_periodic_wave(GC::Ptr<PeriodicWave> periodic_wave)
 {
     m_periodic_wave = periodic_wave;
     m_type = Bindings::OscillatorType::Custom;
+    if (!source_started() || !periodic_wave)
+        return;
+
+    auto render_data = periodic_wave->create_render_data();
+    if (render_data.is_error())
+        return;
+    context()->queue_control_message(UpdateOscillatorWaveform {
+        .node_id = node_id(),
+        .periodic_wave = render_data.release_value(),
+        .waveform = OscillatorWaveform::Sine,
+    });
 }
 
 void OscillatorNode::initialize(JS::Realm& realm)

@@ -479,6 +479,14 @@ void AudioContext::render_audio(Span<float> buffer)
                     .offset_param_id = start.offset_param_id,
                 });
             },
+            [&](UpdateOscillatorWaveform const& update) {
+                for (auto& oscillator : m_active_oscillators) {
+                    if (oscillator.node_id != update.node_id)
+                        continue;
+                    oscillator.periodic_wave = update.periodic_wave;
+                    oscillator.waveform = update.waveform;
+                }
+            },
             [&](StartBufferSource const& start) {
                 if (!start.buffer || start.buffer->frame_count() == 0)
                     return;
