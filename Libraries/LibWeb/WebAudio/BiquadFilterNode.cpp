@@ -5,6 +5,7 @@
  */
 
 #include <AK/Math.h>
+#include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/AudioParamPrototype.h>
 #include <LibWeb/Bindings/BiquadFilterNodePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
@@ -98,7 +99,7 @@ WebIDL::ExceptionOr<void> BiquadFilterNode::get_frequency_response(GC::Root<WebI
         return WebIDL::InvalidStateError::create(realm(), "BiquadFilter parameters must be finite"_utf16);
     auto const frequency_scale = pow(2.0f, parameter_detune / 1200.0f);
     auto const effective_frequency = clamp(parameter_frequency * frequency_scale, 0.0f, sample_rate / 2.0f);
-    auto const q_value = max(abs(parameter_q), 1e-8f);
+    auto const q_value = max(fabs(parameter_q), 1e-8f);
     auto const gain_factor = pow(10.0f, parameter_gain / 40.0f);
     auto const parameter_omega = 2.0f * AK::Pi<float> * effective_frequency / sample_rate;
     auto const parameter_cosine = cos(parameter_omega);

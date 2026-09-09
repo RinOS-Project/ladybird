@@ -489,6 +489,7 @@ void AudioContext::render_audio(Span<float> buffer)
                 m_active_oscillators.append({
                     .node_id = start.node_id,
                     .start_time = start.when,
+                    .stop_time = {},
                     .frequency = start.frequency,
                     .detune = start.detune,
                     .frequency_automation = start.frequency_automation,
@@ -503,6 +504,7 @@ void AudioContext::render_audio(Span<float> buffer)
                 m_active_constant_sources.append({
                     .node_id = start.node_id,
                     .start_time = start.when,
+                    .stop_time = {},
                     .offset = start.offset,
                     .offset_automation = start.offset_automation,
                     .offset_param_id = start.offset_param_id,
@@ -523,6 +525,7 @@ void AudioContext::render_audio(Span<float> buffer)
                     .start_time = start.when,
                     .offset = start.offset,
                     .duration = start.duration,
+                    .stop_time = {},
                     .playback_rate = start.playback_rate,
                     .detune = start.detune,
                     .playback_rate_automation = start.playback_rate_automation,
@@ -761,17 +764,18 @@ void AudioContext::render_audio(Span<float> buffer)
             float right { 0 };
         };
         Array<PrecollectedSource, 256> precollected_source_nodes { };
+        size_t precollected_source_count = 0;
         auto collect_direct_source_modulation = [&](NodeID node_id, float source_left, float source_right) {
             for (auto const& param_connection : m_param_connections) {
                 if (param_connection.source_node_id == node_id && param_connection.output_index == 0)
                     add_param_modulation(param_connection.destination_param_id, (source_left + source_right) * 0.5f);
             }
-            if (precollected_source_nodes.size() < 256)
-                precollected_source_nodes.append({ node_id, source_left, source_right });
+            if (precollected_source_count < precollected_source_nodes.size())
+                precollected_source_nodes[precollected_source_count++] = { node_id, source_left, source_right };
         };
         for (auto const& source : m_active_audio_sources) {
-            if (now < source.start_time || source.stop_time.has_value() && now >= source.stop_time.value()
-                || source.duration.has_value() && now - source.start_time >= source.duration.value()
+            if (now < source.start_time || (source.stop_time.has_value() && now >= source.stop_time.value())
+                || (source.duration.has_value() && now - source.start_time >= source.duration.value())
                 || !source.buffer || source.buffer->frame_count() == 0)
                 continue;
             auto rate = max(static_cast<double>(source.playback_rate), 0.0) * pow(2.0, static_cast<double>(source.detune) / 1200.0);
@@ -799,7 +803,7 @@ void AudioContext::render_audio(Span<float> buffer)
             collect_direct_source_modulation(source.node_id, sample, right);
         }
         for (auto const& oscillator : m_active_oscillators) {
-            if (now < oscillator.start_time || oscillator.stop_time.has_value() && now >= oscillator.stop_time.value())
+            if (now < oscillator.start_time || (oscillator.stop_time.has_value() && now >= oscillator.stop_time.value()))
                 continue;
             auto frequency = static_cast<double>(oscillator.frequency) * pow(2.0, static_cast<double>(oscillator.detune) / 1200.0);
             if (!isfinite(frequency))
@@ -821,7 +825,7 @@ void AudioContext::render_audio(Span<float> buffer)
             collect_direct_source_modulation(oscillator.node_id, sample, sample);
         }
         for (auto const& source : m_active_constant_sources) {
-            if (now < source.start_time || source.stop_time.has_value() && now >= source.stop_time.value())
+            if (now < source.start_time || (source.stop_time.has_value() && now >= source.stop_time.value()))
                 continue;
             auto sample = source.offset;
             if (isfinite(sample))
@@ -839,7 +843,8 @@ void AudioContext::render_audio(Span<float> buffer)
             if (depth > 32)
                 return;
             bool direct_source_was_precollected = false;
-            for (auto const& precollected : precollected_source_nodes) {
+            for (size_t i = 0; i < precollected_source_count; ++i) {
+                auto const& precollected = precollected_source_nodes[i];
                 if (precollected.node_id == source_node_id) {
                     direct_source_was_precollected = true;
                     for (auto const& param_connection : m_param_connections) {

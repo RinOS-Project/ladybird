@@ -6,9 +6,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/BaseAudioContextPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/DOM/Event.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
@@ -465,7 +467,7 @@ GC::Ref<WebIDL::Promise> BaseAudioContext::decode_audio_data(GC::Root<WebIDL::Bu
     auto promise = WebIDL::create_promise(realm);
 
     // 3. If audioData is not detached, execute the following steps:
-    if (!WebIDL::is_buffer_source_detached(JS::Value(*audio_data->raw_object()))) {
+    if (!WebIDL::is_buffer_source_detached(JS::Value(audio_data->raw_object()))) {
         // 3.1. Append promise to [[pending promises]].
         m_pending_promises.append(promise);
 

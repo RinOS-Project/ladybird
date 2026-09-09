@@ -131,7 +131,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
     if (is<GainNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Gain;
         auto gain = as<GainNode>(*destination_node).gain();
-        gain_automation = TRY(gain->create_render_data());
+        gain_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), gain->create_render_data());
         gain_param_id = gain->param_id();
     } else if (is<BiquadFilterNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Biquad;
@@ -163,44 +163,47 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
             filter_kind = BiquadFilterKind::Highshelf;
             break;
         }
-        auto frequency_automation = TRY(filter.frequency()->create_render_data());
-        auto detune_automation = TRY(filter.detune()->create_render_data());
-        auto q_automation = TRY(filter.q()->create_render_data());
-        auto gain_automation_for_filter = TRY(filter.gain()->create_render_data());
+        auto frequency_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), filter.frequency()->create_render_data());
+        auto detune_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), filter.detune()->create_render_data());
+        auto q_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), filter.q()->create_render_data());
+        auto gain_automation_for_filter = TRY_OR_THROW_OOM(m_context->realm().vm(), filter.gain()->create_render_data());
         biquad_frequency_param_id = filter.frequency()->param_id();
         biquad_detune_param_id = filter.detune()->param_id();
         biquad_q_param_id = filter.q()->param_id();
         biquad_gain_param_id = filter.gain()->param_id();
-        biquad = TRY(BiquadFilterRenderData::create(filter_kind, filter.frequency()->value(), filter.detune()->value(), filter.q()->value(), filter.gain()->value(),
-            move(frequency_automation), move(detune_automation), move(q_automation), move(gain_automation_for_filter)));
+        auto biquad_result = BiquadFilterRenderData::create(filter_kind, filter.frequency()->value(), filter.detune()->value(), filter.q()->value(), filter.gain()->value(),
+            move(frequency_automation), move(detune_automation), move(q_automation), move(gain_automation_for_filter));
+        if (biquad_result.is_error())
+            return WebIDL::OperationError::create(m_context->realm(), "Unable to allocate BiquadFilter render state"_utf16);
+        biquad = biquad_result.release_value();
     } else if (is<AnalyserNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Analyser;
-        analyser = TRY(as<AnalyserNode>(*destination_node).ensure_render_data());
+        analyser = TRY_OR_THROW_OOM(m_context->realm().vm(), as<AnalyserNode>(*destination_node).ensure_render_data());
     } else if (is<StereoPannerNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::StereoPanner;
         auto pan = as<StereoPannerNode>(*destination_node).pan();
-        stereo_panner_automation = TRY(pan->create_render_data());
+        stereo_panner_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), pan->create_render_data());
         stereo_panner_param_id = pan->param_id();
     } else if (is<DelayNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Delay;
         auto const& delay_node = as<DelayNode>(*destination_node);
-        auto delay_automation = TRY(delay_node.delay_time()->create_render_data());
+        auto delay_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), delay_node.delay_time()->create_render_data());
         delay_param_id = delay_node.delay_time()->param_id();
-        delay = TRY(DelayRenderData::create(delay_node.max_delay_time(), m_context->sample_rate(), move(delay_automation)));
+        delay = TRY_OR_THROW_OOM(m_context->realm().vm(), DelayRenderData::create(delay_node.max_delay_time(), m_context->sample_rate(), move(delay_automation)));
     } else if (is<DynamicsCompressorNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::DynamicsCompressor;
-        auto const& compressor_node = as<DynamicsCompressorNode>(*destination_node);
-        auto threshold_automation = TRY(compressor_node.threshold()->create_render_data());
-        auto knee_automation = TRY(compressor_node.knee()->create_render_data());
-        auto ratio_automation = TRY(compressor_node.ratio()->create_render_data());
-        auto attack_automation = TRY(compressor_node.attack()->create_render_data());
-        auto release_automation = TRY(compressor_node.release()->create_render_data());
+        auto& compressor_node = as<DynamicsCompressorNode>(*destination_node);
+        auto threshold_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), compressor_node.threshold()->create_render_data());
+        auto knee_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), compressor_node.knee()->create_render_data());
+        auto ratio_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), compressor_node.ratio()->create_render_data());
+        auto attack_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), compressor_node.attack()->create_render_data());
+        auto release_automation = TRY_OR_THROW_OOM(m_context->realm().vm(), compressor_node.release()->create_render_data());
         compressor_threshold_param_id = compressor_node.threshold()->param_id();
         compressor_knee_param_id = compressor_node.knee()->param_id();
         compressor_ratio_param_id = compressor_node.ratio()->param_id();
         compressor_attack_param_id = compressor_node.attack()->param_id();
         compressor_release_param_id = compressor_node.release()->param_id();
-        compressor = TRY(DynamicsCompressorRenderData::create(
+        compressor = TRY_OR_THROW_OOM(m_context->realm().vm(), DynamicsCompressorRenderData::create(
             compressor_node.threshold()->value(), compressor_node.knee()->value(), compressor_node.ratio()->value(),
             compressor_node.attack()->value(), compressor_node.release()->value(), move(threshold_automation),
             move(knee_automation), move(ratio_automation), move(attack_automation), move(release_automation)));
@@ -223,12 +226,12 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
             distance_model = PannerDistanceModel::Exponential;
             break;
         }
-        auto position_x = TRY(panner_node.position_x()->create_render_data());
-        auto position_y = TRY(panner_node.position_y()->create_render_data());
-        auto position_z = TRY(panner_node.position_z()->create_render_data());
-        auto orientation_x = TRY(panner_node.orientation_x()->create_render_data());
-        auto orientation_y = TRY(panner_node.orientation_y()->create_render_data());
-        auto orientation_z = TRY(panner_node.orientation_z()->create_render_data());
+        auto position_x = TRY_OR_THROW_OOM(m_context->realm().vm(), panner_node.position_x()->create_render_data());
+        auto position_y = TRY_OR_THROW_OOM(m_context->realm().vm(), panner_node.position_y()->create_render_data());
+        auto position_z = TRY_OR_THROW_OOM(m_context->realm().vm(), panner_node.position_z()->create_render_data());
+        auto orientation_x = TRY_OR_THROW_OOM(m_context->realm().vm(), panner_node.orientation_x()->create_render_data());
+        auto orientation_y = TRY_OR_THROW_OOM(m_context->realm().vm(), panner_node.orientation_y()->create_render_data());
+        auto orientation_z = TRY_OR_THROW_OOM(m_context->realm().vm(), panner_node.orientation_z()->create_render_data());
         panner_position_x_param_id = panner_node.position_x()->param_id();
         panner_position_y_param_id = panner_node.position_y()->param_id();
         panner_position_z_param_id = panner_node.position_z()->param_id();
@@ -236,15 +239,15 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         panner_orientation_y_param_id = panner_node.orientation_y()->param_id();
         panner_orientation_z_param_id = panner_node.orientation_z()->param_id();
         auto listener = m_context->listener();
-        auto listener_position_x = TRY(listener->position_x()->create_render_data());
-        auto listener_position_y = TRY(listener->position_y()->create_render_data());
-        auto listener_position_z = TRY(listener->position_z()->create_render_data());
-        auto listener_forward_x = TRY(listener->forward_x()->create_render_data());
-        auto listener_forward_y = TRY(listener->forward_y()->create_render_data());
-        auto listener_forward_z = TRY(listener->forward_z()->create_render_data());
-        auto listener_up_x = TRY(listener->up_x()->create_render_data());
-        auto listener_up_y = TRY(listener->up_y()->create_render_data());
-        auto listener_up_z = TRY(listener->up_z()->create_render_data());
+        auto listener_position_x = TRY_OR_THROW_OOM(m_context->realm().vm(), listener->position_x()->create_render_data());
+        auto listener_position_y = TRY_OR_THROW_OOM(m_context->realm().vm(), listener->position_y()->create_render_data());
+        auto listener_position_z = TRY_OR_THROW_OOM(m_context->realm().vm(), listener->position_z()->create_render_data());
+        auto listener_forward_x = TRY_OR_THROW_OOM(m_context->realm().vm(), listener->forward_x()->create_render_data());
+        auto listener_forward_y = TRY_OR_THROW_OOM(m_context->realm().vm(), listener->forward_y()->create_render_data());
+        auto listener_forward_z = TRY_OR_THROW_OOM(m_context->realm().vm(), listener->forward_z()->create_render_data());
+        auto listener_up_x = TRY_OR_THROW_OOM(m_context->realm().vm(), listener->up_x()->create_render_data());
+        auto listener_up_y = TRY_OR_THROW_OOM(m_context->realm().vm(), listener->up_y()->create_render_data());
+        auto listener_up_z = TRY_OR_THROW_OOM(m_context->realm().vm(), listener->up_z()->create_render_data());
         listener_position_x_param_id = listener->position_x()->param_id();
         listener_position_y_param_id = listener->position_y()->param_id();
         listener_position_z_param_id = listener->position_z()->param_id();
@@ -254,7 +257,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         listener_up_x_param_id = listener->up_x()->param_id();
         listener_up_y_param_id = listener->up_y()->param_id();
         listener_up_z_param_id = listener->up_z()->param_id();
-        panner = TRY(PannerRenderData::create(distance_model, panner_node.ref_distance(), panner_node.max_distance(), panner_node.rolloff_factor(),
+        panner = TRY_OR_THROW_OOM(m_context->realm().vm(), PannerRenderData::create(distance_model, panner_node.ref_distance(), panner_node.max_distance(), panner_node.rolloff_factor(),
             move(position_x), move(position_y), move(position_z), move(orientation_x), move(orientation_y), move(orientation_z),
             move(listener_position_x), move(listener_position_y), move(listener_position_z),
             move(listener_forward_x), move(listener_forward_y), move(listener_forward_z),
@@ -282,8 +285,6 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         .biquad_q_param_id = biquad_q_param_id,
         .biquad_gain_param_id = biquad_gain_param_id,
         .analyser = move(analyser),
-        .stereo_panner_automation = move(stereo_panner_automation),
-        .stereo_panner_param_id = stereo_panner_param_id,
         .delay = move(delay),
         .delay_param_id = delay_param_id,
         .panner = move(panner),
@@ -308,6 +309,8 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
         .compressor_ratio_param_id = compressor_ratio_param_id,
         .compressor_attack_param_id = compressor_attack_param_id,
         .compressor_release_param_id = compressor_release_param_id,
+        .stereo_panner_automation = move(stereo_panner_automation),
+        .stereo_panner_param_id = stereo_panner_param_id,
     });
 
     // Publish the JS graph only after all render-side snapshots were built.

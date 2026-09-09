@@ -11,6 +11,7 @@
 #include <LibWeb/WebAudio/AudioBufferSourceNode.h>
 #include <LibWeb/WebAudio/AudioParam.h>
 #include <LibWeb/WebAudio/AudioScheduledSourceNode.h>
+#include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/ControlMessage.h>
 #include <math.h>
 
@@ -135,11 +136,11 @@ WebIDL::ExceptionOr<void> AudioBufferSourceNode::start(Optional<double> when, Op
     // typed-array storage from the rendering thread.
     RefPtr<AudioBufferRenderData> render_data;
     if (m_buffer)
-        render_data = TRY(AudioBufferRenderData::create(*m_buffer));
+        render_data = TRY_OR_THROW_OOM(realm().vm(), AudioBufferRenderData::create(*m_buffer));
     RefPtr<AudioParamRenderData> playback_rate_automation;
-    playback_rate_automation = TRY(m_playback_rate->create_render_data());
+    playback_rate_automation = TRY_OR_THROW_OOM(realm().vm(), m_playback_rate->create_render_data());
     RefPtr<AudioParamRenderData> detune_automation;
-    detune_automation = TRY(m_detune->create_render_data());
+    detune_automation = TRY_OR_THROW_OOM(realm().vm(), m_detune->create_render_data());
 
     // 3. Set the internal slot [[source started]] on this AudioBufferSourceNode to true.
     set_source_started(true);

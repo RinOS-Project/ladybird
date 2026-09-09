@@ -332,7 +332,7 @@ WebIDL::ExceptionOr<void> AnalyserNode::set_fft_size(unsigned long fft_size)
     if (fft_size < 32 || fft_size > 32768 || !is_power_of_two(fft_size))
         return WebIDL::IndexSizeError::create(realm(), "Analyser node fftSize not a power of 2 between 32 and 32768"_utf16);
 
-    auto render_data = TRY(AnalyserRenderData::create(fft_size));
+    auto render_data = TRY_OR_THROW_OOM(realm().vm(), AnalyserRenderData::create(fft_size));
 
     // reset previous block to 0s
     m_previous_block = Vector<f32>();

@@ -37,7 +37,7 @@ BiquadFilterCoefficients BiquadFilterRenderData::coefficients_at_time(double tim
         return coefficients;
 
     auto effective_frequency = clamp(frequency * pow(2.0f, detune / 1200.0f), 0.0f, sample_rate / 2.0f);
-    auto q_value = max(abs(q), 1e-8f);
+    auto q_value = max(fabs(q), 1e-8f);
     auto gain_factor = pow(10.0f, gain / 40.0f);
     auto omega = 2.0f * AK::Pi<float> * effective_frequency / sample_rate;
     auto cosine = cos(omega);

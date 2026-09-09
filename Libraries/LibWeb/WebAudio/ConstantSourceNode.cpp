@@ -34,7 +34,7 @@ WebIDL::ExceptionOr<void> ConstantSourceNode::start(double when)
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "when must be finite and non-negative"sv };
     if (!isfinite(m_offset->value()))
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Constant source offset must be finite"sv };
-    auto automation = TRY(m_offset->create_render_data());
+    auto automation = TRY_OR_THROW_OOM(realm().vm(), m_offset->create_render_data());
     set_source_started(true);
     context()->queue_control_message(StartConstantSource {
         .node_id = node_id(),

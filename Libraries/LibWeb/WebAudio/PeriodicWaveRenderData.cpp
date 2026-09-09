@@ -19,8 +19,8 @@ ErrorOr<NonnullRefPtr<PeriodicWaveRenderData>> PeriodicWaveRenderData::create(Re
 
     Vector<float> real_copy;
     Vector<float> imag_copy;
-    TRY(real_copy.try_append(real));
-    TRY(imag_copy.try_append(imag));
+    TRY(real_copy.try_append(real.data(), real.size()));
+    TRY(imag_copy.try_append(imag.data(), imag.size()));
 
     float normalization = 1.0f;
     double coefficient_bound = 0.0;

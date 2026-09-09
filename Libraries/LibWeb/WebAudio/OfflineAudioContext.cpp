@@ -254,6 +254,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
     auto& oscillators = state.oscillators;
     auto& constant_sources = state.constant_sources;
     auto& node_connections = state.node_connections;
+    auto& param_connections = state.param_connections;
 
     if (!state.initialized) {
         for (auto message : drain_control_messages()) {
@@ -262,6 +263,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             [&](StartOscillator const& start) {
                 oscillators.append({
                     .start_time = start.when,
+                    .stop_time = {},
                     .frequency = start.frequency,
                     .detune = start.detune,
                     .frequency_automation = start.frequency_automation,
@@ -276,6 +278,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             [&](StartConstantSource const& start) {
                 constant_sources.append({
                     .start_time = start.when,
+                    .stop_time = {},
                     .offset = start.offset,
                     .offset_automation = start.offset_automation,
                     .offset_param_id = start.offset_param_id,
@@ -296,6 +299,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     .start_time = start.when,
                     .offset = start.offset,
                     .duration = start.duration,
+                    .stop_time = {},
                     .playback_rate = start.playback_rate,
                     .detune = start.detune,
                     .playback_rate_automation = start.playback_rate_automation,
@@ -546,17 +550,18 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             float right { 0 };
         };
         Array<PrecollectedSource, 256> precollected_source_nodes { };
+        size_t precollected_source_count = 0;
         auto collect_direct_source_modulation = [&](NodeID node_id, float source_left, float source_right) {
             for (auto const& param_connection : param_connections) {
                 if (param_connection.source_node_id == node_id && param_connection.output_index == 0)
                     add_param_modulation(param_connection.destination_param_id, (source_left + source_right) * 0.5f);
             }
-            if (precollected_source_nodes.size() < 256)
-                precollected_source_nodes.append({ node_id, source_left, source_right });
+            if (precollected_source_count < precollected_source_nodes.size())
+                precollected_source_nodes[precollected_source_count++] = { node_id, source_left, source_right };
         };
         for (auto const& source : buffer_sources) {
-            if (now < source.start_time || source.stop_time.has_value() && now >= source.stop_time.value()
-                || source.duration.has_value() && now - source.start_time >= source.duration.value()
+            if (now < source.start_time || (source.stop_time.has_value() && now >= source.stop_time.value())
+                || (source.duration.has_value() && now - source.start_time >= source.duration.value())
                 || !source.buffer || source.buffer->frame_count() == 0)
                 continue;
             auto rate = max(static_cast<double>(source.playback_rate), 0.0) * pow(2.0, static_cast<double>(source.detune) / 1200.0);
@@ -584,7 +589,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             collect_direct_source_modulation(source.node_id, sample, right);
         }
         for (auto const& oscillator : oscillators) {
-            if (now < oscillator.start_time || oscillator.stop_time.has_value() && now >= oscillator.stop_time.value())
+            if (now < oscillator.start_time || (oscillator.stop_time.has_value() && now >= oscillator.stop_time.value()))
                 continue;
             auto frequency = static_cast<double>(oscillator.frequency) * pow(2.0, static_cast<double>(oscillator.detune) / 1200.0);
             if (!isfinite(frequency))
@@ -606,7 +611,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
             collect_direct_source_modulation(oscillator.node_id, sample, sample);
         }
         for (auto const& source : constant_sources) {
-            if (now < source.start_time || source.stop_time.has_value() && now >= source.stop_time.value())
+            if (now < source.start_time || (source.stop_time.has_value() && now >= source.stop_time.value()))
                 continue;
             auto sample = source.offset;
             if (isfinite(sample))
@@ -625,7 +630,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                 return;
             auto right = right_sample.value_or(sample);
             bool direct_source_was_precollected = false;
-            for (auto const& precollected : precollected_source_nodes) {
+            for (size_t precollected_index = 0; precollected_index < precollected_source_count; ++precollected_index) {
+                auto const& precollected = precollected_source_nodes[precollected_index];
                 if (precollected.node_id == source_node_id) {
                     direct_source_was_precollected = true;
                     for (auto const& param_connection : param_connections) {
@@ -869,7 +875,7 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
         auto suspend_promise = m_pending_suspend_promise;
         queue_a_media_element_task(GC::create_function(heap(), [suspend_promise, this]() {
             if (suspend_promise)
-                WebIDL::resolve_promise(this->realm(), suspend_promise, JS::js_undefined());
+                WebIDL::resolve_promise(this->realm(), *suspend_promise, JS::js_undefined());
             m_pending_suspend_time.clear();
             m_pending_suspend_promise = nullptr;
             if (suspend_promise)

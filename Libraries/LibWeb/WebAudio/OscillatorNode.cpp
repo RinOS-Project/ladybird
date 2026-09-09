@@ -45,14 +45,14 @@ WebIDL::ExceptionOr<void> OscillatorNode::start(double when)
     if (!isfinite(m_frequency->value()) || !isfinite(m_detune->value()))
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::RangeError, "Oscillator parameters must be finite"sv };
     RefPtr<AudioParamRenderData> frequency_automation;
-    frequency_automation = TRY(m_frequency->create_render_data());
+    frequency_automation = TRY_OR_THROW_OOM(realm().vm(), m_frequency->create_render_data());
     RefPtr<AudioParamRenderData> detune_automation;
-    detune_automation = TRY(m_detune->create_render_data());
+    detune_automation = TRY_OR_THROW_OOM(realm().vm(), m_detune->create_render_data());
     RefPtr<PeriodicWaveRenderData> periodic_wave;
     if (m_type == Bindings::OscillatorType::Custom) {
         if (!m_periodic_wave)
             return WebIDL::InvalidStateError::create(realm(), "Custom oscillator has no PeriodicWave"_utf16);
-        periodic_wave = TRY(m_periodic_wave->create_render_data());
+        periodic_wave = TRY_OR_THROW_OOM(realm().vm(), m_periodic_wave->create_render_data());
     }
 
     OscillatorWaveform waveform = OscillatorWaveform::Sine;
