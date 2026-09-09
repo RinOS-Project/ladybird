@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Atomic.h>
 #include <AK/AtomicRefCounted.h>
 #include <AK/RefPtr.h>
 #include <LibWeb/Export.h>
@@ -28,6 +29,8 @@ public:
         RefPtr<AudioParamRenderData> release_automation);
 
     float process(float input, double time) const;
+    void process_stereo(float& left, float& right, double time, float sample_rate) const;
+    float reduction() const;
 
     void update_threshold_automation(RefPtr<AudioParamRenderData> data) { m_threshold_automation = move(data); }
     void update_knee_automation(RefPtr<AudioParamRenderData> data) { m_knee_automation = move(data); }
@@ -70,6 +73,9 @@ private:
     RefPtr<AudioParamRenderData> m_ratio_automation;
     RefPtr<AudioParamRenderData> m_attack_automation;
     RefPtr<AudioParamRenderData> m_release_automation;
+    mutable float m_envelope { 0.0f };
+    mutable double m_last_time { -1.0 };
+    Atomic<u32> m_reduction_bits { 0 };
 };
 
 }

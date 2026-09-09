@@ -7,6 +7,7 @@
 #pragma once
 
 #include <LibWeb/WebAudio/AudioNode.h>
+#include <LibWeb/WebAudio/DynamicsCompressorRenderData.h>
 
 namespace Web::WebAudio {
 
@@ -39,7 +40,8 @@ public:
     GC::Ref<AudioParam const> ratio() const { return m_ratio; }
     GC::Ref<AudioParam const> attack() const { return m_attack; }
     GC::Ref<AudioParam const> release() const { return m_release; }
-    float reduction() const { return m_reduction; }
+    float reduction() const { return m_render_data ? m_render_data->reduction() : m_reduction; }
+    void set_render_data(RefPtr<DynamicsCompressorRenderData> data) { m_render_data = move(data); }
 
     WebIDL::ExceptionOr<void> set_channel_count_mode(Bindings::ChannelCountMode) override;
     WebIDL::ExceptionOr<void> set_channel_count(WebIDL::UnsignedLong) override;
@@ -68,6 +70,7 @@ private:
 
     // https://webaudio.github.io/web-audio-api/#dom-dynamicscompressornode-internal-reduction-slot
     float m_reduction { 0 }; // [[internal reduction]]
+    RefPtr<DynamicsCompressorRenderData> m_render_data;
 };
 
 }

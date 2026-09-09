@@ -530,9 +530,8 @@ void OfflineAudioContext::begin_offline_rendering(GC::Ref<WebIDL::Promise> promi
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::DynamicsCompressor && connection.compressor) {
-                    auto compressed_sample = connection.compressor->process(routed_sample, now);
-                    auto compressed_right = connection.compressor->process(routed_right, now);
-                    self(self, connection.destination_node_id, compressed_sample, compressed_right, depth + 1);
+                    connection.compressor->process_stereo(routed_sample, routed_right, now, static_cast<float>(output_rate));
+                    self(self, connection.destination_node_id, routed_sample, routed_right, depth + 1);
                 }
             }
         };

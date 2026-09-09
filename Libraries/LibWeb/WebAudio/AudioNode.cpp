@@ -194,6 +194,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioNode>> AudioNode::connect(GC::Ref<AudioNode> de
             compressor_node.threshold()->value(), compressor_node.knee()->value(), compressor_node.ratio()->value(),
             compressor_node.attack()->value(), compressor_node.release()->value(), move(threshold_automation),
             move(knee_automation), move(ratio_automation), move(attack_automation), move(release_automation)));
+        compressor_node.set_render_data(compressor);
     } else if (is<PannerNode>(*destination_node)) {
         destination_kind = AudioNodeRenderKind::Panner;
         auto const& panner_node = as<PannerNode>(*destination_node);

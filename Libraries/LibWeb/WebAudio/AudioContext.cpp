@@ -731,9 +731,8 @@ void AudioContext::render_audio(Span<float> buffer)
                     continue;
                 }
                 if (connection.destination_kind == AudioNodeRenderKind::DynamicsCompressor && connection.compressor) {
-                    auto compressed_left = connection.compressor->process(routed_left, now);
-                    auto compressed_right = connection.compressor->process(routed_right, now);
-                    self(self, connection.destination_node_id, compressed_left, compressed_right, depth + 1);
+                    connection.compressor->process_stereo(routed_left, routed_right, now, static_cast<float>(output_rate));
+                    self(self, connection.destination_node_id, routed_left, routed_right, depth + 1);
                 }
             }
         };
