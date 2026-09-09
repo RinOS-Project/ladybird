@@ -29,6 +29,10 @@ namespace Web::ServiceWorker {
 GC_DEFINE_ALLOCATOR(Cache);
 
 static constexpr StringView cache_entry_prefix = "RIN-CACHE-ENTRY-V2:"sv;
+static constexpr u32 cache_fetch_policy_credentials_include = 1u << 0;
+static constexpr u32 cache_fetch_policy_mode_cors = 1u << 1;
+static constexpr u32 cache_fetch_policy_mode_no_cors = 1u << 2;
+static constexpr u32 cache_fetch_policy_mode_same_origin = 1u << 3;
 
 static char hex_digit(u8 value)
 {
@@ -175,8 +179,24 @@ bool Cache::owner_fetch_is_current(Fetch::Request const& request) const
     if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
         return false;
     auto request_url = request.url().to_byte_string();
+    u32 fetch_policy = 0;
+    if (request.request()->credentials_mode() == Fetch::Infrastructure::Request::CredentialsMode::Include)
+        fetch_policy |= cache_fetch_policy_credentials_include;
+    switch (request.request()->mode()) {
+    case Fetch::Infrastructure::Request::Mode::CORS:
+        fetch_policy |= cache_fetch_policy_mode_cors;
+        break;
+    case Fetch::Infrastructure::Request::Mode::NoCORS:
+        fetch_policy |= cache_fetch_policy_mode_no_cors;
+        break;
+    case Fetch::Infrastructure::Request::Mode::SameOrigin:
+        fetch_policy |= cache_fetch_policy_mode_same_origin;
+        break;
+    default:
+        return false;
+    }
     auto response = m_page->client().request_service_worker_owner(
-        5u, request_url, m_owner_origin, {}, {}, 0u);
+        5u, request_url, m_owner_origin, {}, {}, fetch_policy);
     return response.accepted && response.found &&
         response.generation == m_owner_generation &&
         response.origin == m_owner_origin &&
