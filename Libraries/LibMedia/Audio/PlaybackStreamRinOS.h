@@ -38,6 +38,8 @@ private:
         ErrorOr<void> check_is_running() const;
         void enqueue(Function<void()>&&);
         void set_playing(bool);
+        void set_played_frames(u64 played_frames) { m_last_played_frames.store(played_frames); }
+        u64 played_frames() const { return m_last_played_frames.load(); }
         void set_underrun_callback(Function<void()>&&);
         void thread_loop();
         void exit();
@@ -55,6 +57,7 @@ private:
         AudioDataRequestCallback m_data_request_callback;
         Function<void()> m_underrun_callback;
         u64 m_last_kernel_underrun_count { 0 };
+        Atomic<u64> m_last_played_frames { 0 };
     };
 
     explicit PlaybackStreamRinOS(NonnullRefPtr<InternalState> state)

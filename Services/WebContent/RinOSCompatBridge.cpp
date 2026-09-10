@@ -2701,8 +2701,20 @@ static int handle_paint(PageSession& page, int client_fd, u64 deadline_ms)
         return -EIO;
 
     auto* dst = static_cast<u8*>(page.paint_shm_addr);
-    for (int y = 0; y < size.height(); ++y)
-        __builtin_memcpy(dst + static_cast<size_t>(y) * row_bytes, bitmap->scanline_u8(y), row_bytes);
+    if (!dst || page.paint_shm_size < total_bytes)
+        return -EIO;
+    for (int y = 0; y < size.height(); ++y) {
+        auto* source = bitmap->scanline_u8(y);
+        if (!source) {
+            auto message = ByteString::formatted(
+                "[webcontent] page {} paint bitmap scanline unavailable y={} width={} height={}\n",
+                page.page_id, y, size.width(), size.height());
+            rin_log(message.characters());
+            return -EIO;
+        }
+        __builtin_memcpy(dst + static_cast<size_t>(y) * row_bytes,
+                         source, row_bytes);
+    }
 
     RinWebContentPaintResponse response {};
     response.width = static_cast<u32>(size.width());

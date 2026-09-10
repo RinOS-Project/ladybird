@@ -10,7 +10,7 @@
 #include <LibCore/ThreadedPromise.h>
 #include <LibMedia/Audio/ChannelMap.h>
 #include <LibThreading/Thread.h>
-#include <apps/common/rin_audio.h>
+#include <apps/common/rin_audio_service_client.h>
 #include <unistd.h>
 
 #include "PlaybackStreamRinOS.h"
@@ -21,6 +21,7 @@ static constexpr u32 sample_rate = 48'000;
 static constexpr u32 channel_count = 2;
 static constexpr u32 render_chunk_frames = 480;
 static constexpr u32 render_chunk_samples = render_chunk_frames * channel_count;
+static constexpr u32 ring_capacity_frames = 4096;
 
 NonnullRefPtr<PlaybackStream::CreatePromise> PlaybackStream::create(OutputState initial_output_state, u32 target_latency_ms, AudioDataRequestCallback&& data_request_callback)
 {
@@ -36,7 +37,9 @@ NonnullRefPtr<PlaybackStream::CreatePromise> PlaybackStreamRinOS::create(OutputS
     auto playback_stream = MUST(adopt_nonnull_ref_or_enomem(new (nothrow) PlaybackStreamRinOS(state)));
 
     auto thread = MUST(Threading::Thread::try_create("RinOS Audio"sv, [state, playback_stream, promise, initial_state, main_thread_event_loop = Core::EventLoop::current_weak()]() mutable {
-        auto handle = rin_audio_open();
+        auto handle = rin_audio_service_stream_create(
+            sample_rate, channel_count, RIN_AUDIO_SERVICE_FORMAT_S16LE,
+            ring_capacity_frames);
         if (handle < 0) {
             auto event_loop = main_thread_event_loop->take();
             if (event_loop.is_alive()) {
@@ -48,15 +51,15 @@ NonnullRefPtr<PlaybackStream::CreatePromise> PlaybackStreamRinOS::create(OutputS
         }
 
         state->set_handle(handle);
-        (void)rin_audio_control(handle, RIN_AUDIO_CTL_SET_VOLUME, 100);
+        (void)rin_audio_service_stream_set_volume(handle, 100);
         if (initial_state == OutputState::Playing) {
             state->set_playing(true);
-            (void)rin_audio_control(handle, RIN_AUDIO_CTL_START, 0);
+            (void)rin_audio_service_stream_start(handle);
         }
 
         auto event_loop = main_thread_event_loop->take();
         if (!event_loop.is_alive()) {
-            (void)rin_audio_close(handle);
+            (void)rin_audio_service_stream_destroy(handle);
             state->set_handle(-1);
             return 1;
         }
@@ -65,8 +68,8 @@ NonnullRefPtr<PlaybackStream::CreatePromise> PlaybackStreamRinOS::create(OutputS
         });
 
         state->thread_loop();
-        (void)rin_audio_control(handle, RIN_AUDIO_CTL_FLUSH, 0);
-        (void)rin_audio_close(handle);
+        (void)rin_audio_service_stream_flush(handle);
+        (void)rin_audio_service_stream_destroy(handle);
         state->set_handle(-1);
         return 0;
     }));
@@ -123,14 +126,15 @@ void PlaybackStreamRinOS::InternalState::render_one_chunk()
     if (audio_handle < 0)
         return;
 
-    RinAudioStatusV1 status {};
-    if (rin_audio_get_status(audio_handle, &status) < 0) {
+    RinAudioServiceStatusV1 status {};
+    if (rin_audio_service_stream_status(audio_handle, &status) < 0) {
         usleep(1000);
         return;
     }
+    m_last_played_frames.store(status.played_frames);
 
-    if (status.underrun_count != m_last_kernel_underrun_count) {
-        m_last_kernel_underrun_count = status.underrun_count;
+    if (status.hardware_underrun_count != m_last_kernel_underrun_count) {
+        m_last_kernel_underrun_count = status.hardware_underrun_count;
         if (m_underrun_callback)
             m_underrun_callback();
     }
@@ -166,7 +170,9 @@ void PlaybackStreamRinOS::InternalState::render_one_chunk()
     auto bytes = ReadonlyBytes { reinterpret_cast<u8 const*>(pcm_samples.data()), sample_count_to_write * sizeof(i16) };
     size_t offset = 0;
     while (offset < bytes.size()) {
-        auto written = rin_audio_write(audio_handle, bytes.data() + offset, bytes.size() - offset);
+        auto written = rin_audio_service_stream_write(
+            audio_handle, bytes.data() + offset,
+            static_cast<u32>(bytes.size() - offset));
         if (written < 0) {
             usleep(1000);
             return;
@@ -233,13 +239,14 @@ NonnullRefPtr<Core::ThreadedPromise<AK::Duration>> PlaybackStreamRinOS::resume()
         return promise;
     }
     m_state->enqueue([state = m_state, promise] {
-        if (rin_audio_control(state->handle(), RIN_AUDIO_CTL_START, 0) < 0) {
+        if (rin_audio_service_stream_resume(state->handle()) < 0) {
             promise->reject(Error::from_string_literal("Unable to resume RinOS audio"));
             return;
         }
         state->set_playing(true);
-        RinAudioStatusV1 status {};
-        (void)rin_audio_get_status(state->handle(), &status);
+        RinAudioServiceStatusV1 status {};
+        (void)rin_audio_service_stream_status(state->handle(), &status);
+        state->set_played_frames(status.played_frames);
         promise->resolve(AK::Duration::from_nanoseconds(static_cast<i64>(status.played_frames * 1'000'000'000ULL / sample_rate)));
     });
     return promise;
@@ -254,7 +261,7 @@ NonnullRefPtr<Core::ThreadedPromise<void>> PlaybackStreamRinOS::drain_buffer_and
     }
     m_state->enqueue([state = m_state, promise] {
         state->set_playing(false);
-        if (rin_audio_control(state->handle(), RIN_AUDIO_CTL_DRAIN, 0) < 0) {
+        if (rin_audio_service_stream_drain(state->handle()) < 0) {
             promise->reject(Error::from_string_literal("Unable to drain RinOS audio"));
             return;
         }
@@ -272,7 +279,7 @@ NonnullRefPtr<Core::ThreadedPromise<void>> PlaybackStreamRinOS::discard_buffer_a
     }
     m_state->enqueue([state = m_state, promise] {
         state->set_playing(false);
-        if (rin_audio_control(state->handle(), RIN_AUDIO_CTL_FLUSH, 0) < 0) {
+        if (rin_audio_service_stream_flush(state->handle()) < 0) {
             promise->reject(Error::from_string_literal("Unable to flush RinOS audio"));
             return;
         }
@@ -283,10 +290,10 @@ NonnullRefPtr<Core::ThreadedPromise<void>> PlaybackStreamRinOS::discard_buffer_a
 
 AK::Duration PlaybackStreamRinOS::total_time_played() const
 {
-    RinAudioStatusV1 status {};
-    if (m_state->handle() < 0 || rin_audio_get_status(m_state->handle(), &status) < 0)
+    if (m_state->handle() < 0)
         return AK::Duration::zero();
-    return AK::Duration::from_nanoseconds(static_cast<i64>(status.played_frames * 1'000'000'000ULL / sample_rate));
+    auto played_frames = m_state->played_frames();
+    return AK::Duration::from_nanoseconds(static_cast<i64>(played_frames * 1'000'000'000ULL / sample_rate));
 }
 
 NonnullRefPtr<Core::ThreadedPromise<void>> PlaybackStreamRinOS::set_volume(double volume)
@@ -298,7 +305,7 @@ NonnullRefPtr<Core::ThreadedPromise<void>> PlaybackStreamRinOS::set_volume(doubl
     }
     auto percent = static_cast<uintptr_t>(AK::clamp(volume, 0.0, 1.0) * 100.0);
     m_state->enqueue([state = m_state, promise, percent] {
-        if (rin_audio_control(state->handle(), RIN_AUDIO_CTL_SET_VOLUME, percent) < 0) {
+        if (rin_audio_service_stream_set_volume(state->handle(), percent) < 0) {
             promise->reject(Error::from_string_literal("Unable to set RinOS audio volume"));
             return;
         }
