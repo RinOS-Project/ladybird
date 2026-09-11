@@ -24,6 +24,11 @@ SerialPort::SerialPort(JS::Realm& realm)
 {
 }
 
+GC::Ref<SerialPort> SerialPort::create(JS::Realm& realm)
+{
+    return realm.create<SerialPort>(realm);
+}
+
 void SerialPort::initialize(JS::Realm& realm)
 {
     WEB_SET_PROTOTYPE_FOR_INTERFACE(SerialPort);

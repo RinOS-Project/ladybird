@@ -63,6 +63,9 @@ class SerialPort : public DOM::EventTarget {
     WEB_PLATFORM_OBJECT(SerialPort, DOM::EventTarget);
     GC_DECLARE_ALLOCATOR(SerialPort);
 
+public:
+    static GC::Ref<SerialPort> create(JS::Realm&);
+
     // https://wicg.github.io/serial/#getinfo-method
     SerialPortInfo get_info() const;
     // https://wicg.github.io/serial/#open-method

@@ -116,7 +116,11 @@ GC::Ref<WebIDL::Promise> Serial::get_ports()
     ports.ensure_capacity(m_granted_ports.size());
     for (auto& port : m_granted_ports)
         ports.append(port);
-    return WebIDL::create_resolved_promise(realm, JS::Array::create_from(realm, ports));
+    GC::RootVector<JS::Value> values(realm.heap());
+    values.ensure_capacity(ports.size());
+    for (auto const& port : ports)
+        values.append(JS::Value(port.ptr()));
+    return WebIDL::create_resolved_promise(realm, JS::Array::create_from(realm, values));
 }
 
 // https://wicg.github.io/serial/#onconnect-attribute
