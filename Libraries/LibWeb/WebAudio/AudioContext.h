@@ -66,6 +66,9 @@ private:
 
     double m_base_latency { 0 };
     double m_output_latency { 0 };
+    // RinOS PlaybackStream accepts a bounded target latency in milliseconds.
+    // The value is passed to the backend instead of being a renderer-only hint.
+    u32 m_target_latency_ms { 20 };
 
     bool m_allowed_to_start = true;
     Vector<GC::Ref<WebIDL::Promise>> m_pending_resume_promises;

@@ -21,6 +21,7 @@ public:
 
     virtual ~PlaybackStreamRinOS() override;
     virtual SampleSpecification sample_specification() const override;
+    virtual Optional<AK::Duration> output_latency() const override;
     virtual void set_underrun_callback(Function<void()>) override;
     virtual NonnullRefPtr<Core::ThreadedPromise<AK::Duration>> resume() override;
     virtual NonnullRefPtr<Core::ThreadedPromise<void>> drain_buffer_and_suspend() override;
@@ -40,6 +41,7 @@ private:
         void set_playing(bool);
         void set_played_frames(u64 played_frames) { m_last_played_frames.store(played_frames); }
         u64 played_frames() const { return m_last_played_frames.load(); }
+        u32 target_latency_frames() const { return m_target_latency_frames; }
         void set_underrun_callback(Function<void()>&&);
         void thread_loop();
         void exit();

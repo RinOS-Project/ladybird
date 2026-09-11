@@ -8,6 +8,7 @@
 
 #include <AK/AtomicRefCounted.h>
 #include <AK/Function.h>
+#include <AK/Optional.h>
 #include <AK/Time.h>
 #include <LibCore/Forward.h>
 #include <LibCore/Promise.h>
@@ -45,6 +46,12 @@ public:
     static NonnullRefPtr<CreatePromise> create(OutputState initial_output_state, u32 target_latency_ms, AudioDataRequestCallback&&);
 
     virtual SampleSpecification sample_specification() const = 0;
+
+    // Returns the output buffering latency when the backend can measure or
+    // account for it. An empty value means that the backend cannot expose a
+    // reliable device-side measurement; callers should then use the latency
+    // requested when creating the stream as their conservative estimate.
+    virtual Optional<AK::Duration> output_latency() const { return {}; }
 
     virtual ~PlaybackStream() = default;
 

@@ -224,6 +224,13 @@ SampleSpecification PlaybackStreamRinOS::sample_specification() const
     return SampleSpecification(sample_rate, ChannelMap::stereo());
 }
 
+Optional<AK::Duration> PlaybackStreamRinOS::output_latency() const
+{
+    auto const latency_frames = m_state->target_latency_frames();
+    auto const latency_nanoseconds = static_cast<i64>(latency_frames) * 1'000'000'000LL / sample_rate;
+    return AK::Duration::from_nanoseconds(latency_nanoseconds);
+}
+
 void PlaybackStreamRinOS::set_underrun_callback(Function<void()> callback)
 {
     m_state->enqueue([state = m_state, callback = move(callback)]() mutable {

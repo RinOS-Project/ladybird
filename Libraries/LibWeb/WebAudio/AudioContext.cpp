@@ -61,6 +61,7 @@ WebIDL::ExceptionOr<GC::Ref<AudioContext>> AudioContext::construct_impl(JS::Real
     // FIXME: 9. Queue a control message to set the MessagePort on the AudioContextGlobalScope, with serializedRenderingSidePort.
 
     // 10. If contextOptions is given, apply the options:
+    bool invalid_latency_hint = false;
     if (context_options.has_value()) {
         // 1. If sinkId is specified, let sinkId be the value of contextOptions.sinkId and run the following substeps:
 
@@ -69,22 +70,38 @@ WebIDL::ExceptionOr<GC::Ref<AudioContext>> AudioContext::construct_impl(JS::Real
             [&](Bindings::AudioContextLatencyCategory category) {
                 switch (category) {
                 case Bindings::AudioContextLatencyCategory::Balanced:
-                    // FIXME: Determine optimal settings for balanced.
+                    context->m_target_latency_ms = 50;
                     break;
                 case Bindings::AudioContextLatencyCategory::Interactive:
-                    // FIXME: Determine optimal settings for interactive.
+                    context->m_target_latency_ms = 20;
                     break;
                 case Bindings::AudioContextLatencyCategory::Playback:
-                    // FIXME: Determine optimal settings for playback.
+                    context->m_target_latency_ms = 100;
                     break;
                 default:
                     VERIFY_NOT_REACHED();
                 }
             },
             [&](double latency_seconds) {
-                // FIXME: Determine optimal settings for numeric latency hint.
-                (void)latency_seconds;
+                // Numeric hints are accepted as seconds by Web Audio. RinOS
+                // audio backends bound their buffering target to a range that
+                // remains usable for both interactive and playback devices.
+                auto latency_milliseconds = latency_seconds * 1000.0;
+                if (!isfinite(latency_milliseconds) || latency_milliseconds <= 0.0) {
+                    invalid_latency_hint = true;
+                    return;
+                }
+                auto rounded_milliseconds = ceil(latency_milliseconds);
+                if (rounded_milliseconds >= 200.0)
+                    context->m_target_latency_ms = 200;
+                else if (rounded_milliseconds <= 20.0)
+                    context->m_target_latency_ms = 20;
+                else
+                    context->m_target_latency_ms = static_cast<u32>(rounded_milliseconds);
             });
+
+        if (invalid_latency_hint)
+            return WebIDL::NotSupportedError::create(realm, "Audio latency hint must be a finite positive number"_utf16);
 
         // 3: If contextOptions.sampleRate is specified, set the sampleRate of context to this value.
         if (context_options->sample_rate.has_value()) {
@@ -95,9 +112,18 @@ WebIDL::ExceptionOr<GC::Ref<AudioContext>> AudioContext::construct_impl(JS::Real
             // FIXME: 1. If sinkId is the empty string or a type of AudioSinkOptions, use the sample rate of the default output device. Abort these substeps.
             // FIXME: 2. If sinkId is a DOMString, use the sample rate of the output device identified by sinkId. Abort these substeps.
             // If contextOptions.sampleRate differs from the sample rate of the output device, the user agent MUST resample the audio output to match the sample rate of the output device.
-            context->set_sample_rate(44100);
+            // RinOS' default output service is 48 kHz. The actual backend
+            // sample specification is still published when the stream is
+            // acquired below, so this remains correct if the device changes.
+            context->set_sample_rate(48'000);
         }
     }
+
+    if (context->sample_rate() == 0)
+        context->set_sample_rate(48'000);
+
+    context->m_base_latency = static_cast<double>(context->m_target_latency_ms) / 1000.0;
+    context->m_output_latency = context->m_base_latency;
 
     // FIXME: 11. If context is allowed to start, send a control message to start processing.
     // FIXME: Implement control message queue to run following steps on the rendering thread
@@ -403,11 +429,21 @@ bool AudioContext::start_rendering_audio_graph()
         self->render_audio(buffer);
         return buffer;
     };
-    auto create_promise = Audio::PlaybackStream::create(Audio::OutputState::Suspended, 100, move(data_callback));
+    auto create_promise = Audio::PlaybackStream::create(Audio::OutputState::Suspended, m_target_latency_ms, move(data_callback));
     create_promise->when_resolved([self](auto& stream) {
         self->m_backend_start_pending = false;
         self->m_playback_stream = stream;
-        self->m_output_sample_rate = stream->sample_specification().sample_rate();
+        auto specification = stream->sample_specification();
+        self->m_output_sample_rate = specification.sample_rate();
+        if (self->sample_rate() == 0 && self->m_output_sample_rate != 0)
+            self->set_sample_rate(self->m_output_sample_rate);
+        if (auto latency = stream->output_latency(); latency.has_value()) {
+            auto latency_seconds = latency->to_seconds_f64();
+            if (isfinite(latency_seconds) && latency_seconds > 0.0) {
+                self->m_base_latency = latency_seconds;
+                self->m_output_latency = latency_seconds;
+            }
+        }
         self->start_source_ended_timer();
         if (self->state() == Bindings::AudioContextState::Running)
             (void)self->m_playback_stream->resume();
