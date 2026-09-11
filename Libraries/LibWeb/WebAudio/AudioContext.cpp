@@ -435,6 +435,10 @@ bool AudioContext::start_rendering_audio_graph()
         self->m_playback_stream = stream;
         auto specification = stream->sample_specification();
         self->m_output_sample_rate = specification.sample_rate();
+        auto channel_count = specification.channel_count();
+        if (channel_count == 0 || channel_count > BaseAudioContext::MAX_NUMBER_OF_CHANNELS)
+            channel_count = 2;
+        self->m_output_channel_count = channel_count;
         if (self->sample_rate() == 0 && self->m_output_sample_rate != 0)
             self->set_sample_rate(self->m_output_sample_rate);
         if (auto latency = stream->output_latency(); latency.has_value()) {
@@ -504,11 +508,14 @@ void AudioContext::stop_source_ended_timer()
 
 void AudioContext::render_audio(Span<float> buffer)
 {
-    // PlaybackStream currently exposes interleaved stereo samples to WebAudio.
-    // Keep the callback bounded even if a platform backend supplies a partial
-    // frame or a future backend changes its channel count.
-    auto frame_count = buffer.size() / 2;
-    buffer = buffer.slice(0, frame_count * 2);
+    // PlaybackStream exposes interleaved samples using the negotiated backend
+    // channel map. Keep the callback bounded even if a platform backend
+    // supplies a partial frame or an invalid channel count.
+    auto channel_count = m_output_channel_count;
+    if (channel_count == 0 || channel_count > BaseAudioContext::MAX_NUMBER_OF_CHANNELS)
+        channel_count = 2;
+    auto frame_count = buffer.size() / channel_count;
+    buffer = buffer.slice(0, frame_count * channel_count);
     buffer.fill(0.0f);
 
     // Control messages are the only cross-thread publication point. Once a
@@ -1121,8 +1128,20 @@ void AudioContext::render_audio(Span<float> buffer)
                 break;
         }
 
-        buffer[frame * 2] = clamp(left, -1.0f, 1.0f);
-        buffer[frame * 2 + 1] = clamp(right, -1.0f, 1.0f);
+        auto output_offset = frame * channel_count;
+        if (channel_count == 1) {
+            // The WebAudio destination downmixes a stereo graph to a mono
+            // device by averaging the two rendered channels.
+            buffer[output_offset] = clamp((left + right) * 0.5f, -1.0f, 1.0f);
+        } else {
+            buffer[output_offset] = clamp(left, -1.0f, 1.0f);
+            buffer[output_offset + 1] = clamp(right, -1.0f, 1.0f);
+            // The current graph route is stereo. Do not duplicate channels
+            // into an arbitrary surround layout; leave unconnected channels
+            // silent until explicit channel routing is available.
+            for (u32 channel = 2; channel < channel_count; ++channel)
+                buffer[output_offset + channel] = 0.0f;
+        }
     }
 
     m_render_frame_position += frame_count;

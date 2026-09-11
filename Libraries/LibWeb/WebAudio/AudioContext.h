@@ -174,6 +174,10 @@ private:
     Vector<ParamConnection> m_param_connections;
     u64 m_render_frame_position { 0 };
     u32 m_output_sample_rate { 48'000 };
+    // PlaybackStream publishes the negotiated channel map when the backend
+    // lease is acquired. Keep the bounded count in the render owner so the
+    // callback never has to inspect a mutable device object.
+    u32 m_output_channel_count { 2 };
     RefPtr<Core::Timer> m_source_ended_timer;
 
     bool start_rendering_audio_graph();
