@@ -93,18 +93,47 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> Serial::request_port(SerialPortReq
     if (result != RIN_SERIAL_OK && result != RIN_SERIAL_EOVERFLOW)
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::NetworkError::create(realm, "Serial device enumeration failed"_utf16));
+    std::uint64_t selected_object_id = 0u;
     for (uint32_t index = 0u; index < count && index < RIN_WEB_SERIAL_MAX_DEVICES;
          ++index) {
         if (!serial_filter_matches(devices[index], options)) continue;
-        // Allocate through the realm so this remains compatible with LibJS
-        // versions where platform objects inherit Object::create(Realm&, Object*).
-        auto port = realm.create<SerialPort>(realm);
-        port->set_backend_device(devices[index]);
-        m_granted_ports.append(port);
-        return WebIDL::create_resolved_promise(realm, port);
+        selected_object_id = devices[index].info.object_id;
+        break;
     }
-    return WebIDL::create_rejected_promise_from_exception(realm,
-        WebIDL::NotFoundError::create(realm, "No permitted serial device is available"_utf16));
+    if (selected_object_id == 0u)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NotFoundError::create(realm, "No permitted serial device is available"_utf16));
+
+    Vector<RinSerialPortalFilterV1> portal_filters;
+    if (options.filters.has_value()) {
+        portal_filters.ensure_capacity(options.filters->size());
+        for (auto const& filter : *options.filters) {
+            RinSerialPortalFilterV1 portal_filter {};
+            if (filter.usb_vendor_id.has_value()) {
+                portal_filter.has_vendor_id = 1u;
+                portal_filter.vendor_id = *filter.usb_vendor_id;
+            }
+            if (filter.usb_product_id.has_value()) {
+                portal_filter.has_product_id = 1u;
+                portal_filter.product_id = *filter.usb_product_id;
+            }
+            portal_filters.append(portal_filter);
+        }
+    }
+    auto origin = HTML::relevant_settings_object(*this).origin().serialize().to_byte_string();
+    RinWebSerialDeviceV1 granted_device {};
+    int permission_result = rin_web_serial_request_port(
+        origin.characters(), 1u, portal_filters.data(), portal_filters.size(),
+        selected_object_id, &granted_device);
+    if (permission_result != RIN_SERIAL_OK)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NotFoundError::create(realm, "Serial device permission was denied"_utf16));
+    // Allocate through the realm so this remains compatible with LibJS
+    // versions where platform objects inherit Object::create(Realm&, Object*).
+    auto port = realm.create<SerialPort>(realm);
+    port->set_backend_device(granted_device);
+    m_granted_ports.append(port);
+    return WebIDL::create_resolved_promise(realm, port);
 }
 
 // https://wicg.github.io/serial/#getports-method
@@ -114,13 +143,24 @@ GC::Ref<WebIDL::Promise> Serial::get_ports()
     if (HTML::is_non_secure_context(HTML::relevant_settings_object(*this)))
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::SecurityError::create(realm, "Web Serial requires a secure context"_utf16));
-    // Array::create_from consumes a span of JS::Value. Keep the converted
-    // values rooted while the array is created instead of relying on template
-    // deduction for the GC::Ref mapping overload.
+    auto origin = HTML::relevant_settings_object(*this).origin().serialize().to_byte_string();
+    RinWebSerialDeviceV1 devices[RIN_WEB_SERIAL_MAX_DEVICES] {};
+    uint32_t count = 0u;
+    if (rin_web_serial_get_ports(origin.characters(), devices,
+                                 RIN_WEB_SERIAL_MAX_DEVICES, &count) !=
+        RIN_SERIAL_OK)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NetworkError::create(realm,
+                "Serial permission lookup failed"_utf16));
+    m_granted_ports.clear();
     GC::RootVector<JS::Value> values(realm.heap());
-    values.ensure_capacity(m_granted_ports.size());
-    for (auto const& port : m_granted_ports)
+    values.ensure_capacity(count);
+    for (uint32_t index = 0u; index < count; ++index) {
+        auto port = realm.create<SerialPort>(realm);
+        port->set_backend_device(devices[index]);
+        m_granted_ports.append(port);
         values.append(JS::Value(port.ptr()));
+    }
     return WebIDL::create_resolved_promise(realm,
         JS::Array::create_from(realm, values.span()));
 }
