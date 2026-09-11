@@ -4,9 +4,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteBuffer.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/Serial/SerialPort.h>
+#include <LibWeb/Streams/ReadableStreamOperations.h>
+#include <LibWeb/Streams/WritableStreamOperations.h>
+#include <LibWeb/WebIDL/AbstractOperations.h>
 #include <LibWeb/WebIDL/Promise.h>
 #include <LibJS/Runtime/Object.h>
 
@@ -90,6 +94,86 @@ GC::Ref<WebIDL::Promise> SerialPort::open(SerialOptions options)
     }
     m_connected = true;
     m_state = SerialPortState::Opened;
+
+    auto self = GC::Ref { *this };
+    auto readable = realm.create<Streams::ReadableStream>(realm);
+    auto readable_pull = GC::create_function(realm.heap(), [self, readable]() {
+        auto& stream_realm = self->realm();
+        auto buffer_or_error = ByteBuffer::create_uninitialized(self->m_buffer_size);
+        if (buffer_or_error.is_error())
+            return WebIDL::create_rejected_promise(stream_realm,
+                JS::TypeError::create(stream_realm, "Unable to allocate the serial read buffer"sv));
+
+        auto buffer = buffer_or_error.release_value();
+        size_t count = 0;
+        auto read_result = rin_web_serial_read(self->m_handle, buffer.data(), buffer.size(), &count);
+        if (read_result == RIN_SERIAL_EAGAIN)
+            return WebIDL::create_resolved_promise(stream_realm, JS::js_undefined());
+        if (read_result != RIN_SERIAL_OK)
+            return WebIDL::create_rejected_promise(stream_realm,
+                JS::TypeError::create(stream_realm, "Serial read failed"sv));
+        if (count == 0)
+            return WebIDL::create_resolved_promise(stream_realm, JS::js_undefined());
+
+        buffer.resize(count);
+        if (auto enqueue_result = readable->pull_from_bytes(move(buffer)); enqueue_result.is_error())
+            return WebIDL::create_rejected_promise(stream_realm,
+                JS::TypeError::create(stream_realm, "Serial read stream rejected data"sv));
+        return WebIDL::create_resolved_promise(stream_realm, JS::js_undefined());
+    });
+    auto readable_cancel = GC::create_function(realm.heap(), [self](JS::Value) {
+        self->m_read_fatal = true;
+        return WebIDL::create_resolved_promise(self->realm(), JS::js_undefined());
+    });
+    readable->set_up_with_byte_reading_support(readable_pull, readable_cancel,
+                                               self->m_buffer_size);
+
+    auto writable_start = GC::create_function(realm.heap(), []() -> WebIDL::ExceptionOr<JS::Value> {
+        return JS::js_undefined();
+    });
+    auto writable_write = GC::create_function(realm.heap(), [self](JS::Value chunk) {
+        auto& stream_realm = self->realm();
+        if (!WebIDL::is_buffer_source_type(chunk))
+            return WebIDL::create_rejected_promise(stream_realm,
+                JS::TypeError::create(stream_realm, "Serial writes require a BufferSource"sv));
+
+        auto bytes_or_error = WebIDL::get_buffer_source_copy(chunk.as_object());
+        if (bytes_or_error.is_error())
+            return WebIDL::create_rejected_promise(stream_realm,
+                JS::TypeError::create(stream_realm, "Unable to copy serial write data"sv));
+
+        auto bytes = bytes_or_error.release_value();
+        if (bytes.is_empty())
+            return WebIDL::create_resolved_promise(stream_realm, JS::js_undefined());
+
+        size_t offset = 0;
+        while (offset < bytes.size()) {
+            size_t written = 0;
+            auto write_result = rin_web_serial_write(self->m_handle,
+                bytes.data() + offset, bytes.size() - offset, &written);
+            if (write_result != RIN_SERIAL_OK || written == 0 ||
+                written > bytes.size() - offset)
+                return WebIDL::create_rejected_promise(stream_realm,
+                    JS::TypeError::create(stream_realm, "Serial write failed"sv));
+            offset += written;
+        }
+        return WebIDL::create_resolved_promise(stream_realm, JS::js_undefined());
+    });
+    auto writable_close = GC::create_function(realm.heap(), [self]() {
+        return WebIDL::create_resolved_promise(self->realm(), JS::js_undefined());
+    });
+    auto writable_abort = GC::create_function(realm.heap(), [self](JS::Value) {
+        self->m_write_fatal = true;
+        return WebIDL::create_resolved_promise(self->realm(), JS::js_undefined());
+    });
+    auto writable_size = GC::create_function(realm.heap(), [](JS::Value) {
+        return JS::normal_completion(JS::Value(1));
+    });
+
+    m_readable = readable;
+    m_writable = MUST(Streams::create_writable_stream(realm, writable_start,
+        writable_write, writable_close, writable_abort, self->m_buffer_size,
+        writable_size));
     return WebIDL::create_resolved_promise(realm, JS::js_undefined());
 }
 
