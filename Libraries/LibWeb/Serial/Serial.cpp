@@ -96,7 +96,9 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> Serial::request_port(SerialPortReq
     for (uint32_t index = 0u; index < count && index < RIN_WEB_SERIAL_MAX_DEVICES;
          ++index) {
         if (!serial_filter_matches(devices[index], options)) continue;
-        auto port = SerialPort::create(realm);
+        // Allocate through the realm so this remains compatible with LibJS
+        // versions where platform objects inherit Object::create(Realm&, Object*).
+        auto port = realm.create<SerialPort>(realm);
         port->set_backend_device(devices[index]);
         m_granted_ports.append(port);
         return WebIDL::create_resolved_promise(realm, port);
@@ -112,15 +114,14 @@ GC::Ref<WebIDL::Promise> Serial::get_ports()
     if (HTML::is_non_secure_context(HTML::relevant_settings_object(*this)))
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::SecurityError::create(realm, "Web Serial requires a secure context"_utf16));
-    Vector<GC::Ref<SerialPort>> ports;
-    ports.ensure_capacity(m_granted_ports.size());
-    for (auto& port : m_granted_ports)
-        ports.append(port);
-    GC::RootVector<JS::Value> values(realm.heap());
-    values.ensure_capacity(ports.size());
-    for (auto const& port : ports)
-        values.append(JS::Value(port.ptr()));
-    return WebIDL::create_resolved_promise(realm, JS::Array::create_from(realm, values));
+    // Array::create_from accepts JS::Value spans (or a span with a mapping
+    // callback), not a vector of GC references. Convert each port explicitly
+    // while the helper keeps the resulting values rooted during allocation.
+    auto ports = JS::Array::create_from(
+        realm, m_granted_ports.span(), [](GC::Ref<SerialPort> const& port) {
+            return JS::Value(port.ptr());
+        });
+    return WebIDL::create_resolved_promise(realm, ports);
 }
 
 // https://wicg.github.io/serial/#onconnect-attribute
