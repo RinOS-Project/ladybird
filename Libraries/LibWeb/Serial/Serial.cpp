@@ -114,14 +114,15 @@ GC::Ref<WebIDL::Promise> Serial::get_ports()
     if (HTML::is_non_secure_context(HTML::relevant_settings_object(*this)))
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::SecurityError::create(realm, "Web Serial requires a secure context"_utf16));
-    // Array::create_from accepts JS::Value spans (or a span with a mapping
-    // callback), not a vector of GC references. Convert each port explicitly
-    // while the helper keeps the resulting values rooted during allocation.
-    auto ports = JS::Array::create_from(
-        realm, m_granted_ports.span(), [](GC::Ref<SerialPort> const& port) {
-            return JS::Value(port.ptr());
-        });
-    return WebIDL::create_resolved_promise(realm, ports);
+    // Array::create_from consumes a span of JS::Value. Keep the converted
+    // values rooted while the array is created instead of relying on template
+    // deduction for the GC::Ref mapping overload.
+    GC::RootVector<JS::Value> values(realm.heap());
+    values.ensure_capacity(m_granted_ports.size());
+    for (auto const& port : m_granted_ports)
+        values.append(JS::Value(port.ptr()));
+    return WebIDL::create_resolved_promise(realm,
+        JS::Array::create_from(realm, values.span()));
 }
 
 // https://wicg.github.io/serial/#onconnect-attribute
