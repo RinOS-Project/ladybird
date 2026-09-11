@@ -149,8 +149,11 @@ bool PlaybackStreamRinOS::InternalState::reopen_stream_after_route_loss()
 void PlaybackStreamRinOS::InternalState::render_one_chunk()
 {
     auto audio_handle = handle();
-    if (audio_handle < 0)
+    if (audio_handle < 0) {
+        (void)reopen_stream_after_route_loss();
+        usleep(1000);
         return;
+    }
 
     RinAudioServiceStatusV1 status {};
     auto status_result = rin_audio_service_stream_status(audio_handle, &status);
