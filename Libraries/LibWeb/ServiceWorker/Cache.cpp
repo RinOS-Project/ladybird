@@ -678,7 +678,8 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
                 }
                 auto bytes = persistence_response.value()->bytes();
                 if (bytes.is_exception()) {
-                    WebIDL::reject_promise(realm(), promise, bytes.release_error());
+                    auto completion = Bindings::exception_to_throw_completion(realm().vm(), bytes.release_error());
+                    WebIDL::reject_promise(realm(), promise, completion.release_value());
                     return;
                 }
                 body_promises.append(bytes.release_value());
