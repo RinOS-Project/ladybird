@@ -12,6 +12,8 @@
 #include <LibWeb/Streams/WritableStream.h>
 #include <LibWeb/WebIDL/Types.h>
 
+#include "../../../../../src/apps/common/rin_web_serial_portal.h"
+
 namespace Web::Serial {
 
 // https://wicg.github.io/serial/#serialoptions-dictionary
@@ -80,6 +82,8 @@ class SerialPort : public DOM::EventTarget {
     // https://wicg.github.io/serial/#writable-attribute
     GC::Ptr<Streams::WritableStream> writable() const { return m_writable; }
 
+    void set_backend_device(RinWebSerialDeviceV1 const& device);
+
     // https://wicg.github.io/serial/#onconnect-attribute-0
     void set_onconnect(WebIDL::CallbackType*);
     WebIDL::CallbackType* onconnect();
@@ -127,6 +131,10 @@ private:
     // https://wicg.github.io/serial/#dfn-pendingclosepromise
     // A Promise used to wait for readable and writable to close
     GC::Ptr<WebIDL::Promise> m_pending_close_promise = {};
+
+    RinWebSerialDeviceV1 m_device {};
+    bool m_have_device { false };
+    uint32_t m_handle { 0 };
 };
 
 }

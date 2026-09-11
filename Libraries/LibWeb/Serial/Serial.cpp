@@ -16,6 +16,8 @@
 #include <LibWeb/Serial/SerialPort.h>
 #include <LibWeb/WebIDL/Promise.h>
 
+#include "../../../../../src/apps/common/rin_web_serial_portal.h"
+
 namespace Web::Serial {
 
 GC_DEFINE_ALLOCATOR(Serial);
@@ -29,6 +31,30 @@ void Serial::initialize(JS::Realm& realm)
 {
     WEB_SET_PROTOTYPE_FOR_INTERFACE(Serial);
     Base::initialize(realm);
+}
+
+void Serial::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    for (auto& port : m_granted_ports)
+        visitor.visit(port);
+}
+
+static bool serial_filter_matches(RinWebSerialDeviceV1 const& device,
+                                  SerialPortRequestOptions const& options)
+{
+    if (!options.filters.has_value()) return true;
+    for (auto const& filter : *options.filters) {
+        if (filter.usb_vendor_id.has_value() &&
+            device.info.vendor_id != *filter.usb_vendor_id)
+            continue;
+        if (filter.usb_product_id.has_value() &&
+            device.info.product_id != *filter.usb_product_id)
+            continue;
+        if (filter.bluetooth_service_class_id.has_value()) continue;
+        return true;
+    }
+    return false;
 }
 
 // https://wicg.github.io/serial/#requestport-method
@@ -60,12 +86,23 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> Serial::request_port(SerialPortReq
                     WebIDL::NotSupportedError::create(realm, "Bluetooth serial is not supported"_utf16));
         }
     }
-    /* The authenticated RinOS device portal is the only source of physical
-     * ports.  Until that portal is attached to this WebContent instance,
-     * expose the specified Web Serial failure instead of inventing a port or
-     * leaking a path string. */
+    RinWebSerialDeviceV1 devices[RIN_WEB_SERIAL_MAX_DEVICES] {};
+    uint32_t count = 0u;
+    int result = rin_web_serial_enumerate(devices, RIN_WEB_SERIAL_MAX_DEVICES,
+                                          &count);
+    if (result != RIN_SERIAL_OK && result != RIN_SERIAL_EOVERFLOW)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NetworkError::create(realm, "Serial device enumeration failed"_utf16));
+    for (uint32_t index = 0u; index < count && index < RIN_WEB_SERIAL_MAX_DEVICES;
+         ++index) {
+        if (!serial_filter_matches(devices[index], options)) continue;
+        auto port = SerialPort::create(realm);
+        port->set_backend_device(devices[index]);
+        m_granted_ports.append(port);
+        return WebIDL::create_resolved_promise(realm, port);
+    }
     return WebIDL::create_rejected_promise_from_exception(realm,
-        WebIDL::NotFoundError::create(realm, "No serial device is available"_utf16));
+        WebIDL::NotFoundError::create(realm, "No permitted serial device is available"_utf16));
 }
 
 // https://wicg.github.io/serial/#getports-method
@@ -75,7 +112,11 @@ GC::Ref<WebIDL::Promise> Serial::get_ports()
     if (HTML::is_non_secure_context(HTML::relevant_settings_object(*this)))
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::SecurityError::create(realm, "Web Serial requires a secure context"_utf16));
-    return WebIDL::create_resolved_promise(realm, MUST(JS::Array::create(realm, 0)));
+    Vector<GC::Ref<SerialPort>> ports;
+    ports.ensure_capacity(m_granted_ports.size());
+    for (auto& port : m_granted_ports)
+        ports.append(port);
+    return WebIDL::create_resolved_promise(realm, JS::Array::create_from(realm, ports));
 }
 
 // https://wicg.github.io/serial/#onconnect-attribute

@@ -8,6 +8,9 @@
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/Serial/SerialPort.h>
 #include <LibWeb/WebIDL/Promise.h>
+#include <LibJS/Runtime/Object.h>
+
+#include "../../../../../src/apps/common/rin_web_serial_portal.h"
 
 namespace Web::Serial {
 
@@ -22,12 +25,19 @@ void SerialPort::initialize(JS::Realm& realm)
     Base::initialize(realm);
 }
 
+void SerialPort::set_backend_device(RinWebSerialDeviceV1 const& device)
+{
+    m_device = device;
+    m_have_device = true;
+}
+
 SerialPortInfo SerialPort::get_info() const
 {
-    /* Device metadata is populated only by the authenticated RinOS device
-     * portal.  An unavailable physical backend therefore returns an empty,
-     * non-authoritative info dictionary rather than a path or guessed IDs. */
-    return {};
+    SerialPortInfo info;
+    if (!m_have_device) return info;
+    if (m_device.info.vendor_id != 0u) info.usb_vendor_id = m_device.info.vendor_id;
+    if (m_device.info.product_id != 0u) info.usb_product_id = m_device.info.product_id;
+    return info;
 }
 
 GC::Ref<WebIDL::Promise> SerialPort::open(SerialOptions options)
@@ -52,12 +62,35 @@ GC::Ref<WebIDL::Promise> SerialPort::open(SerialOptions options)
     if (options.flow_control.value_or(Bindings::FlowControlType::None) == Bindings::FlowControlType::Hardware)
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::NotSupportedError::create(realm, "Hardware flow control is unavailable"_utf16));
+    if (!m_have_device)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NotFoundError::create(realm, "Serial device is no longer available"_utf16));
+    auto parity = options.parity.value_or(Bindings::ParityType::None);
+    auto flow_control = options.flow_control.value_or(Bindings::FlowControlType::None);
+    uint8_t parity_value = parity == Bindings::ParityType::Odd
+        ? RIN_SERIAL_PARITY_ODD
+        : parity == Bindings::ParityType::Even ? RIN_SERIAL_PARITY_EVEN
+                                               : RIN_SERIAL_PARITY_NONE;
+    uint8_t flow_value = flow_control == Bindings::FlowControlType::Hardware
+        ? RIN_SERIAL_FLOW_HARDWARE : RIN_SERIAL_FLOW_NONE;
     m_buffer_size = buffer_size;
     m_state = SerialPortState::Opening;
-    m_state = SerialPortState::Closed;
-    m_connected = false;
-    return WebIDL::create_rejected_promise_from_exception(realm,
-        WebIDL::NetworkError::create(realm, "The RinOS serial device portal is unavailable"_utf16));
+    int result = rin_web_serial_open(m_device.capability, baud_rate, data_bits,
+                                     stop_bits, parity_value, flow_value,
+                                     buffer_size, &m_handle);
+    if (result != RIN_SERIAL_OK) {
+        m_handle = 0u;
+        m_state = SerialPortState::Closed;
+        m_connected = false;
+        if (result == RIN_SERIAL_ENOTSUP)
+            return WebIDL::create_rejected_promise_from_exception(realm,
+                WebIDL::NotSupportedError::create(realm, "Requested serial configuration is not supported"_utf16));
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NetworkError::create(realm, "Serial device could not be opened"_utf16));
+    }
+    m_connected = true;
+    m_state = SerialPortState::Opened;
+    return WebIDL::create_resolved_promise(realm, JS::js_undefined());
 }
 
 GC::Ref<WebIDL::Promise> SerialPort::set_signals(SerialOutputSignals signals)
@@ -69,8 +102,15 @@ GC::Ref<WebIDL::Promise> SerialPort::set_signals(SerialOutputSignals signals)
     if (!signals.data_terminal_ready.has_value() && !signals.request_to_send.has_value() &&
         !signals.break_.has_value())
         return WebIDL::create_resolved_promise(realm, JS::js_undefined());
-    return WebIDL::create_rejected_promise_from_exception(realm,
-        WebIDL::NetworkError::create(realm, "The RinOS serial device portal is unavailable"_utf16));
+    int result = rin_web_serial_set_signals(
+        m_handle, signals.data_terminal_ready.value_or(false),
+        signals.request_to_send.value_or(false), signals.break_.value_or(false));
+    if (result != RIN_SERIAL_OK)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            result == RIN_SERIAL_ENOTSUP
+                ? WebIDL::NotSupportedError::create(realm, "Serial signals are not supported"_utf16)
+                : WebIDL::NetworkError::create(realm, "Serial signal update failed"_utf16));
+    return WebIDL::create_resolved_promise(realm, JS::js_undefined());
 }
 
 GC::Ref<WebIDL::Promise> SerialPort::get_signals() const
@@ -79,8 +119,20 @@ GC::Ref<WebIDL::Promise> SerialPort::get_signals() const
     if (m_state != SerialPortState::Opened)
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::InvalidStateError::create(realm, "Serial port is not open"_utf16));
-    return WebIDL::create_rejected_promise_from_exception(realm,
-        WebIDL::NetworkError::create(realm, "The RinOS serial device portal is unavailable"_utf16));
+    RinSerialStatusV1 status {};
+    if (rin_web_serial_get_signals(m_handle, &status) != RIN_SERIAL_OK)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NetworkError::create(realm, "Serial signal query failed"_utf16));
+    auto signals = JS::Object::create(realm, realm.intrinsics().object_prototype());
+    MUST(signals->create_data_property("dataCarrierDetect"_utf16_fly_string,
+                                       JS::Value(status.dcd != 0u)));
+    MUST(signals->create_data_property("clearToSend"_utf16_fly_string,
+                                       JS::Value(status.cts != 0u)));
+    MUST(signals->create_data_property("ringIndicator"_utf16_fly_string,
+                                       JS::Value(status.ri != 0u)));
+    MUST(signals->create_data_property("dataSetReady"_utf16_fly_string,
+                                       JS::Value(status.dsr != 0u)));
+    return WebIDL::create_resolved_promise(realm, signals);
 }
 
 GC::Ref<WebIDL::Promise> SerialPort::close()
@@ -90,6 +142,10 @@ GC::Ref<WebIDL::Promise> SerialPort::close()
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::InvalidStateError::create(realm, "Serial port is already closed"_utf16));
     m_state = SerialPortState::Closing;
+    if (m_handle != 0u) {
+        (void)rin_web_serial_close(m_handle);
+        m_handle = 0u;
+    }
     m_readable = nullptr;
     m_writable = nullptr;
     m_read_fatal = false;

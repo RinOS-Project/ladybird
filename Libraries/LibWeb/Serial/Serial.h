@@ -9,7 +9,11 @@
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/WebIDL/Types.h>
 
+#include "../../../../../src/apps/common/rin_web_serial_portal.h"
+
 namespace Web::Serial {
+
+class SerialPort;
 
 // https://wicg.github.io/serial/#serialportfilter-dictionary
 struct SerialPortFilter {
@@ -47,6 +51,10 @@ private:
     explicit Serial(JS::Realm&);
 
     virtual void initialize(JS::Realm&) override;
+
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    Vector<GC::Ref<SerialPort>> m_granted_ports;
 };
 
 }
