@@ -19,6 +19,8 @@
 
 namespace Web::Serial {
 
+GC_DEFINE_ALLOCATOR(SerialPort);
+
 SerialPort::SerialPort(JS::Realm& realm)
     : DOM::EventTarget(realm)
 {
