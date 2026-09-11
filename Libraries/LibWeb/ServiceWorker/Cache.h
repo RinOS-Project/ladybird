@@ -63,6 +63,7 @@ private:
 
     WebIDL::ExceptionOr<GC::Ref<Fetch::Request>> normalize_request(Fetch::RequestInfo const&) const;
     WebIDL::ExceptionOr<Entry> clone_entry(GC::Ref<Fetch::Request>, Fetch::Response const&) const;
+    String storage_key_prefix() const;
     String storage_key_for(Fetch::Request const&) const;
     Optional<String> serialize_entry(Entry const&, ReadonlyBytes) const;
     Optional<Entry> deserialize_entry(String const& key, String const& value);

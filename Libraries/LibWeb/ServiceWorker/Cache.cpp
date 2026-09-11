@@ -227,15 +227,22 @@ String Cache::match_url(String const& url, bool ignore_search)
     return MUST(url.substring_from_byte_offset(0, question_mark.value()));
 }
 
-String Cache::storage_key_for(Fetch::Request const& request) const
+String Cache::storage_key_prefix() const
 {
     StringBuilder key;
     key.append(cache_entry_prefix);
     auto encoded_name = hex_encode(m_name.bytes());
-    auto request_url = request.url();
-    auto encoded_url = hex_encode(request_url.bytes());
     key.append(encoded_name);
     key.append(':');
+    return key.to_string_without_validation();
+}
+
+String Cache::storage_key_for(Fetch::Request const& request) const
+{
+    StringBuilder key;
+    key.append(storage_key_prefix());
+    auto request_url = request.url();
+    auto encoded_url = hex_encode(request_url.bytes());
     key.append(encoded_url);
     return key.to_string_without_validation();
 }
@@ -371,8 +378,13 @@ void Cache::restore_entries()
 {
     if (!m_storage_bottle)
         return;
+    // A storage bottle is shared by every named Cache in the profile.  The
+    // cache-name segment is part of the persisted key, so restore only this
+    // Cache's namespace; otherwise reopening one cache would expose entries
+    // from every sibling cache and could delete their malformed records.
+    auto prefix = storage_key_prefix();
     for (auto const& key : m_storage_bottle->keys()) {
-        if (!key.bytes_as_string_view().starts_with(cache_entry_prefix))
+        if (!key.bytes_as_string_view().starts_with(prefix.bytes_as_string_view()))
             continue;
         auto value = m_storage_bottle->get(key);
         if (!value.has_value())
@@ -394,14 +406,9 @@ void Cache::remove_persisted_entries()
 {
     if (!m_storage_bottle)
         return;
-    StringBuilder prefix;
-    prefix.append(cache_entry_prefix);
-    auto encoded_name = hex_encode(m_name.bytes());
-    prefix.append(encoded_name);
-    prefix.append(':');
-    auto prefix_string = prefix.to_string_without_validation();
+    auto prefix = storage_key_prefix();
     for (auto const& key : m_storage_bottle->keys()) {
-        if (key.bytes_as_string_view().starts_with(prefix_string.bytes_as_string_view()))
+        if (key.bytes_as_string_view().starts_with(prefix.bytes_as_string_view()))
             m_storage_bottle->remove(key);
     }
 }
