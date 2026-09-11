@@ -112,12 +112,38 @@ void PlaybackStreamRinOS::InternalState::set_playing(bool playing)
 {
     Threading::MutexLocker locker { m_mutex };
     m_playing = playing;
+    m_playing_state.store(playing);
     m_wake_condition.signal();
 }
 
 void PlaybackStreamRinOS::InternalState::set_underrun_callback(Function<void()>&& callback)
 {
     m_underrun_callback = move(callback);
+}
+
+bool PlaybackStreamRinOS::InternalState::reopen_stream_after_route_loss()
+{
+    if (!m_playing_state.load())
+        return false;
+    auto old_handle = handle();
+    if (old_handle >= 0 && rin_audio_service_stream_destroy(old_handle) == RIN_AUDIO_SERVICE_BUSY)
+        return false;
+    set_handle(-1);
+
+    auto new_handle = rin_audio_service_stream_create(
+        sample_rate, channel_count, RIN_AUDIO_SERVICE_FORMAT_S16LE,
+        ring_capacity_frames);
+    if (new_handle < 0)
+        return false;
+    if (rin_audio_service_stream_set_volume(new_handle, m_volume_percent) < 0 ||
+        rin_audio_service_stream_start(new_handle) < 0) {
+        (void)rin_audio_service_stream_destroy(new_handle);
+        return false;
+    }
+    set_handle(new_handle);
+    m_last_kernel_underrun_count = 0;
+    m_last_played_frames.store(0);
+    return true;
 }
 
 void PlaybackStreamRinOS::InternalState::render_one_chunk()
@@ -127,7 +153,15 @@ void PlaybackStreamRinOS::InternalState::render_one_chunk()
         return;
 
     RinAudioServiceStatusV1 status {};
-    if (rin_audio_service_stream_status(audio_handle, &status) < 0) {
+    auto status_result = rin_audio_service_stream_status(audio_handle, &status);
+    if (status_result < 0) {
+        if (status_result != RIN_AUDIO_SERVICE_BUSY)
+            (void)reopen_stream_after_route_loss();
+        usleep(1000);
+        return;
+    }
+    if (status.state == RIN_AUDIO_SERVICE_STREAM_STOPPED) {
+        (void)reopen_stream_after_route_loss();
         usleep(1000);
         return;
     }
@@ -316,6 +350,7 @@ NonnullRefPtr<Core::ThreadedPromise<void>> PlaybackStreamRinOS::set_volume(doubl
             promise->reject(Error::from_string_literal("Unable to set RinOS audio volume"));
             return;
         }
+        state->set_volume_percent(percent);
         promise->resolve();
     });
     return promise;

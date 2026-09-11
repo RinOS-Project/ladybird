@@ -39,6 +39,7 @@ private:
         ErrorOr<void> check_is_running() const;
         void enqueue(Function<void()>&&);
         void set_playing(bool);
+        void set_volume_percent(u32 percent) { m_volume_percent = percent; }
         void set_played_frames(u64 played_frames) { m_last_played_frames.store(played_frames); }
         u64 played_frames() const { return m_last_played_frames.load(); }
         u32 target_latency_frames() const { return m_target_latency_frames; }
@@ -47,6 +48,7 @@ private:
         void exit();
 
     private:
+        bool reopen_stream_after_route_loss();
         void render_one_chunk();
 
         Atomic<int> m_handle { -1 };
@@ -55,7 +57,9 @@ private:
         Threading::ConditionVariable m_wake_condition { m_mutex };
         Queue<Function<void()>> m_tasks;
         bool m_playing { false };
+        Atomic<bool> m_playing_state { false };
         u32 m_target_latency_frames { 0 };
+        u32 m_volume_percent { 100 };
         AudioDataRequestCallback m_data_request_callback;
         Function<void()> m_underrun_callback;
         u64 m_last_kernel_underrun_count { 0 };
