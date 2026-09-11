@@ -660,25 +660,126 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
                     return;
                 }
             }
-            // Persist every cloned entry before resolving addAll(). Clones
-            // are still staged until all fetches and response cloning have
-            // succeeded, so malformed input and non-cacheable responses do
-            // not publish a partial batch.
-            Vector<GC::Ref<WebIDL::Promise>> persist_promises;
-            persist_promises.ensure_capacity(staged_entries.size());
-            for (auto& entry : staged_entries) {
+
+            // Read and validate every response body before touching either the
+            // in-memory registry or the durable bottle.  The previous code
+            // launched one persist_entry() per response; a later quota error
+            // could therefore leave an earlier entry committed even though
+            // addAll() rejected.  Body reads are asynchronous, but the actual
+            // serialize/store/commit phase below is one synchronous transaction.
+            Vector<GC::Ref<WebIDL::Promise>> body_promises;
+            body_promises.ensure_capacity(staged_entries.size());
+            for (auto const& entry : staged_entries) {
                 auto persistence_response = entry.response->clone();
                 if (persistence_response.is_exception()) {
                     auto completion = Bindings::exception_to_throw_completion(realm().vm(), persistence_response.release_error());
                     WebIDL::reject_promise(realm(), promise, completion.release_value());
                     return;
                 }
-                persist_promises.append(persist_entry(move(entry), persistence_response.release_value()));
+                auto bytes = persistence_response.value()->bytes();
+                if (bytes.is_exception()) {
+                    WebIDL::reject_promise(realm(), promise, bytes.release_error());
+                    return;
+                }
+                body_promises.append(bytes.release_value());
             }
+
             WebIDL::wait_for_all(
                 realm(),
-                persist_promises,
-                [this, promise](Vector<JS::Value> const&) {
+                body_promises,
+                [this, promise, staged_entries = move(staged_entries)](Vector<JS::Value> const& bodies) mutable {
+                    if (!owner_is_current()) {
+                        WebIDL::reject_promise(realm(), promise, WebIDL::InvalidStateError::create(
+                            realm(), "Cache profile owner was revoked before addAll commit"_utf16));
+                        return;
+                    }
+                    if (bodies.size() != staged_entries.size()) {
+                        WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.addAll() body count mismatch"sv));
+                        return;
+                    }
+
+                    struct StorageRecord {
+                        String key;
+                        String value;
+                    };
+
+                    // Snapshot the complete cache namespace and GC entry list
+                    // before any write.  store_serialized_entry() may evict
+                    // old records to satisfy quota, so restoring only the
+                    // newly written keys would not be sufficient on a later
+                    // failure.
+                    auto original_entries = m_entries;
+                    auto original_next_sequence = m_next_sequence;
+                    Vector<StorageRecord> original_storage;
+                    auto prefix = storage_key_prefix();
+                    if (m_storage_bottle) {
+                        for (auto const& key : m_storage_bottle->keys()) {
+                            if (!key.bytes_as_string_view().starts_with(prefix.bytes_as_string_view()))
+                                continue;
+                            auto value = m_storage_bottle->get(key);
+                            if (value.has_value())
+                                original_storage.append({ key, value.release_value() });
+                        }
+                    }
+
+                    Vector<String> serialized_entries;
+                    serialized_entries.ensure_capacity(staged_entries.size());
+                    u64 next_sequence = m_next_sequence;
+                    for (size_t i = 0; i < staged_entries.size(); ++i) {
+                        if (!bodies[i].is_object()) {
+                            WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.addAll() body is not a byte sequence"sv));
+                            return;
+                        }
+                        auto bytes = WebIDL::get_buffer_source_copy(bodies[i].as_object());
+                        if (bytes.is_error()) {
+                            WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.addAll() response body could not be read"sv));
+                            return;
+                        }
+                        if (staged_entries[i].sequence == 0)
+                            staged_entries[i].sequence = next_sequence++;
+                        auto serialized = serialize_entry(staged_entries[i], bytes.value().bytes());
+                        if (!serialized.has_value()) {
+                            WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache.addAll() response could not be serialized"sv));
+                            return;
+                        }
+                        serialized_entries.append(serialized.release_value());
+                    }
+
+                    bool stored = true;
+                    if (m_storage_bottle) {
+                        for (size_t i = 0; i < staged_entries.size(); ++i) {
+                            auto key = storage_key_for(*staged_entries[i].request);
+                            if (!store_serialized_entry(key, serialized_entries[i])) {
+                                stored = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!stored) {
+                        // Restore the durable namespace before restoring the
+                        // in-memory view.  The original namespace was within
+                        // quota, so these exact records fit again unless the
+                        // owner disappeared; in that case the cache is
+                        // inaccessible until a fresh authenticated owner is
+                        // established and no partial batch is published.
+                        if (m_storage_bottle) {
+                            for (auto const& key : m_storage_bottle->keys()) {
+                                if (key.bytes_as_string_view().starts_with(prefix.bytes_as_string_view()))
+                                    m_storage_bottle->remove(key);
+                            }
+                            for (auto const& record : original_storage)
+                                (void)m_storage_bottle->set(record.key, record.value);
+                        }
+                        m_entries = move(original_entries);
+                        m_next_sequence = original_next_sequence;
+                        WebIDL::reject_promise(realm(), promise, WebIDL::QuotaExceededError::create(realm(), "Cache storage quota exceeded"_utf16));
+                        return;
+                    }
+
+                    m_next_sequence = next_sequence;
+                    for (auto& entry : staged_entries)
+                        commit_entry(move(entry));
                     WebIDL::resolve_promise(realm(), promise);
                 },
                 [this, promise](JS::Value reason) {
