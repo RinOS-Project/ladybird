@@ -43,6 +43,8 @@
 #include "rin_socket_abi.h"
 #include "webcontent_peer_identity_policy.h"
 #include "webcontent_network_failure_policy.h"
+#include "webcontent_client_policy.h"
+#include "../../../../src/apps/common/rin_web_serial_portal.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -71,6 +73,7 @@ class BridgeApplication;
 struct PageSession;
 static PageSession* find_page(u32 page_id);
 static int s_service_worker_owner_fd = -1;
+static RinWebContentOwnerChannelSessionV1 s_owner_channel_session {};
 
 static constexpr u64 s_load_start_retry_interval_ms = 250;
 static constexpr u64 s_load_start_retry_budget_ms = 10000;
@@ -303,6 +306,83 @@ static bool recv_all(int fd, void* data, size_t len, u64 deadline_ms)
         offset += static_cast<size_t>(rc);
     }
     return true;
+}
+
+/* WebContent's Serial implementation uses the same authenticated,
+ * generation-bound owner channel as the Browser's other profile services.
+ * This callback is the concrete transport boundary: a portal frame is
+ * wrapped in the existing bounded socket envelope and the response is copied
+ * back only after command/size/status validation. */
+static int serial_portal_exchange(void*, const void* request,
+                                  size_t request_size, void* response,
+                                  size_t response_capacity,
+                                  size_t* response_size)
+{
+    if (response_size != nullptr)
+        *response_size = 0u;
+    if (s_service_worker_owner_fd < 0 ||
+        s_owner_channel_session.session_id == 0u ||
+        s_owner_channel_session.session_generation == 0u ||
+        request == nullptr || response == nullptr || response_size == nullptr ||
+        request_size < sizeof(RinSerialPortalFrameV1) ||
+        request_size > sizeof(RinSerialPortalEnumerateResponseV1) ||
+        response_capacity < sizeof(RinSerialPortalFrameV1) ||
+        response_capacity > sizeof(RinSerialPortalEnumerateResponseV1)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    auto const* frame = reinterpret_cast<RinSerialPortalFrameV1 const*>(request);
+    if (frame->session_id != s_owner_channel_session.session_id ||
+        frame->session_generation != s_owner_channel_session.session_generation ||
+        frame->request_id == 0u) {
+        errno = EPROTO;
+        return -1;
+    }
+
+    u64 deadline_ms;
+    if (!client_rpc_deadline_create(&deadline_ms))
+        return -1;
+    RinWebContentMsgHeader request_header {};
+    request_header.magic = RIN_WEBCONTENT_MAGIC;
+    request_header.version = RIN_WEBCONTENT_VERSION;
+    request_header.command = RIN_WEBCONTENT_CMD_SERIAL_PORTAL_V1;
+    request_header.page_id = 0u;
+    request_header.payload_len = static_cast<u32>(request_size);
+    if (!send_all(s_service_worker_owner_fd, &request_header,
+                  sizeof(request_header), deadline_ms) ||
+        !send_all(s_service_worker_owner_fd, request, request_size,
+                  deadline_ms) ||
+        !recv_all(s_service_worker_owner_fd, &request_header,
+                  sizeof(request_header), deadline_ms)) {
+        errno = ECONNRESET;
+        return -1;
+    }
+    auto validation = rin_webcontent_client_response_header_validate(
+        &request_header, RIN_WEBCONTENT_CMD_SERIAL_PORTAL_V1, 0u,
+        request_header.payload_len);
+    if (validation != RIN_WEBCONTENT_CLIENT_VALID) {
+        errno = validation == RIN_WEBCONTENT_CLIENT_INVALID_SIZE
+            ? EMSGSIZE
+            : EPROTO;
+        return -1;
+    }
+    if (request_header.status != 0) {
+        errno = rin_webcontent_client_status_errno(request_header.status);
+        return -1;
+    }
+    if (request_header.payload_len < sizeof(RinSerialPortalFrameV1) ||
+        request_header.payload_len > response_capacity) {
+        errno = EMSGSIZE;
+        return -1;
+    }
+    if (!recv_all(s_service_worker_owner_fd, response,
+                  request_header.payload_len, deadline_ms)) {
+        errno = ECONNRESET;
+        return -1;
+    }
+    *response_size = request_header.payload_len;
+    return 0;
 }
 
 static bool send_message(int fd, u32 command, i32 status, u32 page_id, void const* payload, u32 payload_len, u64 deadline_ms)
@@ -824,6 +904,8 @@ struct PageSession {
                       sizeof(request_header), deadline_ms)) {
             ::close(s_service_worker_owner_fd);
             s_service_worker_owner_fd = -1;
+            s_owner_channel_session = {};
+            rin_web_serial_set_portal_transport(nullptr);
             return result;
         }
 
@@ -835,6 +917,8 @@ struct PageSession {
         if (validation != RIN_WEBCONTENT_CLIENT_VALID) {
             ::close(s_service_worker_owner_fd);
             s_service_worker_owner_fd = -1;
+            s_owner_channel_session = {};
+            rin_web_serial_set_portal_transport(nullptr);
             return result;
         }
         if (request_header.status != 0)
@@ -846,6 +930,8 @@ struct PageSession {
             !rin_webcontent_client_service_worker_owner_response_valid(&response)) {
             ::close(s_service_worker_owner_fd);
             s_service_worker_owner_fd = -1;
+            s_owner_channel_session = {};
+            rin_web_serial_set_portal_transport(nullptr);
             return result;
         }
         result.accepted =
@@ -2745,11 +2831,22 @@ static void handle_client(int client_fd)
                                nullptr, 0, deadline_ms);
             return;
         }
-        if (!rin_webcontent_service_request_valid(&header, nullptr) ||
+        RinWebContentOwnerChannelSessionV1 session {};
+        if (header.payload_len != sizeof(session) ||
+            !recv_all(client_fd, &session, sizeof(session), deadline_ms) ||
+            session.session_id == 0u || session.session_generation == 0u ||
+            session.reserved[0] != 0u || session.reserved[1] != 0u ||
+            !rin_webcontent_service_request_valid(&header, &session) ||
             !send_message(client_fd, header.command, 0, 0, nullptr, 0,
                           deadline_ms))
             return;
+        s_owner_channel_session = session;
         s_service_worker_owner_fd = client_fd;
+        RinWebSerialPortalTransportV1 serial_transport {};
+        serial_transport.exchange = serial_portal_exchange;
+        serial_transport.session_id = session.session_id;
+        serial_transport.session_generation = session.session_generation;
+        rin_web_serial_set_portal_transport(&serial_transport);
         rin_log("[webcontent] ServiceWorker owner channel connected\n");
         return;
     }
@@ -2795,7 +2892,8 @@ static void handle_client(int client_fd)
         }
         if (s_service_worker_owner_fd >= 0)
             capabilities.capabilities |=
-                RIN_WEBCONTENT_CAPABILITY_SERVICE_WORKER_OWNER_V1;
+                RIN_WEBCONTENT_CAPABILITY_SERVICE_WORKER_OWNER_V1 |
+                RIN_WEBCONTENT_CAPABILITY_SERIAL_PORTAL_V1;
         (void)send_message(client_fd, header.command, 0, 0, &capabilities, sizeof(capabilities), deadline_ms);
         return;
     }
@@ -2969,6 +3067,8 @@ static ErrorOr<int> run_bridge()
         if (s_service_worker_owner_fd >= 0) {
             ::close(s_service_worker_owner_fd);
             s_service_worker_owner_fd = -1;
+            s_owner_channel_session = {};
+            rin_web_serial_set_portal_transport(nullptr);
         }
         if (server_fd >= 0) {
             ::close(server_fd);
@@ -3088,10 +3188,12 @@ static ErrorOr<int> run_bridge()
             return;
 
         s_pages.clear();
-        if (s_service_worker_owner_fd >= 0) {
-            ::close(s_service_worker_owner_fd);
-            s_service_worker_owner_fd = -1;
-        }
+    if (s_service_worker_owner_fd >= 0) {
+        ::close(s_service_worker_owner_fd);
+        s_service_worker_owner_fd = -1;
+        s_owner_channel_session = {};
+        rin_web_serial_set_portal_transport(nullptr);
+    }
         s_server_notifier = nullptr;
         s_stop_timer = nullptr;
         unlink(RIN_WEBCONTENT_SOCKET_PATH);

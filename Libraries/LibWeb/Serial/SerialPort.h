@@ -11,6 +11,7 @@
 #include <LibWeb/Streams/ReadableStream.h>
 #include <LibWeb/Streams/WritableStream.h>
 #include <LibWeb/WebIDL/Types.h>
+#include <LibCore/Forward.h>
 
 #include "../../../../../src/apps/common/rin_web_serial_portal.h"
 
@@ -98,6 +99,8 @@ protected:
 private:
     explicit SerialPort(JS::Realm&);
 
+    void poll_readable();
+
     virtual void initialize(JS::Realm&) override;
 
     // https://wicg.github.io/serial/#dfn-state
@@ -131,6 +134,7 @@ private:
     // https://wicg.github.io/serial/#dfn-pendingclosepromise
     // A Promise used to wait for readable and writable to close
     GC::Ptr<WebIDL::Promise> m_pending_close_promise = {};
+    RefPtr<Core::Timer> m_read_poll_timer = {};
 
     RinWebSerialDeviceV1 m_device {};
     bool m_have_device { false };
