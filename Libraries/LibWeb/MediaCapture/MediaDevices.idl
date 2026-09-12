@@ -1,0 +1,13 @@
+#import <DOM/EventTarget.idl>
+#import <MediaCapture/MediaStream.idl>
+
+// https://w3c.github.io/mediacapture-main/#mediadevices
+[Exposed=Window, SecureContext]
+interface MediaDevices : EventTarget {
+    [NewObject] Promise<MediaStream> getUserMedia(MediaStreamConstraints constraints);
+};
+
+dictionary MediaStreamConstraints {
+    boolean audio = false;
+    boolean video = false;
+};

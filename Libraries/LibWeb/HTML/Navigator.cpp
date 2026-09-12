@@ -77,6 +77,7 @@ void Navigator::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_user_activation);
     visitor.visit(m_service_worker_container);
     visitor.visit(m_media_capabilities);
+    visitor.visit(m_media_devices);
     visitor.visit(m_credentials);
     visitor.visit(m_battery_promise);
     visitor.visit(m_xr);
@@ -164,6 +165,13 @@ GC::Ref<MediaCapabilitiesAPI::MediaCapabilities> Navigator::media_capabilities()
     if (!m_media_capabilities)
         m_media_capabilities = realm().create<MediaCapabilitiesAPI::MediaCapabilities>(realm());
     return *m_media_capabilities;
+}
+
+GC::Ref<MediaCapture::MediaDevices> Navigator::media_devices()
+{
+    if (!m_media_devices)
+        m_media_devices = realm().create<MediaCapture::MediaDevices>(realm());
+    return *m_media_devices;
 }
 
 // https://w3c.github.io/battery/#the-getbattery-method

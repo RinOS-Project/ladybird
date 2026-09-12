@@ -1,0 +1,10 @@
+#import <DOM/EventTarget.idl>
+#import <MediaCapture/MediaStreamTrack.idl>
+
+// https://w3c.github.io/mediacapture-main/#mediastream
+[Exposed=(Window,Worker)]
+interface MediaStream : EventTarget {
+    readonly attribute boolean active;
+    sequence<MediaStreamTrack> getAudioTracks();
+    sequence<MediaStreamTrack> getTracks();
+};
