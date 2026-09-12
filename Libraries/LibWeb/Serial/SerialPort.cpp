@@ -15,7 +15,7 @@
 #include <LibWeb/WebIDL/Promise.h>
 #include <LibJS/Runtime/Object.h>
 
-#include "../../../../../src/apps/common/rin_web_serial_portal.h"
+#include "../../../../../libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
 
 namespace Web::Serial {
 

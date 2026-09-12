@@ -5,7 +5,7 @@
  */
 
 // This file is deliberately selected only for native AK_OS_RINOS CTests. The
-// target image receives these symbols from src/apps/common/rin_runtime.c and
+// target image receives these symbols from libs/rinruntime/rin_runtime.c and
 // must never execute host POSIX syscalls instead.
 
 #include <AK/Types.h>

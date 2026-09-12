@@ -10,7 +10,7 @@
 #include <LibCore/ThreadedPromise.h>
 #include <LibMedia/Audio/ChannelMap.h>
 #include <LibThreading/Thread.h>
-#include <apps/common/rin_audio_service_client.h>
+#include <rinruntime/rin_audio_service_client.h>
 #include <unistd.h>
 
 #include "PlaybackStreamRinOS.h"

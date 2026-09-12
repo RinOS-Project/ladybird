@@ -56,7 +56,7 @@ elseif(LADYBIRD_AUDIO_BACKEND STREQUAL "WASAPI")
 elseif(LADYBIRD_AUDIO_BACKEND STREQUAL "RINOS")
     target_sources(LibMedia PRIVATE
         Audio/PlaybackStreamRinOS.cpp
-        ${LADYBIRD_SOURCE_DIR}/../../src/apps/common/rin_audio_service_client.c
+        ${LADYBIRD_SOURCE_DIR}/../../libs/rinruntime/rin_audio_service_client.c
     )
 elseif (DEFINED LADYBIRD_AUDIO_BACKEND)
     message(FATAL_ERROR "Please update ${CMAKE_CURRENT_LIST_FILE} for audio backend ${LADYBIRD_AUDIO_BACKEND}")

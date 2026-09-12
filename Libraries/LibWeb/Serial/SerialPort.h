@@ -13,7 +13,7 @@
 #include <LibWeb/WebIDL/Types.h>
 #include <LibCore/Forward.h>
 
-#include "../../../../../src/apps/common/rin_web_serial_portal.h"
+#include "../../../../../libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
 
 namespace Web::Serial {
 
