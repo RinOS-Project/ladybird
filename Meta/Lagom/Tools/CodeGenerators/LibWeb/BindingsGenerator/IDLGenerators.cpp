@@ -5500,6 +5500,7 @@ using namespace Web::IndexedDB;
 using namespace Web::Internals;
 using namespace Web::IntersectionObserver;
 using namespace Web::MediaCapabilitiesAPI;
+using namespace Web::MediaCapture;
 using namespace Web::MediaSourceExtensions;
 using namespace Web::NavigationTiming;
 using namespace Web::NotificationsAPI;
