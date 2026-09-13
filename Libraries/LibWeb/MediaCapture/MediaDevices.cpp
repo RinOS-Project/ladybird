@@ -11,7 +11,7 @@
 #include <LibWeb/WebIDL/DOMException.h>
 #include <LibWeb/WebIDL/Promise.h>
 
-#include "../../../../../libs/rinruntime/include/rinruntime/rin_audio_service_client.h"
+#include <rinruntime/rin_audio_service_client.h>
 
 namespace Web::MediaCapture {
 

@@ -56,7 +56,12 @@ elseif(LADYBIRD_AUDIO_BACKEND STREQUAL "WASAPI")
 elseif(LADYBIRD_AUDIO_BACKEND STREQUAL "RINOS")
     target_sources(LibMedia PRIVATE
         Audio/PlaybackStreamRinOS.cpp
-        ${LADYBIRD_SOURCE_DIR}/../../libs/rinruntime/rin_audio_service_client.c
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/src/audio/rin_audio_service_client.c
+    )
+    # Link the public client implementation and its SDK-owned wire ABI.
+    target_include_directories(LibMedia PRIVATE
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/include
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/RinOS-SDK/include
     )
 elseif (DEFINED LADYBIRD_AUDIO_BACKEND)
     message(FATAL_ERROR "Please update ${CMAKE_CURRENT_LIST_FILE} for audio backend ${LADYBIRD_AUDIO_BACKEND}")
