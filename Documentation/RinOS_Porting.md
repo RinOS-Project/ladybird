@@ -42,7 +42,7 @@ libtommath, HarfBuzz/FreeType, Vulkan, Metal 等）を除去し、RinOS純正ラ
 | OpenSSL (SSL/TLS) | `libs/rintls/` (TLS record/handshake) | LibTLS | 2 |
 | libtommath (bignum) | `libs/rintls/crypto/bignum.h` | LibCrypto | 2 |
 | curl (HTTP client) | `Services/RequestServer/` + `resolved` + `rintls` | Services/RequestServer | 4 |
-| ICU 78.2 | `libs/rinicu/` (IPC client → rinicud) | LibUnicode | 3 |
+| ICU 78.2 | `public-base/libs/rinicu/` (IPC client → rinicud) | LibUnicode | 3 |
 | Rust crate (libunicode_rust) | C/C++ 代替 (`libs/libunicode/`) | LibUnicode | 3 |
 | HarfBuzz / FreeType | aquamarine TrueType + stb_truetype | LibGfx/Font | 5 |
 | Fontconfig | 除去（固定フォントパス） | LibGfx/Font | 5 |
@@ -239,7 +239,7 @@ libtommath, HarfBuzz/FreeType, Vulkan, Metal 等）を除去し、RinOS純正ラ
 ```cpp
 // RinOS native library headers are referenced via absolute include paths:
 #include <rintls/rintls.h>          // TLS/crypto
-#include <rinicu/rin_icu.h>         // ICU services (IPC client)
+#include <rinicu/rinicu.h>          // ICU services (IPC client)
 #include <libunicode/rin_unicode.h> // Low-level Unicode
 #include <aquamarine/aquamarine.h>  // 2D/3D rendering
 // Ladybird の IPC endpoint / generated headers は host Lagom tools で生成する

@@ -23,7 +23,7 @@
 #include <LibUnicode/Segmenter.h>
 
 extern "C" {
-#include "../../../rinicu/rin_icu.h"
+#include <rinicu/rinicu.h>
 #include <rin_unicode.h>
 }
 

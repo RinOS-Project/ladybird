@@ -12,23 +12,21 @@
 namespace Unicode {
 
 static constexpr i64 kRinIcuReconnectRetryCooldownMs = 250;
-static thread_local rin_icu_client_t s_client = { -1, 1u, 0u };
+static thread_local rin_icu_client_t s_client = {};
 static thread_local bool s_client_ready = false;
 static thread_local i64 s_next_open_retry_ms = 0;
 
 static void reset_rin_icu_client()
 {
-    s_client.fd = -1;
-    s_client.next_request_id = 1u;
-    s_client.reserved0 = 0u;
+    rin_icu_client_init(&s_client);
 }
 
 rin_icu_client_t& rin_icu_client()
 {
-    if (s_client_ready && s_client.fd >= 0)
+    if (s_client_ready && rin_icu_client_is_open(&s_client))
         return s_client;
 
-    if (s_client.fd >= 0) {
+    if (rin_icu_client_is_open(&s_client)) {
         s_client_ready = true;
         s_next_open_retry_ms = 0;
         return s_client;
@@ -39,7 +37,7 @@ rin_icu_client_t& rin_icu_client()
         return s_client;
 
     reset_rin_icu_client();
-    if (rin_icu_client_open(&s_client) == 0 && s_client.fd >= 0) {
+    if (rin_icu_client_open(&s_client) == 0 && rin_icu_client_is_open(&s_client)) {
         s_client_ready = true;
         s_next_open_retry_ms = 0;
         return s_client;

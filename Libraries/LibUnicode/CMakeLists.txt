@@ -26,16 +26,20 @@ set(SOURCES
 if (AK_OS_RINOS)
     list(APPEND SOURCES RinICUBridge.cpp)
 
-    set(RINICU_CLIENT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../rinicu")
-    set(LIBUNICODE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../libunicode")
+    set(RINICU_CLIENT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../public-base/libs/rinicu")
+    set(RINICU_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../public-base/RinOS-SDK/include")
+    set(LIBUNICODE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../public-base/libs/libunicode")
 
     if (NOT TARGET rinicu)
         add_library(rinicu STATIC
-            ${CMAKE_CURRENT_SOURCE_DIR}/RinICUHostCompat.c
+            ${RINICU_CLIENT_ROOT}/src/client.c
+        )
+        target_include_directories(rinicu PUBLIC
+            ${RINICU_CLIENT_ROOT}/include
         )
         target_include_directories(rinicu PRIVATE
-            ${RINICU_CLIENT_ROOT}
-            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${RINICU_CLIENT_ROOT}/src
+            ${RINICU_SDK_ROOT}
         )
         target_compile_options(rinicu PRIVATE -Wno-cast-qual)
     endif()
