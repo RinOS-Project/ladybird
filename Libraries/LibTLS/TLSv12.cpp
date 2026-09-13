@@ -16,7 +16,7 @@
 #ifdef AK_OS_RINOS
 
 extern "C" {
-#include "../../../rintls/rintls.h"
+#include "../../../../public-base/libs/rintls/rintls.h"
 }
 
 #include <LibThreading/Mutex.h>

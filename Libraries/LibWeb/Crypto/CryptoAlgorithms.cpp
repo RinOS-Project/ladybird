@@ -48,7 +48,7 @@
 #if defined(AK_OS_RINOS)
 extern "C" {
 #include "../../../../../src/webengine/rin_webcrypto_entropy.h"
-#include "../../../../rintls/crypto/modern.h"
+#include "../../../../../public-base/libs/rintls/crypto/modern.h"
 }
 #endif
 

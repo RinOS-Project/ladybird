@@ -13,7 +13,7 @@
 #ifdef AK_OS_RINOS
 
 extern "C" {
-#include "../../../../rintls/crypto/pqc.h"
+#include "../../../../../public-base/libs/rintls/crypto/pqc.h"
 }
 
 namespace Crypto::PK {

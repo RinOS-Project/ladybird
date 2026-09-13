@@ -8,7 +8,7 @@
 #include <AK/Memory.h>
 #include <AK/Vector.h>
 #include <LibGfx/ImageFormats/PNGLoader.h>
-#include "../../../../png/rpng.h"
+#include "../../../../../public-base/libs/rinpng/rpng.h"
 
 namespace Gfx {
 

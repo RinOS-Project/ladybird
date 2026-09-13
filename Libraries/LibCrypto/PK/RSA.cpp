@@ -14,7 +14,7 @@
 #include <cstring>
 
 #ifdef AK_OS_RINOS
-#    include "../../../../rintls/crypto/rsa_webcrypto.h"
+#    include "../../../../../public-base/libs/rintls/crypto/rsa_webcrypto.h"
 #endif
 
 #ifdef AK_OS_RINOS

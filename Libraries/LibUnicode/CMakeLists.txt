@@ -68,6 +68,7 @@ if (AK_OS_RINOS)
     target_compile_options(LibUnicode PRIVATE -Wno-unused-const-variable -Wno-unused-function)
     target_include_directories(LibUnicode PRIVATE
         ${LIBUNICODE_ROOT}
+        ${RINICU_SDK_ROOT}
     )
 else()
     if (RINOS_USE_ICU_BACKEND)

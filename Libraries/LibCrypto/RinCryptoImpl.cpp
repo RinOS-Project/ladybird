@@ -15,8 +15,8 @@
 #include <string.h>
 
 extern "C" {
-#include "../../../rintls/crypto/aes.h"
-#include "../../../rintls/crypto/hmac.h"
+#include "../../../../public-base/libs/rintls/crypto/aes.h"
+#include "../../../../public-base/libs/rintls/crypto/hmac.h"
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

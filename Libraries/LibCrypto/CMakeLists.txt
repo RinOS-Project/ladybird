@@ -49,7 +49,7 @@ endif()
 
 if (AK_OS_RINOS)
     # rintls include paths for RinOS builds
-    target_include_directories(LibCrypto PRIVATE ${CMAKE_SOURCE_DIR}/../rintls)
+    target_include_directories(LibCrypto PRIVATE ${CMAKE_SOURCE_DIR}/../../public-base/libs/rintls)
     target_compile_definitions(LibCrypto PRIVATE AK_OS_RINOS=1 RINTLS_SKIP_BASIC_TYPEDEFS=1)
     if (NOT CMAKE_CROSSCOMPILING)
         target_compile_definitions(LibCrypto PRIVATE RINTLS_HOST_LIBC=1 RIN_USERSPACE=1 RIN_FREESTANDING=0)

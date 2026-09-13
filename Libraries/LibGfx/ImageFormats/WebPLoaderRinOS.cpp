@@ -6,7 +6,7 @@
 
 #include <AK/Memory.h>
 #include <LibGfx/ImageFormats/WebPLoader.h>
-#include "../../../../webp/src/webp/decode.h"
+#include "../../../../../public-base/libs/rinwebp/src/webp/decode.h"
 
 namespace Gfx {
 

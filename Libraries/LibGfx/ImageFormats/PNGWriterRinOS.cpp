@@ -9,7 +9,7 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/ImageFormats/PNGWriter.h>
-#include "../../../../zlib/rinz_checksum.h"
+#include "../../../../../public-base/libs/rinzlib/rinz_checksum.h"
 
 namespace Gfx {
 

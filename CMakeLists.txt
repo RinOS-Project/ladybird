@@ -39,6 +39,7 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(LADYBIRD_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+set(RINTLS_SOURCE_DIR "${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rintls")
 list(APPEND CMAKE_MODULE_PATH "${LADYBIRD_SOURCE_DIR}/Meta/CMake")
 
 # Enable the platform branch before EnableLagom creates AK and the other
@@ -207,30 +208,30 @@ if (AK_OS_RINOS)
         -Wno-implicit-fallthrough)
 
     add_library(RinTLSShim STATIC
-        ${LADYBIRD_SOURCE_DIR}/../rintls/rintls.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/aes.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/bignum.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/ecdh.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/hmac.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/modern.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/pqc.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rsa.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rsa_webcrypto.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mlkem512.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mlkem768.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mlkem1024.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mldsa44.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mldsa65.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mldsa87.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/sha1.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/sha256.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/tls/handshake.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/tls/record.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/x509/cert.c
+        ${RINTLS_SOURCE_DIR}/rintls.c
+        ${RINTLS_SOURCE_DIR}/crypto/aes.c
+        ${RINTLS_SOURCE_DIR}/crypto/bignum.c
+        ${RINTLS_SOURCE_DIR}/crypto/ecdh.c
+        ${RINTLS_SOURCE_DIR}/crypto/hmac.c
+        ${RINTLS_SOURCE_DIR}/crypto/modern.c
+        ${RINTLS_SOURCE_DIR}/crypto/pqc.c
+        ${RINTLS_SOURCE_DIR}/crypto/rsa.c
+        ${RINTLS_SOURCE_DIR}/crypto/rsa_webcrypto.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mlkem512.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mlkem768.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mlkem1024.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mldsa44.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mldsa65.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mldsa87.c
+        ${RINTLS_SOURCE_DIR}/crypto/sha1.c
+        ${RINTLS_SOURCE_DIR}/crypto/sha256.c
+        ${RINTLS_SOURCE_DIR}/tls/handshake.c
+        ${RINTLS_SOURCE_DIR}/tls/record.c
+        ${RINTLS_SOURCE_DIR}/x509/cert.c
     )
     target_include_directories(RinTLSShim PRIVATE
-        ${LADYBIRD_SOURCE_DIR}/../rintls
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto
+        ${RINTLS_SOURCE_DIR}
+        ${RINTLS_SOURCE_DIR}/crypto
         ${LADYBIRD_SOURCE_DIR}/../libecc/include
         ${LADYBIRD_SOURCE_DIR}/../bearssl/inc
         ${LADYBIRD_SOURCE_DIR}/../bearssl/src
@@ -299,10 +300,10 @@ if (AK_OS_RINOS AND BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     # Exercise the provider archive actually shipped through RinTLSShim.  This
     # cannot run under the bare-metal cross build, so it is a native CTest.
     add_executable(test-rintls-modern-backend
-        ${LADYBIRD_SOURCE_DIR}/../rintls/tests/modern_backend_test.c)
+        ${RINTLS_SOURCE_DIR}/tests/modern_backend_test.c)
     target_include_directories(test-rintls-modern-backend PRIVATE
-        ${LADYBIRD_SOURCE_DIR}/../rintls
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto)
+        ${RINTLS_SOURCE_DIR}
+        ${RINTLS_SOURCE_DIR}/crypto)
     target_compile_definitions(test-rintls-modern-backend PRIVATE
         RIN_USERSPACE=1 RIN_FREESTANDING=0 RINTLS_HOST_LIBC=1)
     target_link_libraries(test-rintls-modern-backend PRIVATE
@@ -318,18 +319,18 @@ if (AK_OS_RINOS AND BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     # the only entropy source, allowing every randomized API to prove that a
     # source failure clears its output instead of publishing partial material.
     add_executable(test-rintls-modern-random-failclose
-        ${LADYBIRD_SOURCE_DIR}/../rintls/tests/modern_backend_random_failclose_test.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/modern.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/pqc.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mlkem512.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mlkem768.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mlkem1024.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mldsa44.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mldsa65.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rintls_mldsa87.c)
+        ${RINTLS_SOURCE_DIR}/tests/modern_backend_random_failclose_test.c
+        ${RINTLS_SOURCE_DIR}/crypto/modern.c
+        ${RINTLS_SOURCE_DIR}/crypto/pqc.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mlkem512.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mlkem768.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mlkem1024.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mldsa44.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mldsa65.c
+        ${RINTLS_SOURCE_DIR}/crypto/rintls_mldsa87.c)
     target_include_directories(test-rintls-modern-random-failclose PRIVATE
-        ${LADYBIRD_SOURCE_DIR}/../rintls
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto
+        ${RINTLS_SOURCE_DIR}
+        ${RINTLS_SOURCE_DIR}/crypto
         ${LADYBIRD_SOURCE_DIR}/../libecc/include)
     target_compile_definitions(test-rintls-modern-random-failclose PRIVATE
         RIN_FREESTANDING=1 RINTLS_TEST_HOST_TYPES=1
@@ -352,11 +353,11 @@ if (AK_OS_RINOS AND BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     # cannot publish a key or ciphertext. The same target round-trips OAEP and
     # checks PKCS#1 v1.5 signature verification through the shipped provider.
     add_executable(test-rintls-rsa-webcrypto
-        ${LADYBIRD_SOURCE_DIR}/../rintls/tests/rsa_webcrypto_test.c
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto/rsa_webcrypto.c)
+        ${RINTLS_SOURCE_DIR}/tests/rsa_webcrypto_test.c
+        ${RINTLS_SOURCE_DIR}/crypto/rsa_webcrypto.c)
     target_include_directories(test-rintls-rsa-webcrypto PRIVATE
-        ${LADYBIRD_SOURCE_DIR}/../rintls
-        ${LADYBIRD_SOURCE_DIR}/../rintls/crypto
+        ${RINTLS_SOURCE_DIR}
+        ${RINTLS_SOURCE_DIR}/crypto
         ${LADYBIRD_SOURCE_DIR}/../bearssl/inc
         ${LADYBIRD_SOURCE_DIR}/../bearssl/src)
     target_compile_definitions(test-rintls-rsa-webcrypto PRIVATE
@@ -381,14 +382,14 @@ if (AK_OS_RINOS AND BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         # the native provider configuration as the OS-backed shared-memory
         # test shim evolves.
         add_executable(test-rintls-kmac-cshake
-            ${LADYBIRD_SOURCE_DIR}/../rintls/tests/ladybird_kmac_cshake_test.cpp)
+            ${RINTLS_SOURCE_DIR}/tests/ladybird_kmac_cshake_test.cpp)
         target_link_libraries(test-rintls-kmac-cshake PRIVATE LibCrypto AK)
         add_test(NAME rintls-kmac-cshake COMMAND test-rintls-kmac-cshake)
 
         # Exercise the LibCrypto public-key APIs instead of testing only the
         # provider archive. This proves the AK_OS_RINOS dispatches reach rintls.
         add_executable(test-rintls-modern-libcrypto
-            ${LADYBIRD_SOURCE_DIR}/../rintls/tests/ladybird_modern_backend_test.cpp)
+            ${RINTLS_SOURCE_DIR}/tests/ladybird_modern_backend_test.cpp)
         target_link_libraries(test-rintls-modern-libcrypto PRIVATE LibCrypto AK)
         add_test(NAME rintls-modern-libcrypto COMMAND test-rintls-modern-libcrypto)
     endif()

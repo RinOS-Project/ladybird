@@ -76,16 +76,16 @@ if (AK_OS_RINOS)
         ImageFormats/PNGLoaderRinOS.cpp
         ImageFormats/PNGWriterRinOS.cpp
         ImageFormats/WebPLoaderRinOS.cpp
-        ../../../png/rpng.c
-        ../../../webp/src/dec/webp_dec.c
-        ../../../webp/src/dec/vp8_dec.c
-        ../../../webp/src/dec/vp8l_dec.c
+        ../../../../public-base/libs/rinpng/rpng.c
+        ../../../../public-base/libs/rinwebp/src/dec/webp_dec.c
+        ../../../../public-base/libs/rinwebp/src/dec/vp8_dec.c
+        ../../../../public-base/libs/rinwebp/src/dec/vp8l_dec.c
     )
     set_source_files_properties(
-        ../../../png/rpng.c
-        ../../../webp/src/dec/webp_dec.c
-        ../../../webp/src/dec/vp8_dec.c
-        ../../../webp/src/dec/vp8l_dec.c
+        ../../../../public-base/libs/rinpng/rpng.c
+        ../../../../public-base/libs/rinwebp/src/dec/webp_dec.c
+        ../../../../public-base/libs/rinwebp/src/dec/vp8_dec.c
+        ../../../../public-base/libs/rinwebp/src/dec/vp8l_dec.c
         PROPERTIES COMPILE_OPTIONS "-Wno-missing-prototypes;-Wno-unused-parameter;-Wno-unused-function;-Wno-unused-variable;-Wno-unused-but-set-variable;-Wno-missing-field-initializers"
     )
 endif()
@@ -119,7 +119,7 @@ else()
     # Define 'aquamarine' as a static library if it doesn't already exist.
     # Aquamarine is a standalone C library with no build system.
     if (NOT TARGET aquamarine)
-        set(AQUAMARINE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../aquamarine")
+        set(AQUAMARINE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../public-base/libs/aquamarine")
         add_library(aquamarine STATIC
             ${AQUAMARINE_ROOT}/aq_surface.c
             ${AQUAMARINE_ROOT}/aq_color.c
@@ -134,7 +134,7 @@ else()
         if (AK_OS_RINOS)
             # aq_text.c uses RinOS's Unicode tables. Its standalone target
             # does not inherit LibGfx's private native include directories.
-            target_include_directories(aquamarine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../libunicode)
+            target_include_directories(aquamarine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../../public-base/libs/libunicode)
         endif()
         set_target_properties(aquamarine PROPERTIES C_STANDARD 11)
     endif()
@@ -187,10 +187,10 @@ else()
     # are linked externally; AVIF/JXL/WOFF2 are excluded from the feature set.
     message(STATUS "RinOS policy: LibGfx image/font deps provided by RinOS native libraries.")
     target_include_directories(LibGfx PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../../jpeg
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../../png
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../../webp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../../webp/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../../public-base/libs/rinjpeg
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../../public-base/libs/rinpng
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../../public-base/libs/rinwebp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../../public-base/libs/rinwebp/src
     )
 endif()
 if (RINOS_USE_SKIA_GRAPHICS)

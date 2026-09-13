@@ -8,7 +8,7 @@
 #include <AK/Memory.h>
 #include <AK/Vector.h>
 #include <LibGfx/ImageFormats/JPEGLoader.h>
-#include "../../../../jpeg/rinjpeg.h"
+#include "../../../../../public-base/libs/rinjpeg/rinjpeg.h"
 
 namespace Gfx {
 

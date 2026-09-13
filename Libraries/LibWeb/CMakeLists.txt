@@ -33,7 +33,7 @@ else()
 
     # LibWeb lives at <RinOS>/libs/ladybird/Libraries/LibWeb.
     set(RINOS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." CACHE PATH "RinOS source root used by the LibWeb RinGL bridge")
-    set(RINGL_SOURCE_ROOT "${RINOS_SOURCE_ROOT}/libs/RinGL" CACHE PATH "RinGL source root used by the LibWeb WebGL bridge")
+    set(RINGL_SOURCE_ROOT "${RINOS_SOURCE_ROOT}/public-base/libs/RinGL" CACHE PATH "RinGL source root used by the LibWeb WebGL bridge" FORCE)
     if (NOT EXISTS "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c" OR
         NOT EXISTS "${RINGL_SOURCE_ROOT}/src/platform/aquamarine_ringpu_software_surface.c" OR
         NOT EXISTS "${RINGL_SOURCE_ROOT}/CMakeLists.txt")

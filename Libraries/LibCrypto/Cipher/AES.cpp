@@ -11,7 +11,7 @@
 #include <LibCrypto/RinCryptoImpl.h>
 
 extern "C" {
-#include "../../../../rintls/crypto/aes.h"
+#include "../../../../../public-base/libs/rintls/crypto/aes.h"
 }
 
 namespace Crypto::Cipher {

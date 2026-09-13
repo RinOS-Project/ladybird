@@ -11,8 +11,8 @@
 #ifdef AK_OS_RINOS
 
 extern "C" {
-#include "../../../../rintls/crypto/ecdh.h"
-#include "../../../../rintls/crypto/modern.h"
+#include "../../../../../public-base/libs/rintls/crypto/ecdh.h"
+#include "../../../../../public-base/libs/rintls/crypto/modern.h"
 }
 
 namespace Crypto::Curves {
