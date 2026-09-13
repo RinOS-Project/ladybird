@@ -54,6 +54,13 @@ if (AK_OS_RINOS)
     # policy with the platform bridge. Keep this target-local so non-RinOS
     # Ladybird builds do not acquire a repository-specific include path.
     target_include_directories(requestserverservice PRIVATE ${LADYBIRD_SOURCE_DIR}/../../src/shared)
+    target_include_directories(requestserverservice PRIVATE
+        ${LADYBIRD_SOURCE_DIR}/../../libs/rinhttp/include)
+    target_sources(requestserverservice PRIVATE
+        ${LADYBIRD_SOURCE_DIR}/../../libs/rinhttp/http.c
+        ${LADYBIRD_SOURCE_DIR}/../../libs/rinuri/uri.c
+        ${LADYBIRD_SOURCE_DIR}/../../libs/rinencoding/encoding.c
+        ${LADYBIRD_SOURCE_DIR}/../../libs/rinsecure/memory.c)
 endif()
 
 target_link_libraries(RequestServer PRIVATE requestserverservice)

@@ -10,11 +10,51 @@
 #include <LibTLS/TLSv12.h>
 #include <RequestServer/Resolver.h>
 #include <RequestServer/RinHTTPTransport.h>
+#include <rinhttp/http.h>
 #include <requestserver_upload_body_policy.hpp>
 
 #include "rinos_http_transport_policy.h"
 
 namespace RequestServer {
+
+static int response_connection_close(const uint8_t* data, size_t size)
+{
+    size_t line_start = 0;
+    unsigned line_number = 0;
+    while (line_start < size) {
+        size_t line_end = line_start;
+        while (line_end + 1 < size &&
+               !(data[line_end] == '\r' && data[line_end + 1] == '\n'))
+            ++line_end;
+        if (line_end == size)
+            break;
+
+        if (line_number++ != 0) {
+            size_t colon = line_start;
+            while (colon < line_end && data[colon] != ':')
+                ++colon;
+            if (colon == line_end)
+                return -1;
+            if (rin_http_field_name_equal(
+                    data + line_start, colon - line_start,
+                    reinterpret_cast<const uint8_t*>("connection"), 10) !=
+                RIN_HTTP_OK)
+                goto next_line;
+
+            auto has_close = rin_http_field_value_has_token(
+                data + colon + 1, line_end - colon - 1,
+                reinterpret_cast<const uint8_t*>("close"), 5);
+            if (has_close == RIN_HTTP_OK)
+                return 1;
+            if (has_close != RIN_HTTP_NOT_FOUND)
+                return -1;
+        }
+
+    next_line:
+        line_start = line_end + 2;
+    }
+    return 0;
+}
 
 // ============================================================
 // Stage 3-C: RinHTTPConnectionPool
@@ -174,6 +214,12 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     long connect_timeout_seconds)
 {
     auto fetch = adopt_own(*new RinHTTPFetch());
+
+    auto serialized_url = url.to_byte_string();
+    if (rin_http_redirect_target_valid(
+            reinterpret_cast<const uint8_t*>(serialized_url.characters()),
+            serialized_url.length()) != RIN_HTTP_OK)
+        return Error::from_string_literal("Invalid HTTP(S) URL for RinHTTP transport");
 
     if (!RinRequestServerUploadPolicy::admission_valid(request_body.expected_length, !!request_body.read))
         return Error::from_string_literal("Request body exceeds RinOS limit");
@@ -436,29 +482,72 @@ void RinHTTPFetch::process_line_buffered(ReadonlyBytes data)
             auto line = StringView { m_line_buffer.data(), m_line_buffer.size() - 2 };
 
             if (m_response_state == ResponseState::StatusLine) {
-                // Report the full status line via on_header_received (curl does this too)
-                if (on_header_received) {
-                    on_header_received(m_line_buffer.data(), 1, m_line_buffer.size(), callback_user_data);
+                if (m_response_head_buffer.size() >
+                    RIN_HTTP_MAX_RESPONSE_HEADER_BYTES - m_line_buffer.size()) {
+                    dbgln("[RinHTTP] response head exceeds limit");
+                    finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+                    return;
                 }
-
-                // Parse status code
-                if (line.starts_with("HTTP/"sv)) {
-                    auto space1 = line.find(' ');
-                    if (space1.has_value()) {
-                        auto after_version = line.substring_view(*space1 + 1);
-                        auto space2 = after_version.find(' ');
-                        StringView code_str = space2.has_value() ? after_version.substring_view(0, *space2) : after_version;
-                        if (auto code = code_str.to_number<u32>(); code.has_value())
-                            m_status_code = *code;
-                    }
-                    m_response_start_us = (MonotonicTime::now() - m_start_time).to_microseconds();
-                }
+                m_response_head_buffer.append(m_line_buffer);
                 m_response_state = ResponseState::Headers;
             } else if (m_response_state == ResponseState::Headers) {
                 if (line.is_empty()) {
-                    // End of headers. Report the blank line.
-                    if (on_header_received)
-                        on_header_received(m_line_buffer.data(), 1, m_line_buffer.size(), callback_user_data);
+                    if (m_response_head_buffer.size() < 2u) {
+                        dbgln("[RinHTTP] response head is empty");
+                        finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+                        return;
+                    }
+
+                    RinHttpResponseHead parsed_head;
+                    auto head_size = m_response_head_buffer.size() - 2u;
+                    if (rin_http_parse_response_head(
+                            m_response_head_buffer.data(), head_size,
+                            &parsed_head) != RIN_HTTP_OK ||
+                        (parsed_head.has_content_length &&
+                         parsed_head.content_length > SIZE_MAX)) {
+                        dbgln("[RinHTTP] malformed response head");
+                        finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+                        return;
+                    }
+
+                    auto connection_close = response_connection_close(
+                        m_response_head_buffer.data(), head_size);
+                    if (connection_close < 0) {
+                        dbgln("[RinHTTP] malformed Connection response field");
+                        finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+                        return;
+                    }
+
+                    m_status_code = parsed_head.status_code;
+                    m_response_connection_close = connection_close > 0;
+                    if (parsed_head.has_content_length)
+                        m_content_length = static_cast<size_t>(parsed_head.content_length);
+                    m_has_content_length = parsed_head.has_content_length != 0;
+                    m_chunked_encoding = parsed_head.transfer_encoding_chunked != 0;
+                    m_response_start_us = (MonotonicTime::now() - m_start_time).to_microseconds();
+
+                    // Keep the existing curl-compatible callback contract,
+                    // but replay only after the complete head is validated.
+                    size_t callback_offset = 0;
+                    while (callback_offset < head_size) {
+                        size_t callback_end = callback_offset;
+                        while (callback_end + 1u < head_size &&
+                               !(m_response_head_buffer[callback_end] == '\r' &&
+                                 m_response_head_buffer[callback_end + 1u] == '\n'))
+                            ++callback_end;
+                        if (callback_end + 1u >= head_size)
+                            break;
+                        if (on_header_received)
+                            on_header_received(m_response_head_buffer.data() + callback_offset,
+                                               1, callback_end + 2u - callback_offset,
+                                               callback_user_data);
+                        callback_offset = callback_end + 2u;
+                    }
+                    if (on_header_received) {
+                        static constexpr char blank_line[] = "\r\n";
+                        on_header_received(const_cast<char*>(blank_line), 1, 2,
+                                           callback_user_data);
+                    }
 
                     m_response_state = m_chunked_encoding ? ResponseState::ChunkedSize : ResponseState::Body;
                     m_line_buffer.clear();
@@ -480,30 +569,13 @@ void RinHTTPFetch::process_line_buffered(ReadonlyBytes data)
                     return;
                 }
 
-                // Report header line
-                if (on_header_received)
-                    on_header_received(m_line_buffer.data(), 1, m_line_buffer.size(), callback_user_data);
-
-                // Track Content-Length and Transfer-Encoding
-                auto colon = line.find(':');
-                if (colon.has_value()) {
-                    auto name = line.substring_view(0, *colon).trim_whitespace();
-                    auto value = line.substring_view(*colon + 1).trim_whitespace();
-
-                    if (name.equals_ignoring_ascii_case("content-length"sv)) {
-                        if (auto len = value.to_number<size_t>(); len.has_value()) {
-                            m_content_length = *len;
-                            m_has_content_length = true;
-                        }
-                    } else if (name.equals_ignoring_ascii_case("transfer-encoding"sv)) {
-                        if (value.contains("chunked"sv, CaseSensitivity::CaseInsensitive))
-                            m_chunked_encoding = true;
-                    } else if (name.equals_ignoring_ascii_case("connection"sv)) {
-                        // Stage 3-C: Connection: close \u304c\u4ed8\u3044\u3066\u3044\u308c\u3070\u3053\u306e socket \u306f\u30d7\u30fc\u30eb\u4e0d\u53ef\u3002
-                        if (value.contains("close"sv, CaseSensitivity::CaseInsensitive))
-                            m_response_connection_close = true;
-                    }
+                if (m_response_head_buffer.size() >
+                    RIN_HTTP_MAX_RESPONSE_HEADER_BYTES - m_line_buffer.size()) {
+                    dbgln("[RinHTTP] response head exceeds limit");
+                    finish_with_error(RIN_HTTP_TRANSPORT_RESULT_MALFORMED_RESPONSE);
+                    return;
                 }
+                m_response_head_buffer.append(m_line_buffer);
             }
             m_line_buffer.clear();
         }

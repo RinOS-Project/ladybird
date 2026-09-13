@@ -141,6 +141,10 @@ private:
 
     // Partial line buffer for header parsing
     ByteBuffer m_line_buffer;
+    // Complete response-head lines are retained until the terminating blank
+    // line so the common rinhttp parser can validate the whole head before
+    // exposing any header callback to Request.
+    ByteBuffer m_response_head_buffer;
 
     u32 m_status_code { 0 };
     size_t m_content_length { 0 };
