@@ -44,7 +44,7 @@
 #include "webcontent_peer_identity_policy.h"
 #include "webcontent_network_failure_policy.h"
 #include "webcontent_client_policy.h"
-#include "../../../../libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
+#include "../../../../public-base/libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
 
 #include <errno.h>
 #include <fcntl.h>

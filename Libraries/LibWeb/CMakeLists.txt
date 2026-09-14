@@ -49,7 +49,7 @@ else()
         "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/shader.c"
         # The RinGL-owned Aquamarine surface supplies caller-owned storage to
         # this generic RinGPU backend. It never draws through Aquamarine.
-        "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/software_backend.c"
+        "${RINOS_SOURCE_ROOT}/public-base/libs/RinGPU/src/software/software_backend.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_sync_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c"

@@ -9,7 +9,7 @@
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/WebIDL/Types.h>
 
-#include "../../../../../libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
+#include "../../../../../public-base/libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
 
 namespace Web::Serial {
 

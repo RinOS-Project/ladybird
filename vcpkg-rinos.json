@@ -15,7 +15,7 @@
   "rinos-dependency-map": {
     "openssl":    "→ rintls (libs/rintls)",
     "curl":       "→ direct socket HTTP/1.1 (RinHTTPTransport)",
-    "icu":        "→ rinicu IPC + libunicode (libs/rinicu, libs/libunicode)",
+    "icu":        "→ rinicu IPC + libunicode (public-base/libs/rinicu, public-base/libs/libunicode)",
     "skia":       "→ aquamarine 2D engine (libs/aquamarine)",
     "angle":      "→ excluded (no GPU backend)",
     "harfbuzz":   "→ aquamarine TrueType renderer",
