@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <LibCore/Forward.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/WebIDL/Types.h>
 
@@ -50,11 +51,14 @@ public:
 private:
     explicit Serial(JS::Realm&);
 
+    void poll_portal_events();
+
     virtual void initialize(JS::Realm&) override;
 
     virtual void visit_edges(Cell::Visitor&) override;
 
     Vector<GC::Ref<SerialPort>> m_granted_ports;
+    RefPtr<Core::Timer> m_portal_event_timer = {};
 };
 
 }

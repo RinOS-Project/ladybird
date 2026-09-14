@@ -10,10 +10,13 @@
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/Serial/SerialPort.h>
 #include <LibWeb/Streams/ReadableStreamOperations.h>
+#include <LibWeb/Streams/WritableStreamDefaultController.h>
 #include <LibWeb/Streams/WritableStreamOperations.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 #include <LibWeb/WebIDL/Promise.h>
 #include <LibJS/Runtime/Object.h>
+
+#include <cstring>
 
 #include "../../../../../public-base/libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
 
@@ -41,6 +44,58 @@ void SerialPort::set_backend_device(RinWebSerialDeviceV1 const& device)
 {
     m_device = device;
     m_have_device = true;
+}
+
+static bool same_physical_device(RinSerialDeviceInfoV1 const& left,
+                                 RinSerialDeviceInfoV1 const& right)
+{
+    if (left.transport != right.transport || left.vendor_id != right.vendor_id ||
+        left.product_id != right.product_id)
+        return false;
+    if (left.serial_number[0] != 0 || right.serial_number[0] != 0)
+        return std::strncmp(left.serial_number, right.serial_number,
+                            RIN_SERIAL_NUMBER_MAX) == 0;
+    return std::strncmp(left.manufacturer, right.manufacturer,
+                        RIN_SERIAL_MANUFACTURER_MAX) == 0 &&
+           std::strncmp(left.product, right.product,
+                        RIN_SERIAL_PRODUCT_MAX) == 0 &&
+           std::strncmp(left.path, right.path, RIN_SERIAL_PATH_MAX) == 0;
+}
+
+bool SerialPort::handle_portal_event(RinWebSerialEventV1 const& event)
+{
+    if (!m_have_device)
+        return false;
+
+    bool matches = event.device.capability.object_id ==
+            m_device.capability.object_id &&
+        event.device.capability.generation == m_device.capability.generation;
+    if (!matches && event.connected != 0u)
+        matches = same_physical_device(event.device.info, m_device.info);
+    if (!matches)
+        return false;
+
+    if (event.connected != 0u) {
+        m_device = event.device;
+        m_connected = true;
+        dispatch_event(DOM::Event::create(realm(), HTML::EventNames::connect));
+        return true;
+    }
+
+    m_connected = false;
+    if (m_read_poll_timer) {
+        m_read_poll_timer->stop();
+        m_read_poll_timer = nullptr;
+    }
+    auto error = JS::TypeError::create(realm(), "Serial device disconnected"sv);
+    if (m_readable && m_readable->is_readable())
+        m_readable->error(error);
+    if (m_writable &&
+        m_writable->state() == Streams::WritableStream::State::Writable &&
+        m_writable->controller())
+        m_writable->controller()->error(error);
+    dispatch_event(DOM::Event::create(realm(), HTML::EventNames::disconnect));
+    return true;
 }
 
 SerialPortInfo SerialPort::get_info() const

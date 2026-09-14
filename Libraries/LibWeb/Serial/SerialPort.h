@@ -87,6 +87,7 @@ public:
     GC::Ptr<Streams::WritableStream> writable() const { return m_writable; }
 
     void set_backend_device(RinWebSerialDeviceV1 const& device);
+    bool handle_portal_event(RinWebSerialEventV1 const& event);
 
     // https://wicg.github.io/serial/#onconnect-attribute-0
     void set_onconnect(WebIDL::CallbackType*);

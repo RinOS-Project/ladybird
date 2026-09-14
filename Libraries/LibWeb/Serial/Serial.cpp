@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibCore/Timer.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/DOM/Event.h>
 #include <LibWeb/Bindings/SerialPrototype.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibWeb/HTML/EventNames.h>
@@ -31,6 +33,12 @@ void Serial::initialize(JS::Realm& realm)
 {
     WEB_SET_PROTOTYPE_FOR_INTERFACE(Serial);
     Base::initialize(realm);
+
+    auto self = GC::Ref { *this };
+    m_portal_event_timer = Core::Timer::create_repeating(50, [self] {
+        self->poll_portal_events();
+    });
+    m_portal_event_timer->start();
 }
 
 void Serial::visit_edges(Cell::Visitor& visitor)
@@ -38,6 +46,29 @@ void Serial::visit_edges(Cell::Visitor& visitor)
     Base::visit_edges(visitor);
     for (auto& port : m_granted_ports)
         visitor.visit(port);
+}
+
+void Serial::poll_portal_events()
+{
+    /* The portal client owns the authenticated snapshot and returns at most
+     * one transition per poll.  Keep the Web Serial event delivery on the
+     * Ladybird event-loop timer so no portal/socket callback runs user code
+     * inline. */
+    for (size_t index = 0; index < 8; ++index) {
+        RinWebSerialEventV1 portal_event {};
+        auto result = rin_web_serial_poll_event(&portal_event);
+        if (result == RIN_SERIAL_EAGAIN || result == RIN_SERIAL_ENOTSUP)
+            return;
+        if (result != RIN_SERIAL_OK)
+            return;
+
+        for (auto& port : m_granted_ports)
+            port->handle_portal_event(portal_event);
+
+        dispatch_event(DOM::Event::create(
+            realm(), portal_event.connected != 0u
+                ? HTML::EventNames::connect : HTML::EventNames::disconnect));
+    }
 }
 
 static bool serial_filter_matches(RinWebSerialDeviceV1 const& device,
