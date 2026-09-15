@@ -58,7 +58,9 @@ Optional<String> rin_icu_locale_string_op(
 
     // Null-terminate the locale for C API
     char locale_buf[128];
-    auto n = locale.length() < sizeof(locale_buf) - 1 ? locale.length() : sizeof(locale_buf) - 1;
+    if (locale.length() >= sizeof(locale_buf))
+        return {};
+    auto n = locale.length();
     __builtin_memcpy(locale_buf, locale.characters_without_null_termination(), n);
     locale_buf[n] = '\0';
 
@@ -75,7 +77,9 @@ Optional<String> rin_icu_tz_string_op(
     size_t len = 0;
 
     char tz_buf[128];
-    auto n = tz.length() < sizeof(tz_buf) - 1 ? tz.length() : sizeof(tz_buf) - 1;
+    if (tz.length() >= sizeof(tz_buf))
+        return {};
+    auto n = tz.length();
     __builtin_memcpy(tz_buf, tz.characters_without_null_termination(), n);
     tz_buf[n] = '\0';
 
