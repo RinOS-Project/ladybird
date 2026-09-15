@@ -49,7 +49,7 @@ rin_icu_client_t& rin_icu_client()
     return s_client;
 }
 
-String rin_icu_locale_string_op(
+Optional<String> rin_icu_locale_string_op(
     int (*fn)(rin_icu_client_t*, char const*, char*, size_t, size_t*),
     StringView locale)
 {
@@ -64,7 +64,7 @@ String rin_icu_locale_string_op(
 
     if (fn(&rin_icu_client(), locale_buf, buf, sizeof(buf), &len) == 0 && len > 0)
         return MUST(String::from_utf8({ buf, len }));
-    return MUST(String::from_utf8(locale));
+    return {};
 }
 
 Optional<String> rin_icu_tz_string_op(

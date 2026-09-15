@@ -43,8 +43,10 @@ static_assert(sizeof(RinIcuTimeZoneTransitionResponse) == 8u, "Unexpected RinICU
 rin_icu_client_t& rin_icu_client();
 
 // Convenience: call rinicu with a locale string, filling a char buffer.
-// Returns a String from the buffer, or empty on failure.
-String rin_icu_locale_string_op(
+// Invalid input and an unavailable service are represented as an empty
+// Optional; callers that intentionally provide a compatibility fallback must
+// do so explicitly.
+Optional<String> rin_icu_locale_string_op(
     int (*fn)(rin_icu_client_t*, char const*, char*, size_t, size_t*),
     StringView locale);
 

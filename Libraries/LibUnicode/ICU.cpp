@@ -45,8 +45,15 @@ String LocaleData::canonicalize(StringView locale)
     if (locale_data->m_canonical_locale_string.has_value())
         return *locale_data->m_canonical_locale_string;
 
-    locale_data->m_canonical_locale_string = rin_icu_locale_string_op(
-        rin_icu_locale_canonicalize, locale);
+    auto canonical = rin_icu_locale_string_op(rin_icu_locale_canonicalize,
+                                              locale);
+    /* LocaleData::canonicalize historically has a String return type and is
+     * intentionally best-effort.  Keep that compatibility fallback local to
+     * this API instead of making Optional locale operations succeed with
+     * unverified input. */
+    locale_data->m_canonical_locale_string = canonical.has_value()
+        ? move(*canonical)
+        : MUST(String::from_utf8(locale));
     return *locale_data->m_canonical_locale_string;
 }
 
