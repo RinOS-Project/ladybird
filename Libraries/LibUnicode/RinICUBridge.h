@@ -35,6 +35,8 @@ static_assert(sizeof(rin_icu_number_formatter_options_t) == sizeof(RinIcuNumberF
 static_assert(sizeof(rin_icu_datetime_formatter_options_t) == sizeof(RinIcuDateTimeFormatterOptions), "Unexpected RinICU datetime formatter options layout");
 static_assert(sizeof(rin_icu_plural_rules_options_t) == sizeof(RinIcuPluralRulesOptions), "Unexpected RinICU plural rules options layout");
 static_assert(sizeof(rin_icu_segment_t) == sizeof(RinIcuSegmentNextResponse), "Unexpected RinICU segment response layout");
+static_assert(sizeof(RinIcuTimeZoneTransitionRequest) == 28u, "Unexpected RinICU timezone transition request layout");
+static_assert(sizeof(RinIcuTimeZoneTransitionResponse) == 8u, "Unexpected RinICU timezone transition response layout");
 
 // Thread-local rinicu client connection.
 // Multiple LibUnicode calls share one IPC connection per thread.

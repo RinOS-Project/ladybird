@@ -349,9 +349,22 @@ Vector<String> const& available_time_zones()
     return *cached_available_time_zones;
 }
 
-Vector<String> available_time_zones_in_region(StringView)
+Vector<String> available_time_zones_in_region(StringView region)
 {
-    return { "UTC"_string };
+    ByteString region_z(region);
+    Vector<String> result;
+    char buf[8192];
+    size_t len = 0;
+    if (rin_icu_time_zone_available_in_region(&rin_icu_client(), region_z.characters(), buf, sizeof(buf), &len) != 0 || len == 0)
+        return result;
+
+    for (auto zone : StringView { buf, len }.split_view(',')) {
+        auto trimmed_zone = zone.trim_whitespace();
+        if (!trimmed_zone.is_empty())
+            result.append(MUST(String::from_utf8(trimmed_zone)));
+    }
+    quick_sort(result);
+    return result;
 }
 
 Optional<String> resolve_primary_time_zone(StringView time_zone)
@@ -381,10 +394,24 @@ Vector<TimeZoneOffset> disambiguated_time_zone_offsets(StringView time_zone, Uni
     return {};
 }
 
-Optional<TimeZoneTransition> get_time_zone_transition(StringView, UnixDateTime, TimeZoneTransition::Options)
+Optional<TimeZoneTransition> get_time_zone_transition(StringView time_zone, UnixDateTime time, TimeZoneTransition::Options options)
 {
-    // Transitions not available via rinicu
-    return OptionalNone {};
+    ByteString time_zone_z(time_zone);
+    uint32_t direction = options.direction == TimeZoneTransition::Options::Direction::Previous
+        ? RIN_ICU_TIME_ZONE_DIRECTION_PREVIOUS
+        : RIN_ICU_TIME_ZONE_DIRECTION_NEXT;
+    uint32_t include_given_time = options.include_given_time == TimeZoneTransition::Options::IncludeGivenTime::Yes
+        ? RIN_ICU_TIME_ZONE_INCLUDE_GIVEN_YES
+        : RIN_ICU_TIME_ZONE_INCLUDE_GIVEN_NO;
+    uint32_t transition_rule = options.transition_rule == TimeZoneTransition::Options::TransitionRule::AnyTransition
+        ? RIN_ICU_TIME_ZONE_TRANSITION_ANY
+        : RIN_ICU_TIME_ZONE_TRANSITION_OFFSET_CHANGE;
+    int64_t transition_epoch_ms = 0;
+    if (rin_icu_time_zone_transition(&rin_icu_client(), time_zone_z.characters(), time.milliseconds_since_epoch(), direction, include_given_time, transition_rule, &transition_epoch_ms) != 0)
+        return OptionalNone {};
+    return TimeZoneTransition {
+        .transition = AK::Duration::from_milliseconds(transition_epoch_ms),
+    };
 }
 
 #endif // AK_OS_RINOS
