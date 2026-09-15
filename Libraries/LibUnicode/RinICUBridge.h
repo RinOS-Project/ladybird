@@ -48,8 +48,10 @@ String rin_icu_locale_string_op(
     int (*fn)(rin_icu_client_t*, char const*, char*, size_t, size_t*),
     StringView locale);
 
-// Convenience: call rinicu timezone string op.
-String rin_icu_tz_string_op(
+// Convenience: call rinicu timezone string op.  Invalid input and an
+// unavailable service are represented as an empty Optional; callers must not
+// treat the original, unverified input as a canonical timezone.
+Optional<String> rin_icu_tz_string_op(
     int (*fn)(rin_icu_client_t*, char const*, char*, size_t, size_t*),
     StringView tz);
 
