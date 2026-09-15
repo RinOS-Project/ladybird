@@ -320,7 +320,26 @@ void clear_system_time_zone_cache()
 
 ErrorOr<void> set_current_time_zone(StringView time_zone)
 {
-    cached_system_time_zone = TRY(String::from_utf8(time_zone));
+    /* This is a process-local override for LibUnicode.  The machine-wide
+     * setting remains owned by the private RinOS timezone service; never
+     * claim success by caching an unchecked string when that owner cannot
+     * canonicalize it. */
+    ByteString time_zone_z(time_zone);
+    char canonical_buffer[128];
+    size_t canonical_length = 0;
+    if (rin_icu_time_zone_canonicalize(&rin_icu_client(),
+                                       time_zone_z.characters(),
+                                       canonical_buffer,
+                                       sizeof(canonical_buffer),
+                                       &canonical_length) != 0 ||
+        canonical_length == 0 || canonical_length >= sizeof(canonical_buffer))
+        return Error::from_string_literal("Unable to find the provided time zone");
+
+    auto canonical = TRY(String::from_utf8(StringView {
+        canonical_buffer, canonical_length }));
+    if (canonical.is_empty())
+        return Error::from_string_literal("Unable to find the provided time zone");
+    cached_system_time_zone = move(canonical);
     return {};
 }
 
