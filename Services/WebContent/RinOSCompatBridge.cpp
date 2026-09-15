@@ -44,6 +44,7 @@
 #include "webcontent_peer_identity_policy.h"
 #include "webcontent_network_failure_policy.h"
 #include "webcontent_client_policy.h"
+#include "webcontent_permission_producer.h"
 #include "../../../../public-base/libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
 
 #include <errno.h>
@@ -608,6 +609,7 @@ struct PageSession {
     {
         committed_url = ByteString { "about:blank" };
         title = ByteString { "New Tab" };
+        rin_webcontent_permission_producer_initialize(&permission_producer);
 
         view->on_load_start = [this](URL::URL const& url, bool) {
             auto serialized = remap_markup_internal_url(url.serialize().to_byte_string());
@@ -629,6 +631,8 @@ struct PageSession {
             load_resources_total = 0;
             load_suspected_stall = false;
             note_pending_load_started();
+            if (rin_webcontent_permission_origin_valid(serialized.characters()))
+                rebind_permission_origin(serialized);
             kick_first_frame_if_needed("load-start"sv, true);
             auto message = ByteString::formatted("[webcontent] page {} load start {}\n", page_id, serialized);
             rin_log(message.characters());
@@ -828,6 +832,7 @@ struct PageSession {
             clear_file_picker_request(true);
             clear_pending_load_request();
             clear_first_frame_wait();
+            clear_permission_binding();
             auto message = ByteString::formatted(
                 "[webcontent] page {} crashed first_frame_pending={} paint_revision={} url={}\n",
                 page_id,
@@ -839,6 +844,7 @@ struct PageSession {
         };
 
         view->on_web_content_process_change_for_cross_site_navigation = [this] {
+            rebind_permission_origin(permission_authenticated_origin);
             metrics_dirty = true;
             kick_first_frame_if_needed("process-swap"sv, true);
             mark_dirty();
@@ -859,6 +865,7 @@ struct PageSession {
 
     ~PageSession()
     {
+        rin_webcontent_permission_producer_unbind(&permission_producer);
         close_paint_shm();
     }
 
@@ -1435,6 +1442,73 @@ struct PageSession {
         pending_load_requested_ms = monotonic_time_ms();
     }
 
+    void clear_permission_binding()
+    {
+        rin_webcontent_permission_producer_unbind(&permission_producer);
+        permission_authenticated_origin = {};
+    }
+
+    void rebind_permission_origin(ByteString origin)
+    {
+        clear_permission_binding();
+        if (permission_navigation_generation == 0u ||
+            permission_renderer_generation == UINT64_MAX)
+            return;
+
+        ++permission_renderer_generation;
+        if (!rin_webcontent_permission_origin_valid(origin.characters()) ||
+            !rin_webcontent_permission_producer_bind(
+                &permission_producer, page_id, permission_navigation_generation,
+                permission_renderer_generation, origin.characters()))
+            return;
+        permission_authenticated_origin = origin;
+    }
+
+    bool begin_permission_navigation(ByteString const& origin)
+    {
+        clear_permission_binding();
+        if (permission_navigation_generation == UINT32_MAX ||
+            permission_renderer_generation == UINT64_MAX)
+            return false;
+
+        ++permission_navigation_generation;
+        ++permission_renderer_generation;
+        if (rin_webcontent_permission_origin_valid(origin.characters()) &&
+            rin_webcontent_permission_producer_bind(
+                &permission_producer, page_id, permission_navigation_generation,
+                permission_renderer_generation, origin.characters()))
+            permission_authenticated_origin = origin;
+        return true;
+    }
+
+    int poll_permission(RinWebContentPermissionPollV1 const& request,
+                        RinWebContentPermissionEventV1& event)
+    {
+        if (request.navigation_generation != permission_navigation_generation)
+            return -ESTALE;
+        if (permission_producer.bound != 1u)
+            return -ENOTSUP;
+        if (!rin_webcontent_permission_producer_poll(
+                &permission_producer, page_id, request.navigation_generation,
+                permission_renderer_generation, request.after_request_id,
+                &event))
+            return -EPROTO;
+        return 0;
+    }
+
+    int complete_permission(RinWebContentPermissionCompleteV1 const& completion)
+    {
+        if (completion.navigation_generation != permission_navigation_generation)
+            return -ESTALE;
+        if (permission_producer.bound != 1u)
+            return -ENOTSUP;
+        return rin_webcontent_permission_producer_complete(
+                   &permission_producer, page_id, permission_renderer_generation,
+                   &completion)
+            ? 0
+            : -ESTALE;
+    }
+
     bool dispatch_pending_load_request(bool replay)
     {
         if (pending_load_kind == PendingLoadKind::None)
@@ -1757,6 +1831,8 @@ struct PageSession {
 
     bool navigate(ByteString const& url)
     {
+        if (!begin_permission_navigation(url))
+            return false;
         clear_file_picker_request(true);
         crashed = false;
         crash_reason = {};
@@ -1774,6 +1850,7 @@ struct PageSession {
         prime_pending_load_request(PendingLoadKind::Navigate, url);
         if (!dispatch_pending_load_request(false)) {
             clear_pending_load_request();
+            clear_permission_binding();
             loading = false;
             progress_percent = 0;
             pending_url = {};
@@ -1786,12 +1863,14 @@ struct PageSession {
 
     bool load_markup(ByteString const& base_url, ByteString const& markup)
     {
+        auto shell_url = base_url.is_empty() ? ByteString { "about:blank" } : base_url;
+        if (!begin_permission_navigation(shell_url))
+            return false;
         clear_file_picker_request(true);
         crashed = false;
         crash_reason = {};
         active_navigation_request_id = 0;
         text_input_enabled = false;
-        auto shell_url = base_url.is_empty() ? ByteString { "about:blank" } : base_url;
         builtin_shell_url = is_browser_builtin_url(shell_url) ? shell_url : ByteString {};
         loading = true;
         progress_percent = 20;
@@ -1804,6 +1883,7 @@ struct PageSession {
             ByteString { markup });
         if (!dispatch_pending_load_request(false)) {
             clear_pending_load_request();
+            clear_permission_binding();
             return false;
         }
         mark_dirty();
@@ -2169,6 +2249,15 @@ struct PageSession {
     bool logged_pre_navigation_paint { false };
     RefPtr<Core::Timer> pending_load_replay_timer;
 
+    /* The producer is deliberately transport-ready but not advertised until
+     * a renderer permission callback is connected.  Binding it here ensures
+     * that a future callback cannot publish an origin from a stale document
+     * or a replaced WebContent process. */
+    RinWebContentPermissionProducerV1 permission_producer {};
+    uint32_t permission_navigation_generation { 0 };
+    uint64_t permission_renderer_generation { 1 };
+    ByteString permission_authenticated_origin;
+
     int paint_shm_handle { -1 };
     void* paint_shm_addr { nullptr };
     size_t paint_shm_size { 0 };
@@ -2406,6 +2495,50 @@ static int handle_scroll(PageSession& page, ReadonlyBytes payload)
         return -EINVAL;
     auto const& request = *reinterpret_cast<RinWebContentScrollRequest const*>(payload.data());
     return page.scroll_to(request.x, request.y) ? 0 : -EIO;
+}
+
+static int handle_poll_permission(PageSession& page, int client_fd,
+                                  ReadonlyBytes payload, u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentPermissionPollV1))
+        return send_message(client_fd, RIN_WEBCONTENT_CMD_POLL_PERMISSION_V1,
+                            -EINVAL, page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+
+    auto const& request = *reinterpret_cast<RinWebContentPermissionPollV1 const*>(
+        payload.data());
+    RinWebContentPermissionEventV1 event {};
+    auto result = page.poll_permission(request, event);
+    if (result != 0)
+        return send_message(client_fd, RIN_WEBCONTENT_CMD_POLL_PERMISSION_V1,
+                            result, page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+    return send_message(client_fd, RIN_WEBCONTENT_CMD_POLL_PERMISSION_V1, 0,
+                        page.page_id, &event, sizeof(event), deadline_ms)
+        ? 0
+        : -EIO;
+}
+
+static int handle_complete_permission(PageSession& page, int client_fd,
+                                      ReadonlyBytes payload, u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentPermissionCompleteV1))
+        return send_message(client_fd,
+                            RIN_WEBCONTENT_CMD_COMPLETE_PERMISSION_V1, -EINVAL,
+                            page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+
+    auto const& completion =
+        *reinterpret_cast<RinWebContentPermissionCompleteV1 const*>(
+            payload.data());
+    auto result = page.complete_permission(completion);
+    return send_message(client_fd, RIN_WEBCONTENT_CMD_COMPLETE_PERMISSION_V1,
+                        result, page.page_id, nullptr, 0, deadline_ms)
+        ? 0
+        : -EIO;
 }
 
 static void close_received_descriptors(msghdr const& message)
@@ -2940,6 +3073,14 @@ static void handle_client(int client_fd)
         return;
     case RIN_WEBCONTENT_CMD_SCROLL_TO_V1:
         (void)send_message(client_fd, header.command, handle_scroll(*page, payload_bytes), header.page_id, nullptr, 0, deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_POLL_PERMISSION_V1:
+        (void)handle_poll_permission(*page, client_fd, payload_bytes,
+                                      deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_COMPLETE_PERMISSION_V1:
+        (void)handle_complete_permission(*page, client_fd, payload_bytes,
+                                         deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_GET_PAGE_STATE_V1:
         (void)handle_get_state(*page, client_fd, header.command, deadline_ms);
