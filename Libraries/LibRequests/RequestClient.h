@@ -45,6 +45,14 @@ public:
         URL::URL const&, u64& connection_generation,
         ByteBuffer& certificate_list, ByteBuffer& signer_capability)>;
 
+    /* The signer remains in the authenticated Browser/key-owner process. The
+     * RequestServer receives only the capability and bounded transcript over
+     * the existing authenticated IPC channel. */
+    using ClientCertificateSigner = Function<bool(
+        u64 request_id, u64 connection_generation,
+        ReadonlyBytes signer_capability, u16 signature_scheme,
+        ReadonlyBytes message, ByteBuffer& signature)>;
+
     RefPtr<Request> start_request(ByteString const& method, URL::URL const&, Optional<HTTP::HeaderList const&> request_headers = {}, ReadonlyBytes request_body = {}, HTTP::CacheMode = HTTP::CacheMode::Default, HTTP::Cookie::IncludeCredentials = HTTP::Cookie::IncludeCredentials::Yes, Core::ProxyData const& = {});
     RefPtr<Request> start_streaming_request(ByteString const& method, URL::URL const&, Optional<HTTP::HeaderList const&> request_headers, u64 request_body_length, RequestBodySource, HTTP::CacheMode = HTTP::CacheMode::Default, HTTP::Cookie::IncludeCredentials = HTTP::Cookie::IncludeCredentials::Yes, Core::ProxyData const& = {});
     bool stop_request(Badge<Request>, Request&);
@@ -57,6 +65,15 @@ public:
     void set_client_certificate_provider(ClientCertificateProvider provider)
     {
         m_client_certificate_provider = move(provider);
+        async_client_certificate_identity_state(
+            !!m_client_certificate_provider && !!m_client_certificate_signer);
+    }
+
+    void set_client_certificate_signer(ClientCertificateSigner signer)
+    {
+        m_client_certificate_signer = move(signer);
+        async_client_certificate_identity_state(
+            !!m_client_certificate_provider && !!m_client_certificate_signer);
     }
 
     bool provide_client_certificate(URL::URL const& url,
@@ -82,6 +99,11 @@ private:
     virtual void retrieve_http_cookie(int client_id, u64 request_id, URL::URL url) override;
 
     virtual void certificate_requested(u64 request_id) override;
+    virtual Messages::RequestClient::RequestClientCertificateResponse request_client_certificate(
+        u64 request_id, URL::URL url) override;
+    virtual Messages::RequestClient::SignClientCertificateResponse sign_client_certificate(
+        u64 request_id, u64 connection_generation, ByteBuffer signer_capability,
+        u16 signature_scheme, ByteBuffer message) override;
 
     virtual void websocket_connected(u64 websocket_id) override;
     virtual void websocket_received(u64 websocket_id, bool, ByteBuffer) override;
@@ -111,6 +133,7 @@ private:
     HashMap<u64, NonnullRefPtr<Core::Promise<CacheSizes>>> m_pending_cache_size_estimations;
     u64 m_next_cache_size_estimation_id { 0 };
     ClientCertificateProvider m_client_certificate_provider;
+    ClientCertificateSigner m_client_certificate_signer;
 };
 
 }

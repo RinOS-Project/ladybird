@@ -11,6 +11,7 @@
 #include <RequestServer/Resolver.h>
 #include <RequestServer/RinHTTPTransport.h>
 #include <rinhttp/http.h>
+#include <requestserver_tls_client_certificate_policy.h>
 #include <requestserver_upload_body_policy.hpp>
 
 #include "rinos_http_transport_policy.h"
@@ -167,6 +168,69 @@ RinHTTPFetch::~RinHTTPFetch()
     cancel();
 }
 
+#if defined(AK_OS_RINOS)
+int RinHTTPFetch::client_certificate_provider(rintls_ctx* tls, void* opaque)
+{
+    auto* fetch = static_cast<RinHTTPFetch*>(opaque);
+    if (fetch == nullptr || tls == nullptr ||
+        !fetch->m_client_certificate_provider ||
+        !fetch->m_client_certificate_signer)
+        return RINTLS_ERR_CERTIFICATE;
+
+    u64 connection_generation = 0u;
+    ByteBuffer certificate_list;
+    ByteBuffer signer_capability;
+    if (!fetch->m_client_certificate_provider(
+            connection_generation, certificate_list, signer_capability) ||
+        !rin_requestserver_tls_client_certificate_ipc_valid(
+            fetch->m_request_id, connection_generation, certificate_list.data(),
+            certificate_list.size(), signer_capability.data(),
+            signer_capability.size()))
+        return RINTLS_ERR_CERTIFICATE;
+
+    fetch->m_client_certificate_generation = connection_generation;
+    fetch->m_client_certificate_capability = move(signer_capability);
+    if (rintls_set_client_certificate(
+            tls, certificate_list.data(), certificate_list.size(),
+            &RinHTTPFetch::client_certificate_signer, fetch) != RINTLS_OK) {
+        fetch->m_client_certificate_generation = 0u;
+        fetch->m_client_certificate_capability = {};
+        return RINTLS_ERR_CERTIFICATE;
+    }
+    return RINTLS_OK;
+}
+
+int RinHTTPFetch::client_certificate_signer(
+    void* opaque, u16 signature_scheme, const u8* message,
+    rin_size_t message_length, u8* signature, rin_size_t signature_capacity,
+    rin_size_t* signature_length)
+{
+    auto* fetch = static_cast<RinHTTPFetch*>(opaque);
+    if (signature_length != nullptr)
+        *signature_length = 0u;
+    if (fetch == nullptr || !fetch->m_client_certificate_signer ||
+        fetch->m_client_certificate_generation == 0u ||
+        fetch->m_client_certificate_capability.is_empty() || message == nullptr ||
+        message_length == 0u || message_length > 16u * 1024u ||
+        signature == nullptr || signature_capacity == 0u ||
+        signature_capacity > 512u || signature_length == nullptr)
+        return -1;
+
+    size_t written = 0u;
+    int result = fetch->m_client_certificate_signer(
+        fetch->m_client_certificate_generation,
+        fetch->m_client_certificate_capability.bytes(), signature_scheme,
+        ReadonlyBytes { message, message_length },
+        Bytes { signature, signature_capacity }, written);
+    if (result != 0 || written == 0u || written > signature_capacity) {
+        __builtin_memset(signature, 0, signature_capacity);
+        return -1;
+    }
+    *signature_length = written;
+    return 0;
+}
+#endif
+
 void RinHTTPFetch::cancel()
 {
     if (m_timeout_timer)
@@ -182,12 +246,15 @@ void RinHTTPFetch::cancel()
 }
 
 ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
+    u64 request_id,
     URL::URL const& url,
     ByteString const& method,
     HTTP::HeaderList const& request_headers,
     ReadonlyBytes request_body,
     RefPtr<DNS::LookupResult const> dns_result,
-    long connect_timeout_seconds)
+    long connect_timeout_seconds,
+    ClientCertificateProvider client_certificate_provider,
+    ClientCertificateSigner client_certificate_signer)
 {
     RequestBodySource source;
     source.expected_length = request_body.size();
@@ -201,19 +268,29 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
         offset += count;
         return count;
     };
-    return create(url, method, request_headers, move(source), dns_result,
-                  connect_timeout_seconds);
+    return create(request_id, url, method, request_headers, move(source),
+                  dns_result, connect_timeout_seconds,
+                  move(client_certificate_provider),
+                  move(client_certificate_signer));
 }
 
 ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
+    u64 request_id,
     URL::URL const& url,
     ByteString const& method,
     HTTP::HeaderList const& request_headers,
     RequestBodySource request_body,
     RefPtr<DNS::LookupResult const> dns_result,
-    long connect_timeout_seconds)
+    long connect_timeout_seconds,
+    ClientCertificateProvider client_certificate_provider,
+    ClientCertificateSigner client_certificate_signer)
 {
     auto fetch = adopt_own(*new RinHTTPFetch());
+
+    fetch->m_request_id = request_id;
+    fetch->m_client_certificate_provider = move(client_certificate_provider);
+    fetch->m_client_certificate_signer = move(client_certificate_signer);
+    fetch->m_disable_pooling = !!fetch->m_client_certificate_provider;
 
     auto serialized_url = url.to_byte_string();
     if (rin_http_redirect_target_valid(
@@ -235,7 +312,8 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
 
     // Stage 3-C: \u30d7\u30fc\u30eb\u304b\u3089 idle socket \u3092\u53d6\u308a\u51fa\u305b\u306a\u3044\u304b\u8a66\u3059\u3002
     fetch->m_pool_key = RinHTTPConnectionPool::make_key(url);
-    if (auto pooled = RinHTTPConnectionPool::the().take(fetch->m_pool_key)) {
+    if (auto pooled = RinHTTPConnectionPool::the().take(fetch->m_pool_key);
+        !fetch->m_disable_pooling && pooled) {
         dbgln("[RinHTTP] reusing pooled socket for {}", fetch->m_pool_key);
         fetch->m_socket = move(pooled);
         fetch->m_reused_from_pool = true;
@@ -254,6 +332,13 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
             TLS::Options tls_options;
             if (auto const& cert_path = default_certificate_path(); !cert_path.is_empty())
                 tls_options.root_certificates_path = cert_path;
+#if defined(AK_OS_RINOS)
+            if (fetch->m_client_certificate_provider) {
+                tls_options.client_certificate_provider =
+                    &RinHTTPFetch::client_certificate_provider;
+                tls_options.client_certificate_provider_opaque = fetch.ptr();
+            }
+#endif
 
             auto tls_socket = TRY(TLS::TLSv12::connect(socket_address, host, move(tls_options)));
             fetch->m_connect_end_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
@@ -745,7 +830,8 @@ void RinHTTPFetch::finish_success()
         && !m_response_connection_close
         && !m_pool_key.is_empty()
         && (m_has_content_length || m_chunked_encoding)
-        && !m_socket->is_eof();
+        && !m_socket->is_eof()
+        && !m_disable_pooling;
 
     if (can_pool) {
         auto key = m_pool_key;

@@ -11,6 +11,12 @@
 #include <LibHTTP/HeaderList.h>
 #include <LibURL/URL.h>
 
+#if defined(AK_OS_RINOS)
+extern "C" {
+#    include "../../../../public-base/libs/rintls/rintls.h"
+}
+#endif
+
 namespace WebSocket {
 
 class ConnectionInfo final {
@@ -37,6 +43,24 @@ public:
     Optional<DNS::LookupResult const&> dns_result() const { return m_dns_result ? Optional<DNS::LookupResult const&>(*m_dns_result) : OptionalNone {}; }
     void set_dns_result(NonnullRefPtr<DNS::LookupResult const> dns_result) { m_dns_result = move(dns_result); }
 
+#if defined(AK_OS_RINOS)
+    void set_client_certificate(
+        u64 connection_generation, ByteBuffer certificate_list,
+        ByteBuffer signer_capability,
+        rintls_client_certificate_sign_func signer, void* signer_opaque)
+    {
+        m_client_certificate_generation = connection_generation;
+        m_client_certificate_list = move(certificate_list);
+        m_client_certificate_capability = move(signer_capability);
+        m_client_certificate_sign = signer;
+        m_client_certificate_sign_opaque = signer_opaque;
+    }
+    u64 client_certificate_generation() const { return m_client_certificate_generation; }
+    Optional<ByteBuffer> const& client_certificate_list() const { return m_client_certificate_list; }
+    rintls_client_certificate_sign_func client_certificate_sign() const { return m_client_certificate_sign; }
+    void* client_certificate_sign_opaque() const { return m_client_certificate_sign_opaque; }
+#endif
+
     // secure flag - defined in RFC 6455 Section 3
     bool is_secure() const;
 
@@ -51,6 +75,13 @@ private:
     NonnullRefPtr<HTTP::HeaderList> m_headers;
     Optional<ByteString> m_root_certificates_path;
     RefPtr<DNS::LookupResult const> m_dns_result;
+#if defined(AK_OS_RINOS)
+    u64 m_client_certificate_generation { 0 };
+    Optional<ByteBuffer> m_client_certificate_list;
+    Optional<ByteBuffer> m_client_certificate_capability;
+    rintls_client_certificate_sign_func m_client_certificate_sign { nullptr };
+    void* m_client_certificate_sign_opaque { nullptr };
+#endif
 };
 
 }

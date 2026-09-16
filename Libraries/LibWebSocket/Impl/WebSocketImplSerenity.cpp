@@ -47,6 +47,16 @@ void WebSocketImplSerenity::connect(ConnectionInfo const& connection_info)
         if (connection_info.is_secure()) {
             TLS::Options options;
             options.root_certificates_path = connection_info.root_certificates_path();
+#if defined(AK_OS_RINOS)
+            if (connection_info.client_certificate_list().has_value()) {
+                options.client_certificate_list =
+                    MUST(ByteBuffer::copy(connection_info.client_certificate_list()->bytes()));
+                options.client_certificate_sign =
+                    connection_info.client_certificate_sign();
+                options.client_certificate_sign_opaque =
+                    connection_info.client_certificate_sign_opaque();
+            }
+#endif
 
             return TRY(Core::BufferedSocket<TLS::TLSv12>::create(
                 TRY(TLS::TLSv12::connect(host, connection_info.url().port_or_default(), move(options)))));

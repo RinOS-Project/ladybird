@@ -29,5 +29,11 @@ endpoint RequestClient
     // Certificate requests
     certificate_requested(u64 request_id) =|
 
+    // RequestServer asks the authenticated Browser-side identity producer for
+    // public certificate bytes and the opaque capability before TLS emits
+    // Certificate/CertificateVerify. Private-key material never crosses IPC.
+    request_client_certificate(u64 request_id, URL::URL url) => (u64 connection_generation, ByteBuffer certificate_list, ByteBuffer signer_capability, bool provided)
+    sign_client_certificate(u64 request_id, u64 connection_generation, ByteBuffer signer_capability, u16 signature_scheme, ByteBuffer message) => (ByteBuffer signature, bool success)
+
     estimated_cache_size(u64 cache_size_estimation_id, Requests::CacheSizes sizes) =|
 }

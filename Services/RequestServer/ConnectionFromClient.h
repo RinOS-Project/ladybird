@@ -17,6 +17,12 @@
 #include <RequestServer/RequestClientEndpoint.h>
 #include <RequestServer/RequestServerEndpoint.h>
 
+#if defined(AK_OS_RINOS)
+extern "C" {
+#    include "../../../../public-base/libs/rintls/rintls.h"
+}
+#endif
+
 namespace RequestServer {
 
 class ConnectionFromClient final
@@ -49,10 +55,37 @@ public:
     static bool set_client_certificate_owner(ClientCertificateOwner owner,
                                               void* context);
 
+    /* Synchronous, authenticated key-owner transport used by the RinOS TLS
+     * provider. Public certificate material is fetched before the handshake;
+     * CertificateVerify transcripts are sent to the Browser-side key owner
+     * without ever entering the TLS process as private-key bytes. */
+    bool request_client_certificate(u64 request_id, URL::URL const& url,
+                                    u64& connection_generation,
+                                    ByteBuffer& certificate_list,
+                                    ByteBuffer& signer_capability);
+    int sign_client_certificate(
+        u64 request_id, u64 connection_generation,
+        ReadonlyBytes signer_capability, u16 signature_scheme,
+        ReadonlyBytes message, Bytes signature, size_t& signature_size);
+    bool client_certificate_identity_available() const
+    {
+        return m_client_certificate_identity_available;
+    }
+
     void start_revalidation_request(Badge<Request>, ByteString method, URL::URL, NonnullRefPtr<HTTP::HeaderList> request_headers, ByteBuffer request_body, HTTP::Cookie::IncludeCredentials, Core::ProxyData proxy_data);
     void request_complete(Badge<Request>, Request const&);
 
 private:
+#if defined(AK_OS_RINOS)
+    static int websocket_client_certificate_sign(
+        void*, u16, const u8*, rin_size_t, u8*, rin_size_t, rin_size_t*);
+    int sign_websocket_client_certificate(
+        u64 connection_generation, u16 signature_scheme, const u8* message,
+        rin_size_t message_length, u8* signature, rin_size_t signature_capacity,
+        rin_size_t* signature_length);
+#endif
+    void clear_websocket_client_certificate(u64 websocket_id);
+
     ConnectionFromClient(NonnullOwnPtr<IPC::Transport>, IsPrimaryConnection, ConnectionMap&, Optional<HTTP::DiskCache&>);
 
     virtual Messages::RequestServer::InitTransportResponse init_transport(int peer_pid) override;
@@ -83,6 +116,7 @@ private:
     virtual Messages::RequestServer::WebsocketSetCertificateResponse websocket_set_certificate(
         u64 websocket_id, u64 connection_generation, ByteBuffer certificate_list,
         ByteBuffer signer_capability) override;
+    virtual void client_certificate_identity_state(bool enabled) override;
 
 #if !defined(AK_OS_RINOS)
     static int on_socket_callback(void*, int sockfd, int what, void* user_data, void*);
@@ -102,6 +136,10 @@ private:
     HashMap<u64, NonnullOwnPtr<Request>> m_active_requests;
     HashMap<u64, NonnullOwnPtr<Request>> m_active_revalidation_requests;
     HashMap<u64, RefPtr<WebSocket::WebSocket>> m_websockets;
+    HashMap<u64, u64> m_websocket_certificate_requests;
+    HashMap<u64, ByteBuffer> m_websocket_certificate_capabilities;
+    u64 m_active_websocket_certificate_generation { 0 };
+    bool m_client_certificate_identity_available { false };
 
     RefPtr<Core::Timer> m_timer;
 #if !defined(AK_OS_RINOS)

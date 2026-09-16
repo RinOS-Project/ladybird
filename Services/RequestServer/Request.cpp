@@ -784,9 +784,29 @@ void Request::handle_fetch_state()
     }
 
     VERIFY(m_dns_result);
+    RinHTTPFetch::ClientCertificateProvider client_certificate_provider;
+    RinHTTPFetch::ClientCertificateSigner client_certificate_signer;
+    if (m_client.client_certificate_identity_available()) {
+        client_certificate_provider =
+            [this](u64& connection_generation, ByteBuffer& certificate_list,
+                   ByteBuffer& signer_capability) {
+                return m_client.request_client_certificate(
+                    m_request_id, m_url, connection_generation, certificate_list,
+                    signer_capability);
+            };
+        client_certificate_signer =
+            [this](u64 connection_generation, ReadonlyBytes signer_capability,
+                   u16 signature_scheme, ReadonlyBytes message, Bytes signature,
+                   size_t& signature_size) {
+                return m_client.sign_client_certificate(
+                    m_request_id, connection_generation, signer_capability,
+                    signature_scheme, message, signature, signature_size);
+            };
+    }
     auto fetch_or_error = RinHTTPFetch::create(
-        m_url, m_method, *headers_for_fetch, move(body_source), m_dns_result,
-        s_connect_timeout_seconds);
+        m_request_id, m_url, m_method, *headers_for_fetch, move(body_source),
+        m_dns_result, s_connect_timeout_seconds,
+        move(client_certificate_provider), move(client_certificate_signer));
     if (fetch_or_error.is_error()) {
         dbgln("Request::handle_fetch_state: Failed to create RinHTTPFetch: {}", fetch_or_error.error());
         m_network_error = Requests::NetworkError::UnableToConnect;

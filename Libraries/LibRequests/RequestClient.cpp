@@ -11,6 +11,7 @@
 #if defined(AK_OS_RINOS)
 #    include <unistd.h>
 #    include <requestserver_upload_body_policy.hpp>
+#    include <rinruntime/tls_client_certificate.h>
 #endif
 
 namespace Requests {
@@ -211,6 +212,79 @@ void RequestClient::certificate_requested(u64 request_id)
 {
     if (auto request = m_requests.get(request_id); request.has_value())
         (*request)->did_request_certificates({});
+}
+
+Messages::RequestClient::RequestClientCertificateResponse
+RequestClient::request_client_certificate(u64 request_id, URL::URL url)
+{
+    u64 connection_generation = 0;
+    ByteBuffer certificate_list;
+    ByteBuffer signer_capability;
+    constexpr size_t capability_size = 32u;
+
+    if ((!m_requests.contains(request_id) && !m_websockets.contains(request_id)) ||
+        !m_client_certificate_provider ||
+        !m_client_certificate_provider(url, connection_generation,
+                                       certificate_list, signer_capability) ||
+        connection_generation == 0u || certificate_list.is_empty() ||
+        certificate_list.size() > 16u * 1024u ||
+        signer_capability.size() != capability_size)
+        return { 0u, {}, {}, false };
+
+    bool capability_nonzero = false;
+    for (auto byte : signer_capability.bytes())
+        capability_nonzero |= byte != 0u;
+    if (!capability_nonzero)
+        return { 0u, {}, {}, false };
+
+#if defined(AK_OS_RINOS)
+    RinRuntimeTlsClientCertificateRequestV1 request {
+        sizeof(request),
+        RINRUNTIME_TLS_CLIENT_CERTIFICATE_VERSION,
+        request_id,
+        connection_generation,
+        certificate_list.data(),
+        static_cast<uint32_t>(certificate_list.size()),
+        signer_capability.data(),
+        static_cast<uint32_t>(signer_capability.size()),
+    };
+    if (!rinruntime_tls_client_certificate_request_valid(&request))
+        return { 0u, {}, {}, false };
+#endif
+
+    return { connection_generation, move(certificate_list),
+        move(signer_capability), true };
+}
+
+Messages::RequestClient::SignClientCertificateResponse
+RequestClient::sign_client_certificate(u64 request_id,
+                                        u64 connection_generation,
+                                        ByteBuffer signer_capability,
+                                        u16 signature_scheme,
+                                        ByteBuffer message)
+{
+    constexpr size_t capability_size = 32u;
+    constexpr size_t max_message_size = 16u * 1024u;
+    constexpr size_t max_signature_size = 512u;
+    if ((!m_requests.contains(request_id) && !m_websockets.contains(request_id)) ||
+        !m_client_certificate_signer || connection_generation == 0u ||
+        signer_capability.size() != capability_size || message.is_empty() ||
+        message.size() > max_message_size)
+        return { {}, false };
+
+    bool capability_nonzero = false;
+    for (auto byte : signer_capability.bytes())
+        capability_nonzero |= byte != 0u;
+    if (!capability_nonzero)
+        return { {}, false };
+
+    ByteBuffer signature;
+    if (!m_client_certificate_signer(
+            request_id, connection_generation, signer_capability.bytes(),
+            signature_scheme, message.bytes(), signature) ||
+        signature.is_empty() || signature.size() > max_signature_size)
+        return { {}, false };
+    return { move(signature), true };
 }
 
 RefPtr<WebSocket> RequestClient::websocket_connect(URL::URL const& url, ByteString const& origin, Vector<ByteString> const& protocols, Vector<ByteString> const& extensions, HTTP::HeaderList const& request_headers)

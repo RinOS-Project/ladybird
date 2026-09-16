@@ -80,6 +80,19 @@ void ResourceLoader::set_client(NonnullRefPtr<Requests::RequestClient> request_c
             });
         m_request_client->set_client_certificate_provider(move(provider));
     }
+    if (m_client_certificate_signer) {
+        Requests::RequestClient::ClientCertificateSigner signer(
+            [this](u64 request_id, u64 connection_generation,
+                   ReadonlyBytes signer_capability, u16 signature_scheme,
+                   ReadonlyBytes message, ByteBuffer& signature) {
+                if (!m_client_certificate_signer)
+                    return false;
+                return (*m_client_certificate_signer)(
+                    request_id, connection_generation, signer_capability,
+                    signature_scheme, message, signature);
+            });
+        m_request_client->set_client_certificate_signer(move(signer));
+    }
     m_request_client->on_request_server_died = [this]() {
         m_request_client = nullptr;
     };
@@ -108,6 +121,31 @@ void ResourceLoader::set_client_certificate_provider(
         m_request_client->set_client_certificate_provider(
             move(forwarding_provider));
     }
+}
+
+void ResourceLoader::set_client_certificate_signer(
+    Requests::RequestClient::ClientCertificateSigner signer)
+{
+    if (!signer) {
+        m_client_certificate_signer = nullptr;
+    } else {
+        m_client_certificate_signer = adopt_own_if_nonnull(new (nothrow)
+            Requests::RequestClient::ClientCertificateSigner(move(signer)));
+    }
+    if (!m_request_client)
+        return;
+
+    Requests::RequestClient::ClientCertificateSigner forwarding_signer(
+        [this](u64 request_id, u64 connection_generation,
+               ReadonlyBytes signer_capability, u16 signature_scheme,
+               ReadonlyBytes message, ByteBuffer& signature) {
+            if (!m_client_certificate_signer)
+                return false;
+            return (*m_client_certificate_signer)(
+                request_id, connection_generation, signer_capability,
+                signature_scheme, message, signature);
+        });
+    m_request_client->set_client_certificate_signer(move(forwarding_signer));
 }
 
 void ResourceLoader::prefetch_dns(URL::URL const& url)

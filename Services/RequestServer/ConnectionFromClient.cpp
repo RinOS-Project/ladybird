@@ -103,6 +103,123 @@ bool ConnectionFromClient::set_client_certificate_owner(
     return true;
 }
 
+bool ConnectionFromClient::request_client_certificate(
+    u64 request_id, URL::URL const& url, u64& connection_generation,
+    ByteBuffer& certificate_list, ByteBuffer& signer_capability)
+{
+    connection_generation = 0u;
+    certificate_list = {};
+    signer_capability = {};
+
+    auto response = send_sync<Messages::RequestClient::RequestClientCertificate>(
+        request_id, url);
+    if (!response->provided())
+        return false;
+
+    connection_generation = response->connection_generation();
+    certificate_list = response->take_certificate_list();
+    signer_capability = response->take_signer_capability();
+    return connection_generation != 0u && !certificate_list.is_empty() &&
+           signer_capability.size() == 32u;
+}
+
+#if defined(AK_OS_RINOS)
+int ConnectionFromClient::websocket_client_certificate_sign(
+    void* opaque, u16 signature_scheme, const u8* message,
+    rin_size_t message_length, u8* signature, rin_size_t signature_capacity,
+    rin_size_t* signature_length)
+{
+    auto* connection = static_cast<ConnectionFromClient*>(opaque);
+    if (connection == nullptr)
+        return -1;
+
+    /* RinTLS supplies the signer opaque but not the application request ID.
+     * WebSocket TLS handshakes are synchronous on this connection's event-loop
+     * turn, so the active generation is an unambiguous bounded dispatch key. */
+    if (connection->m_active_websocket_certificate_generation == 0u)
+        return -1;
+    return connection->sign_websocket_client_certificate(
+        connection->m_active_websocket_certificate_generation,
+        signature_scheme, message, message_length, signature,
+        signature_capacity, signature_length);
+}
+
+int ConnectionFromClient::sign_websocket_client_certificate(
+    u64 connection_generation, u16 signature_scheme, const u8* message,
+    rin_size_t message_length, u8* signature, rin_size_t signature_capacity,
+    rin_size_t* signature_length)
+{
+    auto request = m_websocket_certificate_requests.get(connection_generation);
+    auto capability = m_websocket_certificate_capabilities.get(connection_generation);
+    if (!request.has_value() || !capability.has_value())
+        return -1;
+    if (signature_length == nullptr)
+        return -1;
+    return sign_client_certificate(
+        request.value(), connection_generation, capability->bytes(),
+        signature_scheme, ReadonlyBytes { message, message_length },
+        Bytes { signature, signature_capacity },
+        *signature_length);
+}
+
+#endif
+
+void ConnectionFromClient::clear_websocket_client_certificate(u64 websocket_id)
+{
+    Vector<u64> generations;
+    for (auto const& [generation, request_id] : m_websocket_certificate_requests) {
+        if (request_id == websocket_id)
+            generations.append(generation);
+    }
+    for (auto generation : generations) {
+        m_websocket_certificate_requests.remove(generation);
+        m_websocket_certificate_capabilities.remove(generation);
+    }
+    if (m_active_websocket_certificate_generation != 0u &&
+        !m_websocket_certificate_requests.contains(
+            m_active_websocket_certificate_generation))
+        m_active_websocket_certificate_generation = 0u;
+}
+int ConnectionFromClient::sign_client_certificate(
+    u64 request_id, u64 connection_generation,
+    ReadonlyBytes signer_capability, u16 signature_scheme,
+    ReadonlyBytes message, Bytes signature, size_t& signature_size)
+{
+    constexpr size_t capability_size = 32u;
+    constexpr size_t max_message_size = 16u * 1024u;
+    constexpr size_t max_signature_size = 512u;
+    signature_size = 0u;
+    if (request_id == 0u || connection_generation == 0u ||
+        signer_capability.size() != capability_size || message.is_empty() ||
+        message.size() > max_message_size || signature.is_empty() ||
+        signature.size() > max_signature_size)
+        return -1;
+
+    auto capability_copy = ByteBuffer::copy(signer_capability);
+    if (capability_copy.is_error())
+        return -1;
+    auto message_copy = ByteBuffer::copy(message);
+    if (message_copy.is_error())
+        return -1;
+
+    auto response = send_sync<Messages::RequestClient::SignClientCertificate>(
+        request_id, connection_generation, capability_copy.release_value(),
+        signature_scheme, message_copy.release_value());
+    if (!response->success())
+        return -1;
+    auto result = response->take_signature();
+    if (result.is_empty() || result.size() > signature.size())
+        return -1;
+    __builtin_memcpy(signature.data(), result.data(), result.size());
+    signature_size = result.size();
+    return 0;
+}
+
+void ConnectionFromClient::client_certificate_identity_state(bool enabled)
+{
+    m_client_certificate_identity_available = enabled;
+}
+
 void ConnectionFromClient::request_complete(Badge<Request>, Request const& request)
 {
     Core::deferred_invoke([weak_self = make_weak_ptr<ConnectionFromClient>(), request_id = request.request_id(), type = request.type()] {
@@ -468,13 +585,30 @@ void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, Byt
 {
     auto host = url.serialized_host().to_byte_string();
 
+#if defined(AK_OS_RINOS)
+    u64 client_certificate_generation = 0u;
+    ByteBuffer client_certificate_list;
+    ByteBuffer client_certificate_capability;
+    const bool has_client_certificate = request_client_certificate(
+        websocket_id, url, client_certificate_generation,
+        client_certificate_list, client_certificate_capability);
+    if (has_client_certificate) {
+        m_websocket_certificate_requests.set(client_certificate_generation,
+                                              websocket_id);
+        m_websocket_certificate_capabilities.set(
+            client_certificate_generation, move(client_certificate_capability));
+    }
+#endif
+
     m_resolver->dns.lookup(host, DNS::Messages::Class::IN, { DNS::Messages::ResourceType::A, DNS::Messages::ResourceType::AAAA })
         ->when_rejected([this, websocket_id](auto const& error) {
+            clear_websocket_client_certificate(websocket_id);
             dbgln("WebSocketConnect: DNS lookup failed: {}", error);
             async_websocket_errored(websocket_id, static_cast<i32>(Requests::WebSocket::Error::CouldNotEstablishConnection));
         })
-        .when_resolved([this, websocket_id, host = move(host), url = move(url), origin = move(origin), protocols = move(protocols), extensions = move(extensions), additional_request_headers = move(additional_request_headers)](auto const& dns_result) mutable {
+        .when_resolved([this, websocket_id, host = move(host), url = move(url), origin = move(origin), protocols = move(protocols), extensions = move(extensions), additional_request_headers = move(additional_request_headers), has_client_certificate, client_certificate_generation, client_certificate_list = move(client_certificate_list)](auto const& dns_result) mutable {
             if (dns_result->is_empty() || !dns_result->has_cached_addresses()) {
+                clear_websocket_client_certificate(websocket_id);
                 dbgln("WebSocketConnect: DNS lookup failed for '{}'", host);
                 async_websocket_errored(websocket_id, static_cast<i32>(Requests::WebSocket::Error::CouldNotEstablishConnection));
                 return;
@@ -491,6 +625,21 @@ void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, Byt
                 connection_info.set_root_certificates_path(path);
 
 #if defined(AK_OS_RINOS)
+            if (has_client_certificate) {
+                connection_info.set_client_certificate(
+                    client_certificate_generation,
+                    move(client_certificate_list),
+                    MUST(ByteBuffer::copy(
+                        m_websocket_certificate_capabilities
+                            .get(client_certificate_generation)
+                            .value()
+                            .bytes())),
+                    &ConnectionFromClient::websocket_client_certificate_sign,
+                    this);
+            }
+#endif
+
+#if defined(AK_OS_RINOS)
             auto impl = adopt_ref(*new WebSocket::WebSocketImplSerenity());
 #else
             auto impl = WebSocketImplCurl::create(m_curl_multi);
@@ -504,16 +653,21 @@ void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, Byt
                 async_websocket_received(websocket_id, message.is_text(), message.data());
             };
             connection->on_error = [this, websocket_id](auto message) {
+                clear_websocket_client_certificate(websocket_id);
                 async_websocket_errored(websocket_id, (i32)message);
             };
             connection->on_close = [this, websocket_id](u16 code, ByteString reason, bool was_clean) {
+                clear_websocket_client_certificate(websocket_id);
                 async_websocket_closed(websocket_id, code, move(reason), was_clean);
             };
             connection->on_ready_state_change = [this, websocket_id](auto state) {
                 async_websocket_ready_state_changed(websocket_id, (u32)state);
             };
 
+            m_active_websocket_certificate_generation =
+                has_client_certificate ? client_certificate_generation : 0u;
             connection->start();
+            m_active_websocket_certificate_generation = 0u;
             m_websockets.set(websocket_id, move(connection));
         });
 }

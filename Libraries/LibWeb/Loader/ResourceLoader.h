@@ -47,6 +47,8 @@ public:
      * connection generation; false keeps the request fail-closed. */
     void set_client_certificate_provider(
         Requests::RequestClient::ClientCertificateProvider provider);
+    void set_client_certificate_signer(
+        Requests::RequestClient::ClientCertificateSigner signer);
 
     void prefetch_dns(URL::URL const&);
     void preconnect(URL::URL const&);
@@ -101,6 +103,7 @@ private:
      * install a lightweight forwarding closure into each RequestClient so a
      * reconnect can rebind it without copying the callback object. */
     OwnPtr<Requests::RequestClient::ClientCertificateProvider> m_client_certificate_provider;
+    OwnPtr<Requests::RequestClient::ClientCertificateSigner> m_client_certificate_signer;
     HashTable<NonnullRefPtr<Requests::Request>> m_active_requests;
 
     String m_user_agent;

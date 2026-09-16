@@ -23,6 +23,12 @@
 #include <LibRequests/RequestTimingInfo.h>
 #include <LibURL/URL.h>
 
+#if defined(AK_OS_RINOS)
+extern "C" {
+#    include "../../../../public-base/libs/rintls/rintls.h"
+}
+#endif
+
 namespace RequestServer {
 
 // Stage 3-C: HTTP keep-alive \u63a5\u7d9a\u30d7\u30fc\u30eb\u3002scheme://host:port \u3054\u3068\u306b LRU \u3067 socket \u3092\u4fdd\u6301\u3057\u3001
@@ -64,6 +70,17 @@ class RinHTTPFetch {
     AK_MAKE_NONCOPYABLE(RinHTTPFetch);
 
 public:
+    /* These callbacks are called only from the synchronous TLS handshake.
+     * They transport public certificate bytes and an opaque capability to the
+     * authenticated Browser/key owner; private keys never enter this class. */
+    using ClientCertificateProvider = Function<bool(
+        u64& connection_generation, ByteBuffer& certificate_list,
+        ByteBuffer& signer_capability)>;
+    using ClientCertificateSigner = Function<int(
+        u64 connection_generation, ReadonlyBytes signer_capability,
+        u16 signature_scheme, ReadonlyBytes message, Bytes signature,
+        size_t& signature_size)>;
+
     // Callbacks matching curl's callback model used by Request.cpp.
     // on_header_received: called for each header line (including status line).
     //   Signature matches curl CURLOPT_HEADERFUNCTION: (buffer, size, nmemb, user_data).
@@ -88,20 +105,26 @@ public:
     };
 
     static ErrorOr<NonnullOwnPtr<RinHTTPFetch>> create(
+        u64 request_id,
         URL::URL const& url,
         ByteString const& method,
         HTTP::HeaderList const& request_headers,
         ReadonlyBytes request_body,
         RefPtr<DNS::LookupResult const> dns_result,
-        long connect_timeout_seconds);
+        long connect_timeout_seconds,
+        ClientCertificateProvider client_certificate_provider = {},
+        ClientCertificateSigner client_certificate_signer = {});
 
     static ErrorOr<NonnullOwnPtr<RinHTTPFetch>> create(
+        u64 request_id,
         URL::URL const& url,
         ByteString const& method,
         HTTP::HeaderList const& request_headers,
         RequestBodySource request_body,
         RefPtr<DNS::LookupResult const> dns_result,
-        long connect_timeout_seconds);
+        long connect_timeout_seconds,
+        ClientCertificateProvider client_certificate_provider = {},
+        ClientCertificateSigner client_certificate_signer = {});
 
     ~RinHTTPFetch();
 
@@ -112,6 +135,12 @@ public:
 
 private:
     RinHTTPFetch();
+
+#if defined(AK_OS_RINOS)
+    static int client_certificate_provider(rintls_ctx*, void*);
+    static int client_certificate_signer(
+        void*, u16, const u8*, rin_size_t, u8*, rin_size_t, rin_size_t*);
+#endif
 
     ErrorOr<void> send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers);
     void on_socket_ready_to_read();
@@ -168,6 +197,15 @@ private:
     bool m_response_connection_close { false }; // \u30b5\u30fc\u30d0\u304c Connection: close \u3092\u8fd4\u3057\u305f\u304b
     RequestBodyReadFunction m_request_body_read;
     u64 m_request_body_length { 0 };
+
+#if defined(AK_OS_RINOS)
+    u64 m_request_id { 0 };
+    ClientCertificateProvider m_client_certificate_provider;
+    ClientCertificateSigner m_client_certificate_signer;
+    u64 m_client_certificate_generation { 0 };
+    ByteBuffer m_client_certificate_capability;
+    bool m_disable_pooling { false };
+#endif
 };
 
 }

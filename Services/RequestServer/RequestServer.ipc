@@ -28,6 +28,7 @@ endpoint RequestServer
     // Client authentication carries only a TLS wire certificate_list and an
     // opaque signer capability. Private key material must never cross IPC.
     set_certificate(u64 request_id, u64 connection_generation, ByteBuffer certificate_list, ByteBuffer signer_capability) => (bool success)
+    client_certificate_identity_state(bool enabled) =|
 
     ensure_connection(u64 request_id, URL::URL url, ::RequestServer::CacheLevel cache_level) =|
 
