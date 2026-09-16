@@ -7,6 +7,7 @@
 #include <AK/ByteBuffer.h>
 #include <LibCore/Timer.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/DOM/Event.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/Serial/SerialPort.h>
 #include <LibWeb/Streams/ReadableStreamOperations.h>
