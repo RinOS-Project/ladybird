@@ -382,7 +382,8 @@ void PageClient::page_did_finish_loading(URL::URL const& url)
         size_t url_len = url_str.length();
         if (url_len > sizeof(url_buf) - 1)
             url_len = sizeof(url_buf) - 1;
-        __builtin_memcpy(url_buf, url_str.characters(), url_len);
+        if (url_len > 0)
+            __builtin_memcpy(url_buf, url_str.characters(), url_len);
         url_buf[url_len] = '\0';
 
         if (!doc) {
@@ -404,7 +405,8 @@ void PageClient::page_did_finish_loading(URL::URL const& url)
                         size_t l = local.length();
                         if (l > sizeof(first_child_tag) - 1)
                             l = sizeof(first_child_tag) - 1;
-                        __builtin_memcpy(first_child_tag, local.characters_without_null_termination(), l);
+                        if (l > 0)
+                            __builtin_memcpy(first_child_tag, local.characters_without_null_termination(), l);
                         first_child_tag[l] = '\0';
                     } else {
                         __builtin_memcpy(first_child_tag, "(non-element)", 14);
