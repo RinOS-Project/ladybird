@@ -37,6 +37,14 @@ static IDAllocator s_client_ids;
 static ConnectionFromClient::ClientCertificateOwner g_client_certificate_owner = nullptr;
 static void* g_client_certificate_owner_context = nullptr;
 
+static void clear_client_certificate_capability(ByteBuffer& capability)
+{
+    volatile u8* bytes = capability.data();
+    for (size_t index = 0; index < capability.size(); ++index)
+        bytes[index] = 0;
+    capability.clear();
+}
+
 ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transport, IsPrimaryConnection is_primary_connection, ConnectionMap& connections, Optional<HTTP::DiskCache&> disk_cache)
     : IPC::ConnectionFromClient<RequestClientEndpoint, RequestServerEndpoint>(*this, move(transport), s_client_ids.allocate())
     , m_connections(connections)
@@ -76,6 +84,7 @@ ConnectionFromClient::~ConnectionFromClient()
 {
     m_active_requests.clear();
     m_active_revalidation_requests.clear();
+    clear_all_websocket_client_certificates();
 
 #if !defined(AK_OS_RINOS)
     curl_multi_cleanup(m_curl_multi);
@@ -151,15 +160,25 @@ int ConnectionFromClient::sign_websocket_client_certificate(
 {
     auto request = m_websocket_certificate_requests.get(connection_generation);
     auto capability = m_websocket_certificate_capabilities.get(connection_generation);
-    if (!request.has_value() || !capability.has_value())
+    if (!request.has_value() || !capability.has_value()) {
+        if (capability.has_value()) {
+            clear_client_certificate_capability(capability.value());
+            m_websocket_certificate_capabilities.remove(connection_generation);
+        }
+        m_websocket_certificate_requests.remove(connection_generation);
         return -1;
-    if (signature_length == nullptr)
+    }
+    if (signature_length == nullptr) {
+        clear_websocket_client_certificate(request.value());
         return -1;
-    return sign_client_certificate(
+    }
+    const int result = sign_client_certificate(
         request.value(), connection_generation, capability->bytes(),
         signature_scheme, ReadonlyBytes { message, message_length },
         Bytes { signature, signature_capacity },
         *signature_length);
+    clear_websocket_client_certificate(request.value());
+    return result;
 }
 
 #endif
@@ -173,6 +192,9 @@ void ConnectionFromClient::clear_websocket_client_certificate(u64 websocket_id)
     }
     for (auto generation : generations) {
         m_websocket_certificate_requests.remove(generation);
+        if (auto capability = m_websocket_certificate_capabilities.get(generation);
+            capability.has_value())
+            clear_client_certificate_capability(capability.value());
         m_websocket_certificate_capabilities.remove(generation);
     }
     if (m_active_websocket_certificate_generation != 0u &&
@@ -180,6 +202,18 @@ void ConnectionFromClient::clear_websocket_client_certificate(u64 websocket_id)
             m_active_websocket_certificate_generation))
         m_active_websocket_certificate_generation = 0u;
 }
+
+void ConnectionFromClient::clear_all_websocket_client_certificates()
+{
+    for (auto& [generation, capability] : m_websocket_certificate_capabilities) {
+        (void)generation;
+        clear_client_certificate_capability(capability);
+    }
+    m_websocket_certificate_capabilities.clear();
+    m_websocket_certificate_requests.clear();
+    m_active_websocket_certificate_generation = 0u;
+}
+
 int ConnectionFromClient::sign_client_certificate(
     u64 request_id, u64 connection_generation,
     ReadonlyBytes signer_capability, u16 signature_scheme,
@@ -217,6 +251,8 @@ int ConnectionFromClient::sign_client_certificate(
 
 void ConnectionFromClient::client_certificate_identity_state(bool enabled)
 {
+    if (!enabled)
+        clear_all_websocket_client_certificates();
     m_client_certificate_identity_available = enabled;
 }
 
@@ -234,6 +270,7 @@ void ConnectionFromClient::request_complete(Badge<Request>, Request const& reque
 
 void ConnectionFromClient::die()
 {
+    clear_all_websocket_client_certificates();
     if (g_primary_connection == this)
         g_primary_connection = nullptr;
 

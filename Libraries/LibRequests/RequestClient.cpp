@@ -16,6 +16,14 @@
 
 namespace Requests {
 
+static void clear_client_certificate_capability(ByteBuffer& capability)
+{
+    volatile u8* bytes = capability.data();
+    for (size_t index = 0; index < capability.size(); ++index)
+        bytes[index] = 0;
+    capability.clear();
+}
+
 RequestClient::RequestClient(NonnullOwnPtr<IPC::Transport> transport)
     : IPC::ConnectionToServer<RequestClientEndpoint, RequestServerEndpoint>(*this, move(transport))
 {
@@ -32,8 +40,11 @@ bool RequestClient::provide_client_certificate(
     signer_capability = {};
     if (!m_client_certificate_provider)
         return false;
-    return m_client_certificate_provider(url, connection_generation,
-                                         certificate_list, signer_capability);
+    const bool provided = m_client_certificate_provider(
+        url, connection_generation, certificate_list, signer_capability);
+    if (!provided)
+        clear_client_certificate_capability(signer_capability);
+    return provided;
 }
 
 void RequestClient::die()
@@ -222,20 +233,26 @@ RequestClient::request_client_certificate(u64 request_id, URL::URL url)
     ByteBuffer signer_capability;
     constexpr size_t capability_size = 32u;
 
-    if ((!m_requests.contains(request_id) && !m_websockets.contains(request_id)) ||
-        !m_client_certificate_provider ||
-        !m_client_certificate_provider(url, connection_generation,
-                                       certificate_list, signer_capability) ||
+    const bool request_live = m_requests.contains(request_id) ||
+                              m_websockets.contains(request_id);
+    const bool provided = request_live && m_client_certificate_provider &&
+        m_client_certificate_provider(url, connection_generation,
+                                      certificate_list, signer_capability);
+    if (!provided ||
         connection_generation == 0u || certificate_list.is_empty() ||
         certificate_list.size() > 16u * 1024u ||
-        signer_capability.size() != capability_size)
+        signer_capability.size() != capability_size) {
+        clear_client_certificate_capability(signer_capability);
         return { 0u, {}, {}, false };
+    }
 
     bool capability_nonzero = false;
     for (auto byte : signer_capability.bytes())
         capability_nonzero |= byte != 0u;
-    if (!capability_nonzero)
+    if (!capability_nonzero) {
+        clear_client_certificate_capability(signer_capability);
         return { 0u, {}, {}, false };
+    }
 
 #if defined(AK_OS_RINOS)
     RinRuntimeTlsClientCertificateRequestV1 request {
@@ -248,8 +265,10 @@ RequestClient::request_client_certificate(u64 request_id, URL::URL url)
         signer_capability.data(),
         static_cast<uint32_t>(signer_capability.size()),
     };
-    if (!rinruntime_tls_client_certificate_request_valid(&request))
+    if (!rinruntime_tls_client_certificate_request_valid(&request)) {
+        clear_client_certificate_capability(signer_capability);
         return { 0u, {}, {}, false };
+    }
 #endif
 
     return { connection_generation, move(certificate_list),
@@ -269,20 +288,26 @@ RequestClient::sign_client_certificate(u64 request_id,
     if ((!m_requests.contains(request_id) && !m_websockets.contains(request_id)) ||
         !m_client_certificate_signer || connection_generation == 0u ||
         signer_capability.size() != capability_size || message.is_empty() ||
-        message.size() > max_message_size)
+        message.size() > max_message_size) {
+        clear_client_certificate_capability(signer_capability);
         return { {}, false };
+    }
 
     bool capability_nonzero = false;
     for (auto byte : signer_capability.bytes())
         capability_nonzero |= byte != 0u;
-    if (!capability_nonzero)
+    if (!capability_nonzero) {
+        clear_client_certificate_capability(signer_capability);
         return { {}, false };
+    }
 
     ByteBuffer signature;
-    if (!m_client_certificate_signer(
+    const bool signed_ok = m_client_certificate_signer(
             request_id, connection_generation, signer_capability.bytes(),
-            signature_scheme, message.bytes(), signature) ||
-        signature.is_empty() || signature.size() > max_signature_size)
+            signature_scheme, message.bytes(), signature);
+    clear_client_certificate_capability(signer_capability);
+    if (!signed_ok || signature.is_empty() ||
+        signature.size() > max_signature_size)
         return { {}, false };
     return { move(signature), true };
 }

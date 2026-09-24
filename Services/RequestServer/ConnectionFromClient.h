@@ -85,6 +85,7 @@ private:
         rin_size_t* signature_length);
 #endif
     void clear_websocket_client_certificate(u64 websocket_id);
+    void clear_all_websocket_client_certificates();
 
     ConnectionFromClient(NonnullOwnPtr<IPC::Transport>, IsPrimaryConnection, ConnectionMap&, Optional<HTTP::DiskCache&>);
 
