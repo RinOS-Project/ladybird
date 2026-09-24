@@ -122,14 +122,23 @@ bool ConnectionFromClient::request_client_certificate(
 
     auto response = send_sync<Messages::RequestClient::RequestClientCertificate>(
         request_id, url);
-    if (!response->provided())
+    if (!response->provided()) {
+        auto rejected_capability = response->take_signer_capability();
+        clear_client_certificate_capability(rejected_capability);
         return false;
+    }
 
     connection_generation = response->connection_generation();
     certificate_list = response->take_certificate_list();
     signer_capability = response->take_signer_capability();
-    return connection_generation != 0u && !certificate_list.is_empty() &&
-           signer_capability.size() == 32u;
+    if (connection_generation == 0u || certificate_list.is_empty() ||
+        signer_capability.size() != 32u) {
+        connection_generation = 0u;
+        certificate_list = {};
+        clear_client_certificate_capability(signer_capability);
+        return false;
+    }
+    return true;
 }
 
 #if defined(AK_OS_RINOS)
@@ -561,11 +570,13 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
             request_id, connection_generation, certificate_list.data(),
             certificate_list.size(), signer_capability.data(),
             signer_capability.size())) {
+        clear_client_certificate_capability(signer_capability);
         dbgln("SetCertificate: invalid client-certificate capability (request {})", request_id);
         return false;
     }
     if (g_client_certificate_owner == nullptr ||
         g_client_certificate_owner_context == nullptr) {
+        clear_client_certificate_capability(signer_capability);
         dbgln("SetCertificate: authenticated signer owner is unavailable (request {})", request_id);
         return false;
     }
