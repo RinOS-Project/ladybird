@@ -34,7 +34,10 @@ Vector<String> available_keyword_values(StringView locale, StringView key)
         return available_collation_numeric_orderings();
     if (key == "nu"sv)
         return available_number_systems(locale);
-    TODO();
+    // Unknown Unicode extension keys have no product-owned value list.  Keep
+    // the LocaleData lookup fail-closed instead of aborting the process from
+    // a user-controlled locale extension.
+    return {};
 }
 
 Vector<String> const& available_calendars()
