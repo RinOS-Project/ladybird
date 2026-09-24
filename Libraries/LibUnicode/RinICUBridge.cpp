@@ -122,8 +122,9 @@ u32 rin_icu_number_style(NumberFormatStyle style)
 {
     switch (style) {
     case NumberFormatStyle::Decimal:
-    case NumberFormatStyle::Unit:
         return RIN_ICU_NUMBER_STYLE_DECIMAL;
+    case NumberFormatStyle::Unit:
+        return RIN_ICU_NUMBER_STYLE_UNIT;
     case NumberFormatStyle::Percent:
         return RIN_ICU_NUMBER_STYLE_PERCENT;
     case NumberFormatStyle::Currency:

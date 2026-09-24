@@ -1036,7 +1036,20 @@ private:
         }
 
         ByteString locale_z(m_locale);
-        (void)rin_icu_number_formatter_create(&rin_icu_client(), locale_z.characters(), &options, &m_handle);
+        if (m_display_options.style == NumberFormatStyle::Unit) {
+            rin_icu_number_formatter_options_v2_t unit_options {};
+            unit_options.base = options;
+            unit_options.unit_display = rin_icu_style(m_display_options.unit_display.value_or(Style::Short));
+            if (m_display_options.unit.has_value()) {
+                auto unit = m_display_options.unit->bytes_as_string_view();
+                auto copy_length = unit.length() < (RIN_ICU_NUMBER_UNIT_MAX - 1) ? unit.length() : (RIN_ICU_NUMBER_UNIT_MAX - 1);
+                __builtin_memcpy(unit_options.unit, unit.characters_without_null_termination(), copy_length);
+                unit_options.unit[copy_length] = '\0';
+            }
+            (void)rin_icu_number_formatter_create_v2(&rin_icu_client(), locale_z.characters(), &unit_options, &m_handle);
+        } else {
+            (void)rin_icu_number_formatter_create(&rin_icu_client(), locale_z.characters(), &options, &m_handle);
+        }
     }
 
     static Optional<double> value_to_number(Value const& value)
