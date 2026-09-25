@@ -44,12 +44,10 @@ else()
     if (NOT TARGET RinGL)
         add_subdirectory("${RINGL_SOURCE_ROOT}" "${CMAKE_BINARY_DIR}/RinGL")
     endif()
-    # Keep RinGPU's implementation in its own archive. Product executables
-    # link libRinGL.a before libRinGPU.a. RinGL owns the software executor for
-    # its surface; do not copy the older kernel core or shader translation
-    # units here, because those also define public RinGPU APIs.
+    # Keep the public RinGPU API in its own archive. RinGL's embedding target
+    # owns the software executor, while the older kernel core and shader
+    # implementations would duplicate RinGPU public API definitions.
     target_sources(RinGL PRIVATE
-        "${RINOS_SOURCE_ROOT}/public-base/libs/RinGPU/src/software/software_backend.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_sync_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c"
