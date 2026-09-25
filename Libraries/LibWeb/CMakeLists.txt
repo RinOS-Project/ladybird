@@ -44,12 +44,10 @@ else()
     if (NOT TARGET RinGL)
         add_subdirectory("${RINGL_SOURCE_ROOT}" "${CMAKE_BINARY_DIR}/RinGL")
     endif()
+    # Keep RinGPU's implementation in its own archive. Product executables
+    # link libRinGL.a and libRinGPU.a together; copying core, validation, or
+    # software-backend objects into RinGL creates duplicate public definitions.
     target_sources(RinGL PRIVATE
-        "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/core.c"
-        "${RINOS_SOURCE_ROOT}/src/subsystems/ringpu/shader.c"
-        # The RinGL-owned Aquamarine surface supplies caller-owned storage to
-        # this generic RinGPU backend. It never draws through Aquamarine.
-        "${RINOS_SOURCE_ROOT}/public-base/libs/RinGPU/src/software/software_backend.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_ringl_ringpu_sync_adapter.c"
         "${RINOS_SOURCE_ROOT}/src/webengine/rin_webgl_ringl_bridge.c"
