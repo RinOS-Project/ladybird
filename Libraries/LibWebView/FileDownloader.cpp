@@ -367,6 +367,30 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
     auto request = Application::request_server_client().start_request("GET"sv, url, *request_headers);
     if (!request) {
 #if defined(AK_OS_RINOS)
+        auto failure_url = url.serialize().to_byte_string();
+        auto failure_filename = suggested_filename;
+        if (failure_filename.is_empty() ||
+            !rin_browser_download_filename_valid(
+                failure_filename.characters_without_null_termination(),
+                failure_filename.length())) {
+            failure_filename = url.basename();
+        }
+        if (failure_filename.is_empty() ||
+            !rin_browser_download_filename_valid(
+                failure_filename.characters_without_null_termination(),
+                failure_filename.length())) {
+            failure_filename = "download"sv;
+        }
+        /* Allocate the Browser row before reporting a start failure.  The
+         * failure callback can then attach to this bounded metadata record
+         * and the user can retry the same opaque transfer identity. */
+        if (!failure_url.is_empty() &&
+            failure_url.length() < RIN_BROWSER_DOWNLOAD_MAX_URL_BYTES) {
+            event_reporter->report(
+                transfer_id, DownloadEvent::Started, move(failure_url),
+                move(failure_filename),
+                RIN_BROWSER_DOWNLOAD_UNKNOWN_CONTENT_LENGTH);
+        }
         failure_reporter->report(transfer_id, DownloadFailure::TransferFailed);
 #endif
         Application::the().display_error_dialog("Unable to start request to download file"sv);
