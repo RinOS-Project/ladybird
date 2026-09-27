@@ -47,6 +47,8 @@ public:
      * connection generation; false keeps the request fail-closed. */
     void set_client_certificate_provider(
         Requests::RequestClient::ClientCertificateProvider provider);
+    void set_client_certificate_request_provider(
+        Requests::RequestClient::ClientCertificateRequestProvider provider);
     void set_client_certificate_signer(
         Requests::RequestClient::ClientCertificateSigner signer);
 
@@ -103,6 +105,8 @@ private:
      * install a lightweight forwarding closure into each RequestClient so a
      * reconnect can rebind it without copying the callback object. */
     OwnPtr<Requests::RequestClient::ClientCertificateProvider> m_client_certificate_provider;
+    OwnPtr<Requests::RequestClient::ClientCertificateRequestProvider>
+        m_client_certificate_request_provider;
     OwnPtr<Requests::RequestClient::ClientCertificateSigner> m_client_certificate_signer;
     HashTable<NonnullRefPtr<Requests::Request>> m_active_requests;
 

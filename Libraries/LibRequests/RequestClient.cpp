@@ -11,6 +11,7 @@
 #if defined(AK_OS_RINOS)
 #    include <unistd.h>
 #    include <requestserver_upload_body_policy.hpp>
+#    include <requestserver_tls_client_certificate_policy.h>
 #    include <rinruntime/tls_client_certificate.h>
 #endif
 
@@ -226,24 +227,48 @@ void RequestClient::certificate_requested(u64 request_id)
 }
 
 Messages::RequestClient::RequestClientCertificateResponse
-RequestClient::request_client_certificate(u64 request_id, URL::URL url)
+RequestClient::request_client_certificate(
+    u64 request_id, URL::URL url, ByteBuffer signature_algorithms,
+    ByteBuffer signature_algorithms_cert, ByteBuffer certificate_authorities)
 {
+#if !defined(AK_OS_RINOS)
+    (void)request_id;
+    (void)url;
+    (void)signature_algorithms;
+    (void)signature_algorithms_cert;
+    (void)certificate_authorities;
+    return { 0u, 0u, {}, {}, false };
+#else
     u64 connection_generation = 0;
+    u16 signature_scheme = 0u;
     ByteBuffer certificate_list;
     ByteBuffer signer_capability;
     constexpr size_t capability_size = 32u;
 
     const bool request_live = m_requests.contains(request_id) ||
                               m_websockets.contains(request_id);
-    const bool provided = request_live && m_client_certificate_provider &&
-        m_client_certificate_provider(url, connection_generation,
-                                      certificate_list, signer_capability);
+    const bool constraints_valid =
+        rin_requestserver_tls_client_certificate_constraints_valid(
+            signature_algorithms.data(), signature_algorithms.size(),
+            signature_algorithms_cert.data(),
+            signature_algorithms_cert.size(), certificate_authorities.data(),
+            certificate_authorities.size());
+    const bool provided = request_live && constraints_valid &&
+        m_client_certificate_request_provider &&
+        m_client_certificate_request_provider(
+            url, signature_algorithms.bytes(),
+            signature_algorithms_cert.bytes(), certificate_authorities.bytes(),
+            connection_generation, signature_scheme, certificate_list,
+            signer_capability);
     if (!provided ||
         connection_generation == 0u || certificate_list.is_empty() ||
         certificate_list.size() > 16u * 1024u ||
-        signer_capability.size() != capability_size) {
+        signer_capability.size() != capability_size ||
+        !rin_requestserver_tls_signature_scheme_offered(
+            signature_algorithms.data(), signature_algorithms.size(),
+            signature_scheme)) {
         clear_client_certificate_bytes(signer_capability);
-        return { 0u, {}, {}, false };
+        return { 0u, 0u, {}, {}, false };
     }
 
     bool capability_nonzero = false;
@@ -251,7 +276,7 @@ RequestClient::request_client_certificate(u64 request_id, URL::URL url)
         capability_nonzero |= byte != 0u;
     if (!capability_nonzero) {
         clear_client_certificate_bytes(signer_capability);
-        return { 0u, {}, {}, false };
+        return { 0u, 0u, {}, {}, false };
     }
 
 #if defined(AK_OS_RINOS)
@@ -267,12 +292,13 @@ RequestClient::request_client_certificate(u64 request_id, URL::URL url)
     };
     if (!rinruntime_tls_client_certificate_request_valid(&request)) {
         clear_client_certificate_bytes(signer_capability);
-        return { 0u, {}, {}, false };
+        return { 0u, 0u, {}, {}, false };
     }
 #endif
 
-    return { connection_generation, move(certificate_list),
-        move(signer_capability), true };
+    return { connection_generation, signature_scheme,
+        move(certificate_list), move(signer_capability), true };
+#endif
 }
 
 Messages::RequestClient::SignClientCertificateResponse

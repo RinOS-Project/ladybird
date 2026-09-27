@@ -27,6 +27,8 @@
 extern "C" {
 #    include "../../../../public-base/libs/rintls/rintls.h"
 }
+#else
+struct rintls_client_certificate_request;
 #endif
 
 namespace RequestServer {
@@ -74,8 +76,9 @@ public:
      * They transport public certificate bytes and an opaque capability to the
      * authenticated Browser/key owner; private keys never enter this class. */
     using ClientCertificateProvider = Function<bool(
-        u64& connection_generation, ByteBuffer& certificate_list,
-        ByteBuffer& signer_capability)>;
+        const struct rintls_client_certificate_request& request,
+        u64& connection_generation, u16& signature_scheme,
+        ByteBuffer& certificate_list, ByteBuffer& signer_capability)>;
     using ClientCertificateSigner = Function<int(
         u64 connection_generation, ReadonlyBytes signer_capability,
         u16 signature_scheme, ReadonlyBytes message, Bytes signature,

@@ -45,6 +45,17 @@ public:
         URL::URL const&, u64& connection_generation,
         ByteBuffer& certificate_list, ByteBuffer& signer_capability)>;
 
+    /* Request-aware provider used by the RinOS TLS handshake. The vectors are
+     * borrowed from the authenticated RequestServer message and retain their
+     * TLS wire encoding. The selected scheme must be one of the offered
+     * CertificateVerify schemes. */
+    using ClientCertificateRequestProvider = Function<bool(
+        URL::URL const&, ReadonlyBytes signature_algorithms,
+        ReadonlyBytes signature_algorithms_cert,
+        ReadonlyBytes certificate_authorities, u64& connection_generation,
+        u16& signature_scheme, ByteBuffer& certificate_list,
+        ByteBuffer& signer_capability)>;
+
     /* The signer remains in the authenticated Browser/key-owner process. The
      * RequestServer receives only the capability and bounded transcript over
      * the existing authenticated IPC channel. */
@@ -65,15 +76,23 @@ public:
     void set_client_certificate_provider(ClientCertificateProvider provider)
     {
         m_client_certificate_provider = move(provider);
+    }
+
+    void set_client_certificate_request_provider(
+        ClientCertificateRequestProvider provider)
+    {
+        m_client_certificate_request_provider = move(provider);
         async_client_certificate_identity_state(
-            !!m_client_certificate_provider && !!m_client_certificate_signer);
+            !!m_client_certificate_request_provider &&
+            !!m_client_certificate_signer);
     }
 
     void set_client_certificate_signer(ClientCertificateSigner signer)
     {
         m_client_certificate_signer = move(signer);
         async_client_certificate_identity_state(
-            !!m_client_certificate_provider && !!m_client_certificate_signer);
+            !!m_client_certificate_request_provider &&
+            !!m_client_certificate_signer);
     }
 
     bool provide_client_certificate(URL::URL const& url,
@@ -100,7 +119,9 @@ private:
 
     virtual void certificate_requested(u64 request_id) override;
     virtual Messages::RequestClient::RequestClientCertificateResponse request_client_certificate(
-        u64 request_id, URL::URL url) override;
+        u64 request_id, URL::URL url, ByteBuffer signature_algorithms,
+        ByteBuffer signature_algorithms_cert,
+        ByteBuffer certificate_authorities) override;
     virtual Messages::RequestClient::SignClientCertificateResponse sign_client_certificate(
         u64 request_id, u64 connection_generation, ByteBuffer signer_capability,
         u16 signature_scheme, ByteBuffer message) override;
@@ -133,6 +154,7 @@ private:
     HashMap<u64, NonnullRefPtr<Core::Promise<CacheSizes>>> m_pending_cache_size_estimations;
     u64 m_next_cache_size_estimation_id { 0 };
     ClientCertificateProvider m_client_certificate_provider;
+    ClientCertificateRequestProvider m_client_certificate_request_provider;
     ClientCertificateSigner m_client_certificate_signer;
 };
 

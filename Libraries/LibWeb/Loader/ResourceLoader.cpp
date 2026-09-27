@@ -80,6 +80,24 @@ void ResourceLoader::set_client(NonnullRefPtr<Requests::RequestClient> request_c
             });
         m_request_client->set_client_certificate_provider(move(provider));
     }
+    if (m_client_certificate_request_provider) {
+        Requests::RequestClient::ClientCertificateRequestProvider provider(
+            [this](URL::URL const& url, ReadonlyBytes signature_algorithms,
+                   ReadonlyBytes signature_algorithms_cert,
+                   ReadonlyBytes certificate_authorities,
+                   u64& connection_generation, u16& signature_scheme,
+                   ByteBuffer& certificate_list,
+                   ByteBuffer& signer_capability) {
+                if (!m_client_certificate_request_provider)
+                    return false;
+                return (*m_client_certificate_request_provider)(
+                    url, signature_algorithms, signature_algorithms_cert,
+                    certificate_authorities, connection_generation,
+                    signature_scheme, certificate_list, signer_capability);
+            });
+        m_request_client->set_client_certificate_request_provider(
+            move(provider));
+    }
     if (m_client_certificate_signer) {
         Requests::RequestClient::ClientCertificateSigner signer(
             [this](u64 request_id, u64 connection_generation,
@@ -119,6 +137,39 @@ void ResourceLoader::set_client_certificate_provider(
                     signer_capability);
             });
         m_request_client->set_client_certificate_provider(
+            move(forwarding_provider));
+    }
+}
+
+void ResourceLoader::set_client_certificate_request_provider(
+    Requests::RequestClient::ClientCertificateRequestProvider provider)
+{
+    if (!provider) {
+        m_client_certificate_request_provider = nullptr;
+    } else {
+        m_client_certificate_request_provider = adopt_own_if_nonnull(new (nothrow)
+            Requests::RequestClient::ClientCertificateRequestProvider(
+                move(provider)));
+    }
+    if (m_request_client) {
+        Requests::RequestClient::ClientCertificateRequestProvider
+            forwarding_provider(
+                [this](URL::URL const& url,
+                       ReadonlyBytes signature_algorithms,
+                       ReadonlyBytes signature_algorithms_cert,
+                       ReadonlyBytes certificate_authorities,
+                       u64& connection_generation, u16& signature_scheme,
+                       ByteBuffer& certificate_list,
+                       ByteBuffer& signer_capability) {
+                    if (!m_client_certificate_request_provider)
+                        return false;
+                    return (*m_client_certificate_request_provider)(
+                        url, signature_algorithms,
+                        signature_algorithms_cert, certificate_authorities,
+                        connection_generation, signature_scheme,
+                        certificate_list, signer_capability);
+                });
+        m_request_client->set_client_certificate_request_provider(
             move(forwarding_provider));
     }
 }

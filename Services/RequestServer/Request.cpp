@@ -788,10 +788,13 @@ void Request::handle_fetch_state()
     RinHTTPFetch::ClientCertificateSigner client_certificate_signer;
     if (m_client.client_certificate_identity_available()) {
         client_certificate_provider =
-            [this](u64& connection_generation, ByteBuffer& certificate_list,
+            [this](const rintls_client_certificate_request& certificate_request,
+                   u64& connection_generation, u16& signature_scheme,
+                   ByteBuffer& certificate_list,
                    ByteBuffer& signer_capability) {
                 return m_client.request_client_certificate(
-                    m_request_id, m_url, connection_generation, certificate_list,
+                    m_request_id, m_url, certificate_request,
+                    connection_generation, signature_scheme, certificate_list,
                     signer_capability);
             };
         client_certificate_signer =

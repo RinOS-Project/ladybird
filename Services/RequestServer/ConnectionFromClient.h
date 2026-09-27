@@ -55,14 +55,18 @@ public:
     static bool set_client_certificate_owner(ClientCertificateOwner owner,
                                               void* context);
 
-    /* Synchronous, authenticated key-owner transport used by the RinOS TLS
-     * provider. Public certificate material is fetched before the handshake;
-     * CertificateVerify transcripts are sent to the Browser-side key owner
-     * without ever entering the TLS process as private-key bytes. */
-    bool request_client_certificate(u64 request_id, URL::URL const& url,
-                                    u64& connection_generation,
-                                    ByteBuffer& certificate_list,
-                                    ByteBuffer& signer_capability);
+    /* Synchronous, authenticated identity-owner transport used after RinTLS
+     * receives CertificateRequest. The owner sees the peer's bounded public
+     * constraints, returns a matching scheme/certificate and opaque
+     * capability, and receives CertificateVerify transcripts without private
+     * key bytes entering the TLS process. */
+#if defined(AK_OS_RINOS)
+    bool request_client_certificate(
+        u64 request_id, URL::URL const& url,
+        const rintls_client_certificate_request& request,
+        u64& connection_generation, u16& signature_scheme,
+        ByteBuffer& certificate_list, ByteBuffer& signer_capability);
+#endif
     int sign_client_certificate(
         u64 request_id, u64 connection_generation,
         ReadonlyBytes signer_capability, u16 signature_scheme,

@@ -187,24 +187,44 @@ int RinHTTPFetch::client_certificate_provider(rintls_ctx* tls, void* opaque)
         !fetch->m_client_certificate_signer)
         return RINTLS_ERR_CERTIFICATE;
 
+    rintls_client_certificate_request request {};
+    request.struct_size = sizeof(request);
+    if (rintls_get_client_certificate_request(tls, &request) != RINTLS_OK)
+        return RINTLS_ERR_CERTIFICATE;
+    if (request.version != RINTLS_CLIENT_CERTIFICATE_REQUEST_VERSION ||
+        request.reserved != 0u ||
+        !rin_requestserver_tls_client_certificate_constraints_valid(
+            request.signature_algorithms, request.signature_algorithms_size,
+            request.signature_algorithms_cert,
+            request.signature_algorithms_cert_size,
+            request.certificate_authorities,
+            request.certificate_authorities_size))
+        return RINTLS_ERR_CERTIFICATE;
+
     u64 connection_generation = 0u;
+    u16 signature_scheme = 0u;
     ByteBuffer certificate_list;
     ByteBuffer signer_capability;
     const bool provided = fetch->m_client_certificate_provider(
-        connection_generation, certificate_list, signer_capability);
+        request, connection_generation, signature_scheme, certificate_list,
+        signer_capability);
     if (!provided || !rin_requestserver_tls_client_certificate_ipc_valid(
             fetch->m_request_id, connection_generation, certificate_list.data(),
             certificate_list.size(), signer_capability.data(),
-            signer_capability.size())) {
+            signer_capability.size()) ||
+        !rin_requestserver_tls_signature_scheme_offered(
+            request.signature_algorithms, request.signature_algorithms_size,
+            signature_scheme)) {
         clear_client_certificate_capability(signer_capability);
         return RINTLS_ERR_CERTIFICATE;
     }
 
     fetch->m_client_certificate_generation = connection_generation;
     fetch->m_client_certificate_capability = move(signer_capability);
-    if (rintls_set_client_certificate(
+    if (rintls_set_client_certificate_for_scheme(
             tls, certificate_list.data(), certificate_list.size(),
-            &RinHTTPFetch::client_certificate_signer, fetch) != RINTLS_OK) {
+            &RinHTTPFetch::client_certificate_signer, fetch,
+            signature_scheme) != RINTLS_OK) {
         fetch->m_client_certificate_generation = 0u;
         clear_client_certificate_capability(
             fetch->m_client_certificate_capability);
