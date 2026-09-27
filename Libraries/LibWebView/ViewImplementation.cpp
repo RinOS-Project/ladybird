@@ -1027,7 +1027,12 @@ void ViewImplementation::initialize_context_menus()
          * destination.  Do not invoke Ladybird's generic path dialog even as
          * a suggestion: Browser will send only URL and display filename to
          * the authenticated File Portal service. */
-        Application::the().file_downloader().download_file(m_context_menu_url);
+        /* Route this user-initiated transfer through the same WebContent
+         * download event as an <a download> request. Calling FileDownloader
+         * directly would bypass Browser's durable row, receipt, and resume
+         * state. */
+        if (on_request_download)
+            on_request_download(m_context_menu_url, {});
 #else
         auto download_path = Application::the().path_for_downloaded_file(m_context_menu_url.basename());
         if (download_path.is_error())
