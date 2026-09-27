@@ -348,6 +348,13 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
 {
     static u64 next_request_id = 1;
 
+    auto request_id = next_request_id++;
+    if (request_id == 0)
+        request_id = next_request_id++;
+#if defined(AK_OS_RINOS)
+    auto transfer_id = requested_transfer_id != 0 ? requested_transfer_id : request_id;
+#endif
+
     // FIXME: What other request headers should be set? Perhaps we want to use exactly the same request headers used to
     //        originally fetch the image in WebContent.
     auto request_headers = HTTP::HeaderList::create();
@@ -360,16 +367,11 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
     auto request = Application::request_server_client().start_request("GET"sv, url, *request_headers);
     if (!request) {
 #if defined(AK_OS_RINOS)
-        failure_reporter->report(0u, DownloadFailure::TransferFailed);
+        failure_reporter->report(transfer_id, DownloadFailure::TransferFailed);
 #endif
         Application::the().display_error_dialog("Unable to start request to download file"sv);
         return;
     }
-
-    auto request_id = next_request_id++;
-    if (request_id == 0)
-        request_id = next_request_id++;
-    auto transfer_id = requested_transfer_id != 0 ? requested_transfer_id : request_id;
 
 #if defined(AK_OS_RINOS)
     auto browser_event_loop = Core::EventLoop::current_weak();
@@ -380,7 +382,7 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
     m_cancel_callbacks.set(transfer_id, [stream] { stream->cancel(); });
     request->set_unbuffered_request_callbacks(
         [url, suggested_filename = move(suggested_filename), stream,
-            event_reporter, request_id](NonnullRefPtr<HTTP::HeaderList> response_headers,
+            event_reporter, transfer_id](NonnullRefPtr<HTTP::HeaderList> response_headers,
                             Optional<u32> response_code,
                             Optional<String> const&) mutable {
             if (response_code.has_value() && *response_code >= 400) {
@@ -430,7 +432,7 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
             }
 
             event_reporter->report(
-                request_id, FileDownloader::DownloadEvent::Started,
+                transfer_id, FileDownloader::DownloadEvent::Started,
                 url.serialize().to_byte_string(), suggested_filename,
                 declared_length);
 
