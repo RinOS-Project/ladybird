@@ -198,6 +198,7 @@ private:
         u32 operation, ByteString client_url, ByteString origin,
         ByteString script_url, ByteString scope,
         u32 update_via_cache) override;
+    virtual String page_get_notification_permission(URL::Origin const&) override;
     virtual void page_did_mutate_dom(FlyString const& type, Web::DOM::Node const& target, Web::DOM::NodeList& added_nodes, Web::DOM::NodeList& removed_nodes, GC::Ptr<Web::DOM::Node> previous_sibling, GC::Ptr<Web::DOM::Node> next_sibling, Optional<String> const& attribute_name) override;
     virtual void page_did_paint(Gfx::IntRect const& content_rect, i32 bitmap_id) override;
     virtual void page_did_take_screenshot(Gfx::ShareableBitmap const& screenshot) override;

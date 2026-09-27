@@ -22,6 +22,25 @@ namespace Web::NotificationsAPI {
 
 GC_DEFINE_ALLOCATOR(Notification);
 
+Bindings::NotificationPermission Notification::permission(JS::VM& vm)
+{
+    auto* window = as_if<HTML::Window>(vm.current_realm()->global_object());
+    if (window == nullptr)
+        return Bindings::NotificationPermission::Default;
+
+    auto& settings = HTML::relevant_settings_object(*window);
+    if (HTML::is_non_secure_context(settings))
+        return Bindings::NotificationPermission::Default;
+
+    auto permission = window->page().client().page_get_notification_permission(
+        settings.origin());
+    if (permission == "granted"_string)
+        return Bindings::NotificationPermission::Granted;
+    if (permission == "denied"_string)
+        return Bindings::NotificationPermission::Denied;
+    return Bindings::NotificationPermission::Default;
+}
+
 GC::Ref<WebIDL::Promise> Notification::request_permission(
     JS::VM& vm, GC::Ptr<WebIDL::CallbackType> deprecated_callback)
 {

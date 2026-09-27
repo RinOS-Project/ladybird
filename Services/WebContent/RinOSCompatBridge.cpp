@@ -947,9 +947,11 @@ struct PageSession {
         }
         result.accepted =
             response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED ||
-            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_NOT_FOUND;
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_NOT_FOUND ||
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_PERMISSION;
         result.found =
-            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED;
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED ||
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_PERMISSION;
         result.generation = response.generation;
         result.state = response.state;
         result.origin = ByteString { response.origin };

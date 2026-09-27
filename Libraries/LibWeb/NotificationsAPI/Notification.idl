@@ -6,7 +6,7 @@
 interface Notification : EventTarget {
     constructor(DOMString title, optional NotificationOptions options = {});
 
-    // FIXME: static readonly attribute NotificationPermission permission;
+    [Exposed=Window] static readonly attribute NotificationPermission permission;
     [Exposed=Window] static Promise<NotificationPermission> requestPermission(optional NotificationPermissionCallback deprecatedCallback);
 
     static readonly attribute unsigned long maxActions;

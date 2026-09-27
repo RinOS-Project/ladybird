@@ -86,6 +86,7 @@ class WEB_API Notification final : public DOM::EventTarget {
     GC_DECLARE_ALLOCATOR(Notification);
 
 public:
+    static Bindings::NotificationPermission permission(JS::VM&);
     static GC::Ref<WebIDL::Promise> request_permission(JS::VM&, GC::Ptr<WebIDL::CallbackType> deprecated_callback = nullptr);
 
     [[nodiscard]] static WebIDL::ExceptionOr<GC::Ref<Notification>> construct_impl(

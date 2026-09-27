@@ -933,6 +933,27 @@ Web::PageClient::ServiceWorkerOwnerResponse PageClient::request_service_worker_o
     };
 }
 
+String PageClient::page_get_notification_permission(URL::Origin const& origin)
+{
+    const auto origin_string = origin.serialize();
+    auto response = request_service_worker_owner(
+        RIN_WEBCONTENT_SERVICE_WORKER_OWNER_QUERY_NOTIFICATION_PERMISSION,
+        origin_string.to_byte_string(), {}, {}, {}, 0u);
+    const auto expected_origin = origin_string.to_byte_string();
+    if (!response.accepted || !response.found || response.generation == 0u ||
+        response.state > 2u || response.origin != expected_origin ||
+        !response.script_url.is_empty() || !response.scope.is_empty())
+        return {};
+    switch (response.state) {
+    case 1u:
+        return "granted"_string;
+    case 2u:
+        return "denied"_string;
+    default:
+        return "default"_string;
+    }
+}
+
 void PageClient::page_did_mutate_dom(FlyString const& type, Web::DOM::Node const& target, Web::DOM::NodeList& added_nodes, Web::DOM::NodeList& removed_nodes, GC::Ptr<Web::DOM::Node>, GC::Ptr<Web::DOM::Node>, Optional<String> const& attribute_name)
 {
     Optional<WebView::Mutation::Type> mutation;
