@@ -15,6 +15,7 @@
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/NotificationsAPI/Notification.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/ServiceWorker/ServiceWorkerGlobalScope.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 
