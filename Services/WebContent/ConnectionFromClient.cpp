@@ -1239,6 +1239,14 @@ void ConnectionFromClient::handle_file_return(u64, i32 error, Optional<IPC::File
     file_request.value().on_file_request_finish(error != 0 ? Error::from_errno(error) : ErrorOr<i32> { file->take_fd() });
 }
 
+void ConnectionFromClient::complete_notification_permission(
+    u64 page_id, u32 navigation_generation, u64 request_id, String permission)
+{
+    if (auto page = this->page(page_id); page.has_value())
+        page->complete_notification_permission(navigation_generation, request_id,
+                                              move(permission));
+}
+
 void ConnectionFromClient::request_file(u64 page_id, Web::FileRequest file_request)
 {
     i32 const id = last_id++;

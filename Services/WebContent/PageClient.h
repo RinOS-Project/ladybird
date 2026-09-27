@@ -93,6 +93,8 @@ public:
     void run_javascript(StringView js_source);
     void did_output_js_console_message(WebView::ConsoleOutput);
     void console_peer_did_misbehave(char const* reason);
+    void complete_notification_permission(u32 navigation_generation, u64 request_id,
+                                          String permission);
 
     Vector<Web::CSS::StyleSheetIdentifier> list_style_sheets() const;
 
@@ -143,6 +145,7 @@ private:
     virtual void page_did_request_image_context_menu(Web::CSSPixelPoint, URL::URL const&, ByteString const& target, unsigned modifiers, Optional<Gfx::Bitmap const*>) override;
     virtual void page_did_request_media_context_menu(Web::CSSPixelPoint, ByteString const& target, unsigned modifiers, Web::Page::MediaContextMenu const&) override;
     virtual void page_did_request_download(URL::URL const&, ByteString const&) override;
+    virtual void page_did_request_notification_permission(JS::PromiseCapability&) override;
     virtual void page_did_start_loading(URL::URL const&, bool) override;
     virtual void page_did_create_new_document(Web::DOM::Document&) override;
     virtual void page_did_change_active_document_in_top_level_browsing_context(Web::DOM::Document&) override;
@@ -205,6 +208,7 @@ private:
     virtual void page_did_finish_network_request(u64 request_id, u64 body_size, Requests::RequestTimingInfo const&, Optional<Requests::NetworkError> const&) override;
 
     void setup_palette();
+    void resolve_pending_notification_permissions();
     ConnectionFromClient& client() const;
 
     PageHost& m_owner;
@@ -233,6 +237,12 @@ private:
     RefPtr<Core::Timer> m_paint_refresh_timer;
 
     u64 m_devtools_client_count { 0 };
+    struct PendingNotificationPermission {
+        u32 navigation_generation { 0 };
+        u64 request_id { 0 };
+        GC::Ref<JS::PromiseCapability> promise;
+    };
+    Vector<PendingNotificationPermission> m_pending_notification_permissions;
 };
 
 }

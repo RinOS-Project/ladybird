@@ -859,6 +859,10 @@ struct PageSession {
                     move(script_url), move(scope), update_via_cache);
             };
 
+        view->on_request_notification_permission = [this] {
+            return request_notification_permission();
+        };
+
         view->initialize_bridge_client();
         kick_first_frame_if_needed("create-page"sv, true);
     }
@@ -1502,11 +1506,41 @@ struct PageSession {
             return -ESTALE;
         if (permission_producer.bound != 1u)
             return -ENOTSUP;
-        return rin_webcontent_permission_producer_complete(
-                   &permission_producer, page_id, permission_renderer_generation,
-                   &completion)
-            ? 0
-            : -ESTALE;
+        if (!rin_webcontent_permission_producer_complete(
+                &permission_producer, page_id, permission_renderer_generation,
+                &completion))
+            return -ESTALE;
+
+        String permission;
+        if (completion.result == RIN_WEBCONTENT_PERMISSION_RESULT_ALLOW)
+            permission = "granted"_string;
+        else if (completion.result == RIN_WEBCONTENT_PERMISSION_RESULT_BLOCK)
+            permission = "denied"_string;
+        else
+            permission = "default"_string;
+        view->complete_notification_permission(
+            completion.navigation_generation, completion.request_id,
+            move(permission));
+        return 0;
+    }
+
+    WebView::ViewImplementation::NotificationPermissionRequest
+    request_notification_permission()
+    {
+        WebView::ViewImplementation::NotificationPermissionRequest result {};
+        u64 request_id = 0u;
+        if (permission_producer.bound != 1u ||
+            permission_navigation_generation == 0u ||
+            !rin_webcontent_permission_producer_request_bound(
+                &permission_producer, page_id,
+                permission_navigation_generation,
+                permission_renderer_generation, "notifications",
+                "Allow this site to show notifications?", &request_id))
+            return result;
+
+        result.navigation_generation = permission_navigation_generation;
+        result.request_id = request_id;
+        return result;
     }
 
     bool dispatch_pending_load_request(bool replay)
@@ -3027,6 +3061,8 @@ static void handle_client(int client_fd)
             capabilities.capabilities |=
                 RIN_WEBCONTENT_CAPABILITY_SERVICE_WORKER_OWNER_V1 |
                 RIN_WEBCONTENT_CAPABILITY_SERIAL_PORTAL_V1;
+        capabilities.capabilities |=
+            RIN_WEBCONTENT_CAPABILITY_PERMISSIONS_V1;
         (void)send_message(client_fd, header.command, 0, 0, &capabilities, sizeof(capabilities), deadline_ms);
         return;
     }

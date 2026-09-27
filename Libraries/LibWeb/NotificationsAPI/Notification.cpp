@@ -6,16 +6,54 @@
 
 #include <AK/Math.h>
 #include <AK/Time.h>
+#include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/NotificationPrototype.h>
+#include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
+#include <LibWeb/HTML/Window.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/NotificationsAPI/Notification.h>
 #include <LibWeb/ServiceWorker/ServiceWorkerGlobalScope.h>
+#include <LibWeb/WebIDL/AbstractOperations.h>
 
 namespace Web::NotificationsAPI {
 
 GC_DEFINE_ALLOCATOR(Notification);
+
+GC::Ref<WebIDL::Promise> Notification::request_permission(
+    JS::VM& vm, GC::Ptr<WebIDL::CallbackType> deprecated_callback)
+{
+    auto& realm = *vm.current_realm();
+    auto promise = WebIDL::create_promise(realm);
+
+    auto resolve_default = [&] {
+        WebIDL::resolve_promise(realm, *promise,
+            JS::PrimitiveString::create(vm, "default"_utf16));
+    };
+
+    auto* window = as_if<HTML::Window>(realm.global_object());
+    if (window == nullptr || window->browsing_context() == nullptr ||
+        !window->browsing_context()->is_top_level() ||
+        HTML::is_non_secure_context(HTML::relevant_settings_object(*window)) ||
+        !window->has_transient_activation()) {
+        resolve_default();
+    } else {
+        window->page().client().page_did_request_notification_permission(*promise);
+    }
+
+    if (deprecated_callback) {
+        auto callback_steps = GC::create_function(realm.heap(),
+            [deprecated_callback](JS::Value permission) -> WebIDL::ExceptionOr<JS::Value> {
+                (void)WebIDL::invoke_callback(*deprecated_callback, {},
+                    WebIDL::ExceptionBehavior::Report, { { permission } });
+                return JS::js_undefined();
+            });
+        (void)WebIDL::upon_fulfillment(*promise, callback_steps);
+    }
+    return promise;
+}
 
 Notification::Notification(JS::Realm& realm)
     : DOM::EventTarget(realm)

@@ -17,6 +17,7 @@
 #include <LibIPC/TransportHandle.h>
 #include <LibJS/Console.h>
 #include <LibJS/Runtime/ConsoleObject.h>
+#include <LibJS/Runtime/PrimitiveString.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/CSS/CSSImportRule.h>
 #include <LibWeb/CSS/StyleSheetList.h>
@@ -29,6 +30,7 @@
 #include <LibWeb/HTML/HTMLLinkElement.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
+#include <LibWeb/WebIDL/Promise.h>
 #include <LibWeb/InvalidateDisplayList.h>
 #include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Painting/PaintableBox.h>
@@ -107,6 +109,8 @@ void PageClient::visit_edges(JS::Cell::Visitor& visitor)
     Base::visit_edges(visitor);
     visitor.visit(m_page);
     visitor.visit(m_top_level_document_console_client);
+    for (auto const& pending : m_pending_notification_permissions)
+        visitor.visit(pending.promise);
 
     if (m_webdriver)
         m_webdriver->visit_edges(visitor);
@@ -357,6 +361,8 @@ void PageClient::page_did_create_new_document(Web::DOM::Document& document)
 
 void PageClient::page_did_change_active_document_in_top_level_browsing_context(Web::DOM::Document& document)
 {
+    resolve_pending_notification_permissions();
+
     auto& realm = document.realm();
 
     m_web_ui.clear();
@@ -762,8 +768,76 @@ void PageClient::page_did_request_download(URL::URL const& url, ByteString const
     client().async_did_request_download(m_id, url, suggested_filename);
 }
 
+void PageClient::page_did_request_notification_permission(
+    JS::PromiseCapability& promise)
+{
+    auto resolve_default = [&] {
+        auto& realm = *promise.promise()->realm();
+        WebIDL::resolve_promise(realm, promise,
+            JS::PrimitiveString::create(realm.vm(), "default"_string));
+    };
+
+    if (m_pending_notification_permissions.size() >= 4u) {
+        resolve_default();
+        return;
+    }
+
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentClient::RequestNotificationPermission>(m_id);
+    if (!response || response->navigation_generation() == 0u ||
+        response->request_id() == 0u) {
+        resolve_default();
+        return;
+    }
+
+    for (auto const& pending : m_pending_notification_permissions) {
+        if (pending.navigation_generation == response->navigation_generation() &&
+            pending.request_id == response->request_id()) {
+            resolve_default();
+            return;
+        }
+    }
+    m_pending_notification_permissions.append({
+        response->navigation_generation(), response->request_id(), promise });
+}
+
+void PageClient::resolve_pending_notification_permissions()
+{
+    for (auto& pending : m_pending_notification_permissions) {
+        auto& pending_realm = *pending.promise->promise()->realm();
+        WebIDL::resolve_promise(pending_realm, *pending.promise,
+            JS::PrimitiveString::create(pending_realm.vm(), "default"_string));
+    }
+    m_pending_notification_permissions.clear();
+}
+
+void PageClient::complete_notification_permission(
+    u32 navigation_generation, u64 request_id, String permission)
+{
+    if (navigation_generation == 0u || request_id == 0u ||
+        (permission != "granted" && permission != "denied" &&
+         permission != "default"))
+        return;
+
+    for (size_t index = 0; index < m_pending_notification_permissions.size(); ++index) {
+        auto const& pending = m_pending_notification_permissions[index];
+        if (pending.navigation_generation != navigation_generation ||
+            pending.request_id != request_id)
+            continue;
+
+        auto promise = pending.promise;
+        m_pending_notification_permissions.remove(index);
+        auto& realm = *promise->promise()->realm();
+        WebIDL::resolve_promise(realm, *promise,
+            JS::PrimitiveString::create(realm.vm(), move(permission)));
+        return;
+    }
+}
+
 void PageClient::page_did_close_top_level_traversable()
 {
+    resolve_pending_notification_permissions();
+
     // FIXME: Rename this IPC call
     client().async_did_close_browsing_context(m_id);
 

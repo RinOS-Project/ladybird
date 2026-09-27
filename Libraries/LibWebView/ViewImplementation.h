@@ -279,6 +279,14 @@ public:
                                         ByteString origin, ByteString script_url,
                                         ByteString scope, u32 update_via_cache)>
         on_service_worker_owner_request;
+    struct NotificationPermissionRequest {
+        u32 navigation_generation { 0 };
+        u64 request_id { 0 };
+    };
+    Function<NotificationPermissionRequest()> on_request_notification_permission;
+
+    void complete_notification_permission(u32 navigation_generation, u64 request_id,
+                                          String permission);
 
     Menu& page_context_menu() { return *m_page_context_menu; }
     Menu& link_context_menu() { return *m_link_context_menu; }

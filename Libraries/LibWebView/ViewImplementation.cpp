@@ -101,6 +101,17 @@ WebContentClient const& ViewImplementation::client() const
     return *m_client_state.client;
 }
 
+void ViewImplementation::complete_notification_permission(
+    u32 navigation_generation, u64 request_id, String permission)
+{
+    if (navigation_generation == 0u || request_id == 0u ||
+        (permission != "granted" && permission != "denied" &&
+         permission != "default"))
+        return;
+    client().async_complete_notification_permission(
+        page_id(), navigation_generation, request_id, move(permission));
+}
+
 u64 ViewImplementation::page_id() const
 {
     VERIFY(m_client_state.client);

@@ -153,6 +153,7 @@ private:
         u64 page_id, u32 operation, ByteString client_url, ByteString origin,
         ByteString script_url, ByteString scope,
         u32 update_via_cache) override;
+    virtual Messages::WebContentClient::RequestNotificationPermissionResponse request_notification_permission(u64 page_id) override;
 
     bool storage_owner_is_authorized(u64 page_id, Web::StorageAPI::StorageEndpointType endpoint,
                                      String const& storage_key, u64 owner_generation);

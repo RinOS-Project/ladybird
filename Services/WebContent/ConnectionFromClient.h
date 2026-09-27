@@ -123,6 +123,8 @@ private:
     virtual void set_window_size(u64 page_id, Web::DevicePixelSize) override;
     virtual void did_update_window_rect(u64 page_id) override;
     virtual void handle_file_return(u64 page_id, i32 error, Optional<IPC::File> file, i32 request_id) override;
+    virtual void complete_notification_permission(u64 page_id, u32 navigation_generation,
+                                                  u64 request_id, String permission) override;
     virtual void set_system_visibility_state(u64 page_id, Web::HTML::VisibilityState) override;
     virtual void reset_zoom(u64 page_id) override;
 
