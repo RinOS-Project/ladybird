@@ -17,6 +17,7 @@
 #include <LibIPC/TransportHandle.h>
 #include <LibJS/Console.h>
 #include <LibJS/Runtime/ConsoleObject.h>
+#include <LibJS/Runtime/Object.h>
 #include <LibJS/Runtime/PrimitiveString.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/CSS/CSSImportRule.h>
@@ -772,7 +773,7 @@ void PageClient::page_did_request_notification_permission(
     JS::PromiseCapability& promise)
 {
     auto resolve_default = [&] {
-        auto& realm = *promise.promise()->realm();
+        auto& realm = promise.promise()->shape().realm();
         WebIDL::resolve_promise(realm, promise,
             JS::PrimitiveString::create(realm.vm(), "default"_string));
     };
@@ -804,7 +805,7 @@ void PageClient::page_did_request_notification_permission(
 void PageClient::resolve_pending_notification_permissions()
 {
     for (auto& pending : m_pending_notification_permissions) {
-        auto& pending_realm = *pending.promise->promise()->realm();
+        auto& pending_realm = pending.promise->promise()->shape().realm();
         WebIDL::resolve_promise(pending_realm, *pending.promise,
             JS::PrimitiveString::create(pending_realm.vm(), "default"_string));
     }
@@ -827,7 +828,7 @@ void PageClient::complete_notification_permission(
 
         auto promise = pending.promise;
         m_pending_notification_permissions.remove(index);
-        auto& realm = *promise->promise()->realm();
+        auto& realm = promise->promise()->shape().realm();
         WebIDL::resolve_promise(realm, *promise,
             JS::PrimitiveString::create(realm.vm(), move(permission)));
         return;

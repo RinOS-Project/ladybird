@@ -9,6 +9,7 @@
 #include <AK/SourceLocation.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
+#include <LibJS/Runtime/Object.h>
 #include <LibJS/Runtime/PrimitiveString.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/CSS/StyleComputer.h>
@@ -51,7 +52,7 @@ Page::~Page() = default;
 void PageClient::page_did_request_notification_permission(
     JS::PromiseCapability& promise)
 {
-    auto& realm = *promise.promise()->realm();
+    auto& realm = promise.promise()->shape().realm();
     WebIDL::resolve_promise(realm, promise,
         JS::PrimitiveString::create(realm.vm(), "default"_string));
 }
