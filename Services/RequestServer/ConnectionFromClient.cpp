@@ -37,12 +37,22 @@ static IDAllocator s_client_ids;
 static ConnectionFromClient::ClientCertificateOwner g_client_certificate_owner = nullptr;
 static void* g_client_certificate_owner_context = nullptr;
 
-static void clear_client_certificate_capability(ByteBuffer& capability)
+static void clear_client_certificate_bytes(ByteBuffer& bytes)
 {
-    volatile u8* bytes = capability.data();
-    for (size_t index = 0; index < capability.size(); ++index)
+    volatile u8* data = bytes.data();
+    for (size_t index = 0; index < bytes.size(); ++index)
+        data[index] = 0;
+    bytes.clear();
+}
+
+static void clear_client_certificate_signature_output(Bytes output)
+{
+    constexpr size_t max_signature_size = 512u;
+    if (output.is_empty() || output.size() > max_signature_size)
+        return;
+    volatile u8* bytes = output.data();
+    for (size_t index = 0; index < output.size(); ++index)
         bytes[index] = 0;
-    capability.clear();
 }
 
 ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transport, IsPrimaryConnection is_primary_connection, ConnectionMap& connections, Optional<HTTP::DiskCache&> disk_cache)
@@ -124,7 +134,7 @@ bool ConnectionFromClient::request_client_certificate(
         request_id, url);
     if (!response->provided()) {
         auto rejected_capability = response->take_signer_capability();
-        clear_client_certificate_capability(rejected_capability);
+        clear_client_certificate_bytes(rejected_capability);
         return false;
     }
 
@@ -135,7 +145,7 @@ bool ConnectionFromClient::request_client_certificate(
         signer_capability.size() != 32u) {
         connection_generation = 0u;
         certificate_list = {};
-        clear_client_certificate_capability(signer_capability);
+        clear_client_certificate_bytes(signer_capability);
         return false;
     }
     return true;
@@ -171,7 +181,7 @@ int ConnectionFromClient::sign_websocket_client_certificate(
     auto capability = m_websocket_certificate_capabilities.get(connection_generation);
     if (!request.has_value() || !capability.has_value()) {
         if (capability.has_value()) {
-            clear_client_certificate_capability(capability.value());
+            clear_client_certificate_bytes(capability.value());
             m_websocket_certificate_capabilities.remove(connection_generation);
         }
         m_websocket_certificate_requests.remove(connection_generation);
@@ -203,7 +213,7 @@ void ConnectionFromClient::clear_websocket_client_certificate(u64 websocket_id)
         m_websocket_certificate_requests.remove(generation);
         if (auto capability = m_websocket_certificate_capabilities.get(generation);
             capability.has_value())
-            clear_client_certificate_capability(capability.value());
+            clear_client_certificate_bytes(capability.value());
         m_websocket_certificate_capabilities.remove(generation);
     }
     if (m_active_websocket_certificate_generation != 0u &&
@@ -216,7 +226,7 @@ void ConnectionFromClient::clear_all_websocket_client_certificates()
 {
     for (auto& [generation, capability] : m_websocket_certificate_capabilities) {
         (void)generation;
-        clear_client_certificate_capability(capability);
+        clear_client_certificate_bytes(capability);
     }
     m_websocket_certificate_capabilities.clear();
     m_websocket_certificate_requests.clear();
@@ -235,26 +245,40 @@ int ConnectionFromClient::sign_client_certificate(
     if (request_id == 0u || connection_generation == 0u ||
         signer_capability.size() != capability_size || message.is_empty() ||
         message.size() > max_message_size || signature.is_empty() ||
-        signature.size() > max_signature_size)
+        signature.size() > max_signature_size) {
+        clear_client_certificate_signature_output(signature);
         return -1;
+    }
 
     auto capability_copy = ByteBuffer::copy(signer_capability);
-    if (capability_copy.is_error())
+    if (capability_copy.is_error()) {
+        clear_client_certificate_signature_output(signature);
         return -1;
+    }
     auto message_copy = ByteBuffer::copy(message);
-    if (message_copy.is_error())
+    if (message_copy.is_error()) {
+        auto temporary_capability = capability_copy.release_value();
+        clear_client_certificate_bytes(temporary_capability);
+        clear_client_certificate_signature_output(signature);
         return -1;
+    }
 
     auto response = send_sync<Messages::RequestClient::SignClientCertificate>(
         request_id, connection_generation, capability_copy.release_value(),
         signature_scheme, message_copy.release_value());
-    if (!response->success())
+    if (!response->success()) {
+        clear_client_certificate_signature_output(signature);
         return -1;
+    }
     auto result = response->take_signature();
-    if (result.is_empty() || result.size() > signature.size())
+    if (result.is_empty() || result.size() > signature.size()) {
+        clear_client_certificate_bytes(result);
+        clear_client_certificate_signature_output(signature);
         return -1;
+    }
     __builtin_memcpy(signature.data(), result.data(), result.size());
     signature_size = result.size();
+    clear_client_certificate_bytes(result);
     return 0;
 }
 
@@ -570,13 +594,13 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
             request_id, connection_generation, certificate_list.data(),
             certificate_list.size(), signer_capability.data(),
             signer_capability.size())) {
-        clear_client_certificate_capability(signer_capability);
+        clear_client_certificate_bytes(signer_capability);
         dbgln("SetCertificate: invalid client-certificate capability (request {})", request_id);
         return false;
     }
     if (g_client_certificate_owner == nullptr ||
         g_client_certificate_owner_context == nullptr) {
-        clear_client_certificate_capability(signer_capability);
+        clear_client_certificate_bytes(signer_capability);
         dbgln("SetCertificate: authenticated signer owner is unavailable (request {})", request_id);
         return false;
     }
