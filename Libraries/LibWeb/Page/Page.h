@@ -406,7 +406,7 @@ public:
     // only the parsed URL and an untrusted display-name suggestion; they never
     // receive a destination pathname or a writable file descriptor.
     virtual void page_did_request_download(URL::URL const&, ByteString const&) { }
-    virtual void page_did_request_notification_permission(JS::PromiseCapability&) { }
+    virtual void page_did_request_notification_permission(JS::PromiseCapability&);
     virtual void page_did_click_link(URL::URL const&, [[maybe_unused]] ByteString const& target, [[maybe_unused]] unsigned modifiers) { }
     virtual void page_did_middle_click_link(URL::URL const&, [[maybe_unused]] ByteString const& target, [[maybe_unused]] unsigned modifiers) { }
     virtual void page_did_request_tooltip_override(CSSPixelPoint, ByteString const&) { }

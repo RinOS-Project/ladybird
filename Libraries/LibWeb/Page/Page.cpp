@@ -9,6 +9,7 @@
 #include <AK/SourceLocation.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
+#include <LibJS/Runtime/PrimitiveString.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/Clipboard/SystemClipboard.h>
@@ -29,6 +30,7 @@
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/Selection/Selection.h>
+#include <LibWeb/WebIDL/Promise.h>
 
 namespace Web {
 
@@ -45,6 +47,14 @@ Page::Page(GC::Ref<PageClient> client)
 }
 
 Page::~Page() = default;
+
+void PageClient::page_did_request_notification_permission(
+    JS::PromiseCapability& promise)
+{
+    auto& realm = *promise.promise()->realm();
+    WebIDL::resolve_promise(realm, promise,
+        JS::PrimitiveString::create(realm.vm(), "default"_string));
+}
 
 void Page::visit_edges(JS::Cell::Visitor& visitor)
 {
