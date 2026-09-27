@@ -266,11 +266,12 @@ int ConnectionFromClient::sign_client_certificate(
     auto response = send_sync<Messages::RequestClient::SignClientCertificate>(
         request_id, connection_generation, capability_copy.release_value(),
         signature_scheme, message_copy.release_value());
+    auto result = response->take_signature();
     if (!response->success()) {
+        clear_client_certificate_bytes(result);
         clear_client_certificate_signature_output(signature);
         return -1;
     }
-    auto result = response->take_signature();
     if (result.is_empty() || result.size() > signature.size()) {
         clear_client_certificate_bytes(result);
         clear_client_certificate_signature_output(signature);

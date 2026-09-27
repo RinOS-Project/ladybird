@@ -16,12 +16,12 @@
 
 namespace Requests {
 
-static void clear_client_certificate_capability(ByteBuffer& capability)
+static void clear_client_certificate_bytes(ByteBuffer& bytes)
 {
-    volatile u8* bytes = capability.data();
-    for (size_t index = 0; index < capability.size(); ++index)
-        bytes[index] = 0;
-    capability.clear();
+    volatile u8* data = bytes.data();
+    for (size_t index = 0; index < bytes.size(); ++index)
+        data[index] = 0;
+    bytes.clear();
 }
 
 RequestClient::RequestClient(NonnullOwnPtr<IPC::Transport> transport)
@@ -43,7 +43,7 @@ bool RequestClient::provide_client_certificate(
     const bool provided = m_client_certificate_provider(
         url, connection_generation, certificate_list, signer_capability);
     if (!provided)
-        clear_client_certificate_capability(signer_capability);
+        clear_client_certificate_bytes(signer_capability);
     return provided;
 }
 
@@ -242,7 +242,7 @@ RequestClient::request_client_certificate(u64 request_id, URL::URL url)
         connection_generation == 0u || certificate_list.is_empty() ||
         certificate_list.size() > 16u * 1024u ||
         signer_capability.size() != capability_size) {
-        clear_client_certificate_capability(signer_capability);
+        clear_client_certificate_bytes(signer_capability);
         return { 0u, {}, {}, false };
     }
 
@@ -250,7 +250,7 @@ RequestClient::request_client_certificate(u64 request_id, URL::URL url)
     for (auto byte : signer_capability.bytes())
         capability_nonzero |= byte != 0u;
     if (!capability_nonzero) {
-        clear_client_certificate_capability(signer_capability);
+        clear_client_certificate_bytes(signer_capability);
         return { 0u, {}, {}, false };
     }
 
@@ -266,7 +266,7 @@ RequestClient::request_client_certificate(u64 request_id, URL::URL url)
         static_cast<uint32_t>(signer_capability.size()),
     };
     if (!rinruntime_tls_client_certificate_request_valid(&request)) {
-        clear_client_certificate_capability(signer_capability);
+        clear_client_certificate_bytes(signer_capability);
         return { 0u, {}, {}, false };
     }
 #endif
@@ -289,7 +289,7 @@ RequestClient::sign_client_certificate(u64 request_id,
         !m_client_certificate_signer || connection_generation == 0u ||
         signer_capability.size() != capability_size || message.is_empty() ||
         message.size() > max_message_size) {
-        clear_client_certificate_capability(signer_capability);
+        clear_client_certificate_bytes(signer_capability);
         return { {}, false };
     }
 
@@ -297,7 +297,7 @@ RequestClient::sign_client_certificate(u64 request_id,
     for (auto byte : signer_capability.bytes())
         capability_nonzero |= byte != 0u;
     if (!capability_nonzero) {
-        clear_client_certificate_capability(signer_capability);
+        clear_client_certificate_bytes(signer_capability);
         return { {}, false };
     }
 
@@ -305,10 +305,12 @@ RequestClient::sign_client_certificate(u64 request_id,
     const bool signed_ok = m_client_certificate_signer(
             request_id, connection_generation, signer_capability.bytes(),
             signature_scheme, message.bytes(), signature);
-    clear_client_certificate_capability(signer_capability);
+    clear_client_certificate_bytes(signer_capability);
     if (!signed_ok || signature.is_empty() ||
-        signature.size() > max_signature_size)
+        signature.size() > max_signature_size) {
+        clear_client_certificate_bytes(signature);
         return { {}, false };
+    }
     return { move(signature), true };
 }
 
