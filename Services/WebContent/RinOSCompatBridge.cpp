@@ -594,9 +594,12 @@ struct PageSession {
         u64 transfer_id { 0 };
         u64 timestamp_ms { 0 };
         u64 size_bytes { 0 };
+        u64 committed_bytes { 0 };
+        u64 generation { 0 };
         u32 failure_status { RIN_WEBCONTENT_DOWNLOAD_STATUS_NONE };
         ByteString url;
         ByteString filename;
+        ByteString validator;
     };
 
     explicit PageSession(u32 id, Core::AnonymousBuffer theme, int width, int height)
@@ -967,7 +970,9 @@ struct PageSession {
     }
 
     void start_download(URL::URL const& url, ByteString suggested_filename,
-                        u64 transfer_id = 0u)
+                        u64 transfer_id = 0u, u64 generation = 0u,
+                        ByteString validator = {}, u64 total_bytes = 0u,
+                        u64 committed_bytes = 0u)
     {
         // The BridgeApplication is the browser-process side of the isolated
         // WebContent pair. FileDownloader owns authenticated request
@@ -981,11 +986,58 @@ struct PageSession {
                     page->note_download_failure(id, failure);
             }, [page_id_value](u64 id, WebView::FileDownloader::DownloadEvent event,
                                ByteString event_url, ByteString filename,
-                               u64 size) {
+                               u64 size, u64 generation, ByteString validator,
+                               u64 committed_bytes) {
                 if (auto* page = find_page(page_id_value))
                     page->note_download_event(id, event, move(event_url),
-                                              move(filename), size);
-            }, transfer_id);
+                        move(filename), size, generation, move(validator),
+                        committed_bytes);
+            }, transfer_id, generation, move(validator), total_bytes,
+            committed_bytes);
+    }
+
+    bool resume_download(const RinWebContentDownloadResumeV1& request)
+    {
+        if (!rin_webcontent_client_download_resume_valid(&request))
+            return false;
+        for (size_t index = 0u; index < active_downloads.size(); ++index) {
+            if (active_downloads[index].transfer_id == request.transfer_id)
+                return false;
+        }
+        auto parsed_url = URL::Parser::basic_parse(request.url);
+        if (!parsed_url.has_value())
+            return false;
+        for (size_t index = 0u; index < download_events.size();) {
+            if (download_events[index].transfer_id == request.transfer_id)
+                download_events.remove(index);
+            else
+                ++index;
+        }
+        DownloadEventRecord active;
+        active.event = RIN_WEBCONTENT_DOWNLOAD_EVENT_STARTED;
+        active.transfer_id = request.transfer_id;
+        active.timestamp_ms = monotonic_time_ms();
+        active.size_bytes = request.total_bytes;
+        active.committed_bytes = request.committed_bytes;
+        active.generation = request.generation;
+        active.url = ByteString { request.url };
+        active.filename = ByteString { request.filename };
+        active.validator = ByteString { request.validator };
+        if (active_downloads.size() >= 16u)
+            active_downloads.remove(0u);
+        active_downloads.append(active);
+        for (size_t index = 0u; index < retryable_downloads.size();) {
+            if (retryable_downloads[index].transfer_id == request.transfer_id)
+                retryable_downloads.remove(index);
+            else
+                ++index;
+        }
+        start_download(parsed_url.value(), move(active.filename),
+            request.transfer_id, request.generation,
+            ByteString { request.validator }, request.total_bytes,
+            request.committed_bytes);
+        mark_dirty();
+        return true;
     }
 
     void request_file_picker(Web::HTML::AllowMultipleFiles allow_multiple)
@@ -1117,37 +1169,101 @@ struct PageSession {
 
     void note_download_event(u64 transfer_id,
                              WebView::FileDownloader::DownloadEvent event,
-                             ByteString url, ByteString filename, u64 size)
+                             ByteString url, ByteString filename, u64 size,
+                             u64 generation, ByteString validator,
+                             u64 committed_bytes)
     {
         if (transfer_id == 0u || url.is_empty() || filename.is_empty() ||
             url.length() >= RIN_WEBCONTENT_URL_MAX ||
-            filename.length() >= RIN_WEBCONTENT_FILE_PICKER_NAME_MAX ||
-            download_events.size() >= 16u) {
-            if (event == WebView::FileDownloader::DownloadEvent::Completed) {
-                for (size_t index = 0u; index < active_downloads.size(); ++index) {
-                    if (active_downloads[index].transfer_id == transfer_id) {
-                        active_downloads.remove(index);
-                        break;
-                    }
-                }
-            }
+            filename.length() >= RIN_WEBCONTENT_FILE_PICKER_NAME_MAX)
             return;
-        }
         DownloadEventRecord record;
-        record.event = event == WebView::FileDownloader::DownloadEvent::Started
-            ? RIN_WEBCONTENT_DOWNLOAD_EVENT_STARTED
-            : RIN_WEBCONTENT_DOWNLOAD_EVENT_COMPLETED;
+        switch (event) {
+        case WebView::FileDownloader::DownloadEvent::Started:
+            record.event = RIN_WEBCONTENT_DOWNLOAD_EVENT_STARTED;
+            break;
+        case WebView::FileDownloader::DownloadEvent::Progress:
+            record.event = RIN_WEBCONTENT_DOWNLOAD_EVENT_PROGRESS;
+            break;
+        case WebView::FileDownloader::DownloadEvent::Paused:
+            record.event = RIN_WEBCONTENT_DOWNLOAD_EVENT_PAUSED;
+            break;
+        case WebView::FileDownloader::DownloadEvent::Completed:
+            record.event = RIN_WEBCONTENT_DOWNLOAD_EVENT_COMPLETED;
+            break;
+        }
         record.revision = next_download_event_revision++;
         if (record.revision == 0u)
             record.revision = next_download_event_revision++;
         record.transfer_id = transfer_id;
         record.timestamp_ms = monotonic_time_ms();
         record.size_bytes = size;
+        record.committed_bytes = committed_bytes;
+        record.generation = generation;
         record.url = move(url);
         record.filename = move(filename);
-        if (record.event == RIN_WEBCONTENT_DOWNLOAD_EVENT_STARTED)
-            active_downloads.append(record);
-        else {
+        record.validator = move(validator);
+        if (record.event == RIN_WEBCONTENT_DOWNLOAD_EVENT_STARTED) {
+            bool replaced = false;
+            for (size_t index = 0u; index < active_downloads.size(); ++index) {
+                if (active_downloads[index].transfer_id == transfer_id) {
+                    active_downloads[index] = record;
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                if (active_downloads.size() >= 16u)
+                    active_downloads.remove(0u);
+                active_downloads.append(record);
+            }
+        } else {
+            size_t active_index = active_downloads.size();
+            for (size_t index = 0u; index < active_downloads.size(); ++index) {
+                if (active_downloads[index].transfer_id == transfer_id) {
+                    active_index = index;
+                    break;
+                }
+            }
+            if (active_index == active_downloads.size())
+                return;
+            record.url = active_downloads[active_index].url;
+            record.filename = active_downloads[active_index].filename;
+            active_downloads[active_index].size_bytes = record.size_bytes;
+            active_downloads[active_index].committed_bytes = committed_bytes;
+            active_downloads[active_index].generation = generation;
+            active_downloads[active_index].validator = record.validator;
+            if (record.event == RIN_WEBCONTENT_DOWNLOAD_EVENT_PROGRESS) {
+                /* Coalesce queued progress for the same transfer so a fast
+                 * stream cannot evict its terminal event from this bounded
+                 * per-page queue. The active record always keeps the newest
+                 * offset for the failure event below. */
+                for (size_t index = 0u; index < download_events.size();) {
+                    if (download_events[index].transfer_id == transfer_id &&
+                        download_events[index].event ==
+                            RIN_WEBCONTENT_DOWNLOAD_EVENT_PROGRESS) {
+                        download_events.remove(index);
+                    } else {
+                        ++index;
+                    }
+                }
+            }
+            if (download_events.size() >= 16u) {
+                size_t progress_index = download_events.size();
+                for (size_t index = 0u; index < download_events.size(); ++index) {
+                    if (download_events[index].event ==
+                        RIN_WEBCONTENT_DOWNLOAD_EVENT_PROGRESS) {
+                        progress_index = index;
+                        break;
+                    }
+                }
+                if (progress_index < download_events.size())
+                    download_events.remove(progress_index);
+                else if (record.event == RIN_WEBCONTENT_DOWNLOAD_EVENT_PROGRESS)
+                    return;
+            }
+            if (record.event == RIN_WEBCONTENT_DOWNLOAD_EVENT_COMPLETED ||
+                record.event == RIN_WEBCONTENT_DOWNLOAD_EVENT_PAUSED) {
             for (size_t index = 0u; index < active_downloads.size(); ++index) {
                 if (active_downloads[index].transfer_id == transfer_id) {
                     record.url = active_downloads[index].url;
@@ -1156,6 +1272,11 @@ struct PageSession {
                     break;
                 }
             }
+            }
+        }
+        if (download_events.size() >= 16u)
+            return;
+        if (record.event == RIN_WEBCONTENT_DOWNLOAD_EVENT_COMPLETED) {
             for (size_t index = 0u; index < retryable_downloads.size(); ++index) {
                 if (retryable_downloads[index].transfer_id == transfer_id) {
                     retryable_downloads.remove(index);
@@ -1229,7 +1350,6 @@ struct PageSession {
             if (failed.revision == 0u)
                 failed.revision = next_download_event_revision++;
             failed.timestamp_ms = download_status_timestamp_ms;
-            failed.size_bytes = 0u;
             failed.failure_status = status;
             for (size_t index = 0u; index < retryable_downloads.size(); ++index) {
                 if (retryable_downloads[index].transfer_id == transfer_id) {
@@ -1240,6 +1360,18 @@ struct PageSession {
             if (retryable_downloads.size() >= 16u)
                 retryable_downloads.remove(0u);
             retryable_downloads.append(failed);
+            if (download_events.size() >= 16u) {
+                size_t progress_index = download_events.size();
+                for (size_t index = 0u; index < download_events.size(); ++index) {
+                    if (download_events[index].event ==
+                        RIN_WEBCONTENT_DOWNLOAD_EVENT_PROGRESS) {
+                        progress_index = index;
+                        break;
+                    }
+                }
+                if (progress_index < download_events.size())
+                    download_events.remove(progress_index);
+            }
             if (download_events.size() < 16u)
                 download_events.append(move(failed));
         }
@@ -1251,6 +1383,14 @@ struct PageSession {
         if (transfer_id == 0u)
             return false;
         return WebView::Application::the().file_downloader().cancel_download(
+            transfer_id);
+    }
+
+    bool pause_download(u64 transfer_id)
+    {
+        if (transfer_id == 0u)
+            return false;
+        return WebView::Application::the().file_downloader().pause_download(
             transfer_id);
     }
 
@@ -1295,7 +1435,11 @@ struct PageSession {
         output.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
         size_t selected = download_events.size();
         for (size_t index = 0u; index < download_events.size(); ++index) {
-            if (download_events[index].revision > after_revision) {
+            if (download_events[index].revision > after_revision &&
+                download_events[index].event !=
+                    RIN_WEBCONTENT_DOWNLOAD_EVENT_PROGRESS &&
+                download_events[index].event !=
+                    RIN_WEBCONTENT_DOWNLOAD_EVENT_PAUSED) {
                 selected = index;
                 break;
             }
@@ -1311,6 +1455,37 @@ struct PageSession {
         output.failure_status = event.failure_status;
         copy_c_string(output.url, sizeof(output.url), event.url);
         copy_c_string(output.filename, sizeof(output.filename), event.filename);
+        download_events.remove(0u, selected + 1u);
+        mark_dirty();
+    }
+
+    void fill_download_event_v2(
+        u32 after_revision, RinWebContentDownloadEventV2& output)
+    {
+        __builtin_memset(&output, 0, sizeof(output));
+        output.struct_size = sizeof(output);
+        output.version = RIN_WEBCONTENT_DOWNLOAD_EVENT_V2_VERSION;
+        size_t selected = download_events.size();
+        for (size_t index = 0u; index < download_events.size(); ++index) {
+            if (download_events[index].revision > after_revision) {
+                selected = index;
+                break;
+            }
+        }
+        if (selected == download_events.size())
+            return;
+        const auto& event = download_events[selected];
+        output.event = event.event;
+        output.revision = event.revision;
+        output.transfer_id = event.transfer_id;
+        output.timestamp_ms = event.timestamp_ms;
+        output.size_bytes = event.size_bytes;
+        output.committed_bytes = event.committed_bytes;
+        output.generation = event.generation;
+        output.failure_status = event.failure_status;
+        copy_c_string(output.url, sizeof(output.url), event.url);
+        copy_c_string(output.filename, sizeof(output.filename), event.filename);
+        copy_c_string(output.validator, sizeof(output.validator), event.validator);
         download_events.remove(0u, selected + 1u);
         mark_dirty();
     }
@@ -2802,6 +2977,25 @@ static int handle_get_download_event(PageSession& page, int client_fd,
         ? 1 : -EIO;
 }
 
+static int handle_get_download_event_v2(PageSession& page, int client_fd,
+                                        ReadonlyBytes payload,
+                                        u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentDownloadEventRequestV1))
+        return -EINVAL;
+    RinWebContentDownloadEventRequestV1 request {};
+    __builtin_memcpy(&request, payload.data(), sizeof(request));
+    if (!rin_webcontent_client_download_event_request_valid(&request))
+        return -EINVAL;
+    RinWebContentDownloadEventV2 event {};
+    page.fill_download_event_v2(request.after_revision, event);
+    if (!rin_webcontent_client_download_event_v2_valid(&event))
+        return -EPROTO;
+    return send_message(client_fd, RIN_WEBCONTENT_CMD_GET_DOWNLOAD_EVENT_V2,
+                        0, page.page_id, &event, sizeof(event), deadline_ms)
+        ? 1 : -EIO;
+}
+
 static int handle_download_control(PageSession& page, ReadonlyBytes payload,
                                     bool retry)
 {
@@ -2814,6 +3008,28 @@ static int handle_download_control(PageSession& page, ReadonlyBytes payload,
     bool accepted = retry ? page.retry_download(request.transfer_id)
                           : page.cancel_download(request.transfer_id);
     return accepted ? 0 : -ENOENT;
+}
+
+static int handle_download_resume(PageSession& page, ReadonlyBytes payload)
+{
+    if (payload.size() != sizeof(RinWebContentDownloadResumeV1))
+        return -EINVAL;
+    RinWebContentDownloadResumeV1 request {};
+    __builtin_memcpy(&request, payload.data(), sizeof(request));
+    if (!rin_webcontent_client_download_resume_valid(&request))
+        return -EINVAL;
+    return page.resume_download(request) ? 0 : -ENOENT;
+}
+
+static int handle_download_pause(PageSession& page, ReadonlyBytes payload)
+{
+    if (payload.size() != sizeof(RinWebContentDownloadControlV1))
+        return -EINVAL;
+    RinWebContentDownloadControlV1 request {};
+    __builtin_memcpy(&request, payload.data(), sizeof(request));
+    if (!rin_webcontent_client_download_control_valid(&request))
+        return -EINVAL;
+    return page.pause_download(request.transfer_id) ? 0 : -ENOENT;
 }
 
 static int handle_get_accessibility_tree(PageSession& page, int client_fd,
@@ -3127,6 +3343,10 @@ static void handle_client(int client_fd)
         (void)handle_get_download_event(*page, client_fd, payload_bytes,
                                         deadline_ms);
         return;
+    case RIN_WEBCONTENT_CMD_GET_DOWNLOAD_EVENT_V2:
+        (void)handle_get_download_event_v2(*page, client_fd, payload_bytes,
+                                           deadline_ms);
+        return;
     case RIN_WEBCONTENT_CMD_CANCEL_DOWNLOAD_V1:
         (void)send_message(client_fd, header.command,
                            handle_download_control(*page, payload_bytes, false),
@@ -3135,6 +3355,16 @@ static void handle_client(int client_fd)
     case RIN_WEBCONTENT_CMD_RETRY_DOWNLOAD_V1:
         (void)send_message(client_fd, header.command,
                            handle_download_control(*page, payload_bytes, true),
+                           header.page_id, nullptr, 0, deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_RESUME_DOWNLOAD_V1:
+        (void)send_message(client_fd, header.command,
+                           handle_download_resume(*page, payload_bytes),
+                           header.page_id, nullptr, 0, deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_PAUSE_DOWNLOAD_V1:
+        (void)send_message(client_fd, header.command,
+                           handle_download_pause(*page, payload_bytes),
                            header.page_id, nullptr, 0, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_GET_ACCESSIBILITY_TREE_V1:
