@@ -37,6 +37,7 @@
 #include <LibWeb/Painting/PaintableBox.h>
 #include <LibWebView/SiteIsolation.h>
 #include <LibWebView/ViewImplementation.h>
+#include <rin/web/webcontent_protocol.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/DevToolsConsoleClient.h>
 #include <WebContent/PageClient.h>
@@ -774,7 +775,7 @@ void PageClient::page_did_request_notification_permission(
 {
     auto resolve_default = [&] {
         auto& realm = promise.promise()->shape().realm();
-        WebIDL::resolve_promise(realm, promise,
+        Web::WebIDL::resolve_promise(realm, promise,
             JS::PrimitiveString::create(realm.vm(), "default"_string));
     };
 
@@ -806,7 +807,7 @@ void PageClient::resolve_pending_notification_permissions()
 {
     for (auto& pending : m_pending_notification_permissions) {
         auto& pending_realm = pending.promise->promise()->shape().realm();
-        WebIDL::resolve_promise(pending_realm, *pending.promise,
+        Web::WebIDL::resolve_promise(pending_realm, *pending.promise,
             JS::PrimitiveString::create(pending_realm.vm(), "default"_string));
     }
     m_pending_notification_permissions.clear();
@@ -829,7 +830,7 @@ void PageClient::complete_notification_permission(
         auto promise = pending.promise;
         m_pending_notification_permissions.remove(index);
         auto& realm = promise->promise()->shape().realm();
-        WebIDL::resolve_promise(realm, *promise,
+        Web::WebIDL::resolve_promise(realm, *promise,
             JS::PrimitiveString::create(realm.vm(), move(permission)));
         return;
     }
