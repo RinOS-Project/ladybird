@@ -140,5 +140,4 @@ endpoint WebContentClient
     request_worker_agent(u64 page_id, Web::Bindings::AgentType worker_type) => (IPC::TransportHandle handle, IPC::TransportHandle request_server_handle, IPC::TransportHandle image_decoder_handle) // FIXME: Add required attributes to select a SharedWorker Agent
     request_service_worker_owner(u64 page_id, u32 operation, ByteString client_url, ByteString origin, ByteString script_url, ByteString scope, u32 update_via_cache) => (bool accepted, bool found, u64 generation, u32 state, ByteString response_origin, ByteString response_script_url, ByteString response_scope)
     request_notification_permission(u64 page_id) => (u32 navigation_generation, u64 request_id)
-    complete_notification_permission(u64 page_id, u32 navigation_generation, u64 request_id, String permission) =|
 }

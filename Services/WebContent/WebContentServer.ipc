@@ -114,6 +114,7 @@ endpoint WebContentServer
     reset_zoom(u64 page_id) =|
 
     handle_file_return(u64 page_id, i32 error, Optional<IPC::File> file, i32 request_id) =|
+    complete_notification_permission(u64 page_id, u32 navigation_generation, u64 request_id, String permission) =|
 
     set_system_visibility_state(u64 page_id, Web::HTML::VisibilityState visibility_state) =|
 
