@@ -96,6 +96,38 @@ bool CacheStorage::owner_is_current() const
         response.origin == m_owner_origin;
 }
 
+bool CacheStorage::begin_owner_mutation_batch() const
+{
+    if (!owner_is_current())
+        return false;
+    auto response = m_page->client().request_service_worker_owner(
+        7u, {}, m_owner_origin, {}, {}, 0u);
+    return response.accepted && response.found &&
+        response.generation == m_owner_generation &&
+        response.origin == m_owner_origin &&
+        response.script_url == m_owner_origin && response.scope == "/";
+}
+
+bool CacheStorage::commit_owner_mutation_batch() const
+{
+    if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
+        return false;
+    auto response = m_page->client().request_service_worker_owner(
+        8u, {}, m_owner_origin, {}, {}, 0u);
+    return response.accepted && response.found &&
+        response.generation == m_owner_generation &&
+        response.origin == m_owner_origin &&
+        response.script_url == m_owner_origin && response.scope == "/";
+}
+
+void CacheStorage::abort_owner_mutation_batch() const
+{
+    if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
+        return;
+    (void)m_page->client().request_service_worker_owner(
+        9u, {}, m_owner_origin, {}, {}, 0u);
+}
+
 GC::Ref<WebIDL::Promise> CacheStorage::owner_rejected_promise() const
 {
     return WebIDL::create_rejected_promise_from_exception(
@@ -137,12 +169,48 @@ GC::Ref<WebIDL::Promise> CacheStorage::delete_(String const& cache_name)
 {
     if (!owner_is_current())
         return owner_rejected_promise();
-    if (auto cache = m_caches.get(cache_name); cache.has_value())
-        cache.value()->remove_persisted_entries();
-    const bool removed = m_caches.remove(cache_name);
-    if (removed && m_storage_bottle)
+    auto cache = m_caches.get(cache_name);
+    if (!cache.has_value())
+        return WebIDL::create_resolved_promise(realm(), JS::Value(false));
+
+    struct StorageRecord {
+        String key;
+        String value;
+    };
+    Vector<StorageRecord> original_entries;
+    if (m_storage_bottle) {
+        auto prefix = cache.value()->storage_key_prefix();
+        for (auto const& key : m_storage_bottle->keys()) {
+            if (!key.bytes_as_string_view().starts_with(
+                    prefix.bytes_as_string_view()))
+                continue;
+            auto value = m_storage_bottle->get(key);
+            if (value.has_value())
+                original_entries.append({ key, value.release_value() });
+        }
+    }
+    auto original_marker = m_storage_bottle
+        ? m_storage_bottle->get(cache_name)
+        : Optional<String> {};
+
+    if (!begin_owner_mutation_batch())
+        return owner_rejected_promise();
+    const bool entries_removed = cache.value()->remove_persisted_entries();
+    if (entries_removed && m_storage_bottle)
         m_storage_bottle->remove(cache_name);
-    return WebIDL::create_resolved_promise(realm(), JS::Value(removed));
+    if (!entries_removed || !commit_owner_mutation_batch()) {
+        if (m_storage_bottle) {
+            for (auto const& record : original_entries)
+                (void)m_storage_bottle->set(record.key, record.value);
+            if (original_marker.has_value())
+                (void)m_storage_bottle->set(cache_name, original_marker.value());
+        }
+        abort_owner_mutation_batch();
+        return owner_rejected_promise();
+    }
+
+    (void)m_caches.remove(cache_name);
+    return WebIDL::create_resolved_promise(realm(), JS::Value(true));
 }
 
 // https://w3c.github.io/ServiceWorker/#cache-storage-keys

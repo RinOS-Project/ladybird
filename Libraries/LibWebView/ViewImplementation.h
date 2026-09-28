@@ -280,6 +280,10 @@ public:
                                         ByteString origin, ByteString script_url,
                                         ByteString scope, u32 update_via_cache)>
         on_service_worker_owner_request;
+    Function<bool(u16 operation, ByteString origin, ByteString key,
+                  ByteString value, u64 owner_generation)>
+        on_cache_storage_owner_mutation;
+    Function<bool()> on_cache_storage_owner_batch_active;
     struct NotificationPermissionRequest {
         u32 navigation_generation { 0 };
         u64 request_id { 0 };

@@ -613,14 +613,65 @@ Messages::WebContentClient::DidSetStorageItemResponse WebContentClient::did_set_
 {
     if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
         return WebView::StorageOperationError::QuotaExceededError;
-    return Application::storage_jar().set_item(storage_endpoint, storage_key, bottle_key, value);
+    auto result = Application::storage_jar().set_item(
+        storage_endpoint, storage_key, bottle_key, value);
+    if (storage_endpoint != Web::StorageAPI::StorageEndpointType::Caches ||
+        result.has<WebView::StorageOperationError>())
+        return result;
+
+    auto previous_value = result.get<Optional<String>>();
+    auto view = view_for_page_id(page_id);
+    const bool batch_active = view.has_value() &&
+        view->on_cache_storage_owner_batch_active &&
+        view->on_cache_storage_owner_batch_active();
+    const bool owner_committed = view.has_value() &&
+        view->on_cache_storage_owner_mutation &&
+        view->on_cache_storage_owner_mutation(
+            value == "RIN-CACHE-NAME-V1"_string ? 3u : 1u,
+            storage_key.to_byte_string(), bottle_key.to_byte_string(),
+            value.to_byte_string(), owner_generation);
+    if (owner_committed)
+        return result;
+    if (batch_active)
+        return result;
+
+    /* Keep the WebContent SQLite copy aligned if Browser could not publish
+     * the same mutation to its durable SWC1 owner. */
+    if (previous_value.has_value())
+        (void)Application::storage_jar().set_item(
+            storage_endpoint, storage_key, bottle_key, previous_value.value());
+    else
+        Application::storage_jar().remove_item(
+            storage_endpoint, storage_key, bottle_key);
+    return WebView::StorageOperationError::QuotaExceededError;
 }
 
 void WebContentClient::did_remove_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation)
 {
     if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
         return;
+    auto previous_value = Application::storage_jar().get_item(
+        storage_endpoint, storage_key, bottle_key);
     Application::storage_jar().remove_item(storage_endpoint, storage_key, bottle_key);
+    if (storage_endpoint != Web::StorageAPI::StorageEndpointType::Caches)
+        return;
+
+    auto view = view_for_page_id(page_id);
+    const bool batch_active = view.has_value() &&
+        view->on_cache_storage_owner_batch_active &&
+        view->on_cache_storage_owner_batch_active();
+    const bool owner_committed = view.has_value() &&
+        view->on_cache_storage_owner_mutation &&
+        view->on_cache_storage_owner_mutation(
+            previous_value.has_value() &&
+                    previous_value.value() == "RIN-CACHE-NAME-V1"_string
+                ? 4u
+                : 2u,
+            storage_key.to_byte_string(), bottle_key.to_byte_string(), {},
+            owner_generation);
+    if (!owner_committed && !batch_active && previous_value.has_value())
+        (void)Application::storage_jar().set_item(
+            storage_endpoint, storage_key, bottle_key, previous_value.value());
 }
 
 Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_request_storage_keys(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation)

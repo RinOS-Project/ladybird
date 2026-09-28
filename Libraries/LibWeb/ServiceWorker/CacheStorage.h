@@ -41,6 +41,9 @@ private:
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
     bool owner_is_current() const;
+    bool begin_owner_mutation_batch() const;
+    bool commit_owner_mutation_batch() const;
+    void abort_owner_mutation_batch() const;
     GC::Ref<WebIDL::Promise> owner_rejected_promise() const;
 
     OrderedHashMap<String, GC::Ref<Cache>> m_caches;

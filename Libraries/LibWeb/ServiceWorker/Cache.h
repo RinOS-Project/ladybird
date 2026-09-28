@@ -39,7 +39,7 @@ public:
     static GC::Ref<Cache> create(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle> = {}, GC::Ptr<Page> = {}, ByteString owner_origin = {}, u64 owner_generation = 0);
 
     String const& name() const { return m_name; }
-    void remove_persisted_entries();
+    bool remove_persisted_entries();
 
     GC::Ref<WebIDL::Promise> match(Fetch::RequestInfo const&, CacheQueryOptions const& = {});
     GC::Ref<WebIDL::Promise> match_all(Optional<Fetch::RequestInfo> const&, CacheQueryOptions const& = {});
@@ -50,6 +50,7 @@ public:
     GC::Ref<WebIDL::Promise> keys(Optional<Fetch::RequestInfo> const&, CacheQueryOptions const& = {});
 
 private:
+    friend class CacheStorage;
     struct Entry {
         u64 sequence { 0 };
         GC::Ref<Fetch::Request> request;
@@ -65,6 +66,9 @@ private:
     WebIDL::ExceptionOr<Entry> clone_entry(GC::Ref<Fetch::Request>, Fetch::Response const&) const;
     String storage_key_prefix() const;
     String storage_key_for(Fetch::Request const&) const;
+    bool begin_owner_mutation_batch() const;
+    bool commit_owner_mutation_batch() const;
+    void abort_owner_mutation_batch() const;
     Optional<String> serialize_entry(Entry const&, ReadonlyBytes) const;
     Optional<Entry> deserialize_entry(String const& key, String const& value);
     bool store_serialized_entry(String const& key, String const& value);

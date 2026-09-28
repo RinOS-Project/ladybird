@@ -877,6 +877,16 @@ struct PageSession {
                     move(script_url), move(scope), update_via_cache);
             };
 
+        view->on_cache_storage_owner_mutation =
+            [this](u16 operation, ByteString origin, ByteString key,
+                   ByteString value, u64 owner_generation) {
+                return cache_storage_owner_mutation(
+                    operation, origin, key, value, owner_generation);
+            };
+        view->on_cache_storage_owner_batch_active = [this] {
+            return cache_storage_batch_active;
+        };
+
         view->on_request_notification_permission = [this] {
             return request_notification_permission();
         };
@@ -975,7 +985,30 @@ struct PageSession {
         result.origin = ByteString { response.origin };
         result.script_url = ByteString { response.script_url };
         result.scope = ByteString { response.scope };
+        if (result.accepted && result.found) {
+            if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_BEGIN_CACHE_BATCH)
+                cache_storage_batch_active = true;
+            else if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_CACHE_BATCH ||
+                     operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_ABORT_CACHE_BATCH)
+                cache_storage_batch_active = false;
+        }
         return result;
+    }
+
+    bool cache_storage_owner_mutation(u16 operation, ByteString origin,
+                                      ByteString key, ByteString value,
+                                      u64 owner_generation)
+    {
+        if (s_service_worker_owner_fd < 0 || origin.is_empty() ||
+            origin.length() >= RIN_WEBCONTENT_URL_MAX || key.is_empty() ||
+            key.length() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_KEY_BYTES ||
+            value.length() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_VALUE_BYTES)
+            return false;
+        return RinLadybird::request_cache_storage_owner_mutation(
+            page_id, operation, owner_generation,
+            origin.characters(), origin.length(),
+            key.characters(), key.length(),
+            value.characters(), value.length());
     }
 
     void mark_dirty()
@@ -2467,6 +2500,7 @@ struct PageSession {
     }
 
     u32 page_id { 0 };
+    bool cache_storage_batch_active { false };
     int requested_viewport_width { 800 };
     int requested_viewport_height { 600 };
     int reported_viewport_width { 800 };

@@ -202,6 +202,47 @@ bool Cache::owner_fetch_is_current(Fetch::Request const& request) const
         response.script_url == request_url;
 }
 
+bool Cache::begin_owner_mutation_batch() const
+{
+    if (!m_storage_bottle && m_owner_generation == 0)
+        return true;
+    if (!owner_is_current())
+        return false;
+    auto response = m_page->client().request_service_worker_owner(
+        7u,
+        {}, m_owner_origin, {}, {}, 0u);
+    return response.accepted && response.found &&
+        response.generation == m_owner_generation &&
+        response.origin == m_owner_origin &&
+        response.script_url == m_owner_origin && response.scope == "/";
+}
+
+bool Cache::commit_owner_mutation_batch() const
+{
+    if (!m_storage_bottle && m_owner_generation == 0)
+        return true;
+    if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
+        return false;
+    auto response = m_page->client().request_service_worker_owner(
+        8u,
+        {}, m_owner_origin, {}, {}, 0u);
+    return response.accepted && response.found &&
+        response.generation == m_owner_generation &&
+        response.origin == m_owner_origin &&
+        response.script_url == m_owner_origin && response.scope == "/";
+}
+
+void Cache::abort_owner_mutation_batch() const
+{
+    if (!m_storage_bottle && m_owner_generation == 0)
+        return;
+    if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
+        return;
+    (void)m_page->client().request_service_worker_owner(
+        9u,
+        {}, m_owner_origin, {}, {}, 0u);
+}
+
 GC::Ref<WebIDL::Promise> Cache::owner_rejected_promise() const
 {
     return WebIDL::create_rejected_promise_from_exception(
@@ -402,15 +443,18 @@ void Cache::restore_entries()
     quick_sort(m_entries, [](auto const& left, auto const& right) { return left.sequence < right.sequence; });
 }
 
-void Cache::remove_persisted_entries()
+bool Cache::remove_persisted_entries()
 {
     if (!m_storage_bottle)
-        return;
+        return true;
+    if (!owner_is_current())
+        return false;
     auto prefix = storage_key_prefix();
     for (auto const& key : m_storage_bottle->keys()) {
         if (key.bytes_as_string_view().starts_with(prefix.bytes_as_string_view()))
             m_storage_bottle->remove(key);
     }
+    return true;
 }
 
 GC::Ref<WebIDL::Promise> Cache::persist_entry(Entry entry, GC::Ref<Fetch::Response> response)
@@ -436,12 +480,59 @@ GC::Ref<WebIDL::Promise> Cache::persist_entry(Entry entry, GC::Ref<Fetch::Respon
                 WebIDL::reject_promise(realm(), promise, JS::TypeError::create(realm(), "Cache response body could not be read"sv));
                 return JS::js_undefined();
             }
+            const auto original_entries = m_entries;
+            const auto original_next_sequence = m_next_sequence;
             if (entry.sequence == 0)
                 entry.sequence = m_next_sequence++;
             auto key = storage_key_for(*entry.request);
             auto serialized = serialize_entry(entry, bytes.value().bytes());
-            if (!serialized.has_value() || !store_serialized_entry(key, serialized.value())) {
+            if (!serialized.has_value()) {
+                m_entries = original_entries;
+                m_next_sequence = original_next_sequence;
                 WebIDL::reject_promise(realm(), promise, WebIDL::QuotaExceededError::create(realm(), "Cache storage quota exceeded"_utf16));
+                return JS::js_undefined();
+            }
+
+            struct StorageRecord {
+                String key;
+                String value;
+            };
+            Vector<StorageRecord> original_storage;
+            auto prefix = storage_key_prefix();
+            if (m_storage_bottle) {
+                for (auto const& storage_key : m_storage_bottle->keys()) {
+                    if (!storage_key.bytes_as_string_view().starts_with(
+                            prefix.bytes_as_string_view()))
+                        continue;
+                    auto value = m_storage_bottle->get(storage_key);
+                    if (value.has_value())
+                        original_storage.append({ storage_key, value.release_value() });
+                }
+            }
+            if (!begin_owner_mutation_batch()) {
+                m_entries = original_entries;
+                m_next_sequence = original_next_sequence;
+                WebIDL::reject_promise(realm(), promise, WebIDL::InvalidStateError::create(
+                    realm(), "Cache profile owner could not begin a durable write"_utf16));
+                return JS::js_undefined();
+            }
+            const bool stored = store_serialized_entry(key, serialized.value());
+            const bool committed = stored && commit_owner_mutation_batch();
+            if (!committed) {
+                if (m_storage_bottle) {
+                    for (auto const& storage_key : m_storage_bottle->keys()) {
+                        if (storage_key.bytes_as_string_view().starts_with(
+                                prefix.bytes_as_string_view()))
+                            m_storage_bottle->remove(storage_key);
+                    }
+                    for (auto const& record : original_storage)
+                        (void)m_storage_bottle->set(record.key, record.value);
+                }
+                m_entries = original_entries;
+                m_next_sequence = original_next_sequence;
+                abort_owner_mutation_batch();
+                WebIDL::reject_promise(realm(), promise, WebIDL::QuotaExceededError::create(
+                    realm(), "Cache storage quota exceeded"_utf16));
                 return JS::js_undefined();
             }
             commit_entry(move(entry));
@@ -746,6 +837,13 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
                         serialized_entries.append(serialized.release_value());
                     }
 
+                    if (!begin_owner_mutation_batch()) {
+                        WebIDL::reject_promise(realm(), promise,
+                            WebIDL::InvalidStateError::create(
+                                realm(), "Cache profile owner could not begin addAll"_utf16));
+                        return;
+                    }
+
                     bool stored = true;
                     if (m_storage_bottle) {
                         for (size_t i = 0; i < staged_entries.size(); ++i) {
@@ -757,7 +855,9 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
                         }
                     }
 
-                    if (!stored) {
+                    const bool owner_committed = stored &&
+                        commit_owner_mutation_batch();
+                    if (!owner_committed) {
                         // Restore the durable namespace before restoring the
                         // in-memory view.  The original namespace was within
                         // quota, so these exact records fit again unless the
@@ -774,6 +874,7 @@ GC::Ref<WebIDL::Promise> Cache::add_all(Vector<Fetch::RequestInfo> const& inputs
                         }
                         m_entries = move(original_entries);
                         m_next_sequence = original_next_sequence;
+                        abort_owner_mutation_batch();
                         WebIDL::reject_promise(realm(), promise, WebIDL::QuotaExceededError::create(realm(), "Cache storage quota exceeded"_utf16));
                         return;
                     }
@@ -851,17 +952,43 @@ GC::Ref<WebIDL::Promise> Cache::delete_(Fetch::RequestInfo const& input, CacheQu
     if (request.is_exception())
         return WebIDL::create_rejected_promise_from_exception(realm(), request.release_error());
     Vector<String> removed_keys;
-    auto removed = m_entries.remove_all_matching([&](auto const& entry) {
+    Vector<String> original_values;
+    for (auto const& entry : m_entries) {
         if (!matches(entry, *request.value(), options))
-            return false;
-        removed_keys.append(storage_key_for(*entry.request));
-        return true;
-    });
+            continue;
+        auto key = storage_key_for(*entry.request);
+        removed_keys.append(key);
+        if (m_storage_bottle) {
+            auto value = m_storage_bottle->get(key);
+            original_values.append(value.value_or(String {}));
+        } else {
+            original_values.append({});
+        }
+    }
+    if (removed_keys.is_empty())
+        return WebIDL::create_resolved_promise(realm(), JS::Value(false));
+
+    if (!begin_owner_mutation_batch())
+        return owner_rejected_promise();
     if (m_storage_bottle) {
         for (auto const& key : removed_keys)
             m_storage_bottle->remove(key);
     }
-    return WebIDL::create_resolved_promise(realm(), JS::Value(removed));
+    if (!commit_owner_mutation_batch()) {
+        if (m_storage_bottle) {
+            for (size_t index = 0; index < removed_keys.size(); ++index) {
+                if (!original_values[index].is_empty())
+                    (void)m_storage_bottle->set(
+                        removed_keys[index], original_values[index]);
+            }
+        }
+        abort_owner_mutation_batch();
+        return owner_rejected_promise();
+    }
+    m_entries.remove_all_matching([&](auto const& entry) {
+        return matches(entry, *request.value(), options);
+    });
+    return WebIDL::create_resolved_promise(realm(), JS::Value(true));
 }
 
 GC::Ref<WebIDL::Promise> Cache::keys(Optional<Fetch::RequestInfo> const& input, CacheQueryOptions const& options)
