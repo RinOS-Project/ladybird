@@ -123,28 +123,39 @@ void RinHTTPConnectionPool::put(ByteString const& key, OwnPtr<Core::BufferedSock
     // \u6d41\u308c\u3066\u304d\u305f\u30d0\u30a4\u30c8\u3092\u898b\u306a\u3044\u3088\u3046\u306b on_ready_to_read \u3092\u5916\u3059\u3002
     socket->on_ready_to_read = nullptr;
 
+    if (m_next_entry_id == 0 || m_next_entry_id == UINT64_MAX) {
+        dbgln("[RinHTTPPool] put({}): entry id exhausted, not pooling", key);
+        return;
+    }
+
+    PooledSocket pooled;
+    pooled.entry_id = m_next_entry_id++;
+    pooled.socket = move(socket);
+
     auto& slots = m_pools.ensure(key);
     if (slots.size() >= MAX_PER_HOST) {
         // LRU: \u53e4\u3044\u65b9 (vector \u5148\u982d) \u3092\u7834\u68c4\u3002
         dbgln("[RinHTTPPool] put({}): pool full ({}), evicting oldest", key, slots.size());
+        if (slots[0].idle_timer)
+            slots[0].idle_timer->stop();
         slots.remove(0);
     }
 
-    PooledSocket pooled;
-    pooled.socket = move(socket);
     auto key_copy = key;
-    pooled.idle_timer = Core::Timer::create_single_shot(IDLE_TIMEOUT_MS, [this, key_copy]() mutable {
+    auto entry_id = pooled.entry_id;
+    pooled.idle_timer = Core::Timer::create_single_shot(IDLE_TIMEOUT_MS, [this, key_copy, entry_id]() mutable {
         auto it = m_pools.find(key_copy);
         if (it == m_pools.end())
             return;
-        // \u30bf\u30a4\u30e0\u30a2\u30a6\u30c8\u3057\u305f idle_timer \u3068\u4e00\u81f4\u3059\u308b\u30a8\u30f3\u30c8\u30ea\u3092\u524a\u9664\u3059\u308b\u3002
-        // \u7c21\u6613\u5b9f\u88c5: \u5148\u982d (\u6700\u53e4) \u3092\u843d\u3068\u3059\u3002
-        if (!it->value.is_empty()) {
-            it->value.remove(0);
-            dbgln("[RinHTTPPool] idle timeout({}): dropped one, remaining={}", key_copy, it->value.size());
+        for (size_t index = 0; index < it->value.size(); ++index) {
+            if (it->value[index].entry_id != entry_id)
+                continue;
+            it->value.remove(index);
+            dbgln("[RinHTTPPool] idle timeout({}): dropped entry {}, remaining={}", key_copy, entry_id, it->value.size());
+            if (it->value.is_empty())
+                m_pools.remove(it);
+            return;
         }
-        if (it->value.is_empty())
-            m_pools.remove(it);
     });
     pooled.idle_timer->start();
     slots.append(move(pooled));

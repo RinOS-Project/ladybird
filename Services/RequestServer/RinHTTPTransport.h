@@ -58,10 +58,12 @@ private:
     RinHTTPConnectionPool() = default;
 
     struct PooledSocket {
+        u64 entry_id { 0 };
         OwnPtr<Core::BufferedSocketBase> socket;
         RefPtr<Core::Timer> idle_timer;
     };
     HashMap<ByteString, Vector<PooledSocket>> m_pools;
+    u64 m_next_entry_id { 1 };
     static constexpr size_t MAX_PER_HOST = 4;
     static constexpr int IDLE_TIMEOUT_MS = 30000;
 };
