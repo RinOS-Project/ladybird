@@ -129,7 +129,7 @@ static bool rinos_download_https_url(URL::URL const& url)
     auto serialized = url.serialize().to_byte_string();
     return !url.includes_credentials() &&
            rin_browser_download_url_valid(
-               serialized.characters_without_null_termination(),
+               serialized.characters(),
                serialized.length());
 }
 
@@ -185,13 +185,13 @@ static ByteString rinos_download_fallback_filename(
 {
     if (!suggested_filename.is_empty() &&
         rin_browser_download_filename_valid(
-            suggested_filename.characters_without_null_termination(),
+            suggested_filename.characters(),
             suggested_filename.length()))
         return suggested_filename;
     auto filename = url.basename();
     if (filename.is_empty() ||
         !rin_browser_download_filename_valid(
-            filename.characters_without_null_termination(), filename.length()))
+            filename.characters(), filename.length()))
         return "download"sv;
     return filename;
 }
@@ -234,7 +234,8 @@ private:
     FileDownloader::DownloadEventCallback m_callback;
 };
 
-class RinPortalStreamingTransfer final : public RefCounted<RinPortalStreamingTransfer> {
+class RinPortalStreamingTransfer final
+    : public RefCounted<RinPortalStreamingTransfer> {
 public:
     enum class EnqueueResult {
         Accepted,
@@ -350,7 +351,8 @@ public:
         m_changed.broadcast();
     }
 
-    void run(ByteString session_url, ByteString event_url,
+    void run(NonnullRefPtr<RinPortalStreamingTransfer> stream,
+             ByteString session_url, ByteString event_url,
              ByteString referrer, ByteString filename,
              u64 content_length,
              u64 generation, ByteString validator, u64 resume_offset)
@@ -705,7 +707,8 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
                 transfer_id, DownloadFailure::ResponseInvalid);
             return;
         }
-        request_headers->set({ "Range"sv, ByteString { range_header } });
+        request_headers->set({ "Range"sv,
+            ByteString { range_header.data(), range_header.size() } });
         request_headers->set({ "Accept-Encoding"sv, "identity"sv });
         request_headers->set({ "If-Range"sv, resume_validator });
     }
@@ -927,7 +930,7 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
                     length = range_resume ? resume_total_bytes : declared_length,
                     generation = resume_generation, validator = move(validator),
                     offset = range_resume ? resume_committed_bytes : 0u]() mutable -> intptr_t {
-                    stream->run(move(session_url), move(event_url),
+                    stream->run(stream, move(session_url), move(event_url),
                                 move(serialized_referrer), move(filename),
                                 length, generation, move(validator), offset);
                     return 0;
