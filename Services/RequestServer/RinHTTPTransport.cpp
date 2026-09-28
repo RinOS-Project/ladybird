@@ -371,8 +371,10 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
 
     // Stage 3-C: \u30d7\u30fc\u30eb\u304b\u3089 idle socket \u3092\u53d6\u308a\u51fa\u305b\u306a\u3044\u304b\u8a66\u3059\u3002
     fetch->m_pool_key = RinHTTPConnectionPool::make_key(url);
-    if (auto pooled = RinHTTPConnectionPool::the().take(fetch->m_pool_key);
-        !fetch->m_disable_pooling && pooled) {
+    auto pooled = fetch->m_disable_pooling
+        ? OwnPtr<Core::BufferedSocketBase> {}
+        : RinHTTPConnectionPool::the().take(fetch->m_pool_key);
+    if (pooled) {
         dbgln("[RinHTTP] reusing pooled socket for {}", fetch->m_pool_key);
         fetch->m_socket = move(pooled);
         fetch->m_reused_from_pool = true;
