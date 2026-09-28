@@ -1031,8 +1031,14 @@ void ViewImplementation::initialize_context_menus()
          * download event as an <a download> request. Calling FileDownloader
          * directly would bypass Browser's durable row, receipt, and resume
          * state. */
-        if (on_request_download)
-            on_request_download(m_context_menu_url, {});
+        if (on_request_download) {
+            auto origin = m_url.origin();
+            auto referrer = !origin.is_opaque() &&
+                    origin.scheme() == "https"sv
+                ? origin.serialize().to_byte_string()
+                : ByteString {};
+            on_request_download(m_context_menu_url, {}, move(referrer));
+        }
 #else
         auto download_path = Application::the().path_for_downloaded_file(m_context_menu_url.basename());
         if (download_path.is_error())

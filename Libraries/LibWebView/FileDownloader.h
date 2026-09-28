@@ -50,7 +50,7 @@ public:
         Completed,
     };
     using DownloadEventCallback = Function<void(u64, DownloadEvent,
-        ByteString, ByteString, u64, u64, ByteString, u64)>;
+        ByteString, ByteString, ByteString, u64, u64, ByteString, u64)>;
 
     /* RinOS never accepts a caller-selected pathname for a web download.
      * File Manager owns the interactive destination selection and returns a
@@ -63,7 +63,9 @@ public:
                        u64 resume_generation = 0,
                        ByteString resume_validator = {},
                        u64 resume_total_bytes = 0,
-                       u64 resume_committed_bytes = 0);
+                       u64 resume_committed_bytes = 0,
+                       ByteString referrer = {}, u8 redirect_hops = 0,
+                       ByteString resume_stage_url = {});
     /* Stop a live request by its opaque transfer identity. The transfer
      * object owns the portal abort and emits a single Cancelled event. */
     bool cancel_download(u64 transfer_id);

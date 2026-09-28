@@ -13,6 +13,7 @@
 #    include <AK/WeakPtr.h>
 #    include "../../../../src/apps/browser/rin_browser_download_portal_client.h"
 #    include "../../../../src/apps/browser/rin_browser_download_filename.h"
+#    include "../../../../public-base/libs/rinruntime/include/rinruntime/download_policy.h"
 #    include <LibCore/EventLoop.h>
 #    include <LibThreading/ConditionVariable.h>
 #    include <LibThreading/Mutex.h>
@@ -24,6 +25,8 @@ extern "C" int rin_current_process_instance_cookie(u64* cookieOut)
 #include <LibHTTP/HeaderList.h>
 #include <LibRequests/Request.h>
 #include <LibRequests/RequestClient.h>
+#include <LibURL/Parser.h>
+#include <LibURL/URL.h>
 #include <LibWeb/Loader/UserAgent.h>
 #include <LibWebView/Application.h>
 #include <LibWebView/FileDownloader.h>
@@ -119,6 +122,80 @@ static bool rinos_download_strong_etag(StringView value)
     return true;
 }
 
+static constexpr u8 s_max_download_redirects = 8u;
+
+static bool rinos_download_https_url(URL::URL const& url)
+{
+    auto serialized = url.serialize().to_byte_string();
+    return !url.includes_credentials() &&
+           rin_browser_download_url_valid(
+               serialized.characters_without_null_termination(),
+               serialized.length());
+}
+
+static bool rinos_download_redirect_status(u32 status)
+{
+    return status == 301u || status == 302u || status == 303u ||
+           status == 307u || status == 308u;
+}
+
+static Optional<URL::URL> rinos_download_redirect_target(
+    URL::URL const& source, HTTP::HeaderList const& response_headers,
+    bool range_resume, u8 redirect_hops)
+{
+    if (redirect_hops >= s_max_download_redirects)
+        return {};
+    Optional<ByteString> location;
+    bool duplicate_location = false;
+    response_headers.for_each_header_value("Location"sv,
+        [&](StringView value) {
+            if (location.has_value()) {
+                duplicate_location = true;
+                return IterationDecision::Break;
+            }
+            location = ByteString { value };
+            return IterationDecision::Continue;
+        });
+    if (!location.has_value() || duplicate_location || location->is_empty())
+        return {};
+    auto target = source.complete_url(location->view());
+    if (!target.has_value() || !rinos_download_https_url(*target) ||
+        (source.scheme() == "https"sv && target->scheme() != "https"sv) ||
+        (range_resume &&
+         !source.origin().is_same_origin(target->origin())))
+        return {};
+    target->set_fragment({});
+    return target;
+}
+
+static ByteString rinos_download_referrer_for_url(
+    URL::URL const& target, ByteString const& referrer)
+{
+    if (referrer.is_empty())
+        return {};
+    auto parsed = URL::Parser::basic_parse(referrer);
+    if (!parsed.has_value() || !rinos_download_https_url(*parsed) ||
+        !target.origin().is_same_origin(parsed->origin()))
+        return {};
+    return ByteString { parsed->origin().serialize().to_byte_string() };
+}
+
+static ByteString rinos_download_fallback_filename(
+    URL::URL const& url, ByteString suggested_filename)
+{
+    if (!suggested_filename.is_empty() &&
+        rin_browser_download_filename_valid(
+            suggested_filename.characters_without_null_termination(),
+            suggested_filename.length()))
+        return suggested_filename;
+    auto filename = url.basename();
+    if (filename.is_empty() ||
+        !rin_browser_download_filename_valid(
+            filename.characters_without_null_termination(), filename.length()))
+        return "download"sv;
+    return filename;
+}
+
 class RinDownloadFailureReporter final : public RefCounted<RinDownloadFailureReporter> {
 public:
     explicit RinDownloadFailureReporter(FileDownloader::DownloadFailureCallback callback)
@@ -144,12 +221,13 @@ public:
     }
 
     void report(u64 transfer_id, FileDownloader::DownloadEvent event,
-                ByteString url, ByteString filename, u64 size,
+                ByteString url, ByteString referrer, ByteString filename, u64 size,
                 u64 generation, ByteString validator, u64 committed_bytes)
     {
         if (m_callback)
-            m_callback(transfer_id, event, move(url), move(filename), size,
-                       generation, move(validator), committed_bytes);
+            m_callback(transfer_id, event, move(url), move(referrer),
+                       move(filename), size, generation, move(validator),
+                       committed_bytes);
     }
 
 private:
@@ -236,6 +314,31 @@ public:
         return EnqueueResult::Accepted;
     }
 
+    bool set_redirect_target(URL::URL target)
+    {
+        Threading::MutexLocker locker(m_mutex);
+        if (m_failed || m_response_finished || m_redirect_target.has_value())
+            return false;
+        m_redirect_target = move(target);
+        return true;
+    }
+
+    Optional<URL::URL> take_redirect_target()
+    {
+        Threading::MutexLocker locker(m_mutex);
+        if (!m_redirect_target.has_value())
+            return {};
+        auto target = move(m_redirect_target);
+        m_redirect_target = {};
+        return target;
+    }
+
+    bool redirect_pending()
+    {
+        Threading::MutexLocker locker(m_mutex);
+        return m_redirect_target.has_value();
+    }
+
     void response_finished(u64 total_size, Optional<Requests::NetworkError> network_error)
     {
         Threading::MutexLocker locker(m_mutex);
@@ -247,12 +350,14 @@ public:
         m_changed.broadcast();
     }
 
-    void run(ByteString url, ByteString filename, u64 content_length,
+    void run(ByteString session_url, ByteString event_url,
+             ByteString referrer, ByteString filename,
+             u64 content_length,
              u64 generation, ByteString validator, u64 resume_offset)
     {
         RinBrowserDownloadPortalSessionV1 session {};
         rin_browser_download_portal_session_init(&session);
-        auto url_view = url.view();
+        auto url_view = session_url.view();
         auto filename_view = filename.view();
         auto result = resume_offset == 0u
             ? rin_browser_download_portal_session_begin_with_request_id(
@@ -302,14 +407,15 @@ public:
                 return true;
             event_loop->deferred_invoke([
                 request = m_request, event_reporter = m_event_reporter,
-                transfer_id = m_transfer_id, url, filename, content_length,
-                generation, validator, committed = session.written_length] {
+                transfer_id = m_transfer_id, event_url, referrer, filename,
+                content_length, generation, validator,
+                committed = session.written_length] {
                 if (auto strong_request = request.strong_ref())
                     (void)strong_request->stop();
                 event_reporter->report(
                     transfer_id, FileDownloader::DownloadEvent::Paused,
-                    url, filename, content_length, generation, validator,
-                    committed);
+                    event_url, referrer, filename, content_length, generation,
+                    validator, committed);
             });
             return true;
         };
@@ -368,12 +474,13 @@ public:
                         event_loop->deferred_invoke([
                             event_reporter = m_event_reporter,
                             transfer_id = m_transfer_id,
-                            url, filename, content_length, generation,
+                            event_url, referrer, filename, content_length, generation,
                             validator, committed = session.written_length]() mutable {
                             event_reporter->report(
                                 transfer_id, FileDownloader::DownloadEvent::Progress,
-                                move(url), move(filename), content_length,
-                                generation, move(validator), committed);
+                                move(event_url), move(referrer), move(filename),
+                                content_length, generation, move(validator),
+                                committed);
                         });
                     }
                 }
@@ -448,13 +555,14 @@ public:
                     event_loop->deferred_invoke([
                         event_reporter = m_event_reporter,
                         transfer_id = m_transfer_id,
-                        url = move(url), filename = move(filename),
+                        url = move(event_url), referrer = move(referrer),
+                        filename = move(filename),
                         size = receipt.content_length, generation,
                         validator = move(validator)]() mutable {
                         event_reporter->report(
                             transfer_id, FileDownloader::DownloadEvent::Completed,
-                            move(url), move(filename), size, generation,
-                            move(validator), size);
+                            move(url), move(referrer), move(filename), size,
+                            generation, move(validator), size);
                     });
                 }
             }
@@ -501,6 +609,7 @@ private:
     Threading::ConditionVariable m_changed;
     ByteBuffer m_chunk;
     Optional<Requests::NetworkError> m_network_error;
+    Optional<URL::URL> m_redirect_target;
     u64 m_response_total_size { 0 };
     bool m_receiving_started { false };
     bool m_chunk_ready { false };
@@ -520,7 +629,9 @@ void FileDownloader::download_file(URL::URL const& url, ByteString suggested_fil
                                     u64 resume_generation,
                                     ByteString resume_validator,
                                     u64 resume_total_bytes,
-                                    u64 resume_committed_bytes)
+                                    u64 resume_committed_bytes,
+                                    ByteString referrer, u8 redirect_hops,
+                                    ByteString resume_stage_url)
 #else
 void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
 #endif
@@ -542,6 +653,17 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
     RinRuntime::DownloadRangeRequest range_request;
     const bool range_resume = resume_committed_bytes != 0u;
     if (range_resume) {
+        if (resume_stage_url.is_empty())
+            resume_stage_url = url.serialize().to_byte_string();
+        auto parsed_stage_url = URL::Parser::basic_parse(resume_stage_url.view());
+        if (!rinos_download_https_url(url) ||
+            !parsed_stage_url.has_value() ||
+            !rinos_download_https_url(*parsed_stage_url) ||
+            !parsed_stage_url->origin().is_same_origin(url.origin())) {
+            if (on_failure)
+                on_failure(transfer_id, DownloadFailure::ResponseInvalid);
+            return;
+        }
         range_request.requestId = transfer_id;
         range_request.generation = resume_generation;
         range_request.offset = resume_committed_bytes;
@@ -554,23 +676,33 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
         }
         transfer_generation = resume_generation;
     } else if (resume_generation != 0u || !resume_validator.is_empty() ||
-               resume_total_bytes != 0u) {
+               resume_total_bytes != 0u || !resume_stage_url.is_empty()) {
         if (on_failure)
             on_failure(transfer_id, DownloadFailure::ResponseInvalid);
         return;
     }
 #endif
 
-    // FIXME: What other request headers should be set? Perhaps we want to use exactly the same request headers used to
-    //        originally fetch the image in WebContent.
+#if defined(AK_OS_RINOS)
+    auto failure_reporter = adopt_ref(*new RinDownloadFailureReporter(move(on_failure)));
+    auto event_reporter = adopt_ref(*new RinDownloadEventReporter(move(on_event)));
+    if (!rinos_download_https_url(url)) {
+        failure_reporter->report(transfer_id, DownloadFailure::UnsafeURL);
+        return;
+    }
+    referrer = rinos_download_referrer_for_url(url, referrer);
+#endif
+
     auto request_headers = HTTP::HeaderList::create();
     request_headers->set({ "User-Agent"sv, Web::default_user_agent });
 #if defined(AK_OS_RINOS)
+    if (!referrer.is_empty())
+        request_headers->set({ "Referer"sv, referrer });
     if (range_resume) {
         std::string range_header;
         if (!range_request.makeRangeHeader(range_header)) {
-            if (on_failure)
-                on_failure(transfer_id, DownloadFailure::ResponseInvalid);
+            failure_reporter->report(
+                transfer_id, DownloadFailure::ResponseInvalid);
             return;
         }
         request_headers->set({ "Range"sv, ByteString { range_header } });
@@ -579,10 +711,6 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
     }
 #endif
 
-#if defined(AK_OS_RINOS)
-    auto failure_reporter = adopt_ref(*new RinDownloadFailureReporter(move(on_failure)));
-    auto event_reporter = adopt_ref(*new RinDownloadEventReporter(move(on_event)));
-#endif
     auto request = Application::request_server_client().start_request(
         "GET"sv, url, *request_headers, {},
 #if defined(AK_OS_RINOS)
@@ -594,19 +722,8 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
     if (!request) {
 #if defined(AK_OS_RINOS)
         auto failure_url = url.serialize().to_byte_string();
-        auto failure_filename = suggested_filename;
-        if (failure_filename.is_empty() ||
-            !rin_browser_download_filename_valid(
-                failure_filename.characters_without_null_termination(),
-                failure_filename.length())) {
-            failure_filename = url.basename();
-        }
-        if (failure_filename.is_empty() ||
-            !rin_browser_download_filename_valid(
-                failure_filename.characters_without_null_termination(),
-                failure_filename.length())) {
-            failure_filename = "download"sv;
-        }
+        auto failure_filename = rinos_download_fallback_filename(
+            url, move(suggested_filename));
         /* Allocate the Browser row before reporting a start failure.  The
          * failure callback can then attach to this bounded metadata record
          * and the user can retry the same opaque transfer identity. */
@@ -614,7 +731,7 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
             failure_url.length() < RIN_BROWSER_DOWNLOAD_MAX_URL_BYTES) {
             event_reporter->report(
                 transfer_id, DownloadEvent::Started, move(failure_url),
-                move(failure_filename),
+                referrer, move(failure_filename),
                 range_resume ? resume_total_bytes
                              : RIN_BROWSER_DOWNLOAD_UNKNOWN_CONTENT_LENGTH,
                 transfer_generation,
@@ -636,17 +753,59 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
         event_reporter, transfer_id));
     m_cancel_callbacks.set(transfer_id, [stream] { stream->cancel(); });
     m_pause_callbacks.set(transfer_id, [stream] { return stream->pause(); });
+    auto redirect_suggested_filename = suggested_filename;
+    auto redirect_validator = resume_validator;
+    auto redirect_stage_url = resume_stage_url;
     request->set_unbuffered_request_callbacks(
         [url, suggested_filename = move(suggested_filename), stream,
-            event_reporter, transfer_id, range_resume, range_request,
+            referrer, request_weak, event_reporter, transfer_id, range_resume,
+            range_request, redirect_hops, resume_stage_url,
             resume_generation = transfer_generation,
             resume_validator = move(resume_validator),
             resume_total_bytes, resume_committed_bytes](NonnullRefPtr<HTTP::HeaderList> response_headers,
                             Optional<u32> response_code,
                             Optional<String> const&) mutable {
+            auto report_started = [&] {
+                auto event_url = url.serialize().to_byte_string();
+                auto event_filename = rinos_download_fallback_filename(
+                    url, suggested_filename);
+                if (event_url.is_empty() ||
+                    event_url.length() >= RIN_BROWSER_DOWNLOAD_MAX_URL_BYTES)
+                    return;
+                event_reporter->report(
+                    transfer_id, DownloadEvent::Started, move(event_url),
+                    referrer, move(event_filename),
+                    range_resume ? resume_total_bytes
+                                 : RIN_BROWSER_DOWNLOAD_UNKNOWN_CONTENT_LENGTH,
+                    resume_generation,
+                    range_resume ? resume_validator : ByteString {},
+                    range_resume ? resume_committed_bytes : 0u);
+            };
+            auto reject_response = [&](DownloadFailure failure,
+                                       StringView message) {
+                report_started();
+                stream->fail(failure, message);
+            };
+
+            if (response_code.has_value() &&
+                rinos_download_redirect_status(*response_code)) {
+                auto target = rinos_download_redirect_target(
+                    url, *response_headers, range_resume, redirect_hops);
+                if (target.has_value() &&
+                    stream->set_redirect_target(target.release_value())) {
+                    Core::deferred_invoke([request_weak] {
+                        if (auto strong_request = request_weak.strong_ref())
+                            (void)strong_request->stop();
+                    });
+                    return;
+                }
+                reject_response(DownloadFailure::ResponseInvalid,
+                    "Download redirect was rejected by the bounded redirect policy"sv);
+                return;
+            }
             if (response_code.has_value() && *response_code >= 400) {
-                stream->fail(range_resume ? DownloadFailure::ResponseInvalid
-                                          : DownloadFailure::HttpFailed,
+                reject_response(range_resume ? DownloadFailure::ResponseInvalid
+                                             : DownloadFailure::HttpFailed,
                     range_resume
                         ? "Download server rejected the requested range"sv
                         : "Download server returned an error response"sv);
@@ -655,7 +814,7 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
             if (!response_code.has_value() ||
                 (range_resume ? *response_code != 206u
                               : (*response_code < 200 || *response_code >= 300))) {
-                stream->fail(DownloadFailure::ResponseInvalid,
+                reject_response(DownloadFailure::ResponseInvalid,
                     range_resume
                         ? "Download resume did not receive a valid partial response"sv
                         : "Download did not receive a successful HTTP response"sv);
@@ -668,13 +827,13 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
                 declared_length = content_length.get<u64>();
                 if (declared_length == 0u ||
                     declared_length > RIN_BROWSER_DOWNLOAD_MAX_BYTES) {
-                    stream->fail(DownloadFailure::ResponseInvalid,
+                    reject_response(DownloadFailure::ResponseInvalid,
                         "Download response Content-Length is not supported"sv);
                     return;
                 }
             } else if (!content_length.has<Empty>() ||
                        response_headers->get("Content-Length"sv).has_value()) {
-                stream->fail(DownloadFailure::ResponseInvalid,
+                reject_response(DownloadFailure::ResponseInvalid,
                     "Download response has a malformed Content-Length"sv);
                 return;
             }
@@ -683,7 +842,7 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
                 (!content_length.has<u64>() ||
                  content_length.get<u64>() !=
                      resume_total_bytes - resume_committed_bytes)) {
-                stream->fail(DownloadFailure::ResponseInvalid,
+                reject_response(DownloadFailure::ResponseInvalid,
                     "Download range length did not match the saved offset"sv);
                 return;
             }
@@ -692,7 +851,7 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
                 auto encoding = response_headers->get("Content-Encoding"sv);
                 if (encoding.has_value() &&
                     !encoding->equals_ignoring_ascii_case("identity"sv)) {
-                    stream->fail(DownloadFailure::ResponseInvalid,
+                    reject_response(DownloadFailure::ResponseInvalid,
                         "Compressed download ranges are not supported"sv);
                     return;
                 }
@@ -704,7 +863,7 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
                 validator = ByteString { etag->characters(), etag->length() };
             }
             if (range_resume && validator != resume_validator) {
-                stream->fail(DownloadFailure::ResponseInvalid,
+                reject_response(DownloadFailure::ResponseInvalid,
                     "Download validator changed during resume"sv);
                 return;
             }
@@ -723,7 +882,7 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
                         resume_generation,
                         std::string(validator.characters(), validator.length()),
                         response)) {
-                    stream->fail(DownloadFailure::ResponseInvalid,
+                    reject_response(DownloadFailure::ResponseInvalid,
                         "Download Content-Range did not match the saved receipt"sv);
                     return;
                 }
@@ -737,10 +896,8 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
                     server_filename, sizeof(server_filename), &server_filename_size)) {
                 suggested_filename = ByteString { server_filename, server_filename_size };
             }
-            if (suggested_filename.is_empty())
-                suggested_filename = url.basename();
-            if (suggested_filename.is_empty())
-                suggested_filename = "download"sv;
+            suggested_filename = rinos_download_fallback_filename(
+                url, move(suggested_filename));
             const u64 full_length = range_resume ? resume_total_bytes
                                                   : declared_length;
             const bool can_pause = resume_generation != 0u &&
@@ -748,27 +905,31 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
                 full_length <= RIN_BROWSER_DOWNLOAD_MAX_BYTES &&
                 !validator.is_empty();
             if (!stream->begin_receiving(can_pause)) {
-                stream->fail(DownloadFailure::TransferFailed,
+                reject_response(DownloadFailure::TransferFailed,
                     "Secure download transfer could not start"sv);
                 return;
             }
 
             event_reporter->report(
                 transfer_id, FileDownloader::DownloadEvent::Started,
-                url.serialize().to_byte_string(), suggested_filename,
+                url.serialize().to_byte_string(), referrer, suggested_filename,
                 range_resume ? resume_total_bytes : declared_length,
                 resume_generation, validator,
                 range_resume ? resume_committed_bytes : 0u);
 
             auto worker = Threading::Thread::try_create("rin-download"sv,
                 [stream,
-                    serialized_url = url.serialize().to_byte_string(),
+                    session_url = range_resume
+                        ? resume_stage_url : url.serialize().to_byte_string(),
+                    event_url = url.serialize().to_byte_string(),
+                    serialized_referrer = referrer,
                     filename = move(suggested_filename),
                     length = range_resume ? resume_total_bytes : declared_length,
                     generation = resume_generation, validator = move(validator),
                     offset = range_resume ? resume_committed_bytes : 0u]() mutable -> intptr_t {
-                    stream->run(move(serialized_url), move(filename), length,
-                                generation, move(validator), offset);
+                    stream->run(move(session_url), move(event_url),
+                                move(serialized_referrer), move(filename),
+                                length, generation, move(validator), offset);
                     return 0;
                 });
             if (worker.is_error()) {
@@ -782,6 +943,8 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
             transfer_thread->detach();
         },
         [stream, request_weak](ReadonlyBytes bytes) {
+            if (stream->redirect_pending())
+                return;
             auto strong_request = request_weak.strong_ref();
             if (!strong_request || !strong_request->pause_receiving()) {
                 stream->fail(DownloadFailure::TransferFailed,
@@ -802,7 +965,60 @@ void FileDownloader::download_file(URL::URL const& url, LexicalPath destination)
             }
             VERIFY_NOT_REACHED();
         },
-        [this, request_id, transfer_id, stream](u64 total_size, Requests::RequestTimingInfo const&, Optional<Requests::NetworkError> network_error) {
+        [this, request_id, transfer_id, stream, url, referrer,
+            redirect_suggested_filename = move(redirect_suggested_filename),
+            redirect_validator = move(redirect_validator),
+            redirect_stage_url = move(redirect_stage_url), range_resume,
+            transfer_generation, resume_total_bytes, resume_committed_bytes,
+            redirect_hops, failure_reporter, event_reporter](
+            u64 total_size, Requests::RequestTimingInfo const&,
+            Optional<Requests::NetworkError> network_error) mutable {
+            auto redirect_target = stream->take_redirect_target();
+            if (redirect_target.has_value()) {
+                auto target = redirect_target.release_value();
+                auto redirected_referrer =
+                    url.origin().is_same_origin(target.origin())
+                    ? referrer : ByteString {};
+                Core::deferred_invoke([this, request_id, transfer_id,
+                    target = move(target),
+                    redirected_referrer = move(redirected_referrer),
+                    filename = move(redirect_suggested_filename),
+                    validator = move(redirect_validator),
+                    stage_url = move(redirect_stage_url), range_resume,
+                    transfer_generation, resume_total_bytes,
+                    resume_committed_bytes, redirect_hops,
+                    failure_reporter, event_reporter]() mutable {
+                    m_requests.remove(request_id);
+                    m_cancel_callbacks.remove(transfer_id);
+                    m_pause_callbacks.remove(transfer_id);
+
+                    DownloadFailureCallback next_failure =
+                        [failure_reporter](u64 id, DownloadFailure failure) {
+                            failure_reporter->report(id, failure);
+                        };
+                    DownloadEventCallback next_event =
+                        [event_reporter](u64 id, DownloadEvent event,
+                            ByteString event_url, ByteString event_referrer,
+                            ByteString event_filename, u64 size,
+                            u64 generation, ByteString event_validator,
+                            u64 committed_bytes) {
+                            event_reporter->report(id, event,
+                                move(event_url), move(event_referrer),
+                                move(event_filename), size, generation,
+                                move(event_validator), committed_bytes);
+                        };
+                    this->download_file(target, move(filename),
+                        move(next_failure), move(next_event), transfer_id,
+                        range_resume ? transfer_generation : 0u,
+                        move(validator),
+                        range_resume ? resume_total_bytes : 0u,
+                        range_resume ? resume_committed_bytes : 0u,
+                        move(redirected_referrer),
+                        static_cast<u8>(redirect_hops + 1u),
+                        move(stage_url));
+                });
+                return;
+            }
             Core::deferred_invoke([this, request_id, transfer_id] {
                 m_requests.remove(request_id);
                 m_cancel_callbacks.remove(transfer_id);
