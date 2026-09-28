@@ -50,12 +50,23 @@ NonnullRefPtr<PlaybackStream::CreatePromise> PlaybackStreamRinOS::create(OutputS
             return 1;
         }
 
-        state->set_handle(handle);
-        (void)rin_audio_service_stream_set_volume(handle, 100);
-        if (initial_state == OutputState::Playing) {
-            state->set_playing(true);
-            (void)rin_audio_service_stream_start(handle);
+        int setup_result = rin_audio_service_stream_set_volume(handle, 100);
+        if (setup_result >= 0 && initial_state == OutputState::Playing)
+            setup_result = rin_audio_service_stream_start(handle);
+        if (setup_result < 0) {
+            (void)rin_audio_service_stream_destroy(handle);
+            auto event_loop = main_thread_event_loop->take();
+            if (event_loop.is_alive()) {
+                event_loop->deferred_invoke([promise = move(promise)]() mutable {
+                    promise->reject(Error::from_string_literal("Unable to configure RinOS audio output"));
+                });
+            }
+            return 1;
         }
+
+        state->set_handle(handle);
+        if (initial_state == OutputState::Playing)
+            state->set_playing(true);
 
         auto event_loop = main_thread_event_loop->take();
         if (!event_loop.is_alive()) {
