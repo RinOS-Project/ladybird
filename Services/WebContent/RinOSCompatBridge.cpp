@@ -1016,11 +1016,16 @@ struct PageSession {
     {
         if (!rin_webcontent_client_download_resume_v2_valid(&request))
             return false;
+        size_t request_url_length = 0u;
+        if (!rin_webcontent_client_bounded_cstr_length(
+                request.url, sizeof(request.url), 0, 1, &request_url_length))
+            return false;
         for (size_t index = 0u; index < active_downloads.size(); ++index) {
             if (active_downloads[index].transfer_id == request.transfer_id)
                 return false;
         }
-        auto parsed_url = URL::Parser::basic_parse(request.url);
+        auto parsed_url = URL::Parser::basic_parse(
+            StringView { request.url, request_url_length });
         if (!parsed_url.has_value())
             return false;
         for (size_t index = 0u; index < download_events.size();) {
