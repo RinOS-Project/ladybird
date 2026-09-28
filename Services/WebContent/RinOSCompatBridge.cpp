@@ -57,6 +57,7 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -862,6 +863,8 @@ struct PageSession {
         };
 
         view->on_web_content_process_change_for_cross_site_navigation = [this] {
+            view->cache_storage_synchronized_origin = {};
+            view->cache_storage_synchronized_generation = 0;
             rebind_permission_origin(permission_authenticated_origin);
             metrics_dirty = true;
             kick_first_frame_if_needed("process-swap"sv, true);
@@ -882,6 +885,12 @@ struct PageSession {
                    ByteString value, u64 owner_generation) {
                 return cache_storage_owner_mutation(
                     operation, origin, key, value, owner_generation);
+            };
+        view->on_cache_storage_owner_snapshot =
+            [this](ByteString origin, u64 owner_generation,
+                   ByteString& snapshot) {
+                return cache_storage_owner_snapshot(
+                    origin, owner_generation, snapshot);
             };
         view->on_cache_storage_owner_batch_active = [this] {
             return cache_storage_batch_active;
@@ -999,8 +1008,12 @@ struct PageSession {
                                       ByteString key, ByteString value,
                                       u64 owner_generation)
     {
+        const bool initialize = operation ==
+            RIN_WEBCONTENT_CACHE_STORAGE_OWNER_INITIALIZE;
         if (s_service_worker_owner_fd < 0 || origin.is_empty() ||
-            origin.length() >= RIN_WEBCONTENT_URL_MAX || key.is_empty() ||
+            origin.length() >= RIN_WEBCONTENT_URL_MAX ||
+            (key.is_empty() && !initialize) ||
+            (!key.is_empty() && initialize) ||
             key.length() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_KEY_BYTES ||
             value.length() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_VALUE_BYTES)
             return false;
@@ -1009,6 +1022,23 @@ struct PageSession {
             origin.characters(), origin.length(),
             key.characters(), key.length(),
             value.characters(), value.length());
+    }
+
+    bool cache_storage_owner_snapshot(ByteString origin,
+                                      u64 owner_generation,
+                                      ByteString& snapshot)
+    {
+        if (s_service_worker_owner_fd < 0 || origin.is_empty() ||
+            origin.length() >= RIN_WEBCONTENT_URL_MAX)
+            return false;
+        std::vector<uint8_t> bytes;
+        if (!RinLadybird::request_cache_storage_owner_snapshot(
+                page_id, owner_generation, origin.characters(),
+                origin.length(), bytes))
+            return false;
+        snapshot = ByteString {
+            reinterpret_cast<char const*>(bytes.data()), bytes.size() };
+        return true;
     }
 
     void mark_dirty()

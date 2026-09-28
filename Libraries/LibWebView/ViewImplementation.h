@@ -283,7 +283,12 @@ public:
     Function<bool(u16 operation, ByteString origin, ByteString key,
                   ByteString value, u64 owner_generation)>
         on_cache_storage_owner_mutation;
+    Function<bool(ByteString origin, u64 owner_generation,
+                  ByteString& snapshot)>
+        on_cache_storage_owner_snapshot;
     Function<bool()> on_cache_storage_owner_batch_active;
+    String cache_storage_synchronized_origin;
+    u64 cache_storage_synchronized_generation { 0 };
     struct NotificationPermissionRequest {
         u32 navigation_generation { 0 };
         u64 request_id { 0 };

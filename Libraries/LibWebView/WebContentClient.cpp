@@ -13,8 +13,119 @@
 #include <LibWebView/ViewImplementation.h>
 #include <LibWebView/WebContentClient.h>
 #include <LibWebView/WebUI.h>
+#include <AK/StringBuilder.h>
+#include <rin/web/webcontent_protocol.h>
+
+#include <cstring>
 
 namespace WebView {
+
+struct CacheStorageOwnerRecord {
+    String key;
+    String value;
+};
+
+static constexpr StringView cache_storage_marker = "RIN-CACHE-NAME-V1"sv;
+static constexpr StringView cache_storage_name_key_prefix =
+    "RIN-CACHE-NAME-KEY-V1:"sv;
+
+static u16 cache_storage_read_u16(u8 const* bytes)
+{
+    return static_cast<u16>(bytes[0]) |
+        (static_cast<u16>(bytes[1]) << 8u);
+}
+
+static u32 cache_storage_read_u32(u8 const* bytes)
+{
+    return static_cast<u32>(bytes[0]) |
+        (static_cast<u32>(bytes[1]) << 8u) |
+        (static_cast<u32>(bytes[2]) << 16u) |
+        (static_cast<u32>(bytes[3]) << 24u);
+}
+
+static u32 cache_storage_snapshot_crc32(u8 const* bytes, size_t size)
+{
+    u32 crc = 0xffffffffu;
+    for (size_t index = 0; index < size; ++index) {
+        crc ^= bytes[index];
+        for (unsigned bit = 0; bit < 8u; ++bit)
+            crc = (crc >> 1u) ^ (0xedb88320u & static_cast<u32>(-static_cast<i32>(crc & 1u)));
+    }
+    return ~crc;
+}
+
+static ByteString cache_storage_name_owner_key(String const& cache_name)
+{
+    static constexpr char hex_digits[] = "0123456789abcdef";
+    StringBuilder builder;
+    builder.append(cache_storage_name_key_prefix);
+    for (u8 byte : cache_name.bytes()) {
+        builder.append(hex_digits[byte >> 4u]);
+        builder.append(hex_digits[byte & 0x0fu]);
+    }
+    return builder.to_byte_string();
+}
+
+static bool parse_cache_storage_owner_snapshot(
+    ByteString const& snapshot, Vector<CacheStorageOwnerRecord>& records,
+    bool& owner_initialized)
+{
+    records.clear();
+    owner_initialized = false;
+    if (snapshot.length() < 20u ||
+        snapshot.length() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_SNAPSHOT_BYTES ||
+        std::memcmp(snapshot.characters(), "RCS1", 4u) != 0)
+        return false;
+
+    auto const* bytes = reinterpret_cast<u8 const*>(snapshot.characters());
+    const u16 version = cache_storage_read_u16(bytes + 4u);
+    const u16 flags = cache_storage_read_u16(bytes + 6u);
+    const u32 record_count = cache_storage_read_u32(bytes + 8u);
+    const u32 body_size = cache_storage_read_u32(bytes + 12u);
+    const u32 expected_crc = cache_storage_read_u32(bytes + 16u);
+    if (version != 1u || (flags & ~1u) != 0u ||
+        record_count > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_RECORDS ||
+        body_size != snapshot.length() - 20u ||
+        cache_storage_snapshot_crc32(bytes + 20u, body_size) != expected_crc)
+        return false;
+
+    size_t offset = 20u;
+    for (u32 index = 0; index < record_count; ++index) {
+        if (snapshot.length() - offset < 8u)
+            return false;
+        const u32 key_size = cache_storage_read_u32(bytes + offset);
+        const u32 value_size = cache_storage_read_u32(bytes + offset + 4u);
+        offset += 8u;
+        if (key_size == 0u ||
+            key_size > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_KEY_BYTES ||
+            value_size == 0u ||
+            value_size > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_VALUE_BYTES ||
+            key_size > snapshot.length() - offset ||
+            value_size > snapshot.length() - offset - key_size)
+            return false;
+        for (size_t byte_index = 0; byte_index <
+                static_cast<size_t>(key_size) + value_size; ++byte_index) {
+            if (bytes[offset + byte_index] == 0u)
+                return false;
+        }
+        auto key = String::from_utf8(StringView {
+            snapshot.characters() + offset, key_size });
+        auto value = String::from_utf8(StringView {
+            snapshot.characters() + offset + key_size, value_size });
+        if (key.is_error() || value.is_error())
+            return false;
+        auto parsed_key = key.release_value();
+        for (auto const& existing : records)
+            if (existing.key == parsed_key)
+                return false;
+        records.append({ move(parsed_key), value.release_value() });
+        offset += static_cast<size_t>(key_size) + value_size;
+    }
+    if (offset != snapshot.length())
+        return false;
+    owner_initialized = (flags & 1u) != 0u;
+    return true;
+}
 
 bool WebContentClient::storage_owner_is_authorized(u64 page_id,
                                                     Web::StorageAPI::StorageEndpointType endpoint,
@@ -99,6 +210,8 @@ void WebContentClient::notify_all_views_of_crash()
             auto view = ViewImplementation::find_view_by_id(view_id);
             if (!view.has_value())
                 return;
+            view->cache_storage_synchronized_origin = {};
+            view->cache_storage_synchronized_generation = 0;
             view->handle_web_content_process_crash();
             if (view->on_web_content_crashed)
                 view->on_web_content_crashed();
@@ -660,13 +773,15 @@ void WebContentClient::did_remove_storage_item(u64 page_id, Web::StorageAPI::Sto
     const bool batch_active = view.has_value() &&
         view->on_cache_storage_owner_batch_active &&
         view->on_cache_storage_owner_batch_active();
+    const bool cache_name_key = bottle_key.bytes_as_string_view().starts_with(
+        cache_storage_name_key_prefix);
+    const bool cache_name_marker = cache_name_key ||
+        (previous_value.has_value() &&
+         previous_value.value() == "RIN-CACHE-NAME-V1"_string);
     const bool owner_committed = view.has_value() &&
         view->on_cache_storage_owner_mutation &&
         view->on_cache_storage_owner_mutation(
-            previous_value.has_value() &&
-                    previous_value.value() == "RIN-CACHE-NAME-V1"_string
-                ? 4u
-                : 2u,
+            cache_name_marker ? 4u : 2u,
             storage_key.to_byte_string(), bottle_key.to_byte_string(), {},
             owner_generation);
     if (!owner_committed && !batch_active && previous_value.has_value())
@@ -678,6 +793,162 @@ Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_
 {
     if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
         return { Vector<String> {} };
+
+    if (storage_endpoint != Web::StorageAPI::StorageEndpointType::Caches)
+        return Application::storage_jar().get_all_keys(storage_endpoint, storage_key);
+
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_cache_storage_owner_snapshot ||
+        !view->on_service_worker_owner_request ||
+        !view->on_cache_storage_owner_mutation)
+        return { Vector<String> {} };
+    if (view->cache_storage_synchronized_origin == storage_key &&
+        view->cache_storage_synchronized_generation == owner_generation)
+        return Application::storage_jar().get_all_keys(storage_endpoint, storage_key);
+
+    const auto origin = storage_key.to_byte_string();
+    ByteString snapshot;
+    Vector<CacheStorageOwnerRecord> owner_records;
+    bool owner_initialized = false;
+    if (!view->on_cache_storage_owner_snapshot(origin, owner_generation, snapshot) ||
+        !parse_cache_storage_owner_snapshot(snapshot, owner_records, owner_initialized))
+        return { Vector<String> {} };
+
+    if (!owner_initialized) {
+        Vector<CacheStorageOwnerRecord> legacy_records;
+        size_t legacy_snapshot_size = 20u;
+        auto legacy_keys = Application::storage_jar().get_all_keys(
+            storage_endpoint, storage_key);
+        if (legacy_keys.size() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_RECORDS)
+            return { Vector<String> {} };
+        for (auto const& key : legacy_keys) {
+            auto value = Application::storage_jar().get_item(
+                storage_endpoint, storage_key, key);
+            if (!value.has_value())
+                continue;
+            auto const& stored_value = value.value();
+            auto owner_key = stored_value == cache_storage_marker
+                ? cache_storage_name_owner_key(key)
+                : key.to_byte_string();
+            if (owner_key.is_empty() ||
+                owner_key.length() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_KEY_BYTES ||
+                stored_value.bytes().size() >
+                    RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_VALUE_BYTES)
+                return { Vector<String> {} };
+            const size_t encoded_record_size = 8u + owner_key.length() +
+                stored_value.bytes().size();
+            if (encoded_record_size >
+                    RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_SNAPSHOT_BYTES - 20u ||
+                legacy_snapshot_size >
+                    RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_SNAPSHOT_BYTES -
+                        encoded_record_size)
+                return { Vector<String> {} };
+            legacy_snapshot_size += encoded_record_size;
+            legacy_records.append({ key, stored_value });
+        }
+
+        auto batch_response = view->on_service_worker_owner_request(
+            RIN_WEBCONTENT_SERVICE_WORKER_OWNER_BEGIN_CACHE_BATCH,
+            {}, origin, {}, {}, 0u);
+        const auto batch_matches_owner = [&](auto const& response) {
+            return response.accepted && response.found &&
+                response.generation == owner_generation &&
+                response.origin == origin && response.script_url == origin &&
+                response.scope == "/";
+        };
+        if (!batch_matches_owner(batch_response))
+            return { Vector<String> {} };
+
+        bool migrated = true;
+        for (auto const& record : legacy_records) {
+            const bool is_name = record.value == cache_storage_marker;
+            auto owner_key = is_name
+                ? cache_storage_name_owner_key(record.key)
+                : record.key.to_byte_string();
+            if (!view->on_cache_storage_owner_mutation(
+                    is_name
+                        ? RIN_WEBCONTENT_CACHE_STORAGE_OWNER_SET_CACHE_NAME
+                        : RIN_WEBCONTENT_CACHE_STORAGE_OWNER_SET,
+                    origin, owner_key, record.value.to_byte_string(), owner_generation)) {
+                migrated = false;
+                break;
+            }
+        }
+        if (migrated)
+            migrated = view->on_cache_storage_owner_mutation(
+                RIN_WEBCONTENT_CACHE_STORAGE_OWNER_INITIALIZE,
+                origin, {}, {}, owner_generation);
+        if (migrated) {
+            auto commit_response = view->on_service_worker_owner_request(
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_CACHE_BATCH,
+                {}, origin, {}, {}, 0u);
+            migrated = batch_matches_owner(commit_response);
+        }
+        if (!migrated) {
+            (void)view->on_service_worker_owner_request(
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_ABORT_CACHE_BATCH,
+                {}, origin, {}, {}, 0u);
+            return { Vector<String> {} };
+        }
+
+        snapshot = {};
+        owner_records.clear();
+        owner_initialized = false;
+        if (!view->on_cache_storage_owner_snapshot(origin, owner_generation, snapshot) ||
+            !parse_cache_storage_owner_snapshot(snapshot, owner_records, owner_initialized) ||
+            !owner_initialized)
+            return { Vector<String> {} };
+    }
+
+    Vector<CacheStorageOwnerRecord> previous_records;
+    auto previous_keys = Application::storage_jar().get_all_keys(
+        storage_endpoint, storage_key);
+    if (previous_keys.size() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_RECORDS)
+        return { Vector<String> {} };
+    size_t previous_snapshot_size = 20u;
+    for (auto const& key : previous_keys) {
+        auto value = Application::storage_jar().get_item(
+            storage_endpoint, storage_key, key);
+        if (!value.has_value())
+            continue;
+        const size_t key_size = key.bytes().size();
+        const size_t value_size = value->bytes().size();
+        if (key_size == 0u ||
+            key_size > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_KEY_BYTES ||
+            value_size > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_VALUE_BYTES)
+            return { Vector<String> {} };
+        const size_t encoded_record_size = 8u + key_size + value_size;
+        if (encoded_record_size >
+                RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_SNAPSHOT_BYTES - 20u ||
+            previous_snapshot_size >
+                RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_SNAPSHOT_BYTES -
+                    encoded_record_size)
+            return { Vector<String> {} };
+        previous_snapshot_size += encoded_record_size;
+        previous_records.append({ key, value.release_value() });
+    }
+
+    auto& storage_jar = Application::storage_jar();
+    storage_jar.clear_storage_key(storage_endpoint, storage_key);
+    bool restored = true;
+    for (auto const& record : owner_records) {
+        auto result = storage_jar.set_item(
+            storage_endpoint, storage_key, record.key, record.value);
+        if (result.has<WebView::StorageOperationError>()) {
+            restored = false;
+            break;
+        }
+    }
+    if (!restored) {
+        storage_jar.clear_storage_key(storage_endpoint, storage_key);
+        for (auto const& record : previous_records)
+            (void)storage_jar.set_item(
+                storage_endpoint, storage_key, record.key, record.value);
+        return { Vector<String> {} };
+    }
+
+    view->cache_storage_synchronized_origin = storage_key;
+    view->cache_storage_synchronized_generation = owner_generation;
     return Application::storage_jar().get_all_keys(storage_endpoint, storage_key);
 }
 
@@ -685,6 +956,65 @@ void WebContentClient::did_clear_storage(u64 page_id, Web::StorageAPI::StorageEn
 {
     if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
         return;
+
+    if (storage_endpoint == Web::StorageAPI::StorageEndpointType::Caches) {
+        auto view = view_for_page_id(page_id);
+        if (!view.has_value() || !view->on_cache_storage_owner_snapshot ||
+            !view->on_service_worker_owner_request ||
+            !view->on_cache_storage_owner_mutation)
+            return;
+        const auto origin = storage_key.to_byte_string();
+        ByteString snapshot;
+        Vector<CacheStorageOwnerRecord> owner_records;
+        bool owner_initialized = false;
+        if (!view->on_cache_storage_owner_snapshot(origin, owner_generation, snapshot) ||
+            !parse_cache_storage_owner_snapshot(snapshot, owner_records, owner_initialized))
+            return;
+
+        auto batch_response = view->on_service_worker_owner_request(
+            RIN_WEBCONTENT_SERVICE_WORKER_OWNER_BEGIN_CACHE_BATCH,
+            {}, origin, {}, {}, 0u);
+        const auto batch_matches_owner = [&](auto const& response) {
+            return response.accepted && response.found &&
+                response.generation == owner_generation &&
+                response.origin == origin && response.script_url == origin &&
+                response.scope == "/";
+        };
+        if (!batch_matches_owner(batch_response))
+            return;
+
+        bool cleared = true;
+        for (auto const& record : owner_records) {
+            const bool is_name = record.value == cache_storage_marker;
+            if (!view->on_cache_storage_owner_mutation(
+                    is_name
+                        ? RIN_WEBCONTENT_CACHE_STORAGE_OWNER_REMOVE_CACHE_NAME
+                        : RIN_WEBCONTENT_CACHE_STORAGE_OWNER_REMOVE,
+                    origin, record.key.to_byte_string(), {}, owner_generation)) {
+                cleared = false;
+                break;
+            }
+        }
+        if (cleared)
+            cleared = view->on_cache_storage_owner_mutation(
+                RIN_WEBCONTENT_CACHE_STORAGE_OWNER_INITIALIZE,
+                origin, {}, {}, owner_generation);
+        if (cleared) {
+            auto commit_response = view->on_service_worker_owner_request(
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_CACHE_BATCH,
+                {}, origin, {}, {}, 0u);
+            cleared = batch_matches_owner(commit_response);
+        }
+        if (!cleared) {
+            (void)view->on_service_worker_owner_request(
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_ABORT_CACHE_BATCH,
+                {}, origin, {}, {}, 0u);
+            return;
+        }
+        view->cache_storage_synchronized_origin = storage_key;
+        view->cache_storage_synchronized_generation = owner_generation;
+    }
+
     Application::storage_jar().clear_storage_key(storage_endpoint, storage_key);
 }
 

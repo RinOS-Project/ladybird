@@ -15,6 +15,8 @@
 #include <LibWeb/StorageAPI/StorageBottle.h>
 #include <LibWeb/StorageAPI/StorageEndpoint.h>
 #include <LibWeb/StorageAPI/StorageKey.h>
+#include <AK/StringBuilder.h>
+#include <AK/Vector.h>
 #include <LibWeb/ServiceWorker/Cache.h>
 #include <LibWeb/ServiceWorker/CacheStorage.h>
 #include <LibWeb/WebIDL/DOMException.h>
@@ -26,6 +28,57 @@ namespace Web::ServiceWorker {
 GC_DEFINE_ALLOCATOR(CacheStorage);
 
 static auto const cache_storage_marker = "RIN-CACHE-NAME-V1"_string;
+static constexpr StringView cache_storage_name_key_prefix =
+    "RIN-CACHE-NAME-KEY-V1:"sv;
+
+static String cache_storage_marker_key(String const& cache_name)
+{
+    static constexpr char hex_digits[] = "0123456789abcdef";
+    StringBuilder key;
+    key.append(cache_storage_name_key_prefix);
+    for (u8 byte : cache_name.bytes()) {
+        key.append(hex_digits[byte >> 4u]);
+        key.append(hex_digits[byte & 0x0fu]);
+    }
+    return key.to_string_without_validation();
+}
+
+static Optional<String> cache_storage_name_from_marker_key(String const& key)
+{
+    auto bytes = key.bytes_as_string_view();
+    if (!bytes.starts_with(cache_storage_name_key_prefix))
+        return key;
+
+    auto encoded = bytes.substring_view(cache_storage_name_key_prefix.length());
+    if (encoded.length() % 2u != 0u)
+        return {};
+    auto hex_value = [](char ch) -> Optional<u8> {
+        if (ch >= '0' && ch <= '9')
+            return static_cast<u8>(ch - '0');
+        if (ch >= 'a' && ch <= 'f')
+            return static_cast<u8>(ch - 'a' + 10);
+        if (ch >= 'A' && ch <= 'F')
+            return static_cast<u8>(ch - 'A' + 10);
+        return {};
+    };
+
+    Vector<u8> decoded;
+    decoded.ensure_capacity(encoded.length() / 2u);
+    for (size_t index = 0; index < encoded.length(); index += 2u) {
+        auto high = hex_value(encoded[index]);
+        auto low = hex_value(encoded[index + 1u]);
+        if (!high.has_value() || !low.has_value())
+            return {};
+        decoded.append(static_cast<u8>((high.value() << 4u) | low.value()));
+    }
+    if (decoded.is_empty())
+        return {};
+    auto name = String::from_utf8(StringView {
+        reinterpret_cast<char const*>(decoded.data()), decoded.size() });
+    if (name.is_error())
+        return {};
+    return name.release_value();
+}
 
 static GC::Ptr<Page> page_for_cache_storage(JS::Realm& realm)
 {
@@ -63,11 +116,14 @@ CacheStorage::CacheStorage(JS::Realm& realm)
 
     m_storage_bottle = StorageAPI::LocalStorageBottle::create(
         heap(), *page, storage_key.value(), {}, StorageAPI::StorageEndpointType::Caches, m_owner_generation);
-    for (auto const& cache_name : m_storage_bottle->keys()) {
-        auto marker = m_storage_bottle->get(cache_name);
+    for (auto const& marker_key : m_storage_bottle->keys()) {
+        auto marker = m_storage_bottle->get(marker_key);
         if (!marker.has_value() || marker.value() != cache_storage_marker)
             continue;
-        m_caches.set(cache_name, Cache::create(realm, cache_name, m_storage_bottle, page, m_owner_origin, m_owner_generation));
+        auto cache_name = cache_storage_name_from_marker_key(marker_key);
+        if (!cache_name.has_value())
+            continue;
+        m_caches.set(cache_name.value(), Cache::create(realm, cache_name.value(), m_storage_bottle, page, m_owner_origin, m_owner_generation));
     }
 }
 
@@ -141,7 +197,8 @@ GC::Ref<WebIDL::Promise> CacheStorage::open(String const& cache_name)
     if (!owner_is_current())
         return owner_rejected_promise();
     if (!m_caches.contains(cache_name) && m_storage_bottle) {
-        auto result = m_storage_bottle->set(cache_name, cache_storage_marker);
+        auto result = m_storage_bottle->set(
+            cache_storage_marker_key(cache_name), cache_storage_marker);
         if (result.has<WebView::StorageOperationError>()) {
             auto quota_error = WebIDL::QuotaExceededError::create(
                 realm(), "Cache storage quota exceeded"_utf16);
@@ -189,21 +246,26 @@ GC::Ref<WebIDL::Promise> CacheStorage::delete_(String const& cache_name)
                 original_entries.append({ key, value.release_value() });
         }
     }
+    auto marker_key = cache_storage_marker_key(cache_name);
     auto original_marker = m_storage_bottle
-        ? m_storage_bottle->get(cache_name)
+        ? m_storage_bottle->get(marker_key)
         : Optional<String> {};
+    if (m_storage_bottle && !original_marker.has_value()) {
+        marker_key = cache_name;
+        original_marker = m_storage_bottle->get(marker_key);
+    }
 
     if (!begin_owner_mutation_batch())
         return owner_rejected_promise();
     const bool entries_removed = cache.value()->remove_persisted_entries();
     if (entries_removed && m_storage_bottle)
-        m_storage_bottle->remove(cache_name);
+        m_storage_bottle->remove(marker_key);
     if (!entries_removed || !commit_owner_mutation_batch()) {
         if (m_storage_bottle) {
             for (auto const& record : original_entries)
                 (void)m_storage_bottle->set(record.key, record.value);
             if (original_marker.has_value())
-                (void)m_storage_bottle->set(cache_name, original_marker.value());
+                (void)m_storage_bottle->set(marker_key, original_marker.value());
         }
         abort_owner_mutation_batch();
         return owner_rejected_promise();
