@@ -635,8 +635,19 @@ struct PageSession {
             load_resources_total = 0;
             load_suspected_stall = false;
             note_pending_load_started();
-            if (rin_webcontent_permission_origin_valid(serialized.characters()))
-                rebind_permission_origin(serialized);
+            /* Bind permission requests only after WebContent reports the
+             * document URL that actually started loading. A Browser-requested
+             * URL can still be displaying the previous document, and a
+             * redirect can change the final origin. Never bind a full URL or
+             * an opaque/non-HTTP origin as permission identity. */
+            auto permission_origin = url.origin();
+            auto serialized_permission_origin =
+                permission_origin.serialize().to_byte_string();
+            if (permission_origin.is_opaque() ||
+                !rin_webcontent_permission_origin_valid(
+                    serialized_permission_origin.characters()))
+                serialized_permission_origin = {};
+            rebind_permission_origin(move(serialized_permission_origin));
             kick_first_frame_if_needed("load-start"sv, true);
             auto message = ByteString::formatted("[webcontent] page {} load start {}\n", page_id, serialized);
             rin_log(message.characters());
@@ -1710,7 +1721,7 @@ struct PageSession {
         permission_authenticated_origin = origin;
     }
 
-    bool begin_permission_navigation(ByteString const& origin)
+    bool begin_permission_navigation()
     {
         clear_permission_binding();
         if (permission_navigation_generation == UINT32_MAX ||
@@ -1719,11 +1730,9 @@ struct PageSession {
 
         ++permission_navigation_generation;
         ++permission_renderer_generation;
-        if (rin_webcontent_permission_origin_valid(origin.characters()) &&
-            rin_webcontent_permission_producer_bind(
-                &permission_producer, page_id, permission_navigation_generation,
-                permission_renderer_generation, origin.characters()))
-            permission_authenticated_origin = origin;
+        /* Do not bind the requested URL here. The old document can still run
+         * until navigation reaches WebContent, and redirects are not known
+         * yet. A successful on_load_start() installs the canonical origin. */
         return true;
     }
 
@@ -2107,7 +2116,7 @@ struct PageSession {
 
     bool navigate(ByteString const& url)
     {
-        if (!begin_permission_navigation(url))
+        if (!begin_permission_navigation())
             return false;
         clear_file_picker_request(true);
         crashed = false;
@@ -2140,7 +2149,7 @@ struct PageSession {
     bool load_markup(ByteString const& base_url, ByteString const& markup)
     {
         auto shell_url = base_url.is_empty() ? ByteString { "about:blank" } : base_url;
-        if (!begin_permission_navigation(shell_url))
+        if (!begin_permission_navigation())
             return false;
         clear_file_picker_request(true);
         crashed = false;
