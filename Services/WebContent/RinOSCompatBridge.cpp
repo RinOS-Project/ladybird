@@ -1828,9 +1828,9 @@ struct PageSession {
             return -ESTALE;
         if (permission_producer.bound != 1u)
             return -ENOTSUP;
-        if (!rin_webcontent_permission_producer_complete(
+        if (!rin_webcontent_permission_producer_complete_type(
                 &permission_producer, page_id, permission_renderer_generation,
-                &completion))
+                &completion, "notifications"))
             return -ESTALE;
 
         String permission;
@@ -2606,10 +2606,10 @@ struct PageSession {
     bool logged_pre_navigation_paint { false };
     RefPtr<Core::Timer> pending_load_replay_timer;
 
-    /* The producer is deliberately transport-ready but not advertised until
-     * a renderer permission callback is connected.  Binding it here ensures
-     * that a future callback cannot publish an origin from a stale document
-     * or a replaced WebContent process. */
+    /* The producer is deliberately transport-ready, but it publishes no
+     * origin until a renderer permission callback reaches the current
+     * document. Binding it here ensures that a callback cannot publish an
+     * origin from a stale document or a replaced WebContent process. */
     RinWebContentPermissionProducerV1 permission_producer {};
     uint32_t permission_navigation_generation { 0 };
     uint64_t permission_renderer_generation { 1 };
