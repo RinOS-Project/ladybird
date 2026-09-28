@@ -236,6 +236,7 @@ static ByteString sanitized_url_for_logging(URL::URL const& url)
     return url.to_byte_string();
 }
 
+#if !defined(AK_OS_RINOS)
 static void store_response_cookies(Page& page, URL::URL const& url, StringView set_cookie_entry)
 {
     auto decoded_cookie = String::from_utf8(set_cookie_entry);
@@ -248,6 +249,7 @@ static void store_response_cookies(Page& page, URL::URL const& url, StringView s
 
     page.client().page_did_set_cookie(url, cookie.value(), HTTP::Cookie::Source::Http);
 }
+#endif
 
 static NonnullRefPtr<HTTP::HeaderList> response_headers_for_file(StringView path, Optional<time_t> const& modified_time)
 {
@@ -660,6 +662,12 @@ RefPtr<Requests::Request> ResourceLoader::start_network_request(LoadRequest cons
 
 void ResourceLoader::handle_network_response_headers(LoadRequest const& request, HTTP::HeaderList const& response_headers)
 {
+#if defined(AK_OS_RINOS)
+    // RinOS commits Set-Cookie through the authenticated Browser owner after
+    // Fetch has checked the response, before the response is exposed.
+    (void)request;
+    (void)response_headers;
+#else
     if (!request.page())
         return;
 
@@ -673,6 +681,7 @@ void ResourceLoader::handle_network_response_headers(LoadRequest const& request,
             }
         }
     }
+#endif
 }
 
 void ResourceLoader::finish_network_request(NonnullRefPtr<Requests::Request> protocol_request)

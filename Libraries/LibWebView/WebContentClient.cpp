@@ -1268,6 +1268,37 @@ Messages::WebContentClient::RequestServiceWorkerOwnerResponse WebContentClient::
              move(result.origin), move(result.script_url), move(result.scope) };
 }
 
+String WebContentClient::retrieve_http_cookie_header(URL::URL const& url)
+{
+    String cookie_header;
+    WebContentClient::for_each_client([&](WebContentClient& client) {
+        for (auto const& [page_id, view] : client.m_views) {
+            (void)view;
+            if (page_id == 0u)
+                continue;
+            auto response = client.request_service_worker_owner(
+                page_id,
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER,
+                url.to_byte_string(), {}, {}, {},
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_CREDENTIALS_INCLUDE);
+            if (!response.accepted || !response.found || response.generation == 0u)
+                continue;
+
+            StringBuilder builder;
+            builder.append(response.origin);
+            builder.append(response.script_url);
+            builder.append(response.scope);
+            auto header = builder.to_string();
+            if (header.is_error())
+                continue;
+            cookie_header = header.release_value();
+            return IterationDecision::Break;
+        }
+        return IterationDecision::Continue;
+    });
+    return cookie_header;
+}
+
 Messages::WebContentClient::RequestNotificationPermissionResponse
 WebContentClient::request_notification_permission(u64 page_id)
 {

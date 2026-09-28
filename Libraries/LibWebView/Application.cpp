@@ -506,9 +506,15 @@ ErrorOr<void> Application::launch_request_server()
 {
     m_request_server_client = TRY(launch_request_server_process());
 
+#if defined(AK_OS_RINOS)
+    m_request_server_client->on_retrieve_http_cookie = [](URL::URL const& url) {
+        return WebContentClient::retrieve_http_cookie_header(url);
+    };
+#else
     m_request_server_client->on_retrieve_http_cookie = [this](URL::URL const& url) {
         return m_cookie_jar->get_cookie(url, HTTP::Cookie::Source::Http);
     };
+#endif
 
     m_request_server_client->on_request_server_died = [this]() {
         m_request_server_client = nullptr;

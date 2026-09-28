@@ -14,6 +14,7 @@
 #include <AK/ScopeGuard.h>
 #include <LibHTTP/Cache/MemoryCache.h>
 #include <LibHTTP/Cache/Utilities.h>
+#include <LibHTTP/Cookie/Cookie.h>
 #include <LibHTTP/Method.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibRequests/Request.h>
@@ -60,6 +61,7 @@
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/MixedContent/AbstractOperations.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/ReferrerPolicy/AbstractOperations.h>
 #include <LibWeb/ResourceTiming/PerformanceResourceTiming.h>
 #include <LibWeb/SRI/SRI.h>
@@ -69,6 +71,7 @@
 #include <LibWeb/Streams/TransformStreamOperations.h>
 #include <LibWeb/Streams/Transformer.h>
 #include <LibWeb/WebIDL/DOMException.h>
+#include <rin/web/webcontent_protocol.h>
 
 namespace Web::Fetch::Fetching {
 
@@ -2195,7 +2198,7 @@ GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(
     // 13. Set up stream with byte reading support with pullAlgorithm set to pullAlgorithm, cancelAlgorithm set to cancelAlgorithm.
     stream->set_up_with_byte_reading_support(pull_algorithm, cancel_algorithm);
 
-    auto on_headers_received = GC::create_function(vm.heap(), [&vm, pending_response, stream, request, fetched_data_receiver](HTTP::HeaderList const& response_headers, Optional<u32> status_code, Optional<String> const& reason_phrase) {
+    auto on_headers_received = GC::create_function(vm.heap(), [&vm, &realm, &page, &fetch_params, pending_response, stream, request, fetched_data_receiver, include_credentials](HTTP::HeaderList const& response_headers, Optional<u32> status_code, Optional<String> const& reason_phrase) {
         if (pending_response->is_resolved()) {
             // RequestServer will send us the response headers twice, the second time being for HTTP trailers. This
             // fetch algorithm is not interested in trailers, so just drop them here.
@@ -2219,6 +2222,100 @@ GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(
 
         for (auto const& [name, value] : response_headers.headers())
             response->header_list()->append({ name, value });
+
+#if defined(AK_OS_RINOS)
+        if (include_credentials == HTTP::Cookie::IncludeCredentials::Yes) {
+            u32 cookie_policy = RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_CREDENTIALS_INCLUDE;
+            bool cors_validated = request->response_tainting() != Infrastructure::Request::ResponseTainting::CORS;
+            if (request->response_tainting() == Infrastructure::Request::ResponseTainting::CORS) {
+                cookie_policy |= RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_MODE_CORS;
+                if (response->status() == 304 || response->status() == 407) {
+                    // Fetch excludes these statuses from the CORS check. Do not
+                    // let their Set-Cookie fields cross the durable owner boundary.
+                    cors_validated = false;
+                } else {
+                    cors_validated = cors_check(request, *response);
+                }
+                if (cors_validated)
+                    cookie_policy |= RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_CORS_VALIDATED;
+            } else if (request->mode() == Infrastructure::Request::Mode::Navigate) {
+                cookie_policy |= RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_MODE_NAVIGATE;
+            } else if (request->response_tainting() == Infrastructure::Request::ResponseTainting::Opaque) {
+                cookie_policy |= RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_MODE_NO_CORS;
+            } else {
+                cookie_policy |= RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_MODE_SAME_ORIGIN;
+            }
+
+            StringBuilder response_cookie_builder;
+            bool first_cookie = true;
+            for (auto const& [name, value] : response_headers.headers()) {
+                if (!name.equals_ignoring_ascii_case("Set-Cookie"sv))
+                    continue;
+                if (value.is_empty() || value.find('\n').has_value() ||
+                    value.find('\r').has_value() || value.find('\0').has_value())
+                    continue;
+                if (!first_cookie)
+                    response_cookie_builder.append('\n');
+                response_cookie_builder.append(value);
+                first_cookie = false;
+            }
+            auto encoded_cookies = response_cookie_builder.to_byte_string();
+            if (!encoded_cookies.is_empty() && cors_validated) {
+                constexpr size_t cookie_chunk_capacity = RIN_WEBCONTENT_URL_MAX - 1u;
+                constexpr size_t cookie_request_capacity = cookie_chunk_capacity * 2u;
+                if (encoded_cookies.length() > cookie_request_capacity) {
+                    auto error = MUST(String::formatted("Response Set-Cookie fields exceed the authenticated owner request limit"));
+                    if (stream->is_readable())
+                        stream->error(JS::TypeError::create(realm, error));
+                    pending_response->resolve(Infrastructure::root_response_references(
+                        Infrastructure::Response::network_error(vm, error)));
+                    fetch_params.controller()->stop_fetch();
+                    return;
+                }
+
+                size_t first_chunk_size = min(cookie_chunk_capacity, encoded_cookies.length());
+                while (first_chunk_size > 0u && first_chunk_size < encoded_cookies.length() &&
+                       (static_cast<u8>(encoded_cookies[first_chunk_size]) & 0xc0u) == 0x80u)
+                    --first_chunk_size;
+                auto first_chunk = encoded_cookies.substring(0u, first_chunk_size);
+                auto second_chunk = encoded_cookies.substring(first_chunk_size);
+                auto owner_response = page.client().request_service_worker_owner(
+                    RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_HTTP_COOKIES,
+                    request->current_url().to_byte_string(), request->byte_serialize_origin(),
+                    move(first_chunk), move(second_chunk), cookie_policy);
+                if (!owner_response.accepted || !owner_response.found || owner_response.generation == 0u) {
+                    auto error = MUST(String::formatted("Browser did not durably commit response cookies"));
+                    if (stream->is_readable())
+                        stream->error(JS::TypeError::create(realm, error));
+                    pending_response->resolve(Infrastructure::root_response_references(
+                        Infrastructure::Response::network_error(vm, error)));
+                    fetch_params.controller()->stop_fetch();
+                    return;
+                }
+
+                StringBuilder accepted_cookie_builder;
+                accepted_cookie_builder.append(owner_response.origin);
+                accepted_cookie_builder.append(owner_response.script_url);
+                accepted_cookie_builder.append(owner_response.scope);
+                auto accepted_cookies = accepted_cookie_builder.to_byte_string();
+                size_t offset = 0u;
+                while (offset < accepted_cookies.length()) {
+                    auto separator = accepted_cookies.find('\n', offset);
+                    auto end = separator.has_value() ? separator.value() : accepted_cookies.length();
+                    if (end == offset)
+                        break;
+                    auto raw_cookie = String::from_utf8(accepted_cookies.substring(offset, end - offset));
+                    if (!raw_cookie.is_error()) {
+                        if (auto parsed_cookie = HTTP::Cookie::parse_cookie(request->current_url(), raw_cookie.value()); parsed_cookie.has_value())
+                            page.client().page_did_set_cookie(request->current_url(), parsed_cookie.value(), HTTP::Cookie::Source::Http);
+                    }
+                    if (!separator.has_value())
+                        break;
+                    offset = separator.value() + 1u;
+                }
+            }
+        }
+#endif
 
         fetched_data_receiver->set_response(response);
 

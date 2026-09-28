@@ -975,7 +975,10 @@ struct PageSession {
         RinWebContentServiceWorkerOwnerResponseV1 response {};
         if (!recv_all(s_service_worker_owner_fd, &response, sizeof(response),
                       deadline_ms) ||
-            !rin_webcontent_client_service_worker_owner_response_valid(&response)) {
+            ((operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER ||
+              operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_HTTP_COOKIES)
+                 ? !rin_webcontent_client_service_worker_owner_cookie_response_valid(&response)
+                 : !rin_webcontent_client_service_worker_owner_response_valid(&response))) {
             ::close(s_service_worker_owner_fd);
             s_service_worker_owner_fd = -1;
             s_owner_channel_session = {};

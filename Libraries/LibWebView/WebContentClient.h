@@ -42,6 +42,7 @@ public:
     static void for_each_client(Callback callback);
 
     static size_t client_count() { return s_clients.size(); }
+    static String retrieve_http_cookie_header(URL::URL const&);
 
     explicit WebContentClient(NonnullOwnPtr<IPC::Transport>);
     WebContentClient(NonnullOwnPtr<IPC::Transport>, ViewImplementation&);
