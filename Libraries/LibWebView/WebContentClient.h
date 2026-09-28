@@ -154,6 +154,9 @@ private:
         u64 page_id, u32 operation, ByteString client_url, ByteString origin,
         ByteString script_url, ByteString scope,
         u32 update_via_cache) override;
+    virtual Messages::WebContentClient::RequestHttpCookieOwnerResponse request_http_cookie_owner(
+        u64 page_id, u32 operation, ByteString request_url, ByteString origin,
+        ByteString cookie_data, u32 policy) override;
     virtual Messages::WebContentClient::RequestNotificationPermissionResponse request_notification_permission(u64 page_id) override;
 
     bool storage_owner_is_authorized(u64 page_id, Web::StorageAPI::StorageEndpointType endpoint,

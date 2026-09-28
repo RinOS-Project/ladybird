@@ -2261,9 +2261,8 @@ GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(
             }
             auto encoded_cookies = response_cookie_builder.to_byte_string();
             if (!encoded_cookies.is_empty() && cors_validated) {
-                constexpr size_t cookie_chunk_capacity = RIN_WEBCONTENT_URL_MAX - 1u;
-                constexpr size_t cookie_request_capacity = cookie_chunk_capacity * 2u;
-                if (encoded_cookies.length() > cookie_request_capacity) {
+                if (encoded_cookies.length() >
+                    RIN_WEBCONTENT_HTTP_COOKIE_OWNER_MAX_DATA_BYTES) {
                     auto error = MUST(String::formatted("Response Set-Cookie fields exceed the authenticated owner request limit"));
                     if (stream->is_readable())
                         stream->error(JS::TypeError::create(realm, error));
@@ -2273,16 +2272,10 @@ GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(
                     return;
                 }
 
-                size_t first_chunk_size = min(cookie_chunk_capacity, encoded_cookies.length());
-                while (first_chunk_size > 0u && first_chunk_size < encoded_cookies.length() &&
-                       (static_cast<u8>(encoded_cookies[first_chunk_size]) & 0xc0u) == 0x80u)
-                    --first_chunk_size;
-                auto first_chunk = encoded_cookies.substring(0u, first_chunk_size);
-                auto second_chunk = encoded_cookies.substring(first_chunk_size);
-                auto owner_response = page.client().request_service_worker_owner(
+                auto owner_response = page.client().request_http_cookie_owner(
                     RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_HTTP_COOKIES,
                     request->current_url().to_byte_string(), request->byte_serialize_origin(),
-                    move(first_chunk), move(second_chunk), cookie_policy);
+                    move(encoded_cookies), cookie_policy);
                 if (!owner_response.accepted || !owner_response.found || owner_response.generation == 0u) {
                     auto error = MUST(String::formatted("Browser did not durably commit response cookies"));
                     if (stream->is_readable())
@@ -2293,11 +2286,7 @@ GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(
                     return;
                 }
 
-                StringBuilder accepted_cookie_builder;
-                accepted_cookie_builder.append(owner_response.origin);
-                accepted_cookie_builder.append(owner_response.script_url);
-                accepted_cookie_builder.append(owner_response.scope);
-                auto accepted_cookies = accepted_cookie_builder.to_byte_string();
+                auto accepted_cookies = owner_response.data;
                 size_t offset = 0u;
                 while (offset < accepted_cookies.length()) {
                     auto separator = accepted_cookies.find('\n', offset);

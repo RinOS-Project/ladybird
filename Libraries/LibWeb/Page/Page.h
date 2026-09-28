@@ -502,6 +502,20 @@ public:
         return {};
     }
 
+    struct HttpCookieOwnerResponse {
+        bool accepted { false };
+        bool found { false };
+        u64 generation { 0 };
+        ByteString data;
+    };
+    virtual HttpCookieOwnerResponse request_http_cookie_owner(
+        [[maybe_unused]] u32 operation, [[maybe_unused]] ByteString request_url,
+        [[maybe_unused]] ByteString origin, [[maybe_unused]] ByteString cookie_data,
+        [[maybe_unused]] u32 policy)
+    {
+        return {};
+    }
+
     virtual void page_did_mutate_dom([[maybe_unused]] FlyString const& type, [[maybe_unused]] DOM::Node const& target, [[maybe_unused]] DOM::NodeList& added_nodes, [[maybe_unused]] DOM::NodeList& removed_nodes, [[maybe_unused]] GC::Ptr<DOM::Node> previous_sibling, [[maybe_unused]] GC::Ptr<DOM::Node> next_sibling, [[maybe_unused]] Optional<String> const& attribute_name) { }
 
     virtual void page_did_paint([[maybe_unused]] Gfx::IntRect const& content_rect, [[maybe_unused]] i32 bitmap_id) { }

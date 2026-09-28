@@ -935,6 +935,29 @@ Web::PageClient::ServiceWorkerOwnerResponse PageClient::request_service_worker_o
     };
 }
 
+Web::PageClient::HttpCookieOwnerResponse PageClient::request_http_cookie_owner(
+    u32 operation, ByteString request_url, ByteString origin,
+    ByteString cookie_data, u32 policy)
+{
+    if ((operation != RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER &&
+         operation != RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_HTTP_COOKIES) ||
+        request_url.is_empty() || request_url.length() >= RIN_WEBCONTENT_URL_MAX ||
+        origin.is_empty() || origin.length() >= RIN_WEBCONTENT_URL_MAX ||
+        cookie_data.length() > RIN_WEBCONTENT_HTTP_COOKIE_OWNER_MAX_DATA_BYTES)
+        return {};
+    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::RequestHttpCookieOwner>(
+        m_id, operation, move(request_url), move(origin), move(cookie_data), policy);
+    if (!response) {
+        dbgln("WebContent client disconnected during RequestHttpCookieOwner.");
+        return {};
+    }
+    if (response->response_data().length() >
+        RIN_WEBCONTENT_HTTP_COOKIE_OWNER_MAX_DATA_BYTES)
+        return {};
+    return { response->accepted(), response->found(), response->generation(),
+             response->take_response_data() };
+}
+
 String PageClient::page_get_notification_permission(URL::Origin const& origin)
 {
     const auto origin_string = origin.serialize();

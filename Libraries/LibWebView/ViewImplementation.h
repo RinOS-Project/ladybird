@@ -58,6 +58,12 @@ public:
         ByteString script_url;
         ByteString scope;
     };
+    struct HttpCookieOwnerResponse {
+        bool accepted { false };
+        bool found { false };
+        u64 generation { 0 };
+        ByteString data;
+    };
 
     virtual ~ViewImplementation();
 
@@ -280,6 +286,10 @@ public:
                                         ByteString origin, ByteString script_url,
                                         ByteString scope, u32 update_via_cache)>
         on_service_worker_owner_request;
+    Function<HttpCookieOwnerResponse(u32 operation, ByteString request_url,
+                                     ByteString origin, ByteString cookie_data,
+                                     u32 policy)>
+        on_http_cookie_owner_request;
     Function<bool(u16 operation, ByteString origin, ByteString key,
                   ByteString value, u64 owner_generation)>
         on_cache_storage_owner_mutation;

@@ -1268,6 +1268,27 @@ Messages::WebContentClient::RequestServiceWorkerOwnerResponse WebContentClient::
              move(result.origin), move(result.script_url), move(result.scope) };
 }
 
+Messages::WebContentClient::RequestHttpCookieOwnerResponse WebContentClient::request_http_cookie_owner(
+    u64 page_id, u32 operation, ByteString request_url, ByteString origin,
+    ByteString cookie_data, u32 policy)
+{
+    if ((operation != RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER &&
+         operation != RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_HTTP_COOKIES) ||
+        request_url.is_empty() || request_url.length() >= RIN_WEBCONTENT_URL_MAX ||
+        origin.is_empty() || origin.length() >= RIN_WEBCONTENT_URL_MAX ||
+        cookie_data.length() > RIN_WEBCONTENT_HTTP_COOKIE_OWNER_MAX_DATA_BYTES)
+        return { false, false, 0, {} };
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_http_cookie_owner_request)
+        return { false, false, 0, {} };
+
+    auto result = view->on_http_cookie_owner_request(
+        operation, move(request_url), move(origin), move(cookie_data), policy);
+    if (result.data.length() > RIN_WEBCONTENT_HTTP_COOKIE_OWNER_MAX_DATA_BYTES)
+        return { false, false, 0, {} };
+    return { result.accepted, result.found, result.generation, move(result.data) };
+}
+
 String WebContentClient::retrieve_http_cookie_header(URL::URL const& url)
 {
     String cookie_header;
@@ -1276,18 +1297,17 @@ String WebContentClient::retrieve_http_cookie_header(URL::URL const& url)
             (void)view;
             if (page_id == 0u)
                 continue;
-            auto response = client.request_service_worker_owner(
+            auto serialized_origin = url.origin().serialize();
+            auto response = client.request_http_cookie_owner(
                 page_id,
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER,
-                url.to_byte_string(), {}, {}, {},
+                url.to_byte_string(), serialized_origin.to_byte_string(), {},
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_CREDENTIALS_INCLUDE);
             if (!response.accepted || !response.found || response.generation == 0u)
                 continue;
 
             StringBuilder builder;
-            builder.append(response.origin);
-            builder.append(response.script_url);
-            builder.append(response.scope);
+            builder.append(response.response_data());
             auto header = builder.to_string();
             if (header.is_error())
                 continue;

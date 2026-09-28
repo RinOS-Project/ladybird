@@ -44,6 +44,7 @@
 #include "webcontent_peer_identity_policy.h"
 #include "webcontent_network_failure_policy.h"
 #include "webcontent_client_policy.h"
+#include "../../../../src/webengine/RinLadybirdRuntime.hpp"
 #include "webcontent_permission_producer.h"
 #include "../../../../public-base/libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
 
@@ -879,6 +880,13 @@ struct PageSession {
                     operation, move(client_url), move(origin),
                     move(script_url), move(scope), update_via_cache);
             };
+        view->on_http_cookie_owner_request =
+            [this](u32 operation, ByteString request_url, ByteString origin,
+                   ByteString cookie_data, u32 policy) {
+                return http_cookie_owner_request(
+                    operation, move(request_url), move(origin),
+                    move(cookie_data), policy);
+            };
 
         view->on_cache_storage_owner_mutation =
             [this](u16 operation, ByteString origin, ByteString key,
@@ -975,10 +983,7 @@ struct PageSession {
         RinWebContentServiceWorkerOwnerResponseV1 response {};
         if (!recv_all(s_service_worker_owner_fd, &response, sizeof(response),
                       deadline_ms) ||
-            ((operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER ||
-              operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_HTTP_COOKIES)
-                 ? !rin_webcontent_client_service_worker_owner_cookie_response_valid(&response)
-                 : !rin_webcontent_client_service_worker_owner_response_valid(&response))) {
+            !rin_webcontent_client_service_worker_owner_response_valid(&response)) {
             ::close(s_service_worker_owner_fd);
             s_service_worker_owner_fd = -1;
             s_owner_channel_session = {};
@@ -1025,6 +1030,47 @@ struct PageSession {
             origin.characters(), origin.length(),
             key.characters(), key.length(),
             value.characters(), value.length());
+    }
+
+    WebView::ViewImplementation::HttpCookieOwnerResponse http_cookie_owner_request(
+        u32 operation, ByteString request_url, ByteString origin,
+        ByteString cookie_data, u32 policy)
+    {
+        WebView::ViewImplementation::HttpCookieOwnerResponse result;
+        u16 owner_operation = 0u;
+        if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER)
+            owner_operation = RIN_WEBCONTENT_HTTP_COOKIE_OWNER_GET_HEADER;
+        else if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_HTTP_COOKIES)
+            owner_operation = RIN_WEBCONTENT_HTTP_COOKIE_OWNER_COMMIT_SET_COOKIE;
+        else
+            return result;
+
+        if (s_service_worker_owner_fd < 0 || request_url.is_empty() ||
+            origin.is_empty() || origin.length() >= RIN_WEBCONTENT_URL_MAX ||
+            request_url.length() >= RIN_WEBCONTENT_URL_MAX ||
+            cookie_data.length() > RIN_WEBCONTENT_HTTP_COOKIE_OWNER_MAX_DATA_BYTES ||
+            (owner_operation == RIN_WEBCONTENT_HTTP_COOKIE_OWNER_GET_HEADER &&
+             !cookie_data.is_empty()) ||
+            (owner_operation == RIN_WEBCONTENT_HTTP_COOKIE_OWNER_COMMIT_SET_COOKIE &&
+             cookie_data.is_empty()))
+            return result;
+
+        std::vector<uint8_t> response_data;
+        u64 generation = 0u;
+        if (!RinLadybird::request_http_cookie_owner(
+                page_id, owner_operation, policy,
+                origin.characters(), origin.length(),
+                request_url.characters(), request_url.length(),
+                cookie_data.characters(), cookie_data.length(),
+                response_data, generation) || generation == 0u)
+            return result;
+
+        result.accepted = true;
+        result.found = true;
+        result.generation = generation;
+        result.data = ByteString {
+            reinterpret_cast<char const*>(response_data.data()), response_data.size() };
+        return result;
     }
 
     bool cache_storage_owner_snapshot(ByteString origin,
