@@ -28,6 +28,111 @@ static void clear_client_certificate_capability(ByteBuffer& capability)
 }
 #endif
 
+static ErrorOr<void> socket_write_exact(Core::TCPSocket& socket, ReadonlyBytes bytes)
+{
+    size_t offset = 0;
+    while (offset < bytes.size()) {
+        auto written = TRY(socket.write_some(bytes.slice(offset)));
+        if (written == 0)
+            return Error::from_string_literal("Proxy closed while writing handshake");
+        offset += written;
+    }
+    return {};
+}
+
+static ErrorOr<void> socket_read_exact(Core::TCPSocket& socket, Bytes bytes,
+                                      int timeout_ms)
+{
+    size_t offset = 0;
+    while (offset < bytes.size()) {
+        auto ready = TRY(socket.can_read_without_blocking(timeout_ms));
+        if (!ready)
+            return Error::from_string_literal("SOCKS5 proxy handshake timed out");
+        auto read = TRY(socket.read_some(bytes.slice(offset)));
+        if (read.is_empty())
+            return Error::from_string_literal("Proxy closed during handshake");
+        offset += read.size();
+    }
+    return {};
+}
+
+static ErrorOr<void> socks5_connect(Core::TCPSocket& socket, URL::URL const& url,
+                                    long connect_timeout_seconds)
+{
+    constexpr u8 greeting[] { 5, 1, 0 };
+    u8 greeting_reply[2] {};
+    int timeout_ms = -1;
+    if (connect_timeout_seconds > 0) {
+        auto bounded_seconds = min(connect_timeout_seconds, 2147483L);
+        timeout_ms = static_cast<int>(bounded_seconds * 1000L);
+    }
+    TRY(socket_write_exact(socket, ReadonlyBytes { greeting, sizeof(greeting) }));
+    TRY(socket_read_exact(socket, Bytes { greeting_reply, sizeof(greeting_reply) }, timeout_ms));
+    if (greeting_reply[0] != 5 || greeting_reply[1] != 0)
+        return Error::from_string_literal("SOCKS5 proxy rejected no-auth negotiation");
+
+    if (!url.host().has_value())
+        return Error::from_string_literal("SOCKS5 target has no host");
+
+    u8 request[262] {};
+    size_t request_size = 0;
+    request[0] = 5;
+    request[1] = 1;
+    request[2] = 0;
+    if (url.host()->has<IPv4Address>()) {
+        request[3] = 1;
+        auto address = url.host()->get<IPv4Address>();
+        for (size_t index = 0; index < 4; ++index)
+            request[4 + index] = address[index];
+        request_size = 8;
+    } else if (url.host()->has<IPv6Address>()) {
+        request[3] = 4;
+        auto address = url.host()->get<IPv6Address>();
+        for (size_t index = 0; index < 8; ++index) {
+            auto piece = address[index];
+            request[4 + index * 2] = static_cast<u8>(piece >> 8);
+            request[5 + index * 2] = static_cast<u8>(piece);
+        }
+        request_size = 22;
+    } else {
+        auto host = url.serialized_host().to_byte_string();
+        if (host.is_empty() || host.length() > 255)
+            return Error::from_string_literal("SOCKS5 target hostname is outside the protocol bound");
+        request[3] = 3;
+        request[4] = static_cast<u8>(host.length());
+        __builtin_memcpy(request + 5, host.characters(), host.length());
+        request_size = 5 + host.length() + 2;
+    }
+
+    auto port = url.port_or_default();
+    size_t port_offset = request_size - 2;
+    request[port_offset] = static_cast<u8>(port >> 8);
+    request[port_offset + 1] = static_cast<u8>(port);
+    TRY(socket_write_exact(socket, ReadonlyBytes { request, request_size }));
+
+    u8 reply[4] {};
+    TRY(socket_read_exact(socket, Bytes { reply, sizeof(reply) }, timeout_ms));
+    if (reply[0] != 5 || reply[1] != 0 || reply[2] != 0)
+        return Error::from_string_literal("SOCKS5 proxy could not connect to target");
+
+    size_t bound_address_size = 0;
+    if (reply[3] == 1)
+        bound_address_size = 4;
+    else if (reply[3] == 4)
+        bound_address_size = 16;
+    else if (reply[3] == 3) {
+        u8 hostname_size = 0;
+        TRY(socket_read_exact(socket, Bytes { &hostname_size, 1 }, timeout_ms));
+        bound_address_size = hostname_size;
+    } else {
+        return Error::from_string_literal("SOCKS5 proxy returned an invalid address type");
+    }
+    u8 ignored_bound_address[257] {};
+    TRY(socket_read_exact(socket, Bytes {
+        ignored_bound_address, bound_address_size + 2 }, timeout_ms));
+    return {};
+}
+
 static int response_connection_close(const uint8_t* data, size_t size)
 {
     size_t line_start = 0;
@@ -80,12 +185,14 @@ RinHTTPConnectionPool& RinHTTPConnectionPool::the()
     return s_instance;
 }
 
-ByteString RinHTTPConnectionPool::make_key(URL::URL const& url)
+ByteString RinHTTPConnectionPool::make_key(URL::URL const& url, Core::ProxyData const& proxy)
 {
     auto host = url.serialized_host().to_byte_string();
     auto port = url.port_or_default();
     StringBuilder b;
     b.appendff("{}://{}:{}", url.scheme(), host, port);
+    if (proxy.type == Core::ProxyData::Type::SOCKS5)
+        b.appendff("|socks5://{}:{}", proxy.host_ipv4, proxy.port);
     return b.to_byte_string();
 }
 
@@ -313,7 +420,8 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     RefPtr<DNS::LookupResult const> dns_result,
     long connect_timeout_seconds,
     ClientCertificateProvider client_certificate_provider,
-    ClientCertificateSigner client_certificate_signer)
+    ClientCertificateSigner client_certificate_signer,
+    Core::ProxyData proxy_data)
 {
     RequestBodySource source;
     source.expected_length = request_body.size();
@@ -330,7 +438,7 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     return create(request_id, url, method, request_headers, move(source),
                   dns_result, connect_timeout_seconds,
                   move(client_certificate_provider),
-                  move(client_certificate_signer));
+                  move(client_certificate_signer), move(proxy_data));
 }
 
 ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
@@ -342,7 +450,8 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     RefPtr<DNS::LookupResult const> dns_result,
     long connect_timeout_seconds,
     ClientCertificateProvider client_certificate_provider,
-    ClientCertificateSigner client_certificate_signer)
+    ClientCertificateSigner client_certificate_signer,
+    Core::ProxyData proxy_data)
 {
     auto fetch = adopt_own(*new RinHTTPFetch());
 
@@ -362,7 +471,12 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     fetch->m_request_body_length = request_body.expected_length;
     fetch->m_request_body_read = move(request_body.read);
 
-    if (!dns_result || dns_result->is_empty() || !dns_result->has_cached_addresses())
+    bool using_socks5 = proxy_data.type == Core::ProxyData::Type::SOCKS5;
+    if (proxy_data.type != Core::ProxyData::Type::Direct && !using_socks5)
+        return Error::from_string_literal("Unsupported proxy type");
+    if (using_socks5 && (proxy_data.port == 0 || proxy_data.host_ipv4 == IPv4Address {}))
+        return Error::from_string_literal("Invalid SOCKS5 proxy endpoint");
+    if (!using_socks5 && (!dns_result || dns_result->is_empty() || !dns_result->has_cached_addresses()))
         return Error::from_string_literal("No DNS result for HTTP fetch");
 
     auto host = url.serialized_host().to_byte_string();
@@ -370,7 +484,7 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     bool is_https = url.scheme() == "https"sv;
 
     // Stage 3-C: \u30d7\u30fc\u30eb\u304b\u3089 idle socket \u3092\u53d6\u308a\u51fa\u305b\u306a\u3044\u304b\u8a66\u3059\u3002
-    fetch->m_pool_key = RinHTTPConnectionPool::make_key(url);
+    fetch->m_pool_key = RinHTTPConnectionPool::make_key(url, proxy_data);
     auto pooled = fetch->m_disable_pooling
         ? OwnPtr<Core::BufferedSocketBase> {}
         : RinHTTPConnectionPool::the().take(fetch->m_pool_key);
@@ -384,10 +498,19 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
             fetch->m_secure_connect_start_us = fetch->m_connect_end_us;
     } else {
         // Build SocketAddress from DNS result
-        auto const& addresses = dns_result->cached_addresses();
-        Core::SocketAddress socket_address = addresses.first().visit(
-            [&](IPv4Address const& v4) -> Core::SocketAddress { return { v4, port }; },
-            [&](IPv6Address const& v6) -> Core::SocketAddress { return { v6, port }; });
+        Core::SocketAddress socket_address;
+        if (using_socks5) {
+            socket_address = Core::SocketAddress { proxy_data.host_ipv4, proxy_data.port };
+        } else {
+            auto const& addresses = dns_result->cached_addresses();
+            socket_address = addresses.first().visit(
+                [&](IPv4Address const& v4) -> Core::SocketAddress { return { v4, port }; },
+                [&](IPv6Address const& v6) -> Core::SocketAddress { return { v6, port }; });
+        }
+
+        auto tcp_socket = TRY(Core::TCPSocket::connect(socket_address));
+        if (using_socks5)
+            TRY(socks5_connect(*tcp_socket, url, connect_timeout_seconds));
 
         if (is_https) {
             TLS::Options tls_options;
@@ -401,13 +524,12 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
             }
 #endif
 
-            auto tls_socket = TRY(TLS::TLSv12::connect(socket_address, host, move(tls_options)));
+            auto tls_socket = TRY(TLS::TLSv12::connect(move(tcp_socket), host, move(tls_options)));
             fetch->m_connect_end_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
             fetch->m_secure_connect_start_us = fetch->m_connect_end_us;
 
             fetch->m_socket = TRY(Core::BufferedSocket<TLS::TLSv12>::create(move(tls_socket)));
         } else {
-            auto tcp_socket = TRY(Core::TCPSocket::connect(socket_address));
             TRY(tcp_socket->set_blocking(false));
             fetch->m_connect_end_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
 

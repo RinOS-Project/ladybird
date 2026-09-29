@@ -107,6 +107,13 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect(Core::SocketAddress const& addres
     return connect_internal(move(tcp_socket), host, move(options));
 }
 
+ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect(NonnullOwnPtr<Core::TCPSocket> socket, ByteString const& host, Options options)
+{
+    if (!socket->is_open())
+        return Error::from_string_literal("Cannot start TLS on a closed TCP socket");
+    return connect_internal(move(socket), host, move(options));
+}
+
 void TLSv12::handle_fatal_error()
 {
     if (m_ctx) {
@@ -306,6 +313,13 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect(Core::SocketAddress const& addres
 {
     auto tcp_socket = TRY(Core::TCPSocket::connect(address));
     return connect_internal(move(tcp_socket), host, move(options));
+}
+
+ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect(NonnullOwnPtr<Core::TCPSocket> socket, ByteString const& host, Options options)
+{
+    if (!socket->is_open())
+        return Error::from_string_literal("Cannot start TLS on a closed TCP socket");
+    return connect_internal(move(socket), host, move(options));
 }
 
 static void wait_for_activity(int sock, bool read)

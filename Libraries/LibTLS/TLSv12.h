@@ -54,6 +54,7 @@ public:
 
     static ErrorOr<NonnullOwnPtr<TLSv12>> connect(Core::SocketAddress const&, ByteString const& host, Options = {});
     static ErrorOr<NonnullOwnPtr<TLSv12>> connect(ByteString const& host, u16 port, Options = {});
+    static ErrorOr<NonnullOwnPtr<TLSv12>> connect(NonnullOwnPtr<Core::TCPSocket>, ByteString const& host, Options = {});
 
     ~TLSv12() override;
 

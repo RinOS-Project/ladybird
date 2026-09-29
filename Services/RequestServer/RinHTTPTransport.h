@@ -15,6 +15,7 @@
 #include <AK/OwnPtr.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
+#include <LibCore/Proxy.h>
 #include <LibCore/Socket.h>
 #include <LibCore/Timer.h>
 #include <LibDNS/Resolver.h>
@@ -42,8 +43,8 @@ class RinHTTPConnectionPool {
 public:
     static RinHTTPConnectionPool& the();
 
-    // Pool key: "scheme://host:port"
-    static ByteString make_key(URL::URL const& url);
+    // Pool key includes the selected proxy route as well as the origin.
+    static ByteString make_key(URL::URL const& url, Core::ProxyData const& proxy = {});
 
     // \u30d7\u30fc\u30eb\u304b\u3089 socket \u3092\u53d6\u308a\u51fa\u3059\u3002\u306a\u3051\u308c\u3070 nullptr\u3002
     OwnPtr<Core::BufferedSocketBase> take(ByteString const& key);
@@ -118,7 +119,8 @@ public:
         RefPtr<DNS::LookupResult const> dns_result,
         long connect_timeout_seconds,
         ClientCertificateProvider client_certificate_provider = {},
-        ClientCertificateSigner client_certificate_signer = {});
+        ClientCertificateSigner client_certificate_signer = {},
+        Core::ProxyData proxy_data = {});
 
     static ErrorOr<NonnullOwnPtr<RinHTTPFetch>> create(
         u64 request_id,
@@ -129,7 +131,8 @@ public:
         RefPtr<DNS::LookupResult const> dns_result,
         long connect_timeout_seconds,
         ClientCertificateProvider client_certificate_provider = {},
-        ClientCertificateSigner client_certificate_signer = {});
+        ClientCertificateSigner client_certificate_signer = {},
+        Core::ProxyData proxy_data = {});
 
     ~RinHTTPFetch();
 

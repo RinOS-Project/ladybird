@@ -643,6 +643,18 @@ void Request::handle_dns_lookup_state()
     }
     m_dns_pending = true;
 
+    // SOCKS5_HOSTNAME resolves the destination at the proxy. Do not require a
+    // local destination lookup, which could leak the hostname or make a proxy-
+    // only network unusable. Cookie retrieval remains in parallel as usual.
+    if (m_proxy_data.type == Core::ProxyData::Type::SOCKS5) {
+        m_dns_pending = false;
+        if (first_is_one_of(m_type, Type::Fetch, Type::BackgroundRevalidation))
+            maybe_advance_from_parallel();
+        else
+            transition_to_state(State::Complete);
+        return;
+    }
+
     // RinOS owns DNS policy and caching in the isolated resolved service.
     // Using LibDNS here bypassed that service and left RequestServer without a
     // configured upstream, so every browser lookup failed before resolved saw
@@ -670,6 +682,13 @@ void Request::handle_dns_lookup_state()
 #endif
 
 #if !defined(AK_OS_RINOS)
+    if (m_proxy_data.type == Core::ProxyData::Type::SOCKS5) {
+        if (first_is_one_of(m_type, Type::Fetch, Type::BackgroundRevalidation))
+            transition_to_state(State::RetrieveCookie);
+        else
+            transition_to_state(State::Complete);
+        return;
+    }
     m_resolver->dns.lookup(host, DNS::Messages::Class::IN, { DNS::Messages::ResourceType::A, DNS::Messages::ResourceType::AAAA }, { .validate_dnssec_locally = dns_info.validate_dnssec_locally })
         ->when_rejected(weak_callback(*this, [host](auto& self, auto const& error) {
             dbgln("Request::handle_dns_lookup_state: DNS lookup failed for '{}': {}", host, error);
@@ -800,7 +819,8 @@ void Request::handle_fetch_state()
             headers_for_fetch->append({ "If-Modified-Since"sv, *revalidation_attributes.last_modified });
     }
 
-    VERIFY(m_dns_result);
+    if (m_proxy_data.type != Core::ProxyData::Type::SOCKS5)
+        VERIFY(m_dns_result);
     RinHTTPFetch::ClientCertificateProvider client_certificate_provider;
     RinHTTPFetch::ClientCertificateSigner client_certificate_signer;
     if (m_client.client_certificate_identity_available()) {
@@ -826,7 +846,8 @@ void Request::handle_fetch_state()
     auto fetch_or_error = RinHTTPFetch::create(
         m_request_id, m_url, m_method, *headers_for_fetch, move(body_source),
         m_dns_result, s_connect_timeout_seconds,
-        move(client_certificate_provider), move(client_certificate_signer));
+        move(client_certificate_provider), move(client_certificate_signer),
+        m_proxy_data);
     if (fetch_or_error.is_error()) {
         dbgln("Request::handle_fetch_state: Failed to create RinHTTPFetch: {}", fetch_or_error.error());
         m_network_error = Requests::NetworkError::UnableToConnect;
@@ -936,8 +957,25 @@ void Request::handle_fetch_state()
         m_curl_string_lists.append(curl_headers);
     }
 
-    // FIXME: Set up proxy if applicable
-    (void)m_proxy_data;
+    if (m_proxy_data.type == Core::ProxyData::Type::SOCKS5) {
+        if (m_proxy_data.port == 0 || m_proxy_data.host_ipv4 == IPv4Address {}) {
+            m_network_error = Requests::NetworkError::UnableToResolveProxy;
+            transition_to_state(State::Error);
+            return;
+        }
+        auto proxy_host = m_proxy_data.host_ipv4.to_byte_string();
+        set_option(CURLOPT_PROXY, proxy_host.characters());
+        set_option(CURLOPT_PROXYPORT, static_cast<long>(m_proxy_data.port));
+        set_option(CURLOPT_PROXYTYPE, static_cast<long>(CURLPROXY_SOCKS5_HOSTNAME));
+    } else if (m_proxy_data.type != Core::ProxyData::Type::Direct) {
+        m_network_error = Requests::NetworkError::UnableToResolveProxy;
+        transition_to_state(State::Error);
+        return;
+    } else {
+        // Do not let ambient proxy environment variables override the
+        // authenticated per-request route selected by the Browser.
+        set_option(CURLOPT_PROXY, "");
+    }
 
     set_option(CURLOPT_HEADERFUNCTION, &on_header_received);
     set_option(CURLOPT_HEADERDATA, this);
@@ -945,14 +983,16 @@ void Request::handle_fetch_state()
     set_option(CURLOPT_WRITEFUNCTION, &on_data_received);
     set_option(CURLOPT_WRITEDATA, this);
 
-    VERIFY(m_dns_result);
-    auto formatted_address = build_curl_resolve_list(*m_dns_result, m_url.serialized_host(), m_url.port_or_default());
+    if (m_proxy_data.type == Core::ProxyData::Type::Direct) {
+        VERIFY(m_dns_result);
+        auto formatted_address = build_curl_resolve_list(*m_dns_result, m_url.serialized_host(), m_url.port_or_default());
 
-    if (curl_slist* resolve_list = curl_slist_append(nullptr, formatted_address.characters())) {
-        set_option(CURLOPT_RESOLVE, resolve_list);
-        m_curl_string_lists.append(resolve_list);
-    } else {
-        VERIFY_NOT_REACHED();
+        if (curl_slist* resolve_list = curl_slist_append(nullptr, formatted_address.characters())) {
+            set_option(CURLOPT_RESOLVE, resolve_list);
+            m_curl_string_lists.append(resolve_list);
+        } else {
+            VERIFY_NOT_REACHED();
+        }
     }
 
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
