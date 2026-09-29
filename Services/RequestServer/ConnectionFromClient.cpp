@@ -113,10 +113,16 @@ bool ConnectionFromClient::set_client_certificate_owner(
     ClientCertificateOwner owner, void* context)
 {
     if (owner == nullptr || context == nullptr) {
+        if (owner != nullptr || context != nullptr)
+            return false;
         g_client_certificate_owner = nullptr;
         g_client_certificate_owner_context = nullptr;
-        return owner == nullptr && context == nullptr;
+        return true;
     }
+    if (g_client_certificate_owner != nullptr ||
+        g_client_certificate_owner_context != nullptr)
+        return g_client_certificate_owner == owner &&
+            g_client_certificate_owner_context == context;
     g_client_certificate_owner = owner;
     g_client_certificate_owner_context = context;
     return true;
