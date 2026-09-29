@@ -8,6 +8,7 @@
 
 #include <AK/ByteBuffer.h>
 #include <AK/ByteString.h>
+#include <AK/Function.h>
 #include <AK/MemoryStream.h>
 #include <AK/Optional.h>
 #include <AK/Time.h>
@@ -35,6 +36,11 @@ namespace RequestServer {
 
 class Request final : public HTTP::CacheRequest {
 public:
+    struct RequestBodySource {
+        u64 expected_length { 0 };
+        Function<ErrorOr<size_t>(Bytes)> read;
+    };
+
     static NonnullOwnPtr<Request> fetch(
         u64 request_id,
         Optional<HTTP::DiskCache&> disk_cache,
@@ -50,7 +56,6 @@ public:
         ByteString alt_svc_cache_path,
         Core::ProxyData proxy_data);
 
-#if defined(AK_OS_RINOS)
     static NonnullOwnPtr<Request> fetch_streaming(
         u64 request_id,
         Optional<HTTP::DiskCache&> disk_cache,
@@ -61,11 +66,10 @@ public:
         URL::URL url,
         ByteString method,
         NonnullRefPtr<HTTP::HeaderList> request_headers,
-        RinHTTPFetch::RequestBodySource request_body,
+        RequestBodySource request_body,
         HTTP::Cookie::IncludeCredentials include_credentials,
         ByteString alt_svc_cache_path,
         Core::ProxyData proxy_data);
-#endif
 
     static NonnullOwnPtr<Request> connect(
         u64 request_id,
@@ -189,6 +193,9 @@ private:
 
     static size_t on_header_received(void* buffer, size_t size, size_t nmemb, void* user_data);
     static size_t on_data_received(void* buffer, size_t size, size_t nmemb, void* user_data);
+#if !defined(AK_OS_RINOS)
+    static size_t on_request_body_read(char* buffer, size_t size, size_t nmemb, void* user_data);
+#endif
 
     ErrorOr<void> inform_client_request_started();
     void transfer_headers_to_client_if_needed();
@@ -221,14 +228,15 @@ private:
 #if defined(AK_OS_RINOS)
     OwnPtr<RinHTTPFetch> m_rin_fetch;
     Optional<int> m_rin_result_code;
-    Optional<RinHTTPFetch::RequestBodySource> m_request_body_source;
 #else
     void* m_curl_easy_handle { nullptr };
     CurlTransferContext m_curl_transfer_context { CurlTransferContext::Kind::Request, nullptr };
     bool m_curl_handle_added { false };
     Vector<curl_slist*> m_curl_string_lists;
     Optional<int> m_curl_result_code;
+    size_t m_request_body_bytes_read { 0 };
 #endif
+    Optional<RequestBodySource> m_request_body_source;
 
     NonnullRefPtr<Resolver> m_resolver;
     RefPtr<DNS::LookupResult const> m_dns_result;

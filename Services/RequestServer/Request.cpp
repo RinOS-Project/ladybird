@@ -169,7 +169,6 @@ NonnullOwnPtr<Request> Request::fetch(
     return request;
 }
 
-#if defined(AK_OS_RINOS)
 NonnullOwnPtr<Request> Request::fetch_streaming(
     u64 request_id,
     Optional<HTTP::DiskCache&> disk_cache,
@@ -180,7 +179,7 @@ NonnullOwnPtr<Request> Request::fetch_streaming(
     URL::URL url,
     ByteString method,
     NonnullRefPtr<HTTP::HeaderList> request_headers,
-    RinHTTPFetch::RequestBodySource request_body,
+    RequestBodySource request_body,
     HTTP::Cookie::IncludeCredentials include_credentials,
     ByteString alt_svc_cache_path,
     Core::ProxyData proxy_data)
@@ -191,7 +190,6 @@ NonnullOwnPtr<Request> Request::fetch_streaming(
 
     return request;
 }
-#endif
 
 NonnullOwnPtr<Request> Request::connect(
     u64 request_id,
@@ -893,7 +891,13 @@ void Request::handle_fetch_state()
 
     RinHTTPFetch::RequestBodySource body_source;
     if (m_request_body_source.has_value()) {
-        body_source = m_request_body_source.release_value();
+        auto request_body_source = m_request_body_source.release_value();
+        body_source.expected_length = request_body_source.expected_length;
+        body_source.read = [request_body_source = move(request_body_source)](u8* buffer, size_t capacity) mutable -> ErrorOr<size_t> {
+            if (!request_body_source.read)
+                return Error::from_string_literal("Missing streaming request-body source");
+            return request_body_source.read({ buffer, capacity });
+        };
     } else {
         body_source.expected_length = m_request_body.size();
         body_source.read = [body = m_request_body.bytes(), offset = size_t { 0 }](
@@ -1019,7 +1023,21 @@ void Request::handle_fetch_state()
 
     curl_slist* curl_headers = nullptr;
 
-    if (m_method.is_one_of("POST"sv, "PUT"sv, "PATCH"sv, "DELETE"sv)) {
+    if (m_request_body_source.has_value()) {
+        if (!m_request_body_source->read || m_request_body_source->expected_length > NumericLimits<curl_off_t>::max()) {
+            m_network_error = Requests::NetworkError::Unknown;
+            transition_to_state(State::Error);
+            return;
+        }
+
+        set_option(CURLOPT_READFUNCTION, &on_request_body_read);
+        set_option(CURLOPT_READDATA, this);
+        set_option(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(m_request_body_source->expected_length));
+        if (m_method == "POST"sv)
+            set_option(CURLOPT_POST, 1L);
+        else
+            set_option(CURLOPT_UPLOAD, 1L);
+    } else if (m_method.is_one_of("POST"sv, "PUT"sv, "PATCH"sv, "DELETE"sv)) {
         set_option(CURLOPT_POSTFIELDSIZE, m_request_body.size());
         set_option(CURLOPT_POSTFIELDS, m_request_body.data());
 
@@ -1285,6 +1303,43 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
 
     return total_size;
 }
+
+#if !defined(AK_OS_RINOS)
+size_t Request::on_request_body_read(char* buffer, size_t size, size_t nmemb, void* user_data)
+{
+    auto& request = *static_cast<Request*>(user_data);
+    if (nmemb != 0 && size > NumericLimits<size_t>::max() / nmemb)
+        return CURL_READFUNC_ABORT;
+
+    auto capacity = size * nmemb;
+    if (!request.m_request_body_source.has_value() || capacity == 0)
+        return 0;
+
+    auto& source = *request.m_request_body_source;
+    if (!source.read)
+        return CURL_READFUNC_ABORT;
+
+    auto result = source.read({ reinterpret_cast<u8*>(buffer), capacity });
+    if (result.is_error()) {
+        request.m_network_error = Requests::NetworkError::Unknown;
+        return CURL_READFUNC_ABORT;
+    }
+
+    auto bytes_read = result.release_value();
+    if (bytes_read > capacity || bytes_read > source.expected_length - min(source.expected_length, request.m_request_body_bytes_read)) {
+        request.m_network_error = Requests::NetworkError::Unknown;
+        return CURL_READFUNC_ABORT;
+    }
+
+    request.m_request_body_bytes_read += bytes_read;
+    if (bytes_read == 0 && request.m_request_body_bytes_read < source.expected_length) {
+        request.m_network_error = Requests::NetworkError::IncompleteContent;
+        return CURL_READFUNC_ABORT;
+    }
+
+    return bytes_read;
+}
+#endif
 
 ErrorOr<void> Request::inform_client_request_started()
 {

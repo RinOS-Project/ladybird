@@ -500,7 +500,6 @@ void ConnectionFromClient::start_streaming_request(u64 request_id, ByteString me
         return;
     }
 
-#if defined(AK_OS_RINOS)
     static constexpr u64 max_request_body_bytes = 128u * 1024u * 1024u;
     static constexpr size_t max_request_body_chunk_bytes = 64u * 1024u;
     if (request_body_length > max_request_body_bytes) {
@@ -512,35 +511,29 @@ void ConnectionFromClient::start_streaming_request(u64 request_id, ByteString me
         return;
     }
 
-    RinHTTPFetch::RequestBodySource body_source;
+    Request::RequestBodySource body_source;
     body_source.expected_length = request_body_length;
-    body_source.read = [this, request_id](u8* buffer, size_t capacity) -> ErrorOr<size_t> {
-        if (!buffer || capacity == 0u || capacity > max_request_body_chunk_bytes)
+    body_source.read = [this, request_id](Bytes output) -> ErrorOr<size_t> {
+        if (output.is_empty() || output.size() > max_request_body_chunk_bytes)
             return Error::from_string_literal("Invalid streaming request-body read");
 
-        auto response = send_sync<Messages::RequestClient::RequestBodyChunk>(request_id, static_cast<u32>(capacity));
+        auto response = send_sync<Messages::RequestClient::RequestBodyChunk>(request_id, static_cast<u32>(output.size()));
         auto data = response->take_data();
-        if (data.size() > capacity || (response->eof() && !data.is_empty()))
+        if (data.size() > output.size() || (response->eof() && !data.is_empty()))
             return Error::from_string_literal("Invalid streaming request-body response");
         if (data.is_empty())
             return size_t { 0 };
 
-        __builtin_memcpy(buffer, data.data(), data.size());
+        __builtin_memcpy(output.data(), data.data(), data.size());
         return data.size();
     };
 
+#if defined(AK_OS_RINOS)
     auto request = Request::fetch_streaming(request_id, m_disk_cache, cache_mode, *this, nullptr, m_resolver, move(url), move(method), HTTP::HeaderList::create(move(request_headers)), move(body_source), include_credentials, m_alt_svc_cache_path, proxy_data);
-    m_active_requests.set(request_id, move(request));
 #else
-    (void)request_id;
-    (void)method;
-    (void)url;
-    (void)request_headers;
-    (void)request_body_length;
-    (void)cache_mode;
-    (void)include_credentials;
-    (void)proxy_data;
+    auto request = Request::fetch_streaming(request_id, m_disk_cache, cache_mode, *this, m_curl_multi, m_resolver, move(url), move(method), HTTP::HeaderList::create(move(request_headers)), move(body_source), include_credentials, m_alt_svc_cache_path, proxy_data);
 #endif
+    m_active_requests.set(request_id, move(request));
 }
 
 void ConnectionFromClient::start_revalidation_request(Badge<Request>, ByteString method, URL::URL url, NonnullRefPtr<HTTP::HeaderList> request_headers, ByteBuffer request_body, HTTP::Cookie::IncludeCredentials include_credentials, Core::ProxyData proxy_data)
