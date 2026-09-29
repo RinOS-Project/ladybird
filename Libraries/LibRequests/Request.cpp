@@ -75,8 +75,34 @@ void Request::set_buffered_request_finished_callback(BufferedRequestFinished on_
     };
 
     on_finish = [this, on_buffered_request_finished = move(on_buffered_request_finished)](auto total_size, auto& timing_info, auto network_error) {
-        auto output_buffer = ByteBuffer::create_uninitialized(m_internal_buffered_data->payload_stream.used_buffer_size()).release_value_but_fixme_should_propagate_errors();
-        m_internal_buffered_data->payload_stream.read_until_filled(output_buffer).release_value_but_fixme_should_propagate_errors();
+        auto const finish_with_failure = [&](u64 reported_total_size, Optional<NetworkError> reported_error) {
+            if (!reported_error.has_value())
+                reported_error = NetworkError::Unknown;
+            on_buffered_request_finished(
+                reported_total_size,
+                timing_info,
+                reported_error,
+                m_internal_buffered_data->response_headers,
+                m_internal_buffered_data->response_code,
+                m_internal_buffered_data->reason_phrase,
+                {});
+        };
+
+        if (m_internal_buffered_data->payload_failed) {
+            finish_with_failure(0, network_error);
+            return;
+        }
+
+        auto output_buffer = ByteBuffer::create_uninitialized(m_internal_buffered_data->payload_stream.used_buffer_size());
+        if (output_buffer.is_error()) {
+            finish_with_failure(0, network_error);
+            return;
+        }
+        auto payload = output_buffer.release_value();
+        if (auto result = m_internal_buffered_data->payload_stream.read_until_filled(payload); result.is_error()) {
+            finish_with_failure(0, network_error);
+            return;
+        }
 
         on_buffered_request_finished(
             total_size,
@@ -85,12 +111,14 @@ void Request::set_buffered_request_finished_callback(BufferedRequestFinished on_
             m_internal_buffered_data->response_headers,
             m_internal_buffered_data->response_code,
             m_internal_buffered_data->reason_phrase,
-            output_buffer);
+            payload);
     };
 
     set_up_internal_stream_data([this](auto read_bytes) {
-        // FIXME: What do we do if this fails?
-        m_internal_buffered_data->payload_stream.write_until_depleted(read_bytes).release_value_but_fixme_should_propagate_errors();
+        if (m_internal_buffered_data->payload_failed)
+            return;
+        if (auto result = m_internal_buffered_data->payload_stream.write_until_depleted(read_bytes); result.is_error())
+            m_internal_buffered_data->payload_failed = true;
     });
 }
 

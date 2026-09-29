@@ -122,6 +122,7 @@ private:
         NonnullRefPtr<HTTP::HeaderList> response_headers;
         Optional<u32> response_code;
         Optional<String> reason_phrase;
+        bool payload_failed { false };
     };
 
     struct InternalStreamData {
