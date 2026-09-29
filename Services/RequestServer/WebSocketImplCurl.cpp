@@ -45,7 +45,11 @@ void WebSocketImplCurl::connect(WebSocket::ConnectionInfo const& info)
     VERIFY(on_ready_to_read);
 
     m_easy_handle = curl_easy_init();
-    VERIFY(m_easy_handle); // FIXME: Allow failure, and return ENOMEM
+    if (!m_easy_handle) {
+        dbgln("WebSocketImplCurl::connect: curl_easy_init failed");
+        on_connection_error();
+        return;
+    }
 
     auto set_option = [this](auto option, auto value) -> bool {
         auto result = curl_easy_setopt(m_easy_handle, option, value);
@@ -55,21 +59,35 @@ void WebSocketImplCurl::connect(WebSocket::ConnectionInfo const& info)
         return false;
     };
 
-    set_option(CURLOPT_PRIVATE, reinterpret_cast<uintptr_t>(this) | websocket_private_tag);
-    set_option(CURLOPT_WS_OPTIONS, CURLWS_RAW_MODE);
-    set_option(CURLOPT_CONNECT_ONLY, 2); // WebSocket mode
+    if (!set_option(CURLOPT_PRIVATE, reinterpret_cast<uintptr_t>(this) | websocket_private_tag) ||
+        !set_option(CURLOPT_WS_OPTIONS, CURLWS_RAW_MODE) ||
+        !set_option(CURLOPT_CONNECT_ONLY, 2)) { // WebSocket mode
+        on_connection_error();
+        return;
+    }
 
     // FIXME: Add a header function to validate the Sec-WebSocket headers that curl currently doesn't validate
 
     auto const& url = info.url();
-    set_option(CURLOPT_URL, url.to_byte_string().characters());
-    set_option(CURLOPT_PORT, url.port_or_default());
+    if (!set_option(CURLOPT_URL, url.to_byte_string().characters()) ||
+        !set_option(CURLOPT_PORT, url.port_or_default())) {
+        on_connection_error();
+        return;
+    }
 
-    if (auto root_certs = info.root_certificates_path(); root_certs.has_value())
-        set_option(CURLOPT_CAINFO, root_certs->characters());
+    if (auto root_certs = info.root_certificates_path(); root_certs.has_value() &&
+        !set_option(CURLOPT_CAINFO, root_certs->characters())) {
+        on_connection_error();
+        return;
+    }
 
     auto const origin_header = ByteString::formatted("Origin: {}", info.origin());
     curl_slist* curl_headers = curl_slist_append(nullptr, origin_header.characters());
+    if (!curl_headers) {
+        dbgln("WebSocketImplCurl::connect: failed to allocate Origin header");
+        on_connection_error();
+        return;
+    }
 
     for (auto const& [name, value] : info.headers().headers()) {
         // curl will discard headers with empty values unless we pass the header name followed by a semicolon.
@@ -78,34 +96,72 @@ void WebSocketImplCurl::connect(WebSocket::ConnectionInfo const& info)
             header_string = ByteString::formatted("{};", name);
         else
             header_string = ByteString::formatted("{}: {}", name, value);
-        curl_headers = curl_slist_append(curl_headers, header_string.characters());
+        auto* appended_headers = curl_slist_append(curl_headers, header_string.characters());
+        if (!appended_headers) {
+            curl_slist_free_all(curl_headers);
+            dbgln("WebSocketImplCurl::connect: failed to allocate request header");
+            on_connection_error();
+            return;
+        }
+        curl_headers = appended_headers;
     }
 
     if (auto const& protocols = info.protocols(); !protocols.is_empty()) {
         StringBuilder protocol_builder;
         protocol_builder.append("Sec-WebSocket-Protocol: "sv);
         protocol_builder.append(ByteString::join(","sv, protocols));
-        curl_headers = curl_slist_append(curl_headers, protocol_builder.to_byte_string().characters());
+        auto* appended_headers = curl_slist_append(curl_headers, protocol_builder.to_byte_string().characters());
+        if (!appended_headers) {
+            curl_slist_free_all(curl_headers);
+            dbgln("WebSocketImplCurl::connect: failed to allocate protocol header");
+            on_connection_error();
+            return;
+        }
+        curl_headers = appended_headers;
     }
 
     if (auto const& extensions = info.extensions(); !extensions.is_empty()) {
         StringBuilder protocol_builder;
         protocol_builder.append("Sec-WebSocket-Extensions: "sv);
         protocol_builder.append(ByteString::join(","sv, extensions));
-        curl_headers = curl_slist_append(curl_headers, protocol_builder.to_byte_string().characters());
+        auto* appended_headers = curl_slist_append(curl_headers, protocol_builder.to_byte_string().characters());
+        if (!appended_headers) {
+            curl_slist_free_all(curl_headers);
+            dbgln("WebSocketImplCurl::connect: failed to allocate extension header");
+            on_connection_error();
+            return;
+        }
+        curl_headers = appended_headers;
     }
 
-    set_option(CURLOPT_HTTPHEADER, curl_headers);
+    if (!set_option(CURLOPT_HTTPHEADER, curl_headers)) {
+        curl_slist_free_all(curl_headers);
+        on_connection_error();
+        return;
+    }
     m_curl_string_lists.append(curl_headers);
 
     if (auto const& dns_info = info.dns_result(); dns_info.has_value()) {
         auto* resolve_list = curl_slist_append(nullptr, build_curl_resolve_list(*dns_info, url.serialized_host(), url.port_or_default()).characters());
-        set_option(CURLOPT_RESOLVE, resolve_list);
+        if (!resolve_list) {
+            dbgln("WebSocketImplCurl::connect: failed to allocate DNS resolve list");
+            on_connection_error();
+            return;
+        }
+        if (!set_option(CURLOPT_RESOLVE, resolve_list)) {
+            curl_slist_free_all(resolve_list);
+            on_connection_error();
+            return;
+        }
         m_curl_string_lists.append(resolve_list);
     }
 
     CURLMcode const err = curl_multi_add_handle(m_multi_handle, m_easy_handle);
-    VERIFY(err == CURLM_OK);
+    if (err != CURLM_OK) {
+        dbgln("WebSocketImplCurl::connect: failed to add curl handle: {}", curl_multi_strerror(err));
+        on_connection_error();
+        return;
+    }
 }
 
 bool WebSocketImplCurl::can_read_line()
