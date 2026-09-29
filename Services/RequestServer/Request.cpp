@@ -1240,15 +1240,26 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
             return CURL_WRITEFUNC_ERROR;
 #endif
 
+        bool cache_writer_available = true;
         request.m_disk_cache->create_entry(request, request.m_url, request.m_method, request.m_request_headers, request.m_request_start_time)
             .visit(
                 [&](Optional<HTTP::CacheEntryWriter&> cache_entry_writer) {
                     request.m_cache_entry_writer = cache_entry_writer;
                 },
                 [&](HTTP::DiskCache::CacheHasOpenEntry) {
-                    // This should not be reachable, as cache revalidation holds an exclusive lock on the cache entry.
-                    VERIFY_NOT_REACHED();
+                    // Revalidation normally holds an exclusive lock, but a concurrent cache owner must still
+                    // fail the transfer rather than terminating RequestServer if that invariant is violated.
+                    cache_writer_available = false;
                 });
+
+        if (!cache_writer_available) {
+            request.m_network_error = Requests::NetworkError::Unknown;
+#if defined(AK_OS_RINOS)
+            return 0;
+#else
+            return CURL_WRITEFUNC_ERROR;
+#endif
+        }
     }
 
     request.transfer_headers_to_client_if_needed();
