@@ -32,6 +32,11 @@ OwnPtr<ResourceSubstitutionMap> g_resource_substitution_map;
 
 }
 
+#if defined(AK_OS_RINOS)
+extern "C" int rin_service_should_stop(void);
+extern "C" int rin_service_health(u32 status);
+#endif
+
 #ifndef AK_OS_WINDOWS
 static void handle_signal(int signal)
 {
@@ -143,6 +148,19 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     auto client = TRY(IPC::take_over_accepted_client_from_system_server<RequestServer::ConnectionFromClient>(
         mach_server_name,
         RequestServer::ConnectionFromClient::IsPrimaryConnection::Yes, connections, disk_cache));
+
+#if defined(AK_OS_RINOS)
+    // RequestServer is a service-manager-owned private process. Poll the
+    // kernel stop gate from the private event-loop owner so authenticated
+    // service-manager stop does not depend on a console signal.  The timer is
+    // deliberately kept out of the public EventLoop and transport adapters.
+    auto service_lifecycle_timer = Core::Timer::create_repeating(50, [&event_loop] {
+        if (rin_service_should_stop())
+            event_loop.quit(0);
+    });
+    service_lifecycle_timer->start();
+    (void)rin_service_health(0u);
+#endif
 
     auto result = event_loop.exec();
 #if defined(AK_OS_WINDOWS)
