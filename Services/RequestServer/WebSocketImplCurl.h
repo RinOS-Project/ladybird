@@ -37,6 +37,10 @@ public:
 private:
     explicit WebSocketImplCurl(CURLM*);
 
+    static size_t on_header_received(char*, size_t, size_t, void*);
+    size_t process_header(ReadonlyBytes);
+    void reset_response_headers();
+    bool response_headers_valid() const;
     void read_from_socket();
 
     CURLM* m_multi_handle { nullptr };
@@ -45,6 +49,18 @@ private:
     RefPtr<Core::Notifier> m_error_notifier;
     Vector<curl_slist*> m_curl_string_lists;
     AllocatingMemoryStream m_read_buffer;
+    ByteString m_websocket_key;
+    Vector<ByteString> m_requested_protocols;
+    Vector<ByteString> m_requested_extensions;
+    ByteString m_response_status;
+    bool m_response_header_valid { false };
+    bool m_response_headers_complete { false };
+    bool m_response_upgrade_seen { false };
+    bool m_response_connection_seen { false };
+    bool m_response_accept_seen { false };
+    bool m_response_protocol_header_seen { false };
+    bool m_response_protocol_seen { false };
+    bool m_response_extensions_header_seen { false };
 };
 
 }
