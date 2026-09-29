@@ -9,6 +9,7 @@
 #include <AK/MemoryStream.h>
 #include <LibCore/Forward.h>
 #include <LibWebSocket/Impl/WebSocketImpl.h>
+#include <RequestServer/CurlTransferContext.h>
 
 typedef void CURL;
 typedef void CURLM;
@@ -45,6 +46,7 @@ private:
 
     CURLM* m_multi_handle { nullptr };
     CURL* m_easy_handle { nullptr };
+    CurlTransferContext m_curl_transfer_context { CurlTransferContext::Kind::WebSocket, nullptr };
     RefPtr<Core::Notifier> m_read_notifier;
     RefPtr<Core::Notifier> m_error_notifier;
     Vector<curl_slist*> m_curl_string_lists;

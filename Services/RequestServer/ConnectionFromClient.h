@@ -158,6 +158,4 @@ private:
     u64 m_next_revalidation_request_id { 0 };
 };
 
-constexpr inline uintptr_t websocket_private_tag = 0x1;
-
 }

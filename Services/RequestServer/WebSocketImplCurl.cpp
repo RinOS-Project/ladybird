@@ -21,6 +21,7 @@ NonnullRefPtr<WebSocketImplCurl> WebSocketImplCurl::create(CURLM* multi_handle)
 WebSocketImplCurl::WebSocketImplCurl(CURLM* multi_handle)
     : m_multi_handle(multi_handle)
 {
+    m_curl_transfer_context.owner = this;
 }
 
 WebSocketImplCurl::~WebSocketImplCurl()
@@ -62,7 +63,7 @@ void WebSocketImplCurl::connect(WebSocket::ConnectionInfo const& info)
         return false;
     };
 
-    if (!set_option(CURLOPT_PRIVATE, reinterpret_cast<uintptr_t>(this) | websocket_private_tag) ||
+    if (!set_option(CURLOPT_PRIVATE, &m_curl_transfer_context) ||
         !set_option(CURLOPT_WS_OPTIONS, CURLWS_RAW_MODE) ||
         !set_option(CURLOPT_CONNECT_ONLY, 2) || // WebSocket mode
         !set_option(CURLOPT_HEADERFUNCTION, &WebSocketImplCurl::on_header_received) ||

@@ -627,9 +627,10 @@ void ConnectionFromClient::check_active_requests()
         VERIFY(result == CURLE_OK);
         VERIFY(application_private != nullptr);
 
-        // FIXME: Come up with a unified way to track websockets and standard fetches instead of this nasty tagged pointer
-        if (reinterpret_cast<uintptr_t>(application_private) & websocket_private_tag) {
-            auto* websocket_impl = reinterpret_cast<WebSocketImplCurl*>(reinterpret_cast<uintptr_t>(application_private) & ~websocket_private_tag);
+        auto* transfer_context = static_cast<CurlTransferContext*>(application_private);
+        VERIFY(transfer_context->owner != nullptr);
+        if (transfer_context->kind == CurlTransferContext::Kind::WebSocket) {
+            auto* websocket_impl = static_cast<WebSocketImplCurl*>(transfer_context->owner);
             if (msg->data.result == CURLE_OK) {
                 if (!websocket_impl->did_connect())
                     websocket_impl->on_connection_error();
@@ -639,7 +640,8 @@ void ConnectionFromClient::check_active_requests()
             continue;
         }
 
-        auto* request = static_cast<Request*>(application_private);
+        VERIFY(transfer_context->kind == CurlTransferContext::Kind::Request);
+        auto* request = static_cast<Request*>(transfer_context->owner);
         request->notify_fetch_complete({}, msg->data.result);
     }
 }

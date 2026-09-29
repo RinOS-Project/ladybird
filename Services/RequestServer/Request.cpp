@@ -266,6 +266,9 @@ Request::Request(
     , m_proxy_data(proxy_data)
     , m_response_headers(HTTP::HeaderList::create())
 {
+#if !defined(AK_OS_RINOS)
+    m_curl_transfer_context.owner = this;
+#endif
 #if defined(AK_OS_RINOS)
     size_t context_count = 0u;
     for (auto const& header : m_request_headers->headers()) {
@@ -298,6 +301,9 @@ Request::Request(
     , m_request_headers(HTTP::HeaderList::create())
     , m_response_headers(HTTP::HeaderList::create())
 {
+#if !defined(AK_OS_RINOS)
+    m_curl_transfer_context.owner = this;
+#endif
 }
 
 Request::~Request()
@@ -843,7 +849,7 @@ void Request::handle_connect_state()
             dbgln("Request::handle_connect_state: Failed to set curl option: {}", curl_easy_strerror(result));
     };
 
-    set_option(CURLOPT_PRIVATE, this);
+    set_option(CURLOPT_PRIVATE, &m_curl_transfer_context);
 
     set_option(CURLOPT_NOSIGNAL, 1L);
 
@@ -967,7 +973,7 @@ void Request::handle_fetch_state()
             dbgln("Request::handle_start_fetch_state: Failed to set curl option: {}", curl_easy_strerror(result));
     };
 
-    set_option(CURLOPT_PRIVATE, this);
+    set_option(CURLOPT_PRIVATE, &m_curl_transfer_context);
 
     set_option(CURLOPT_NOSIGNAL, 1L);
 

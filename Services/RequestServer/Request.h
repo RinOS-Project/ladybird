@@ -21,6 +21,7 @@
 #include <LibRequests/RequestTimingInfo.h>
 #include <LibURL/URL.h>
 #include <RequestServer/CacheLevel.h>
+#include <RequestServer/CurlTransferContext.h>
 #include <RequestServer/Forward.h>
 #include <RequestServer/RequestPipe.h>
 
@@ -223,6 +224,7 @@ private:
     Optional<RinHTTPFetch::RequestBodySource> m_request_body_source;
 #else
     void* m_curl_easy_handle { nullptr };
+    CurlTransferContext m_curl_transfer_context { CurlTransferContext::Kind::Request, nullptr };
     Vector<curl_slist*> m_curl_string_lists;
     Optional<int> m_curl_result_code;
 #endif
