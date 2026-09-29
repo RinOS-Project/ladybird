@@ -221,15 +221,18 @@ ErrorOr<ByteString> WebSocketImplCurl::read_line(size_t)
 
 bool WebSocketImplCurl::send(ReadonlyBytes bytes)
 {
-    size_t sent = 0;
-    CURLcode result = CURLE_OK;
-    do {
-        sent = 0;
-        result = curl_easy_send(m_easy_handle, bytes.data(), bytes.size(), &sent);
-        bytes = bytes.slice(sent);
-    } while (bytes.size() > 0 && (result == CURLE_OK || result == CURLE_AGAIN));
+    if (!m_easy_handle)
+        return false;
 
-    return result == CURLE_OK;
+    while (!bytes.is_empty()) {
+        size_t sent = 0;
+        auto const result = curl_easy_send(m_easy_handle, bytes.data(), bytes.size(), &sent);
+        if (result != CURLE_OK || sent == 0 || sent > bytes.size())
+            return false;
+        bytes = bytes.slice(sent);
+    }
+
+    return true;
 }
 
 bool WebSocketImplCurl::eof()
