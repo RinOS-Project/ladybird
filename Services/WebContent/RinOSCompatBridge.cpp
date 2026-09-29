@@ -44,6 +44,7 @@
 #include "webcontent_peer_identity_policy.h"
 #include "webcontent_network_failure_policy.h"
 #include "webcontent_client_policy.h"
+#include "RinNetworkProxyConsumer.h"
 #include "../../../../src/webengine/RinLadybirdRuntime.hpp"
 #include "webcontent_permission_producer.h"
 #include "../../../../public-base/libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
@@ -3700,6 +3701,7 @@ static ErrorOr<int> run_bridge()
     }
 
     auto cleanup_server_socket = [&] {
+        WebContent::stop_network_proxy_consumer();
         s_server_notifier = nullptr;
         if (s_service_worker_owner_fd >= 0) {
             ::close(s_service_worker_owner_fd);
@@ -3820,10 +3822,18 @@ static ErrorOr<int> run_bridge()
         }
     };
 
+    if (!WebContent::start_network_proxy_consumer()) {
+        auto consumer_error = Error::from_errno(errno);
+        cleanup_server_socket();
+        return consumer_error;
+    }
+
     s_stop_timer = Core::Timer::create_repeating(50, [server_fd] {
+        WebContent::apply_network_proxy_snapshot();
         if (!rin_service_should_stop())
             return;
 
+        WebContent::stop_network_proxy_consumer();
         s_pages.clear();
     if (s_service_worker_owner_fd >= 0) {
         ::close(s_service_worker_owner_fd);
@@ -3841,6 +3851,7 @@ static ErrorOr<int> run_bridge()
 
     rin_log("[webcontent] Ladybird bridge ready\n");
     auto result = s_app->execute();
+    WebContent::stop_network_proxy_consumer();
     if (result.is_error()) {
         cleanup_server_socket();
         s_stop_timer = nullptr;

@@ -7,7 +7,9 @@
 
 #include <AK/GenericShorthands.h>
 #if defined(AK_OS_RINOS)
+#    include <AK/Array.h>
 #    include <AK/HashMap.h>
+#    include <AK/IPv6Address.h>
 #    include <AK/Time.h>
 #endif
 #include <LibCore/File.h>
@@ -77,39 +79,60 @@ static ErrorOr<NonnullRefPtr<DNS::LookupResult>> resolve_host_via_rinos(ByteStri
     // one host, and opening a fresh resolved IPC session for every one needlessly
     // consumes Unix endpoints. Holding this mutex across a miss coalesces
     // concurrent lookups for the same host.
+    ByteString lookup_host = host;
+    if (host.length() > 2u && host[0] == '[' &&
+        host[host.length() - 1u] == ']')
+        lookup_host = ByteString::formatted("{}", StringView {
+            host.characters() + 1u, host.length() - 2u });
+
     Threading::MutexLocker locker { s_rinos_dns_cache_mutex };
     auto now_ms = MonotonicTime::now_coarse().milliseconds();
-    if (auto cached = s_rinos_dns_cache.find(host); cached != s_rinos_dns_cache.end()) {
+    if (auto cached = s_rinos_dns_cache.find(lookup_host); cached != s_rinos_dns_cache.end()) {
         if (cached->value.expires_at_ms > now_ms)
             return cached->value.result;
         s_rinos_dns_cache.remove(cached);
     }
 
     struct addrinfo hints {};
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    auto addresses = TRY(Core::System::getaddrinfo(host.characters(), nullptr, hints));
-    auto result = make_ref_counted<DNS::LookupResult>(DNS::Messages::DomainName::from_string(host));
+    auto addresses = TRY(Core::System::getaddrinfo(lookup_host.characters(), nullptr, hints));
+    auto result = make_ref_counted<DNS::LookupResult>(DNS::Messages::DomainName::from_string(lookup_host));
     result->will_add_record_of_type(DNS::Messages::ResourceType::A);
+    result->will_add_record_of_type(DNS::Messages::ResourceType::AAAA);
 
     bool found_address = false;
     for (auto const& address : addresses.addresses()) {
-        if (address.ai_family != AF_INET || address.ai_addr == nullptr
-            || address.ai_addrlen < sizeof(sockaddr_in)) {
+        if (address.ai_addr == nullptr)
             continue;
+        if (address.ai_family == AF_INET &&
+            address.ai_addrlen >= sizeof(sockaddr_in)) {
+            auto const* ipv4 = reinterpret_cast<sockaddr_in const*>(address.ai_addr);
+            result->add_record({
+                .name = {},
+                .type = DNS::Messages::ResourceType::A,
+                .class_ = DNS::Messages::Class::IN,
+                .ttl = 0,
+                .record = DNS::Messages::Records::A { IPv4Address(ipv4->sin_addr.s_addr) },
+                .raw = {},
+            });
+            found_address = true;
+        } else if (address.ai_family == AF_INET6 &&
+                   address.ai_addrlen >= sizeof(sockaddr_in6)) {
+            auto const* ipv6 = reinterpret_cast<sockaddr_in6 const*>(address.ai_addr);
+            Array<u8, 16> bytes {};
+            __builtin_memcpy(bytes.data(), &ipv6->sin6_addr, bytes.size());
+            result->add_record({
+                .name = {},
+                .type = DNS::Messages::ResourceType::AAAA,
+                .class_ = DNS::Messages::Class::IN,
+                .ttl = 0,
+                .record = DNS::Messages::Records::AAAA { IPv6Address { bytes } },
+                .raw = {},
+            });
+            found_address = true;
         }
-
-        auto const* ipv4 = reinterpret_cast<sockaddr_in const*>(address.ai_addr);
-        result->add_record({
-            .name = {},
-            .type = DNS::Messages::ResourceType::A,
-            .class_ = DNS::Messages::Class::IN,
-            .ttl = 0,
-            .record = DNS::Messages::Records::A { IPv4Address(ipv4->sin_addr.s_addr) },
-            .raw = {},
-        });
-        found_address = true;
     }
 
     result->finished_request();
@@ -118,7 +141,7 @@ static ErrorOr<NonnullRefPtr<DNS::LookupResult>> resolve_host_via_rinos(ByteStri
 
     if (s_rinos_dns_cache.size() >= s_rinos_dns_cache_max_entries)
         s_rinos_dns_cache.clear();
-    s_rinos_dns_cache.set(host, RinDNSCacheEntry { result, now_ms + s_rinos_dns_cache_ttl_ms });
+    s_rinos_dns_cache.set(lookup_host, RinDNSCacheEntry { result, now_ms + s_rinos_dns_cache_ttl_ms });
     return result;
 }
 #endif
@@ -622,11 +645,25 @@ void Request::handle_serve_substitution_state()
 void Request::handle_dns_lookup_state()
 {
     auto host = m_url.serialized_host().to_byte_string();
+    if (m_proxy_data.type == Core::ProxyData::Type::HTTP)
+        host = m_proxy_data.host;
 #if !defined(AK_OS_RINOS)
     auto const& dns_info = DNSInfo::the();
 #endif
 
 #if defined(AK_OS_RINOS)
+    if (m_proxy_data.type == Core::ProxyData::Type::Blocked) {
+        m_network_error = Requests::NetworkError::UnableToResolveProxy;
+        transition_to_state(State::Error);
+        return;
+    }
+    if (m_proxy_data.type != Core::ProxyData::Type::Direct &&
+        m_proxy_data.type != Core::ProxyData::Type::SOCKS5 &&
+        m_proxy_data.type != Core::ProxyData::Type::HTTP) {
+        m_network_error = Requests::NetworkError::UnableToResolveProxy;
+        transition_to_state(State::Error);
+        return;
+    }
     // Stage 3-A: DNS \u3068 Cookie IPC \u3092\u4e26\u5217\u767a\u884c\u3002RetrieveCookie \u72b6\u614b\u306f\u30b9\u30ad\u30c3\u30d7\u3059\u308b\u3002
     // \u30b3\u30f3\u30c6\u30f3\u30c4\u4ed8\u304d\u30a4\u30d9\u30f3\u30c8\u3067\u306f Cookie IPC \u306e\u5f80\u5fa9\u3067 200\uff5e500ms \u304b\u304b\u308b\u3053\u3068\u304c\u3042\u308a\u3001
     // DNS \u89e3\u6c7a\u3068\u540c\u6642\u306b\u8d70\u3089\u305b\u308b\u3068 1 \u30ea\u30bd\u30fc\u30b9\u5f53\u305f\u308a\u6570\u767e ms \u524a\u6e1b\u3067\u304d\u308b\u3002
@@ -643,9 +680,10 @@ void Request::handle_dns_lookup_state()
     }
     m_dns_pending = true;
 
-    // SOCKS5_HOSTNAME resolves the destination at the proxy. Do not require a
-    // local destination lookup, which could leak the hostname or make a proxy-
-    // only network unusable. Cookie retrieval remains in parallel as usual.
+    // SOCKS5_HOSTNAME resolves the destination at the proxy. HTTP proxy routes
+    // resolve only the proxy endpoint below. Neither route should perform a
+    // local origin lookup that could leak the hostname or block proxy-only
+    // networks. Cookie retrieval remains in parallel as usual.
     if (m_proxy_data.type == Core::ProxyData::Type::SOCKS5) {
         m_dns_pending = false;
         if (first_is_one_of(m_type, Type::Fetch, Type::BackgroundRevalidation))
@@ -664,7 +702,9 @@ void Request::handle_dns_lookup_state()
     if (lookup_result.is_error()) {
         dbgln("Request::handle_dns_lookup_state: RinResolver lookup failed for '{}': {}", host, lookup_result.error());
         m_dns_pending = false;
-        m_network_error = Requests::NetworkError::UnableToResolveHost;
+        m_network_error = m_proxy_data.type == Core::ProxyData::Type::HTTP
+            ? Requests::NetworkError::UnableToResolveProxy
+            : Requests::NetworkError::UnableToResolveHost;
         transition_to_state(State::Error);
         return;
     }
@@ -682,7 +722,13 @@ void Request::handle_dns_lookup_state()
 #endif
 
 #if !defined(AK_OS_RINOS)
-    if (m_proxy_data.type == Core::ProxyData::Type::SOCKS5) {
+    if (m_proxy_data.type == Core::ProxyData::Type::Blocked) {
+        m_network_error = Requests::NetworkError::UnableToResolveProxy;
+        transition_to_state(State::Error);
+        return;
+    }
+    if (m_proxy_data.type == Core::ProxyData::Type::SOCKS5 ||
+        m_proxy_data.type == Core::ProxyData::Type::HTTP) {
         if (first_is_one_of(m_type, Type::Fetch, Type::BackgroundRevalidation))
             transition_to_state(State::RetrieveCookie);
         else
@@ -819,6 +865,11 @@ void Request::handle_fetch_state()
             headers_for_fetch->append({ "If-Modified-Since"sv, *revalidation_attributes.last_modified });
     }
 
+    if (m_proxy_data.type == Core::ProxyData::Type::Blocked) {
+        m_network_error = Requests::NetworkError::UnableToResolveProxy;
+        transition_to_state(State::Error);
+        return;
+    }
     if (m_proxy_data.type != Core::ProxyData::Type::SOCKS5)
         VERIFY(m_dns_result);
     RinHTTPFetch::ClientCertificateProvider client_certificate_provider;
@@ -967,6 +1018,15 @@ void Request::handle_fetch_state()
         set_option(CURLOPT_PROXY, proxy_host.characters());
         set_option(CURLOPT_PROXYPORT, static_cast<long>(m_proxy_data.port));
         set_option(CURLOPT_PROXYTYPE, static_cast<long>(CURLPROXY_SOCKS5_HOSTNAME));
+    } else if (m_proxy_data.type == Core::ProxyData::Type::HTTP) {
+        if (m_proxy_data.host.is_empty() || m_proxy_data.port == 0) {
+            m_network_error = Requests::NetworkError::UnableToResolveProxy;
+            transition_to_state(State::Error);
+            return;
+        }
+        set_option(CURLOPT_PROXY, m_proxy_data.host.characters());
+        set_option(CURLOPT_PROXYPORT, static_cast<long>(m_proxy_data.port));
+        set_option(CURLOPT_PROXYTYPE, static_cast<long>(CURLPROXY_HTTP));
     } else if (m_proxy_data.type != Core::ProxyData::Type::Direct) {
         m_network_error = Requests::NetworkError::UnableToResolveProxy;
         transition_to_state(State::Error);

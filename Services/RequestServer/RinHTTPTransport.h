@@ -150,7 +150,9 @@ private:
         void*, u16, const u8*, rin_size_t, u8*, rin_size_t, rin_size_t*);
 #endif
 
-    ErrorOr<void> send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers);
+    ErrorOr<void> send_request(URL::URL const& url, ByteString const& method,
+                               HTTP::HeaderList const& request_headers,
+                               bool absolute_form);
     void on_socket_ready_to_read();
     void process_line_buffered(ReadonlyBytes data);
     void process_body_data(ReadonlyBytes data);

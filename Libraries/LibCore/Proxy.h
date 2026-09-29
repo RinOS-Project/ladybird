@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Error.h>
 #include <AK/IPv4Address.h>
 #include <AK/Types.h>
@@ -18,9 +19,12 @@ struct ProxyData {
     enum Type {
         Direct,
         SOCKS5,
+        HTTP,
+        Blocked,
     } type { Type::Direct };
 
     IPv4Address host_ipv4;
+    ByteString host;
     u16 port { 0 };
 
     bool operator==(ProxyData const& other) const = default;
@@ -28,6 +32,17 @@ struct ProxyData {
     static ErrorOr<ProxyData> parse_url(URL::URL const& url)
     {
         ProxyData proxy_data;
+        if (url.scheme() == "http") {
+            if (!url.host().has_value())
+                return Error::from_string_literal("Invalid HTTP proxy endpoint");
+            proxy_data.type = ProxyData::Type::HTTP;
+            proxy_data.host = url.serialized_host().to_byte_string();
+            // URL normalizes an explicitly supplied default HTTP port away.
+            proxy_data.port = url.port_or_default();
+            if (proxy_data.host.is_empty() || proxy_data.port == 0)
+                return Error::from_string_literal("Invalid HTTP proxy endpoint");
+            return proxy_data;
+        }
         if (url.scheme() != "socks5")
             return Error::from_string_literal("Unsupported proxy type");
 

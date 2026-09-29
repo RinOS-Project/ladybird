@@ -14,6 +14,8 @@
 #include <requestserver_tls_client_certificate_policy.h>
 #include <requestserver_upload_body_policy.hpp>
 
+#include <limits.h>
+
 #include "rinos_http_transport_policy.h"
 
 namespace RequestServer {
@@ -133,6 +135,63 @@ static ErrorOr<void> socks5_connect(Core::TCPSocket& socket, URL::URL const& url
     return {};
 }
 
+static ErrorOr<void> http_proxy_connect(Core::TCPSocket& socket,
+                                        URL::URL const& url,
+                                        long connect_timeout_seconds)
+{
+    auto host = url.serialized_host().to_byte_string();
+    auto port = url.port_or_default();
+    StringBuilder builder;
+    builder.appendff("CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\nProxy-Connection: keep-alive\r\n\r\n",
+                     host, port, host, port);
+    auto request = builder.to_byte_string();
+    TRY(socket_write_exact(socket, request.bytes()));
+
+    int timeout_ms = -1;
+    i64 deadline_ms = 0;
+    if (connect_timeout_seconds > 0) {
+        auto bounded_seconds = min(connect_timeout_seconds, 2147483L);
+        timeout_ms = static_cast<int>(bounded_seconds * 1000L);
+        deadline_ms = MonotonicTime::now_coarse().milliseconds() + timeout_ms;
+    }
+
+    ByteBuffer response_head;
+    constexpr size_t maximum_connect_response_bytes = 16u * 1024u;
+    u8 byte = 0;
+    while (response_head.size() < maximum_connect_response_bytes) {
+        if (deadline_ms != 0) {
+            auto remaining_ms = deadline_ms - MonotonicTime::now_coarse().milliseconds();
+            if (remaining_ms <= 0)
+                return Error::from_string_literal("HTTP proxy CONNECT timed out");
+            timeout_ms = static_cast<int>(min(remaining_ms, static_cast<i64>(INT_MAX)));
+        }
+        auto ready = TRY(socket.can_read_without_blocking(timeout_ms));
+        if (!ready)
+            return Error::from_string_literal("HTTP proxy CONNECT timed out");
+        auto read = TRY(socket.read_some(Bytes { &byte, 1 }));
+        if (read.is_empty())
+            return Error::from_string_literal("HTTP proxy closed during CONNECT");
+        response_head.append(byte);
+        auto size = response_head.size();
+        if (size >= 4u && response_head[size - 4u] == '\r' &&
+            response_head[size - 3u] == '\n' &&
+            response_head[size - 2u] == '\r' &&
+            response_head[size - 1u] == '\n') {
+            RinHttpResponseHead parsed_response {};
+            if (size < 4u ||
+                rin_http_parse_response_head(response_head.data(), size - 2u,
+                                             &parsed_response) != RIN_HTTP_OK ||
+                parsed_response.status_code != 200u ||
+                (parsed_response.has_content_length &&
+                 parsed_response.content_length != 0u) ||
+                parsed_response.has_transfer_encoding != 0u)
+                return Error::from_string_literal("HTTP proxy rejected CONNECT");
+            return {};
+        }
+    }
+    return Error::from_string_literal("HTTP proxy CONNECT response exceeded limit");
+}
+
 static int response_connection_close(const uint8_t* data, size_t size)
 {
     size_t line_start = 0;
@@ -193,6 +252,10 @@ ByteString RinHTTPConnectionPool::make_key(URL::URL const& url, Core::ProxyData 
     b.appendff("{}://{}:{}", url.scheme(), host, port);
     if (proxy.type == Core::ProxyData::Type::SOCKS5)
         b.appendff("|socks5://{}:{}", proxy.host_ipv4, proxy.port);
+    else if (proxy.type == Core::ProxyData::Type::HTTP)
+        b.appendff("|http://{}:{}", proxy.host, proxy.port);
+    else if (proxy.type == Core::ProxyData::Type::Blocked)
+        b.append("|blocked"sv);
     return b.to_byte_string();
 }
 
@@ -472,10 +535,16 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     fetch->m_request_body_read = move(request_body.read);
 
     bool using_socks5 = proxy_data.type == Core::ProxyData::Type::SOCKS5;
-    if (proxy_data.type != Core::ProxyData::Type::Direct && !using_socks5)
+    bool using_http_proxy = proxy_data.type == Core::ProxyData::Type::HTTP;
+    if (proxy_data.type == Core::ProxyData::Type::Blocked)
+        return Error::from_string_literal("System proxy configuration is unavailable");
+    if (proxy_data.type != Core::ProxyData::Type::Direct && !using_socks5 &&
+        !using_http_proxy)
         return Error::from_string_literal("Unsupported proxy type");
     if (using_socks5 && (proxy_data.port == 0 || proxy_data.host_ipv4 == IPv4Address {}))
         return Error::from_string_literal("Invalid SOCKS5 proxy endpoint");
+    if (using_http_proxy && (proxy_data.host.is_empty() || proxy_data.port == 0))
+        return Error::from_string_literal("Invalid HTTP proxy endpoint");
     if (!using_socks5 && (!dns_result || dns_result->is_empty() || !dns_result->has_cached_addresses()))
         return Error::from_string_literal("No DNS result for HTTP fetch");
 
@@ -503,14 +572,17 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
             socket_address = Core::SocketAddress { proxy_data.host_ipv4, proxy_data.port };
         } else {
             auto const& addresses = dns_result->cached_addresses();
+            auto destination_port = using_http_proxy ? proxy_data.port : port;
             socket_address = addresses.first().visit(
-                [&](IPv4Address const& v4) -> Core::SocketAddress { return { v4, port }; },
-                [&](IPv6Address const& v6) -> Core::SocketAddress { return { v6, port }; });
+                [&](IPv4Address const& v4) -> Core::SocketAddress { return { v4, destination_port }; },
+                [&](IPv6Address const& v6) -> Core::SocketAddress { return { v6, destination_port }; });
         }
 
         auto tcp_socket = TRY(Core::TCPSocket::connect(socket_address));
         if (using_socks5)
             TRY(socks5_connect(*tcp_socket, url, connect_timeout_seconds));
+        else if (using_http_proxy && is_https)
+            TRY(http_proxy_connect(*tcp_socket, url, connect_timeout_seconds));
 
         if (is_https) {
             TLS::Options tls_options;
@@ -539,7 +611,8 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
 
     // Send request
     fetch->m_request_start_us = (MonotonicTime::now() - fetch->m_start_time).to_microseconds();
-    TRY(fetch->send_request(url, method, request_headers));
+    TRY(fetch->send_request(url, method, request_headers,
+                            using_http_proxy && !is_https));
 
     // 接続確立タイマー: 相手のデータが届くまでを監視。最初の read で停止する。
     if (connect_timeout_seconds > 0) {
@@ -567,15 +640,30 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
     return fetch;
 }
 
-ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url, ByteString const& method, HTTP::HeaderList const& request_headers)
+ErrorOr<void> RinHTTPFetch::send_request(URL::URL const& url,
+                                         ByteString const& method,
+                                         HTTP::HeaderList const& request_headers,
+                                         bool absolute_form)
 {
     StringBuilder builder;
 
     auto resource = url.serialize_path();
-    if (url.query().has_value())
+    if (absolute_form) {
+        auto host = url.serialized_host().to_byte_string();
+        auto port = url.port_or_default();
+        bool is_default_port = port == 80u;
+        builder.appendff("{} http://{}", method, host);
+        if (!is_default_port)
+            builder.appendff(":{}", port);
+        builder.append(resource);
+        if (url.query().has_value())
+            builder.appendff("?{}", *url.query());
+        builder.append(" HTTP/1.1\r\n"sv);
+    } else if (url.query().has_value()) {
         builder.appendff("{} {}?{} HTTP/1.1\r\n", method, resource, *url.query());
-    else
+    } else {
         builder.appendff("{} {} HTTP/1.1\r\n", method, resource);
+    }
 
     // Host header
     auto host = url.serialized_host().to_byte_string();

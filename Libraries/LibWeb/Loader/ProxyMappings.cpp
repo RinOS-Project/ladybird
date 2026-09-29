@@ -13,6 +13,15 @@ Web::ProxyMappings& Web::ProxyMappings::the()
     return instance;
 }
 
+Web::ProxyMappings::ProxyMappings()
+{
+#if defined(AK_OS_RINOS)
+    // WebContent applies a validated networkd snapshot on the event loop.
+    // Until then, requests must not silently bypass the system route.
+    m_system_proxy.type = Core::ProxyData::Type::Blocked;
+#endif
+}
+
 Core::ProxyData Web::ProxyMappings::proxy_for_url(URL::URL const& url) const
 {
     auto url_string = url.to_byte_string();
@@ -32,7 +41,11 @@ Core::ProxyData Web::ProxyMappings::proxy_for_url(URL::URL const& url) const
         }
     }
 
+#if defined(AK_OS_RINOS)
+    return m_system_proxy;
+#else
     return {};
+#endif
 }
 
 void Web::ProxyMappings::set_mappings(Vector<ByteString> proxies, OrderedHashMap<ByteString, size_t> mappings)

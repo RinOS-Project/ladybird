@@ -49,6 +49,7 @@ target_link_libraries(WebContent PRIVATE webcontentservice LibURL)
 if (AK_OS_RINOS)
     add_library(rinoswebcontentbridge STATIC
         RinOSCompatBridge.cpp
+        RinNetworkProxyConsumer.cpp
         ${LADYBIRD_SOURCE_DIR}/../../src/shared/webcontent_bridge_recovery_policy.c
     )
     target_include_directories(rinoswebcontentbridge PRIVATE

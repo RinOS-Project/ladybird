@@ -20,13 +20,15 @@ public:
 
     Core::ProxyData proxy_for_url(URL::URL const&) const;
     void set_mappings(Vector<ByteString> proxies, OrderedHashMap<ByteString, size_t> mappings);
+    void set_system_proxy(Core::ProxyData proxy) { m_system_proxy = move(proxy); }
 
 private:
-    ProxyMappings() = default;
+    ProxyMappings();
     ~ProxyMappings() = default;
 
     Vector<ByteString> m_proxies;
     OrderedHashMap<ByteString, size_t> m_mappings;
+    Core::ProxyData m_system_proxy;
 };
 
 }
