@@ -65,7 +65,7 @@ void RequestClient::die()
 
 RefPtr<Request> RequestClient::start_request(ByteString const& method, URL::URL const& url, Optional<HTTP::HeaderList const&> request_headers, ReadonlyBytes request_body, HTTP::CacheMode cache_mode, HTTP::Cookie::IncludeCredentials include_credentials, Core::ProxyData const& proxy_data)
 {
-    auto request_id = m_next_request_id++;
+    auto request_id = m_next_transfer_id++;
     auto headers = request_headers.map([](auto const& headers) { return headers.headers().span(); }).value_or({});
 
     IPCProxy::async_start_request(request_id, method, url, headers, request_body, cache_mode, include_credentials, proxy_data);
@@ -79,7 +79,7 @@ RefPtr<Request> RequestClient::start_streaming_request(ByteString const& method,
     if (!RinRequestServerUploadPolicy::admission_valid(request_body_length, !!source))
         return nullptr;
 
-    auto request_id = m_next_request_id++;
+    auto request_id = m_next_transfer_id++;
     auto headers = request_headers.map([](auto const& headers) { return headers.headers().span(); }).value_or({});
     m_streaming_request_bodies.set(request_id, StreamingRequestBody { move(source), request_body_length });
     IPCProxy::async_start_streaming_request(request_id, method, url, headers, request_body_length, cache_mode, include_credentials, proxy_data);
@@ -106,7 +106,7 @@ bool RequestClient::stop_request(Badge<Request>, Request& request)
 
 void RequestClient::ensure_connection(URL::URL const& url, RequestServer::CacheLevel cache_level)
 {
-    auto request_id = m_next_request_id++;
+    auto request_id = m_next_transfer_id++;
     async_ensure_connection(request_id, url, cache_level);
 }
 
@@ -349,7 +349,7 @@ RequestClient::sign_client_certificate(u64 request_id,
 
 RefPtr<WebSocket> RequestClient::websocket_connect(URL::URL const& url, ByteString const& origin, Vector<ByteString> const& protocols, Vector<ByteString> const& extensions, HTTP::HeaderList const& request_headers)
 {
-    auto websocket_id = m_next_websocket_id++;
+    auto websocket_id = m_next_transfer_id++;
     IPCProxy::async_websocket_connect(websocket_id, url, origin, protocols, extensions, request_headers.headers());
     auto connection = WebSocket::create_from_id({}, *this, websocket_id, url);
     m_websockets.set(websocket_id, connection);

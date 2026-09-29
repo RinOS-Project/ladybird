@@ -138,7 +138,11 @@ private:
     virtual void estimated_cache_size(u64 cache_size_estimation_id, CacheSizes sizes) override;
 
     HashMap<u64, RefPtr<Request>> m_requests;
-    u64 m_next_request_id { 0 };
+    /* Requests and WebSockets use one authenticated transfer-id namespace.
+     * Their maps and IPC message families remain separate because their
+     * lifetimes and event directions differ, but a certificate callback can
+     * never ambiguously match a live request and WebSocket at the same time. */
+    u64 m_next_transfer_id { 0 };
 
     struct StreamingRequestBody {
         RequestBodySource source;
@@ -150,7 +154,6 @@ private:
     HashMap<u64, StreamingRequestBody> m_streaming_request_bodies;
 
     HashMap<u64, NonnullRefPtr<WebSocket>> m_websockets;
-    u64 m_next_websocket_id { 0 };
 
     HashMap<u64, NonnullRefPtr<Core::Promise<CacheSizes>>> m_pending_cache_size_estimations;
     u64 m_next_cache_size_estimation_id { 0 };

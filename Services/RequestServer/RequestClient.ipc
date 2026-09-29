@@ -16,8 +16,10 @@ endpoint RequestClient
 
     retrieve_http_cookie(int client_id, u64 request_id, URL::URL url, ByteString cookie_context, ByteString method) =|
 
-    // Websocket API
-    // FIXME: See if this can be merged with the regular APIs
+    // WebSocket API. These messages intentionally remain a separate family:
+    // unlike a request, a WebSocket is bidirectional and long-lived. Both
+    // families use this same authenticated endpoint and the client allocates
+    // one transfer-id namespace, so certificate callbacks cannot be ambiguous.
     websocket_connected(u64 websocket_id) =|
     websocket_received(u64 websocket_id, bool is_text, ByteBuffer data) =|
     websocket_errored(u64 websocket_id, i32 message) =|
