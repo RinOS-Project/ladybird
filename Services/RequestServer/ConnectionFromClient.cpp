@@ -467,6 +467,15 @@ void ConnectionFromClient::start_request(u64 request_id, ByteString method, URL:
 {
     dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: start_request({}, {})", request_id, url);
 
+    /* Request IDs are client-owned and must identify one live request. A
+     * duplicate must not replace the existing Request: doing so would drop
+     * its completion path and leave the client waiting forever. */
+    if (m_active_requests.contains(request_id)) {
+        dbgln("RequestServer: rejecting duplicate request ID {}", request_id);
+        async_request_finished(request_id, 0u, {}, Requests::NetworkError::Unknown);
+        return;
+    }
+
 #if defined(AK_OS_RINOS)
     auto request = Request::fetch(request_id, m_disk_cache, cache_mode, *this, nullptr, m_resolver, move(url), move(method), HTTP::HeaderList::create(move(request_headers)), move(request_body), include_credentials, m_alt_svc_cache_path, proxy_data);
 #else
@@ -478,6 +487,12 @@ void ConnectionFromClient::start_request(u64 request_id, ByteString method, URL:
 void ConnectionFromClient::start_streaming_request(u64 request_id, ByteString method, URL::URL url, Vector<HTTP::Header> request_headers, u64 request_body_length, HTTP::CacheMode cache_mode, HTTP::Cookie::IncludeCredentials include_credentials, Core::ProxyData proxy_data)
 {
     dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: start_streaming_request({}, {}, {} bytes)", request_id, url, request_body_length);
+
+    if (m_active_requests.contains(request_id)) {
+        dbgln("RequestServer: rejecting duplicate streaming request ID {}", request_id);
+        async_request_finished(request_id, 0u, {}, Requests::NetworkError::Unknown);
+        return;
+    }
 
 #if defined(AK_OS_RINOS)
     static constexpr u64 max_request_body_bytes = 128u * 1024u * 1024u;
@@ -674,6 +689,11 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
 
 void ConnectionFromClient::ensure_connection(u64 request_id, URL::URL url, ::RequestServer::CacheLevel cache_level)
 {
+    if (m_active_requests.contains(request_id)) {
+        dbgln("RequestServer: rejecting duplicate connection request ID {}", request_id);
+        async_request_finished(request_id, 0u, {}, Requests::NetworkError::Unknown);
+        return;
+    }
 #if defined(AK_OS_RINOS)
     auto request = Request::connect(request_id, *this, nullptr, m_resolver, move(url), cache_level);
 #else
