@@ -140,6 +140,11 @@ private:
 
     HashMap<u64, NonnullOwnPtr<Request>> m_active_requests;
     HashMap<u64, NonnullOwnPtr<Request>> m_active_revalidation_requests;
+    /* Reserve a WebSocket transfer id while DNS and connection setup are
+     * asynchronous.  The client shares one request/WebSocket namespace, so
+     * a pending handshake must not be able to race a second request or
+     * overwrite m_websockets after resolution. */
+    HashMap<u64, bool> m_pending_websockets;
     HashMap<u64, RefPtr<WebSocket::WebSocket>> m_websockets;
     HashMap<u64, u64> m_websocket_certificate_requests;
     HashMap<u64, ByteBuffer> m_websocket_certificate_capabilities;

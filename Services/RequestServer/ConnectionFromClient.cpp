@@ -94,6 +94,8 @@ ConnectionFromClient::~ConnectionFromClient()
 {
     m_active_requests.clear();
     m_active_revalidation_requests.clear();
+    m_pending_websockets.clear();
+    m_websockets.clear();
     clear_all_websocket_client_certificates();
 
 #if !defined(AK_OS_RINOS)
@@ -729,6 +731,18 @@ void ConnectionFromClient::remove_cache_entries_accessed_since(UnixDateTime sinc
 
 void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, ByteString origin, Vector<ByteString> protocols, Vector<ByteString> extensions, Vector<HTTP::Header> additional_request_headers)
 {
+    if (m_active_requests.contains(websocket_id) ||
+        m_active_revalidation_requests.contains(websocket_id) ||
+        m_pending_websockets.contains(websocket_id) ||
+        m_websockets.contains(websocket_id)) {
+        dbgln("RequestServer: rejecting duplicate WebSocket transfer ID {}", websocket_id);
+        async_websocket_errored(
+            websocket_id,
+            static_cast<i32>(Requests::WebSocket::Error::CouldNotEstablishConnection));
+        return;
+    }
+    m_pending_websockets.set(websocket_id, true);
+
     auto host = url.serialized_host().to_byte_string();
 
 #if defined(AK_OS_RINOS)
@@ -740,12 +754,16 @@ void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, Byt
 
     m_resolver->dns.lookup(host, DNS::Messages::Class::IN, { DNS::Messages::ResourceType::A, DNS::Messages::ResourceType::AAAA })
         ->when_rejected([this, websocket_id](auto const& error) {
+            m_pending_websockets.remove(websocket_id);
             clear_websocket_client_certificate(websocket_id);
             dbgln("WebSocketConnect: DNS lookup failed: {}", error);
             async_websocket_errored(websocket_id, static_cast<i32>(Requests::WebSocket::Error::CouldNotEstablishConnection));
         })
         .when_resolved([this, websocket_id, host = move(host), url = move(url), origin = move(origin), protocols = move(protocols), extensions = move(extensions), additional_request_headers = move(additional_request_headers)](auto const& dns_result) mutable {
+            if (!m_pending_websockets.contains(websocket_id))
+                return;
             if (dns_result->is_empty() || !dns_result->has_cached_addresses()) {
+                m_pending_websockets.remove(websocket_id);
                 clear_websocket_client_certificate(websocket_id);
                 dbgln("WebSocketConnect: DNS lookup failed for '{}'", host);
                 async_websocket_errored(websocket_id, static_cast<i32>(Requests::WebSocket::Error::CouldNotEstablishConnection));
@@ -777,19 +795,23 @@ void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, Byt
             connection->on_error = [this, websocket_id](auto message) {
                 clear_websocket_client_certificate(websocket_id);
                 async_websocket_errored(websocket_id, (i32)message);
+                m_websockets.remove(websocket_id);
             };
             connection->on_close = [this, websocket_id](u16 code, ByteString reason, bool was_clean) {
                 clear_websocket_client_certificate(websocket_id);
                 async_websocket_closed(websocket_id, code, move(reason), was_clean);
+                m_websockets.remove(websocket_id);
             };
             connection->on_ready_state_change = [this, websocket_id](auto state) {
                 async_websocket_ready_state_changed(websocket_id, (u32)state);
             };
 
-            m_active_websocket_certificate_generation = 0u;
-            connection->start();
-            m_active_websocket_certificate_generation = 0u;
             m_websockets.set(websocket_id, move(connection));
+            m_pending_websockets.remove(websocket_id);
+            m_active_websocket_certificate_generation = 0u;
+            if (auto* live_connection = m_websockets.get(websocket_id).value_or({}))
+                live_connection->start();
+            m_active_websocket_certificate_generation = 0u;
         });
 }
 
