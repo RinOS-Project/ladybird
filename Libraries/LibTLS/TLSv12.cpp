@@ -506,7 +506,10 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPS
 
     if (options.root_certificates_path.has_value()) {
         auto path = options.root_certificates_path.value();
-        SSL_CTX_load_verify_file(ssl_ctx, path.characters());
+        if (SSL_CTX_load_verify_file(ssl_ctx, path.characters()) != 1) {
+            dbgln("Unable to load TLS trust store '{}'", path);
+            return Error::from_string_literal("Unable to load TLS trust store");
+        }
     } else {
         // Use the default trusted certificate store
 #if defined(AK_OS_WINDOWS)
