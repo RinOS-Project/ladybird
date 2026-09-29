@@ -484,6 +484,10 @@ void ConnectionFromClient::start_streaming_request(u64 request_id, ByteString me
     static constexpr size_t max_request_body_chunk_bytes = 64u * 1024u;
     if (request_body_length > max_request_body_bytes) {
         dbgln("RequestServer: rejecting oversized streaming request body");
+        /* The IPC method is fire-and-forget, so a silent admission return
+         * would leave the client waiting forever for request_finished. Keep
+         * the malformed peer request failure-atomic and terminal. */
+        async_request_finished(request_id, 0u, {}, Requests::NetworkError::Unknown);
         return;
     }
 
