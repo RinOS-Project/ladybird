@@ -1111,8 +1111,10 @@ void Request::handle_complete_state()
 void Request::handle_error_state()
 {
     if (m_type == Type::Fetch) {
-        // FIXME: Implement timing info for failed requests.
-        m_client.async_request_finished(m_request_id, m_bytes_transferred_to_client, {}, m_network_error.value_or(Requests::NetworkError::Unknown));
+        auto timing_info = acquire_timing_info();
+        m_client.async_request_finished(m_request_id, m_bytes_transferred_to_client,
+                                        timing_info,
+                                        m_network_error.value_or(Requests::NetworkError::Unknown));
     }
 
     m_client.request_complete({}, *this);
