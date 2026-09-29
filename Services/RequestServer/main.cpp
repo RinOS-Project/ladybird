@@ -7,18 +7,24 @@
 
 #include <AK/ByteString.h>
 #include <AK/Format.h>
+#include <AK/ScopeGuard.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Process.h>
 #include <LibCore/System.h>
+#include <LibCore/Timer.h>
 #include <LibHTTP/Cache/DiskCache.h>
 #include <LibIPC/SingleServer.h>
 #include <LibMain/Main.h>
 #include <RequestServer/ConnectionFromClient.h>
 #include <RequestServer/Resolver.h>
 #include <RequestServer/ResourceSubstitutionMap.h>
+
+#if defined(AK_OS_WINDOWS)
+#    include <AK/Windows.h>
+#endif
 
 namespace RequestServer {
 
@@ -31,6 +37,23 @@ static void handle_signal(int signal)
 {
     VERIFY(signal == SIGINT || signal == SIGTERM);
     Core::EventLoop::current().quit(0);
+}
+#else
+static volatile LONG s_windows_quit_requested = 0;
+
+static BOOL WINAPI handle_console_control(DWORD control_type)
+{
+    switch (control_type) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+        InterlockedExchange(&s_windows_quit_requested, 1);
+        return TRUE;
+    default:
+        return FALSE;
+    }
 }
 #endif
 
@@ -80,10 +103,20 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 #endif
 
     Core::EventLoop event_loop;
-    // FIXME: Have another way to signal the event loop to gracefully quit on windows.
 #ifndef AK_OS_WINDOWS
     Core::EventLoop::register_signal(SIGINT, handle_signal);
     Core::EventLoop::register_signal(SIGTERM, handle_signal);
+#else
+    if (!SetConsoleCtrlHandler(&handle_console_control, TRUE))
+        return Error::from_windows_error();
+    ScopeGuard unregister_console_control_handler = [] {
+        (void)SetConsoleCtrlHandler(&handle_console_control, FALSE);
+    };
+    auto windows_stop_timer = Core::Timer::create_repeating(50, [&event_loop] {
+        if (InterlockedCompareExchange(&s_windows_quit_requested, 0, 0) != 0)
+            event_loop.quit(0);
+    });
+    windows_stop_timer->start();
 #endif
 
     Optional<HTTP::DiskCache> disk_cache;
@@ -113,5 +146,9 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
         mach_server_name,
         RequestServer::ConnectionFromClient::IsPrimaryConnection::Yes, connections, disk_cache));
 
-    return event_loop.exec();
+    auto result = event_loop.exec();
+#if defined(AK_OS_WINDOWS)
+    windows_stop_timer->stop();
+#endif
+    return result;
 }
