@@ -358,6 +358,14 @@ void ConnectionFromClient::request_complete(Badge<Request>, Request const& reque
     });
 }
 
+bool ConnectionFromClient::transfer_id_in_use(u64 transfer_id) const
+{
+    return m_active_requests.contains(transfer_id) ||
+        m_active_revalidation_requests.contains(transfer_id) ||
+        m_pending_websockets.contains(transfer_id) ||
+        m_websockets.contains(transfer_id);
+}
+
 void ConnectionFromClient::die()
 {
     clear_all_websocket_client_certificates();
@@ -478,7 +486,7 @@ void ConnectionFromClient::start_request(u64 request_id, ByteString method, URL:
     /* Request IDs are client-owned and must identify one live request. A
      * duplicate must not replace the existing Request: doing so would drop
      * its completion path and leave the client waiting forever. */
-    if (m_active_requests.contains(request_id)) {
+    if (transfer_id_in_use(request_id)) {
         dbgln("RequestServer: rejecting duplicate request ID {}", request_id);
         async_request_finished(request_id, 0u, {}, Requests::NetworkError::Unknown);
         return;
@@ -496,7 +504,7 @@ void ConnectionFromClient::start_streaming_request(u64 request_id, ByteString me
 {
     dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: start_streaming_request({}, {}, {} bytes)", request_id, url, request_body_length);
 
-    if (m_active_requests.contains(request_id)) {
+    if (transfer_id_in_use(request_id)) {
         dbgln("RequestServer: rejecting duplicate streaming request ID {}", request_id);
         async_request_finished(request_id, 0u, {}, Requests::NetworkError::Unknown);
         return;
@@ -692,7 +700,7 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
 
 void ConnectionFromClient::ensure_connection(u64 request_id, URL::URL url, ::RequestServer::CacheLevel cache_level)
 {
-    if (m_active_requests.contains(request_id)) {
+    if (transfer_id_in_use(request_id)) {
         dbgln("RequestServer: rejecting duplicate connection request ID {}", request_id);
         async_request_finished(request_id, 0u, {}, Requests::NetworkError::Unknown);
         return;
@@ -731,10 +739,7 @@ void ConnectionFromClient::remove_cache_entries_accessed_since(UnixDateTime sinc
 
 void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, ByteString origin, Vector<ByteString> protocols, Vector<ByteString> extensions, Vector<HTTP::Header> additional_request_headers)
 {
-    if (m_active_requests.contains(websocket_id) ||
-        m_active_revalidation_requests.contains(websocket_id) ||
-        m_pending_websockets.contains(websocket_id) ||
-        m_websockets.contains(websocket_id)) {
+    if (transfer_id_in_use(websocket_id)) {
         dbgln("RequestServer: rejecting duplicate WebSocket transfer ID {}", websocket_id);
         async_websocket_errored(
             websocket_id,

@@ -80,6 +80,8 @@ public:
     void request_complete(Badge<Request>, Request const&);
 
 private:
+    bool transfer_id_in_use(u64) const;
+
 #if defined(AK_OS_RINOS)
     static int websocket_client_certificate_sign(
         void*, u16, const u8*, rin_size_t, u8*, rin_size_t, rin_size_t*);
