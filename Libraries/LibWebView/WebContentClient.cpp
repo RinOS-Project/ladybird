@@ -1348,9 +1348,8 @@ static ByteString serialize_cookie_owner_context(
 
     const bool has_cross_site_ancestor = ancestor_text == "1"sv;
     const bool top_level_navigation = navigation_text == "1"sv;
-    const bool same_site = no_client ||
-        (request_origin.has_value() && !has_cross_site_ancestor &&
-         request_origin->is_same_site(url.origin()));
+    const bool same_site = request_origin.has_value() &&
+        !has_cross_site_ancestor && request_origin->is_same_site(url.origin());
     const bool safe_method = method.equals_ignoring_ascii_case("GET"sv) ||
         method.equals_ignoring_ascii_case("HEAD"sv) ||
         method.equals_ignoring_ascii_case("OPTIONS"sv) ||

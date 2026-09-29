@@ -134,10 +134,9 @@ static ByteString rin_cookie_owner_context(
     Infrastructure::Request const& request)
 {
     auto context = rin_cookie_request_context(request);
-    const bool same_site = !context.hasClient ||
-        (context.requestOrigin.has_value() &&
+    const bool same_site = context.hasClient && context.requestOrigin.has_value() &&
          !context.hasCrossSiteAncestor &&
-         context.requestOrigin->is_same_site(request.current_url().origin()));
+         context.requestOrigin->is_same_site(request.current_url().origin());
     const bool safe_method = request.method().equals_ignoring_ascii_case("GET"sv) ||
         request.method().equals_ignoring_ascii_case("HEAD"sv) ||
         request.method().equals_ignoring_ascii_case("OPTIONS"sv) ||
