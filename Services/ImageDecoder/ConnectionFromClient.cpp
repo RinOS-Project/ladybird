@@ -5,6 +5,7 @@
  */
 
 #include <AK/Debug.h>
+#include <AK/ByteBuffer.h>
 #include <AK/IDAllocator.h>
 #include <ImageDecoder/ConnectionFromClient.h>
 #include <ImageDecoder/ImageDecoderClientEndpoint.h>
@@ -13,6 +14,12 @@
 #include <LibGfx/ImageFormats/ImageDecoder.h>
 #include <LibGfx/ImageFormats/TIFFMetadata.h>
 #include <LibIPC/TransportHandle.h>
+
+#ifdef AK_OS_RINOS
+extern "C" {
+#include "../../../../src/services/imagedecoder/rin_image_decoder_service_client.h"
+}
+#endif
 
 namespace ImageDecoder {
 
@@ -81,6 +88,7 @@ Messages::ImageDecoderServer::ConnectNewClientsResponse ConnectionFromClient::co
     return handles;
 }
 
+#ifndef AK_OS_RINOS
 static void decode_image_to_bitmaps_and_durations_with_decoder(Gfx::ImageDecoder const& decoder, Optional<Gfx::IntSize> ideal_size, Vector<RefPtr<Gfx::Bitmap>>& bitmaps, Vector<u32>& durations)
 {
     bitmaps.ensure_capacity(decoder.frame_count());
@@ -100,9 +108,169 @@ static void decode_image_to_bitmaps_and_durations_with_decoder(Gfx::ImageDecoder
 }
 
 static constexpr u32 STREAMING_BATCH_SIZE = 4;
+#endif
 
-static ErrorOr<ConnectionFromClient::DecodeResult> decode_image_to_details(Core::AnonymousBuffer encoded_buffer, Optional<Gfx::IntSize> ideal_size, Optional<ByteString> const& known_mime_type)
+#ifdef AK_OS_RINOS
+static ErrorOr<ConnectionFromClient::DecodeResult> decode_image_to_details_via_rinos_service(Core::AnonymousBuffer encoded_buffer, i64 request_id)
 {
+    constexpr u32 max_dimension = RIN_IMAGE_DECODER_TRANSPORT_MAX_DIMENSION;
+    constexpr u32 max_pixels = RIN_IMAGE_DECODER_TRANSPORT_MAX_PIXELS;
+    constexpr u32 max_output_bytes = 16 * 1024 * 1024;
+    constexpr u64 max_source_bytes = 4 * 1024 * 1024;
+    constexpr u32 pixel_chunk_size = RIN_IMAGE_DECODER_TRANSPORT_MAX_PIXEL_CHUNK;
+    constexpr u32 bytes_per_pixel = 4;
+
+    if (encoded_buffer.size() == 0 || encoded_buffer.size() > max_source_bytes)
+        return Error::from_string_literal("RinOS ImageDecoder source exceeds private adapter limit");
+
+    struct ClientScope {
+        RinImageDecoderServiceClientV1 client {};
+
+        ClientScope()
+        {
+            client.fd = -1;
+        }
+
+        ~ClientScope()
+        {
+            rin_image_decoder_service_client_close(&client);
+        }
+    } scope;
+
+    if (rin_image_decoder_service_client_connect(&scope.client) != 0)
+        return Error::from_string_literal("RinOS ImageDecoder service unavailable");
+
+    u64 next_request_id = request_id > 0 ? static_cast<u64>(request_id) : 1;
+    auto take_request_id = [&]() -> ErrorOr<u64> {
+        if (next_request_id == 0 || next_request_id == NumericLimits<u64>::max())
+            return Error::from_string_literal("RinOS ImageDecoder request id exhausted");
+        return next_request_id++;
+    };
+
+    RinImageDecoderSourceRegisterRequestV1 register_request {};
+    register_request.struct_size = sizeof(register_request);
+    register_request.version = RIN_IMAGE_DECODER_TRANSPORT_VERSION;
+    register_request.operation = RIN_IMAGE_DECODER_TRANSPORT_REGISTER_SOURCE;
+    register_request.request_id = TRY(take_request_id());
+    register_request.source_size = encoded_buffer.size();
+    register_request.max_width = max_dimension;
+    register_request.max_height = max_dimension;
+    register_request.max_pixels = max_pixels;
+    register_request.max_frames = 1;
+    register_request.max_output_bytes = max_output_bytes;
+
+    u64 source_capability = 0;
+    u64 source_generation = 0;
+    auto register_status = rin_image_decoder_service_client_register_source(
+        &scope.client, &register_request, encoded_buffer.data<u8>(),
+        &source_capability, &source_generation);
+    if (register_status != RIN_IMAGE_DECODER_TRANSPORT_OK)
+        return Error::from_string_literal("RinOS ImageDecoder source registration failed");
+
+    RinImageDecoderDecodeRequestV1 decode_request {};
+    decode_request.struct_size = sizeof(decode_request);
+    decode_request.version = RIN_IMAGE_DECODER_TRANSPORT_VERSION;
+    decode_request.operation = RIN_IMAGE_DECODER_TRANSPORT_DECODE;
+    decode_request.request_id = TRY(take_request_id());
+    decode_request.source_capability = source_capability;
+    decode_request.source_generation = source_generation;
+    decode_request.source_size = encoded_buffer.size();
+    decode_request.deadline_ms = RIN_IMAGE_DECODER_SERVICE_CLIENT_IO_TIMEOUT_MS;
+    decode_request.max_width = max_dimension;
+    decode_request.max_height = max_dimension;
+    decode_request.max_pixels = max_pixels;
+    decode_request.max_frames = 1;
+    decode_request.max_output_bytes = max_output_bytes;
+
+    RinImageDecoderDecodeResponseV1 decode_response {};
+    auto decode_status = rin_image_decoder_service_client_decode(
+        &scope.client, &decode_request, &decode_response);
+    if (decode_status != RIN_IMAGE_DECODER_TRANSPORT_OK)
+        return Error::from_string_literal("RinOS ImageDecoder decode failed");
+
+    auto const row_bytes = static_cast<u64>(decode_response.width) * bytes_per_pixel;
+    auto const frame_bytes = static_cast<u64>(decode_response.stride_bytes) * decode_response.height;
+    if (decode_response.width == 0 || decode_response.height == 0 ||
+        decode_response.width > max_dimension || decode_response.height > max_dimension ||
+        decode_response.frame_count != 1 ||
+        decode_response.pixel_format != RIN_IMAGE_DECODER_TRANSPORT_PIXEL_FORMAT_ARGB8888 ||
+        decode_response.stride_bytes < row_bytes ||
+        decode_response.pixel_bytes != frame_bytes ||
+        decode_response.pixel_bytes == 0 || decode_response.pixel_bytes > max_output_bytes)
+        return Error::from_string_literal("RinOS ImageDecoder returned invalid frame metadata");
+
+    auto bitmap = TRY(Gfx::Bitmap::create(
+        Gfx::BitmapFormat::BGRA8888,
+        Gfx::AlphaType::Unpremultiplied,
+        { static_cast<int>(decode_response.width), static_cast<int>(decode_response.height) }));
+    if (bitmap->pitch() < row_bytes || bitmap->data_size() < bitmap->pitch() * decode_response.height)
+        return Error::from_string_literal("RinOS ImageDecoder bitmap layout is incompatible");
+
+    auto pixel_chunk = TRY(ByteBuffer::create_uninitialized(pixel_chunk_size));
+    u64 offset = 0;
+    while (offset < decode_response.pixel_bytes) {
+        auto const remaining = decode_response.pixel_bytes - offset;
+        auto const capacity = static_cast<u32>(remaining < pixel_chunk_size ? remaining : pixel_chunk_size);
+
+        RinImageDecoderPixelReadRequestV1 read_request {};
+        read_request.struct_size = sizeof(read_request);
+        read_request.version = RIN_IMAGE_DECODER_TRANSPORT_VERSION;
+        read_request.operation = RIN_IMAGE_DECODER_TRANSPORT_READ_PIXELS;
+        read_request.request_id = TRY(take_request_id());
+        read_request.source_generation = source_generation;
+        read_request.offset = offset;
+        read_request.capacity = capacity;
+
+        u32 bytes_read = 0;
+        RinImageDecoderPixelReadResponseV1 read_response {};
+        auto read_status = rin_image_decoder_service_client_read_pixels(
+            &scope.client, &read_request, pixel_chunk.data(), &bytes_read, &read_response);
+        if (read_status != RIN_IMAGE_DECODER_TRANSPORT_OK || bytes_read == 0 ||
+            read_response.total_bytes != decode_response.pixel_bytes ||
+            read_response.offset != offset || bytes_read > capacity)
+            return Error::from_string_literal("RinOS ImageDecoder pixel transfer failed");
+
+        size_t copied = 0;
+        while (copied < bytes_read) {
+            auto const absolute = offset + copied;
+            auto const row = absolute / decode_response.stride_bytes;
+            auto const row_offset = absolute % decode_response.stride_bytes;
+            auto const available_in_source_row = decode_response.stride_bytes - row_offset;
+            if (row_offset >= row_bytes) {
+                auto const skipped = min(static_cast<u64>(bytes_read - copied), available_in_source_row);
+                copied += skipped;
+                continue;
+            }
+
+            auto const visible_bytes = row_bytes - row_offset;
+            auto copy_count = min(static_cast<u64>(bytes_read - copied), available_in_source_row);
+            copy_count = min(copy_count, visible_bytes);
+            __builtin_memcpy(bitmap->scanline_u8(static_cast<int>(row)) + row_offset,
+                pixel_chunk.data() + copied, copy_count);
+            copied += copy_count;
+        }
+
+        offset += bytes_read;
+    }
+
+    Vector<RefPtr<Gfx::Bitmap>> bitmaps;
+    bitmaps.unchecked_append(move(bitmap));
+    ConnectionFromClient::DecodeResult result;
+    result.frame_count = 1;
+    result.durations.unchecked_append(0);
+    result.bitmaps = Gfx::BitmapSequence { move(bitmaps) };
+    return result;
+}
+#endif
+
+static ErrorOr<ConnectionFromClient::DecodeResult> decode_image_to_details(Core::AnonymousBuffer encoded_buffer, Optional<Gfx::IntSize> ideal_size, Optional<ByteString> const& known_mime_type, i64 request_id)
+{
+#ifdef AK_OS_RINOS
+    (void)ideal_size;
+    (void)known_mime_type;
+    return decode_image_to_details_via_rinos_service(move(encoded_buffer), request_id);
+#else
+    (void)request_id;
     auto decoder = TRY(Gfx::ImageDecoder::try_create_for_raw_bytes(ReadonlyBytes { encoded_buffer.data<u8>(), encoded_buffer.size() }, known_mime_type));
 
     if (!decoder)
@@ -173,13 +341,14 @@ static ErrorOr<ConnectionFromClient::DecodeResult> decode_image_to_details(Core:
     result.bitmaps = Gfx::BitmapSequence { move(bitmaps) };
 
     return result;
+#endif
 }
 
 NonnullRefPtr<ConnectionFromClient::Job> ConnectionFromClient::make_decode_image_job(i64 request_id, Core::AnonymousBuffer encoded_buffer, Optional<Gfx::IntSize> ideal_size, Optional<ByteString> mime_type)
 {
     return Job::construct(
-        [encoded_buffer = move(encoded_buffer), ideal_size = move(ideal_size), mime_type = move(mime_type)](auto&) mutable -> ErrorOr<DecodeResult> {
-            return TRY(decode_image_to_details(move(encoded_buffer), ideal_size, mime_type));
+        [encoded_buffer = move(encoded_buffer), ideal_size = move(ideal_size), mime_type = move(mime_type), request_id](auto&) mutable -> ErrorOr<DecodeResult> {
+            return TRY(decode_image_to_details(move(encoded_buffer), ideal_size, mime_type, request_id));
         },
         [strong_this = NonnullRefPtr(*this), request_id](DecodeResult result) {
             i64 session_id = 0;
