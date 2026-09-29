@@ -238,6 +238,7 @@ private:
     URL::URL m_url;
     ByteString m_method;
 
+    MonotonicTime m_monotonic_start_time { MonotonicTime::now() };
     UnixDateTime m_request_start_time { UnixDateTime::now() };
     NonnullRefPtr<HTTP::HeaderList> m_request_headers;
     ByteBuffer m_request_body;
@@ -260,6 +261,8 @@ private:
     size_t m_bytes_transferred_to_client { 0 };
     bool m_client_response_abandoned { false };
 
+    Optional<i64> m_cache_response_start_microseconds;
+    Optional<i64> m_cache_response_end_microseconds;
     Optional<Requests::NetworkError> m_network_error;
 };
 

@@ -521,6 +521,7 @@ void Request::handle_initial_state()
 
 void Request::handle_read_cache_state()
 {
+    m_cache_response_start_microseconds = (MonotonicTime::now() - m_monotonic_start_time).to_microseconds();
     m_status_code = m_cache_entry_reader->status_code();
     m_reason_phrase = m_cache_entry_reader->reason_phrase();
     m_response_headers = m_cache_entry_reader->response_headers();
@@ -534,6 +535,7 @@ void Request::handle_read_cache_state()
         m_client_request_pipe->writer_fd(),
         weak_callback(*this, [](auto& self, auto bytes_sent) {
             self.m_bytes_transferred_to_client = bytes_sent;
+            self.m_cache_response_end_microseconds = (MonotonicTime::now() - self.m_monotonic_start_time).to_microseconds();
 #if defined(AK_OS_RINOS)
             self.m_rin_result_code = 0;
 #else
@@ -544,6 +546,7 @@ void Request::handle_read_cache_state()
         }),
         weak_callback(*this, [](auto& self, auto bytes_sent) {
             self.m_bytes_transferred_to_client = bytes_sent;
+            self.m_cache_response_end_microseconds = (MonotonicTime::now() - self.m_monotonic_start_time).to_microseconds();
             self.m_network_error = Requests::NetworkError::CacheReadFailed;
 
             self.transition_to_state(State::Error);
@@ -1457,9 +1460,20 @@ Requests::RequestTimingInfo Request::acquire_timing_info() const
     // |--|--|--|--|--|--|--|--TOTAL
     // |--|--|--|--|--|--|--|--REDIRECT
 
-    // FIXME: Implement timing info for cache hits.
-    if (m_cache_entry_reader.has_value())
-        return {};
+    if (m_cache_entry_reader.has_value()) {
+        if (!m_cache_response_start_microseconds.has_value())
+            return {};
+
+        auto response_start = *m_cache_response_start_microseconds;
+        auto response_end = m_cache_response_end_microseconds.value_or(response_start);
+        return Requests::RequestTimingInfo {
+            .request_start_microseconds = 0,
+            .response_start_microseconds = response_start,
+            .response_end_microseconds = response_end,
+            .encoded_body_size = static_cast<i64>(m_bytes_transferred_to_client),
+            .http_version_alpn_identifier = Requests::ALPNHttpVersion::None,
+        };
+    }
 
     // No timing info available for resource substitutions (no curl handle).
     if (!m_curl_easy_handle)
