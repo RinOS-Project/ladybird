@@ -319,8 +319,11 @@ Request::~Request()
         m_rin_fetch->cancel();
 #else
     if (m_curl_easy_handle) {
-        auto result = curl_multi_remove_handle(m_curl_multi_handle, m_curl_easy_handle);
-        VERIFY(result == CURLM_OK);
+        if (m_curl_handle_added) {
+            auto result = curl_multi_remove_handle(m_curl_multi_handle, m_curl_easy_handle);
+            if (result != CURLM_OK)
+                dbgln("Request::~Request: Failed to remove curl easy handle: {}", curl_multi_strerror(result));
+        }
 
         curl_easy_cleanup(m_curl_easy_handle);
     }
@@ -841,6 +844,8 @@ void Request::handle_connect_state()
     m_curl_easy_handle = curl_easy_init();
     if (!m_curl_easy_handle) {
         dbgln("Request::handle_connect_state: Failed to initialize curl easy handle");
+        m_network_error = Requests::NetworkError::UnableToConnect;
+        transition_to_state(State::Error);
         return;
     }
 
@@ -859,7 +864,13 @@ void Request::handle_connect_state()
     set_option(CURLOPT_CONNECT_ONLY, 1L);
 
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
-    VERIFY(result == CURLM_OK);
+    if (result != CURLM_OK) {
+        dbgln("Request::handle_connect_state: Failed to add curl easy handle: {}", curl_multi_strerror(result));
+        m_network_error = Requests::NetworkError::UnableToConnect;
+        transition_to_state(State::Error);
+        return;
+    }
+    m_curl_handle_added = true;
 #endif
 }
 
@@ -1094,7 +1105,13 @@ void Request::handle_fetch_state()
     }
 
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
-    VERIFY(result == CURLM_OK);
+    if (result != CURLM_OK) {
+        dbgln("Request::handle_fetch_state: Failed to add curl easy handle: {}", curl_multi_strerror(result));
+        m_network_error = Requests::NetworkError::UnableToConnect;
+        transition_to_state(State::Error);
+        return;
+    }
+    m_curl_handle_added = true;
 #endif
 }
 

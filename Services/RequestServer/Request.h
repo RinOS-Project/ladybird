@@ -225,6 +225,7 @@ private:
 #else
     void* m_curl_easy_handle { nullptr };
     CurlTransferContext m_curl_transfer_context { CurlTransferContext::Kind::Request, nullptr };
+    bool m_curl_handle_added { false };
     Vector<curl_slist*> m_curl_string_lists;
     Optional<int> m_curl_result_code;
 #endif
