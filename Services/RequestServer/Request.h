@@ -184,6 +184,7 @@ private:
     void handle_fetch_state();
     void handle_complete_state();
     void handle_error_state();
+    void start_cache_wait_timer();
 
     static size_t on_header_received(void* buffer, size_t size, size_t nmemb, void* user_data);
     static size_t on_data_received(void* buffer, size_t size, size_t nmemb, void* user_data);
@@ -263,6 +264,7 @@ private:
 
     Optional<i64> m_cache_response_start_microseconds;
     Optional<i64> m_cache_response_end_microseconds;
+    RefPtr<Core::Timer> m_cache_wait_timer;
     Optional<Requests::NetworkError> m_network_error;
 };
 

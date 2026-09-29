@@ -15,6 +15,7 @@
 #include <LibCore/File.h>
 #include <LibCore/MimeData.h>
 #include <LibCore/Notifier.h>
+#include <LibCore/Timer.h>
 #if defined(AK_OS_RINOS)
 #    include <LibCore/System.h>
 #endif
@@ -46,6 +47,7 @@ namespace RequestServer {
 extern OwnPtr<ResourceSubstitutionMap> g_resource_substitution_map;
 
 static long s_connect_timeout_seconds = 90L;
+static constexpr int s_cache_wait_timeout_ms = 5'000;
 
 #if defined(AK_OS_RINOS)
 struct RinDNSCacheEntry {
@@ -300,6 +302,9 @@ Request::Request(
 
 Request::~Request()
 {
+    if (m_cache_wait_timer)
+        m_cache_wait_timer->stop();
+
     if (!m_response_buffer.is_eof())
         dbgln("Warning: Request destroyed with buffered data (it's likely that the client disappeared or the request was cancelled)");
 
@@ -328,9 +333,31 @@ Request::~Request()
 
 void Request::notify_request_unblocked(Badge<HTTP::DiskCache>)
 {
-    // FIXME: We may want a timer to limit how long we are waiting for a request before proceeding with a network
-    //        request that skips the disk cache.
+    if (m_state != State::WaitForCache)
+        return;
+
+    if (m_cache_wait_timer) {
+        m_cache_wait_timer->stop();
+        m_cache_wait_timer = nullptr;
+    }
+
     transition_to_state(State::Init);
+}
+
+void Request::start_cache_wait_timer()
+{
+    if (!m_cache_wait_timer) {
+        m_cache_wait_timer = Core::Timer::create_single_shot(s_cache_wait_timeout_ms, [this] {
+            if (m_state != State::WaitForCache)
+                return;
+
+            m_cache_wait_timer = nullptr;
+            m_cache_mode = HTTP::CacheMode::NoStore;
+            transition_to_state(State::Init);
+        });
+    }
+
+    m_cache_wait_timer->restart(s_cache_wait_timeout_ms);
 }
 
 void Request::notify_retrieved_http_cookie(Badge<ConnectionFromClient>, StringView cookie)
@@ -486,6 +513,7 @@ void Request::handle_initial_state()
                 },
                 [&](HTTP::DiskCache::CacheHasOpenEntry) {
                     // If an existing entry is open for writing, we must wait for it to complete.
+                    start_cache_wait_timer();
                     transition_to_state(State::WaitForCache);
                 });
 
@@ -509,6 +537,7 @@ void Request::handle_initial_state()
                     // If an existing entry is open for reading or writing, we must wait for it to complete. An entry being
                     // open for reading is a rare case, but may occur if a cached response expired between the existing
                     // entry's cache validation and the attempted reader validation when this request was created.
+                    start_cache_wait_timer();
                     transition_to_state(State::WaitForCache);
                 });
 
