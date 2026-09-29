@@ -199,7 +199,10 @@ void WebSocketImplCurl::connect(WebSocket::ConnectionInfo const& info)
 
 bool WebSocketImplCurl::can_read_line()
 {
-    VERIFY_NOT_REACHED();
+    dbgln("WebSocketImplCurl::can_read_line called after curl consumed the handshake headers");
+    if (on_connection_error)
+        on_connection_error();
+    return false;
 }
 
 ErrorOr<ByteBuffer> WebSocketImplCurl::read(int max_size)
@@ -211,7 +214,7 @@ ErrorOr<ByteBuffer> WebSocketImplCurl::read(int max_size)
 
 ErrorOr<ByteString> WebSocketImplCurl::read_line(size_t)
 {
-    VERIFY_NOT_REACHED();
+    return Error::from_string_literal("curl WebSocket raw mode does not expose line reads");
 }
 
 bool WebSocketImplCurl::send(ReadonlyBytes bytes)
