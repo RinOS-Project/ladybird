@@ -849,19 +849,24 @@ void Request::handle_connect_state()
         return;
     }
 
-    auto set_option = [&](auto option, auto value) {
-        if (auto result = curl_easy_setopt(m_curl_easy_handle, option, value); result != CURLE_OK)
+    auto set_option = [&](auto option, auto value) -> bool {
+        if (auto result = curl_easy_setopt(m_curl_easy_handle, option, value); result != CURLE_OK) {
             dbgln("Request::handle_connect_state: Failed to set curl option: {}", curl_easy_strerror(result));
+            return false;
+        }
+        return true;
     };
 
-    set_option(CURLOPT_PRIVATE, &m_curl_transfer_context);
-
-    set_option(CURLOPT_NOSIGNAL, 1L);
-
-    set_option(CURLOPT_URL, m_url.to_byte_string().characters());
-    set_option(CURLOPT_PORT, m_url.port_or_default());
-    set_option(CURLOPT_CONNECTTIMEOUT, s_connect_timeout_seconds);
-    set_option(CURLOPT_CONNECT_ONLY, 1L);
+    if (!set_option(CURLOPT_PRIVATE, &m_curl_transfer_context) ||
+        !set_option(CURLOPT_NOSIGNAL, 1L) ||
+        !set_option(CURLOPT_URL, m_url.to_byte_string().characters()) ||
+        !set_option(CURLOPT_PORT, m_url.port_or_default()) ||
+        !set_option(CURLOPT_CONNECTTIMEOUT, s_connect_timeout_seconds) ||
+        !set_option(CURLOPT_CONNECT_ONLY, 1L)) {
+        m_network_error = Requests::NetworkError::UnableToConnect;
+        transition_to_state(State::Error);
+        return;
+    }
 
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
     if (result != CURLM_OK) {
@@ -979,9 +984,12 @@ void Request::handle_fetch_state()
             return;
     }
 
+    bool setup_failed = false;
     auto set_option = [&](auto option, auto value) {
-        if (auto result = curl_easy_setopt(m_curl_easy_handle, option, value); result != CURLE_OK)
+        if (auto result = curl_easy_setopt(m_curl_easy_handle, option, value); result != CURLE_OK) {
             dbgln("Request::handle_start_fetch_state: Failed to set curl option: {}", curl_easy_strerror(result));
+            setup_failed = true;
+        }
     };
 
     set_option(CURLOPT_PRIVATE, &m_curl_transfer_context);
@@ -1100,8 +1108,17 @@ void Request::handle_fetch_state()
             set_option(CURLOPT_RESOLVE, resolve_list);
             m_curl_string_lists.append(resolve_list);
         } else {
-            VERIFY_NOT_REACHED();
+            dbgln("Request::handle_start_fetch_state: Failed to allocate curl resolve list");
+            m_network_error = Requests::NetworkError::UnableToConnect;
+            transition_to_state(State::Error);
+            return;
         }
+    }
+
+    if (setup_failed) {
+        m_network_error = Requests::NetworkError::UnableToConnect;
+        transition_to_state(State::Error);
+        return;
     }
 
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
