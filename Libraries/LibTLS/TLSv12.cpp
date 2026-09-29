@@ -24,6 +24,34 @@ extern "C" {
 namespace {
 
 constexpr size_t max_rin_trust_bundle_size = 4 * 1024 * 1024;
+constexpr u32 max_rin_trust_anchor_count = 256;
+
+static bool trust_paths_equal(Vector<ByteString> const& left, Vector<ByteString> const& right)
+{
+    if (left.size() != right.size())
+        return false;
+    for (size_t index = 0; index < left.size(); ++index) {
+        if (left[index] != right[index])
+            return false;
+    }
+    return true;
+}
+
+static u32 read_bundle_u32(u8 const* bytes)
+{
+    return static_cast<u32>(bytes[0]) |
+        (static_cast<u32>(bytes[1]) << 8) |
+        (static_cast<u32>(bytes[2]) << 16) |
+        (static_cast<u32>(bytes[3]) << 24);
+}
+
+static void write_bundle_u32(u8* bytes, u32 value)
+{
+    bytes[0] = static_cast<u8>(value);
+    bytes[1] = static_cast<u8>(value >> 8);
+    bytes[2] = static_cast<u8>(value >> 16);
+    bytes[3] = static_cast<u8>(value >> 24);
+}
 
 class RinTrustStoreCache {
 public:
@@ -33,38 +61,76 @@ public:
             rintls_trust_store_release(entry.store);
     }
 
-    ErrorOr<rintls_trust_store*> get(ByteString const& path)
+    ErrorOr<rintls_trust_store*> get(Vector<ByteString> const& paths)
     {
         Threading::MutexLocker locker { m_mutex };
         for (auto const& entry : m_entries) {
-            if (entry.path == path)
+            if (trust_paths_equal(entry.paths, paths))
                 return entry.store;
         }
 
-        auto file_or_error = Core::File::open(path, Core::File::OpenMode::Read);
-        if (file_or_error.is_error()) {
-            dbgln("Unable to open RinOS TLS trust store '{}': {}", path, file_or_error.error());
-            return Error::from_string_literal("Unable to open RinOS TLS trust store");
-        }
-        auto file = file_or_error.release_value();
-        auto size_or_error = file->size();
-        if (size_or_error.is_error()) {
-            dbgln("Unable to size RinOS TLS trust store '{}': {}", path, size_or_error.error());
-            return Error::from_string_literal("Unable to size RinOS TLS trust store");
-        }
-        auto size = size_or_error.release_value();
-        if (size == 0 || size > max_rin_trust_bundle_size) {
-            dbgln("RinOS TLS trust store '{}' has invalid size {}", path, size);
-            return Error::from_string_literal("RinOS TLS trust store has invalid size");
+        if (paths.is_empty())
+            return Error::from_string_literal("RinOS TLS trust store is empty");
+
+        ByteBuffer combined_bundle;
+        const u8 magic[] = { 'R', 'C', 'A', '1' };
+        const u8 zero_count[] = { 0, 0, 0, 0 };
+        TRY(combined_bundle.try_append(magic, sizeof(magic)));
+        TRY(combined_bundle.try_append(zero_count, sizeof(zero_count)));
+        u32 anchor_count = 0;
+
+        for (auto const& path : paths) {
+            auto file_or_error = Core::File::open(path, Core::File::OpenMode::Read);
+            if (file_or_error.is_error()) {
+                dbgln("Unable to open RinOS TLS trust store '{}': {}", path, file_or_error.error());
+                return Error::from_string_literal("Unable to open RinOS TLS trust store");
+            }
+            auto file = file_or_error.release_value();
+            auto size_or_error = file->size();
+            if (size_or_error.is_error()) {
+                dbgln("Unable to size RinOS TLS trust store '{}': {}", path, size_or_error.error());
+                return Error::from_string_literal("Unable to size RinOS TLS trust store");
+            }
+            auto size = size_or_error.release_value();
+            if (size < 8 || size > max_rin_trust_bundle_size) {
+                dbgln("RinOS TLS trust store '{}': invalid size {}", path, size);
+                return Error::from_string_literal("RinOS TLS trust store has invalid size");
+            }
+
+            auto bytes = TRY(ByteBuffer::create_uninitialized(size));
+            TRY(file->read_until_filled(bytes.bytes()));
+            auto source = bytes.bytes();
+            if (__builtin_memcmp(source.data(), magic, sizeof(magic)) != 0)
+                return Error::from_string_literal("RinOS TLS trust store has invalid header");
+
+            auto source_count = read_bundle_u32(source.data() + 4);
+            if (source_count == 0 || source_count > max_rin_trust_anchor_count ||
+                source_count > max_rin_trust_anchor_count - anchor_count)
+                return Error::from_string_literal("RinOS TLS trust store has too many anchors");
+
+            size_t offset = 8;
+            for (u32 index = 0; index < source_count; ++index) {
+                if (offset > source.size() || source.size() - offset < 4)
+                    return Error::from_string_literal("RinOS TLS trust store has truncated entry");
+                auto certificate_size = read_bundle_u32(source.data() + offset);
+                if (certificate_size == 0 || certificate_size > source.size() - offset - 4)
+                    return Error::from_string_literal("RinOS TLS trust store has invalid entry");
+                TRY(combined_bundle.try_append(source.data() + offset, 4 + certificate_size));
+                offset += 4 + certificate_size;
+            }
+            if (offset != source.size())
+                return Error::from_string_literal("RinOS TLS trust store has trailing data");
+            anchor_count += source_count;
+            if (combined_bundle.size() > max_rin_trust_bundle_size)
+                return Error::from_string_literal("RinOS TLS trust store is too large");
         }
 
-        auto bytes = TRY(ByteBuffer::create_uninitialized(size));
-        TRY(file->read_until_filled(bytes.bytes()));
-
+        write_bundle_u32(combined_bundle.data() + 4, anchor_count);
         rintls_trust_store* store = nullptr;
-        auto result = rintls_trust_store_from_bundle(bytes.data(), bytes.size(), &store);
+        auto result = rintls_trust_store_from_bundle(
+            combined_bundle.data(), combined_bundle.size(), &store);
         if (result != RINTLS_OK || !store) {
-            dbgln("Unable to parse RinOS TLS trust store '{}': {}", path, rintls_strerror(result));
+            dbgln("Unable to parse RinOS TLS trust stores: {}", rintls_strerror(result));
             return Error::from_string_literal("Unable to parse RinOS TLS trust store");
         }
 
@@ -74,14 +140,14 @@ public:
             return Error::from_string_literal("RinOS TLS trust store is empty");
         }
 
-        m_entries.append({ path, store });
-        dbgln("Loaded RinOS TLS trust store '{}' with {} anchors", path, count);
+        m_entries.append({ paths, store });
+        dbgln("Loaded {} RinOS TLS trust stores with {} anchors", paths.size(), count);
         return store;
     }
 
 private:
     struct Entry {
-        ByteString path;
+        Vector<ByteString> paths;
         rintls_trust_store* store { nullptr };
     };
 
@@ -231,9 +297,13 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPS
 {
     TRY(socket->set_blocking(false));
 
-    if (!options.root_certificates_path.has_value() || options.root_certificates_path->is_empty())
+    Vector<ByteString> trust_paths = move(options.root_certificates_paths);
+    if (trust_paths.is_empty() && options.root_certificates_path.has_value() &&
+        !options.root_certificates_path->is_empty())
+        trust_paths.append(*options.root_certificates_path);
+    if (trust_paths.is_empty())
         return Error::from_string_literal("RinOS TLS trust store is not configured");
-    auto* trust_store = TRY(s_rin_trust_store_cache.get(*options.root_certificates_path));
+    auto* trust_store = TRY(s_rin_trust_store_cache.get(trust_paths));
 
     auto* ctx = rintls_new();
     if (!ctx)
@@ -504,11 +574,15 @@ ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect_internal(NonnullOwnPtr<Core::TCPS
     // Configure the client to abort the handshake if certificate verification fails.
     SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, nullptr);
 
-    if (options.root_certificates_path.has_value()) {
-        auto path = options.root_certificates_path.value();
-        if (SSL_CTX_load_verify_file(ssl_ctx, path.characters()) != 1) {
-            dbgln("Unable to load TLS trust store '{}'", path);
-            return Error::from_string_literal("Unable to load TLS trust store");
+    if (!options.root_certificates_paths.is_empty() || options.root_certificates_path.has_value()) {
+        Vector<ByteString> trust_paths = move(options.root_certificates_paths);
+        if (trust_paths.is_empty())
+            trust_paths.append(options.root_certificates_path.value());
+        for (auto const& path : trust_paths) {
+            if (path.is_empty() || SSL_CTX_load_verify_file(ssl_ctx, path.characters()) != 1) {
+                dbgln("Unable to load TLS trust store '{}'", path);
+                return Error::from_string_literal("Unable to load TLS trust store");
+            }
         }
     } else {
         // Use the default trusted certificate store

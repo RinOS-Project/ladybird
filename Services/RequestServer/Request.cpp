@@ -1000,8 +1000,9 @@ void Request::handle_fetch_state()
 
     set_option(CURLOPT_NOSIGNAL, 1L);
 
-    if (auto const& path = default_certificate_path(); !path.is_empty())
-        set_option(CURLOPT_CAINFO, path.characters());
+    if (!set_curl_certificate_paths(m_curl_easy_handle,
+            default_certificate_paths(), m_curl_ca_info_blob))
+        setup_failed = true;
 
     set_option(CURLOPT_ACCEPT_ENCODING, ""); // Empty string lets curl define the accepted encodings.
     set_option(CURLOPT_URL, m_url.to_byte_string().characters());

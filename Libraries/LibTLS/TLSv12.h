@@ -9,6 +9,7 @@
 
 #include <AK/ByteBuffer.h>
 #include <AK/Function.h>
+#include <AK/Vector.h>
 #include <LibCore/Socket.h>
 #include <LibCrypto/Certificate/Certificate.h>
 #ifdef AK_OS_RINOS
@@ -22,7 +23,11 @@ extern "C" {
 namespace TLS {
 
 struct Options {
+    /* RequestServer may provide more than one private trust-store path. Keep
+     * the old singular field for callers outside that path, but never let a
+     * multi-store caller silently lose entries. */
     Optional<ByteString> root_certificates_path;
+    Vector<ByteString> root_certificates_paths;
 #ifdef AK_OS_RINOS
     /* Wire-format TLS certificate_list (3-byte total length followed by DER
      * entries) and a capability callback for CertificateVerify.  The private

@@ -39,6 +39,8 @@ public:
 
     Optional<ByteString> const& root_certificates_path() const { return m_root_certificates_path; }
     void set_root_certificates_path(Optional<ByteString> root_certificates_path) { m_root_certificates_path = move(root_certificates_path); }
+    Vector<ByteString> const& root_certificates_paths() const { return m_root_certificates_paths; }
+    void set_root_certificates_paths(Vector<ByteString> root_certificates_paths) { m_root_certificates_paths = move(root_certificates_paths); }
 
     Optional<DNS::LookupResult const&> dns_result() const { return m_dns_result ? Optional<DNS::LookupResult const&>(*m_dns_result) : OptionalNone {}; }
     void set_dns_result(NonnullRefPtr<DNS::LookupResult const> dns_result) { m_dns_result = move(dns_result); }
@@ -74,6 +76,7 @@ private:
     Vector<ByteString> m_extensions {};
     NonnullRefPtr<HTTP::HeaderList> m_headers;
     Optional<ByteString> m_root_certificates_path;
+    Vector<ByteString> m_root_certificates_paths;
     RefPtr<DNS::LookupResult const> m_dns_result;
 #if defined(AK_OS_RINOS)
     u64 m_client_certificate_generation { 0 };

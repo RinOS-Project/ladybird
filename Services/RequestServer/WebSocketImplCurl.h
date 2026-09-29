@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/MemoryStream.h>
+#include <AK/Optional.h>
 #include <LibCore/Forward.h>
 #include <LibWebSocket/Impl/WebSocketImpl.h>
 #include <RequestServer/CurlTransferContext.h>
@@ -50,6 +51,7 @@ private:
     RefPtr<Core::Notifier> m_read_notifier;
     RefPtr<Core::Notifier> m_error_notifier;
     Vector<curl_slist*> m_curl_string_lists;
+    Optional<ByteBuffer> m_curl_ca_info_blob;
     AllocatingMemoryStream m_read_buffer;
     ByteString m_websocket_key;
     Vector<ByteString> m_requested_protocols;

@@ -586,8 +586,7 @@ ErrorOr<NonnullOwnPtr<RinHTTPFetch>> RinHTTPFetch::create(
 
         if (is_https) {
             TLS::Options tls_options;
-            if (auto const& cert_path = default_certificate_path(); !cert_path.is_empty())
-                tls_options.root_certificates_path = cert_path;
+            tls_options.root_certificates_paths = default_certificate_paths();
 #if defined(AK_OS_RINOS)
             if (fetch->m_client_certificate_provider) {
                 tls_options.client_certificate_provider =

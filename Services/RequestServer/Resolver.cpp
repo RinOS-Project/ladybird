@@ -10,16 +10,35 @@
 
 namespace RequestServer {
 
-static ByteString g_default_certificate_path;
+static Vector<ByteString> g_default_certificate_paths;
 
 ByteString const& default_certificate_path()
 {
-    return g_default_certificate_path;
+    static ByteString empty_path;
+    if (g_default_certificate_paths.is_empty())
+        return empty_path;
+    return g_default_certificate_paths.first();
 }
 
 void set_default_certificate_path(ByteString default_certificate_path)
 {
-    g_default_certificate_path = move(default_certificate_path);
+    g_default_certificate_paths.clear();
+    if (!default_certificate_path.is_empty())
+        g_default_certificate_paths.append(move(default_certificate_path));
+}
+
+Vector<ByteString> const& default_certificate_paths()
+{
+    return g_default_certificate_paths;
+}
+
+void set_default_certificate_paths(Vector<ByteString> paths)
+{
+    g_default_certificate_paths.clear();
+    for (auto& path : paths) {
+        if (!path.is_empty())
+            g_default_certificate_paths.append(move(path));
+    }
 }
 
 DNSInfo& DNSInfo::the()
@@ -53,8 +72,7 @@ NonnullRefPtr<Resolver> Resolver::default_resolver()
         if (dns_info.use_dns_over_tls) {
             TLS::Options options;
 
-            if (!g_default_certificate_path.is_empty())
-                options.root_certificates_path = g_default_certificate_path;
+            options.root_certificates_paths = g_default_certificate_paths;
 
             return DNS::Resolver::SocketResult {
                 MaybeOwned<Core::Socket>(TRY(TLS::TLSv12::connect(*dns_info.server_address, *dns_info.server_hostname, move(options)))),

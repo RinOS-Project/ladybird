@@ -86,9 +86,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     certificates.append("/System/Trust/roots.rinca"sv);
 #endif
 
-    // FIXME: Update RequestServer to support multiple custom root certificates.
-    if (!certificates.is_empty())
-        RequestServer::set_default_certificate_path(certificates.first());
+    RequestServer::set_default_certificate_paths(move(certificates));
 
     if (!resource_map_path.is_empty()) {
         auto map = RequestServer::ResourceSubstitutionMap::load_from_file(resource_map_path);

@@ -93,10 +93,17 @@ void WebSocketImplCurl::connect(WebSocket::ConnectionInfo const& info)
         return;
     }
 
-    if (auto root_certs = info.root_certificates_path(); root_certs.has_value() &&
-        !set_option(CURLOPT_CAINFO, root_certs->characters())) {
+    if (!RequestServer::set_curl_certificate_paths(
+            m_easy_handle, info.root_certificates_paths(), m_curl_ca_info_blob)) {
         on_connection_error();
         return;
+    }
+    if (info.root_certificates_paths().is_empty()) {
+        if (auto root_certs = info.root_certificates_path(); root_certs.has_value() &&
+            !set_option(CURLOPT_CAINFO, root_certs->characters())) {
+            on_connection_error();
+            return;
+        }
     }
 
     auto const origin_header = ByteString::formatted("Origin: {}", info.origin());

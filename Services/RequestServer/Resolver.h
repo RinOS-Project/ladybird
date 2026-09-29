@@ -9,6 +9,7 @@
 
 #include <AK/Optional.h>
 #include <AK/RefCounted.h>
+#include <AK/Vector.h>
 #include <AK/Weakable.h>
 #include <LibCore/Forward.h>
 #include <LibDNS/Resolver.h>
@@ -41,5 +42,7 @@ private:
 
 ByteString const& default_certificate_path();
 void set_default_certificate_path(ByteString);
+Vector<ByteString> const& default_certificate_paths();
+void set_default_certificate_paths(Vector<ByteString>);
 
 }

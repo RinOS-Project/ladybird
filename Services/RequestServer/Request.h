@@ -233,6 +233,7 @@ private:
     CurlTransferContext m_curl_transfer_context { CurlTransferContext::Kind::Request, nullptr };
     bool m_curl_handle_added { false };
     Vector<curl_slist*> m_curl_string_lists;
+    Optional<ByteBuffer> m_curl_ca_info_blob;
     Optional<int> m_curl_result_code;
     size_t m_request_body_bytes_read { 0 };
 #endif

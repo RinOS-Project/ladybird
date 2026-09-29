@@ -47,6 +47,7 @@ void WebSocketImplSerenity::connect(ConnectionInfo const& connection_info)
         if (connection_info.is_secure()) {
             TLS::Options options;
             options.root_certificates_path = connection_info.root_certificates_path();
+            options.root_certificates_paths = connection_info.root_certificates_paths();
 #if defined(AK_OS_RINOS)
             if (connection_info.client_certificate_list().has_value()) {
                 options.client_certificate_list =
