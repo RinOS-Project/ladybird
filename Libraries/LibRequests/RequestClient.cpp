@@ -93,7 +93,16 @@ bool RequestClient::stop_request(Badge<Request>, Request& request)
 {
     if (!m_requests.contains(request.id()))
         return false;
-    return IPCProxy::stop_request(request.id());
+    auto stopped = IPCProxy::stop_request(request.id());
+    if (stopped) {
+        /* RequestServer removes a cancelled request without sending the
+         * normal request_finished callback. Drop both private ownership
+         * records here so a cancelled upload cannot retain its producer or
+         * accept a late body pull for a request that no longer exists. */
+        m_streaming_request_bodies.remove(request.id());
+        m_requests.remove(request.id());
+    }
+    return stopped;
 }
 
 void RequestClient::ensure_connection(URL::URL const& url, RequestServer::CacheLevel cache_level)
