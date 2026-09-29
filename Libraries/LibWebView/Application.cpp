@@ -507,11 +507,15 @@ ErrorOr<void> Application::launch_request_server()
     m_request_server_client = TRY(launch_request_server_process());
 
 #if defined(AK_OS_RINOS)
-    m_request_server_client->on_retrieve_http_cookie = [](URL::URL const& url) {
-        return WebContentClient::retrieve_http_cookie_header(url);
+    m_request_server_client->on_retrieve_http_cookie = [](URL::URL const& url,
+                                                           ByteString const& context,
+                                                           ByteString const& method) {
+        return WebContentClient::retrieve_http_cookie_header(url, context, method);
     };
 #else
-    m_request_server_client->on_retrieve_http_cookie = [this](URL::URL const& url) {
+    m_request_server_client->on_retrieve_http_cookie = [this](URL::URL const& url,
+                                                              ByteString const&,
+                                                              ByteString const&) {
         return m_cookie_jar->get_cookie(url, HTTP::Cookie::Source::Http);
     };
 #endif

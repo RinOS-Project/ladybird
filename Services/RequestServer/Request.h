@@ -243,6 +243,7 @@ private:
     ByteBuffer m_request_body;
 
     HTTP::Cookie::IncludeCredentials m_include_credentials { HTTP::Cookie::IncludeCredentials::Yes };
+    ByteString m_cookie_context;
 
     ByteString m_alt_svc_cache_path;
     Core::ProxyData m_proxy_data;

@@ -208,12 +208,13 @@ void RequestClient::headers_became_available(u64 request_id, Vector<HTTP::Header
         warnln("Received headers for non-existent request {}", request_id);
 }
 
-void RequestClient::retrieve_http_cookie(int client_id, u64 request_id, URL::URL url)
+void RequestClient::retrieve_http_cookie(int client_id, u64 request_id, URL::URL url,
+                                         ByteString cookie_context, ByteString method)
 {
     String cookie;
 
     if (on_retrieve_http_cookie)
-        cookie = on_retrieve_http_cookie(url);
+        cookie = on_retrieve_http_cookie(url, cookie_context, method);
 
     async_retrieved_http_cookie(client_id, request_id, cookie);
 }

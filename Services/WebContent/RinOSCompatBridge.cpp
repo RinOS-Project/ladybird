@@ -1049,10 +1049,7 @@ struct PageSession {
             origin.is_empty() || origin.length() >= RIN_WEBCONTENT_URL_MAX ||
             request_url.length() >= RIN_WEBCONTENT_URL_MAX ||
             cookie_data.length() > RIN_WEBCONTENT_HTTP_COOKIE_OWNER_MAX_DATA_BYTES ||
-            (owner_operation == RIN_WEBCONTENT_HTTP_COOKIE_OWNER_GET_HEADER &&
-             !cookie_data.is_empty()) ||
-            (owner_operation == RIN_WEBCONTENT_HTTP_COOKIE_OWNER_COMMIT_SET_COOKIE &&
-             cookie_data.is_empty()))
+            cookie_data.is_empty())
             return result;
 
         std::vector<uint8_t> response_data;

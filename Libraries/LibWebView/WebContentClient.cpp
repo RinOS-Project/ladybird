@@ -6,6 +6,8 @@
 
 #include <LibHTTP/Cookie/ParsedCookie.h>
 #include <LibIPC/TransportHandle.h>
+#include <LibURL/Parser.h>
+#include <LibURL/Site.h>
 #include <LibWebView/Application.h>
 #include <LibWebView/CookieJar.h>
 #include <LibWebView/HelperProcess.h>
@@ -1289,8 +1291,87 @@ Messages::WebContentClient::RequestHttpCookieOwnerResponse WebContentClient::req
     return { result.accepted, result.found, result.generation, move(result.data) };
 }
 
-String WebContentClient::retrieve_http_cookie_header(URL::URL const& url)
+static ByteString serialize_cookie_owner_context(
+    URL::URL const& url, ByteString const& request_context,
+    ByteString const& method)
 {
+    if (request_context.is_empty() || request_context.length() > 4096u)
+        return {};
+    StringView input { request_context.characters(), request_context.length() };
+    auto first_separator = input.find('|');
+    auto second_separator = first_separator.has_value()
+        ? input.find('|', first_separator.value() + 1u) : Optional<size_t> {};
+    auto third_separator = second_separator.has_value()
+        ? input.find('|', second_separator.value() + 1u) : Optional<size_t> {};
+    auto fourth_separator = third_separator.has_value()
+        ? input.find('|', third_separator.value() + 1u) : Optional<size_t> {};
+    if (!first_separator.has_value() || !second_separator.has_value() ||
+        !third_separator.has_value() || !fourth_separator.has_value() ||
+        input.find('|', fourth_separator.value() + 1u).has_value() ||
+        input.substring_view(0u, first_separator.value()) != "RCX1"sv)
+        return {};
+
+    auto origin_text = input.substring_view(first_separator.value() + 1u,
+        second_separator.value() - first_separator.value() - 1u);
+    auto ancestor_text = input.substring_view(second_separator.value() + 1u,
+        third_separator.value() - second_separator.value() - 1u);
+    auto navigation_text = input.substring_view(third_separator.value() + 1u,
+        fourth_separator.value() - third_separator.value() - 1u);
+    auto partition_text = input.substring_view(fourth_separator.value() + 1u);
+    if ((ancestor_text != "0"sv && ancestor_text != "1"sv) ||
+        (navigation_text != "0"sv && navigation_text != "1"sv) ||
+        partition_text.is_empty() || partition_text.length() > 272u)
+        return {};
+
+    Optional<URL::Origin> request_origin;
+    const bool no_client = origin_text == "-"sv;
+    if (!no_client && origin_text != "null"sv) {
+        auto origin_url = URL::Parser::basic_parse(
+            MUST(String::formatted("{}/", origin_text)));
+        if (!origin_url.has_value() ||
+            origin_url->origin().serialize() != origin_text)
+            return {};
+        request_origin = origin_url->origin();
+    }
+
+    String partition_site;
+    if (partition_text == "null"sv) {
+        partition_site = "null"_string;
+    } else {
+        auto site_url = URL::Parser::basic_parse(
+            MUST(String::formatted("{}/", partition_text)));
+        if (!site_url.has_value() ||
+            URL::Site::obtain(site_url->origin()).serialize() != partition_text)
+            return {};
+        partition_site = MUST(String::from_utf8(partition_text));
+    }
+
+    const bool has_cross_site_ancestor = ancestor_text == "1"sv;
+    const bool top_level_navigation = navigation_text == "1"sv;
+    const bool same_site = no_client ||
+        (request_origin.has_value() && !has_cross_site_ancestor &&
+         request_origin->is_same_site(url.origin()));
+    const bool safe_method = method.equals_ignoring_ascii_case("GET"sv) ||
+        method.equals_ignoring_ascii_case("HEAD"sv) ||
+        method.equals_ignoring_ascii_case("OPTIONS"sv) ||
+        method.equals_ignoring_ascii_case("TRACE"sv);
+    const bool top_level_safe_navigation = top_level_navigation && safe_method;
+    if (top_level_navigation)
+        partition_site = URL::Site::obtain(url.origin()).serialize();
+    return ByteString::formatted("RSC1|{}|{}|{}|{}\n",
+        same_site ? "1"sv : "0"sv,
+        top_level_safe_navigation ? "1"sv : "0"sv,
+        top_level_navigation ? "1"sv : "0"sv,
+        partition_site.to_byte_string());
+}
+
+String WebContentClient::retrieve_http_cookie_header(
+    URL::URL const& url, ByteString const& request_context,
+    ByteString const& method)
+{
+    auto cookie_context = serialize_cookie_owner_context(url, request_context, method);
+    if (cookie_context.is_empty())
+        return {};
     String cookie_header;
     WebContentClient::for_each_client([&](WebContentClient& client) {
         for (auto const& [page_id, view] : client.m_views) {
@@ -1301,7 +1382,7 @@ String WebContentClient::retrieve_http_cookie_header(URL::URL const& url)
             auto response = client.request_http_cookie_owner(
                 page_id,
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER,
-                url.to_byte_string(), serialized_origin.to_byte_string(), {},
+                url.to_byte_string(), serialized_origin.to_byte_string(), cookie_context,
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_CREDENTIALS_INCLUDE);
             if (!response.accepted || !response.found || response.generation == 0u)
                 continue;

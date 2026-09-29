@@ -62,6 +62,7 @@
 #include <LibWeb/MixedContent/AbstractOperations.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/Page/Page.h>
+#include <LibURL/Site.h>
 #include <LibWeb/ReferrerPolicy/AbstractOperations.h>
 #include <LibWeb/ResourceTiming/PerformanceResourceTiming.h>
 #include <LibWeb/SRI/SRI.h>
@@ -77,6 +78,87 @@ namespace Web::Fetch::Fetching {
 
 using Infrastructure::RootedResponseReferences;
 using Infrastructure::root_response_references;
+
+#if defined(AK_OS_RINOS)
+struct RinCookieRequestContext {
+    Optional<URL::Origin> requestOrigin;
+    Optional<URL::Origin> topLevelOrigin;
+    bool hasClient { false };
+    bool hasCrossSiteAncestor { false };
+    bool topLevelNavigation { false };
+};
+
+static RinCookieRequestContext rin_cookie_request_context(
+    Infrastructure::Request const& request)
+{
+    RinCookieRequestContext context;
+    if (auto client = request.client()) {
+        context.hasClient = true;
+        context.requestOrigin = client->origin();
+        context.hasCrossSiteAncestor = client->has_cross_site_ancestor();
+        context.topLevelOrigin = client->top_level_origin;
+    }
+    if (!context.topLevelOrigin.has_value() &&
+        request.top_level_navigation_initiator_origin().has_value())
+        context.topLevelOrigin = request.top_level_navigation_initiator_origin().value();
+    context.topLevelNavigation =
+        request.mode() == Infrastructure::Request::Mode::Navigate &&
+        request.destination().has_value() &&
+        request.destination().value() ==
+            Infrastructure::Request::Destination::Document;
+    return context;
+}
+
+static ByteString rin_cookie_request_context(
+    Infrastructure::Request const& request)
+{
+    auto context = rin_cookie_request_context(request);
+    auto request_origin = context.hasClient && context.requestOrigin.has_value()
+        ? context.requestOrigin->serialize().to_byte_string()
+        : ByteString("-"sv);
+    auto partition_site = ByteString("null"sv);
+    if (context.topLevelNavigation) {
+        partition_site = URL::Site::obtain(request.current_url().origin())
+                             .serialize().to_byte_string();
+    } else if (context.topLevelOrigin.has_value() &&
+               !context.topLevelOrigin->is_opaque()) {
+        partition_site = URL::Site::obtain(context.topLevelOrigin.value())
+                             .serialize().to_byte_string();
+    }
+    return ByteString::formatted("RCX1|{}|{}|{}|{}", request_origin,
+        context.hasCrossSiteAncestor ? "1"sv : "0"sv,
+        context.topLevelNavigation ? "1"sv : "0"sv, partition_site);
+}
+
+static ByteString rin_cookie_owner_context(
+    Infrastructure::Request const& request)
+{
+    auto context = rin_cookie_request_context(request);
+    const bool same_site = !context.hasClient ||
+        (context.requestOrigin.has_value() &&
+         !context.hasCrossSiteAncestor &&
+         context.requestOrigin->is_same_site(request.current_url().origin()));
+    const bool safe_method = request.method().equals_ignoring_ascii_case("GET"sv) ||
+        request.method().equals_ignoring_ascii_case("HEAD"sv) ||
+        request.method().equals_ignoring_ascii_case("OPTIONS"sv) ||
+        request.method().equals_ignoring_ascii_case("TRACE"sv);
+    const bool top_level_safe_navigation =
+        context.topLevelNavigation && safe_method;
+    auto partition_site = ByteString("null"sv);
+    if (context.topLevelNavigation) {
+        partition_site = URL::Site::obtain(request.current_url().origin())
+                             .serialize().to_byte_string();
+    } else if (context.topLevelOrigin.has_value() &&
+               !context.topLevelOrigin->is_opaque()) {
+        partition_site = URL::Site::obtain(context.topLevelOrigin.value())
+                             .serialize().to_byte_string();
+    }
+    return ByteString::formatted("RSC1|{}|{}|{}|{}",
+        same_site ? "1"sv : "0"sv,
+        top_level_safe_navigation ? "1"sv : "0"sv,
+        context.topLevelNavigation ? "1"sv : "0"sv, partition_site);
+}
+#endif
 
 static bool g_http_memory_cache_enabled = false;
 
@@ -2141,6 +2223,13 @@ GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(
 
     auto& page = Bindings::principal_host_defined_page(HTML::principal_realm(realm));
 
+#if defined(AK_OS_RINOS)
+    /* RequestServer consumes this private routing context before it builds the
+     * outbound HTTP request. It never reaches the network peer. */
+    request->header_list()->set(HTTP::Header::isomorphic_encode(
+        "RinOS-Cookie-Context"sv, rin_cookie_request_context(*request)));
+#endif
+
     LoadRequest load_request { request->header_list() };
     load_request.set_url(request->current_url());
     load_request.set_page(page);
@@ -2261,7 +2350,9 @@ GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(
             }
             auto encoded_cookies = response_cookie_builder.to_byte_string();
             if (!encoded_cookies.is_empty() && cors_validated) {
-                if (encoded_cookies.length() >
+                auto owner_cookie_data = ByteString::formatted("{}\n{}",
+                    rin_cookie_owner_context(*request), encoded_cookies);
+                if (owner_cookie_data.length() >
                     RIN_WEBCONTENT_HTTP_COOKIE_OWNER_MAX_DATA_BYTES) {
                     auto error = MUST(String::formatted("Response Set-Cookie fields exceed the authenticated owner request limit"));
                     if (stream->is_readable())
@@ -2275,7 +2366,7 @@ GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(
                 auto owner_response = page.client().request_http_cookie_owner(
                     RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_HTTP_COOKIES,
                     request->current_url().to_byte_string(), request->byte_serialize_origin(),
-                    move(encoded_cookies), cookie_policy);
+                    move(owner_cookie_data), cookie_policy);
                 if (!owner_response.accepted || !owner_response.found || owner_response.generation == 0u) {
                     auto error = MUST(String::formatted("Browser did not durably commit response cookies"));
                     if (stream->is_readable())

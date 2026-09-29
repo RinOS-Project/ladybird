@@ -241,6 +241,21 @@ Request::Request(
     , m_proxy_data(proxy_data)
     , m_response_headers(HTTP::HeaderList::create())
 {
+#if defined(AK_OS_RINOS)
+    size_t context_count = 0u;
+    for (auto const& header : m_request_headers->headers()) {
+        if (!header.name.equals_ignoring_ascii_case("RinOS-Cookie-Context"sv))
+            continue;
+        ++context_count;
+        if (context_count == 1u && header.value.length() <= 4096u)
+            m_cookie_context = header.value;
+    }
+    if (context_count != 1u)
+        m_cookie_context = {};
+    m_request_headers->delete_all_matching([](auto const& header) {
+        return header.name.equals_ignoring_ascii_case("RinOS-Cookie-Context"sv);
+    });
+#endif
 }
 
 Request::Request(
@@ -620,7 +635,8 @@ void Request::handle_dns_lookup_state()
         if (auto connection = ConnectionFromClient::primary_connection(); connection.has_value()) {
             rs_serial("[RS] parallel: cookie IPC sent (in-flight with DNS)\n");
             m_cookie_pending = true;
-            connection->async_retrieve_http_cookie(m_client.client_id(), m_request_id, m_url);
+            connection->async_retrieve_http_cookie(m_client.client_id(), m_request_id,
+                                                   m_url, m_cookie_context, m_method);
         } else {
             rs_serial("[RS] parallel: no primary connection; skipping cookie\n");
         }
@@ -703,7 +719,8 @@ void Request::handle_retrieve_cookie_state()
 
     if (auto connection = ConnectionFromClient::primary_connection(); connection.has_value()) {
         rs_serial("[RS] cookie IPC sent\n");
-        connection->async_retrieve_http_cookie(m_client.client_id(), m_request_id, m_url);
+        connection->async_retrieve_http_cookie(m_client.client_id(), m_request_id,
+                                               m_url, m_cookie_context, m_method);
     } else {
         rs_serial("[RS] cookie IPC FAILED: no primary connection\n");
         m_network_error = Requests::NetworkError::RequestServerDied;
