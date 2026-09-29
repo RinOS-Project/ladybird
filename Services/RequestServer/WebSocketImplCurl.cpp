@@ -207,6 +207,8 @@ bool WebSocketImplCurl::can_read_line()
 
 ErrorOr<ByteBuffer> WebSocketImplCurl::read(int max_size)
 {
+    if (max_size <= 0)
+        return Error::from_string_literal("invalid curl WebSocket read size");
     auto buffer = TRY(ByteBuffer::create_uninitialized(max_size));
     auto const read_bytes = TRY(m_read_buffer.read_some(buffer));
     return buffer.slice(0, read_bytes.size());
