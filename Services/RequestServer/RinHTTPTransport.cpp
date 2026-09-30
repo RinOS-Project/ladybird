@@ -11,7 +11,6 @@
 #include <RequestServer/Resolver.h>
 #include <RequestServer/RinHTTPTransport.h>
 #include <rinhttp/http.h>
-#include <requestserver_tls_client_certificate_policy.h>
 #include <requestserver_upload_body_policy.hpp>
 
 #include <limits.h>
@@ -400,18 +399,59 @@ int RinHTTPFetch::client_certificate_provider(rintls_ctx* tls, void* opaque)
         return RINTLS_ERR_CERTIFICATE;
     }
 
-    fetch->m_client_certificate_generation = connection_generation;
-    fetch->m_client_certificate_capability = move(signer_capability);
+    rin_requestserver_tls_client_certificate_session_reset(
+        &fetch->m_client_certificate_session);
+    if (!rin_requestserver_tls_client_certificate_session_bind(
+            &fetch->m_client_certificate_session, fetch->m_request_id,
+            connection_generation, certificate_list.data(),
+            certificate_list.size(), signer_capability.data(),
+            signer_capability.size(),
+            &RinHTTPFetch::client_certificate_session_sign, fetch) ||
+        !rin_requestserver_tls_client_certificate_session_start(
+            &fetch->m_client_certificate_session)) {
+        clear_client_certificate_capability(signer_capability);
+        return RINTLS_ERR_CERTIFICATE;
+    }
     if (rintls_set_client_certificate_for_scheme(
             tls, certificate_list.data(), certificate_list.size(),
             &RinHTTPFetch::client_certificate_signer, fetch,
             signature_scheme) != RINTLS_OK) {
-        fetch->m_client_certificate_generation = 0u;
-        clear_client_certificate_capability(
-            fetch->m_client_certificate_capability);
+        rin_requestserver_tls_client_certificate_session_reset(
+            &fetch->m_client_certificate_session);
         return RINTLS_ERR_CERTIFICATE;
     }
     return RINTLS_OK;
+}
+
+int RinHTTPFetch::client_certificate_session_sign(
+    void* opaque, const uint8_t capability[], uint64_t request_id,
+    uint64_t connection_generation, uint16_t signature_scheme,
+    const uint8_t* message, size_t message_size, uint8_t* signature,
+    size_t signature_capacity, size_t* signature_size)
+{
+    auto* fetch = static_cast<RinHTTPFetch*>(opaque);
+    if (signature_size != nullptr)
+        *signature_size = 0u;
+    if (fetch == nullptr || request_id != fetch->m_request_id ||
+        !fetch->m_client_certificate_signer || capability == nullptr ||
+        message == nullptr || message_size == 0u ||
+        signature == nullptr || signature_capacity == 0u ||
+        signature_size == nullptr)
+        return -1;
+
+    size_t written = 0u;
+    auto result = fetch->m_client_certificate_signer(
+        connection_generation,
+        ReadonlyBytes { capability,
+                        RINRUNTIME_TLS_CLIENT_CERTIFICATE_CAPABILITY_BYTES },
+        signature_scheme, ReadonlyBytes { message, message_size },
+        Bytes { signature, signature_capacity }, written);
+    if (result != 0 || written == 0u || written > signature_capacity) {
+        __builtin_memset(signature, 0, signature_capacity);
+        return -1;
+    }
+    *signature_size = written;
+    return 0;
 }
 
 int RinHTTPFetch::client_certificate_signer(
@@ -422,17 +462,13 @@ int RinHTTPFetch::client_certificate_signer(
     auto* fetch = static_cast<RinHTTPFetch*>(opaque);
     if (signature_length != nullptr)
         *signature_length = 0u;
-    if (fetch == nullptr || !fetch->m_client_certificate_signer ||
-        fetch->m_client_certificate_generation == 0u ||
-        fetch->m_client_certificate_capability.is_empty() || message == nullptr ||
+    if (fetch == nullptr || message == nullptr ||
         message_length == 0u || message_length > 16u * 1024u ||
         signature == nullptr || signature_capacity == 0u ||
         signature_capacity > 512u || signature_length == nullptr) {
-        if (fetch != nullptr) {
-            clear_client_certificate_capability(
-                fetch->m_client_certificate_capability);
-            fetch->m_client_certificate_generation = 0u;
-        }
+        if (fetch != nullptr)
+            rin_requestserver_tls_client_certificate_session_reset(
+                &fetch->m_client_certificate_session);
         if (signature != nullptr && signature_capacity != 0u &&
             signature_capacity <= 512u)
             __builtin_memset(signature, 0, signature_capacity);
@@ -440,15 +476,12 @@ int RinHTTPFetch::client_certificate_signer(
     }
 
     size_t written = 0u;
-    int result = fetch->m_client_certificate_signer(
-        fetch->m_client_certificate_generation,
-        fetch->m_client_certificate_capability.bytes(), signature_scheme,
-        ReadonlyBytes { message, message_length },
-        Bytes { signature, signature_capacity }, written);
-    clear_client_certificate_capability(fetch->m_client_certificate_capability);
-    fetch->m_client_certificate_generation = 0u;
-    if (result != 0 || written == 0u || written > signature_capacity) {
-        __builtin_memset(signature, 0, signature_capacity);
+    auto result = rin_requestserver_tls_client_certificate_session_sign(
+        &fetch->m_client_certificate_session, signature_scheme,
+        message, message_length, signature, signature_capacity, &written);
+    if (result != 0) {
+        rin_requestserver_tls_client_certificate_session_reset(
+            &fetch->m_client_certificate_session);
         return -1;
     }
     *signature_length = written;
@@ -469,8 +502,8 @@ void RinHTTPFetch::cancel()
         m_socket = nullptr;
     }
 #if defined(AK_OS_RINOS)
-    clear_client_certificate_capability(m_client_certificate_capability);
-    m_client_certificate_generation = 0u;
+    rin_requestserver_tls_client_certificate_session_reset(
+        &m_client_certificate_session);
 #endif
 }
 

@@ -28,6 +28,7 @@
 extern "C" {
 #    include "../../../../public-base/libs/rintls/rintls.h"
 }
+#    include <requestserver_tls_client_certificate_policy.h>
 #else
 struct rintls_client_certificate_request;
 #endif
@@ -146,6 +147,9 @@ private:
 
 #if defined(AK_OS_RINOS)
     static int client_certificate_provider(rintls_ctx*, void*);
+    static int client_certificate_session_sign(
+        void*, const uint8_t*, uint64_t, uint64_t, uint16_t, const uint8_t*,
+        size_t, uint8_t*, size_t, size_t*);
     static int client_certificate_signer(
         void*, u16, const u8*, rin_size_t, u8*, rin_size_t, rin_size_t*);
 #endif
@@ -212,8 +216,7 @@ private:
     u64 m_request_id { 0 };
     ClientCertificateProvider m_client_certificate_provider;
     ClientCertificateSigner m_client_certificate_signer;
-    u64 m_client_certificate_generation { 0 };
-    ByteBuffer m_client_certificate_capability;
+    RinRequestServerTlsClientCertificateSessionV1 m_client_certificate_session {};
     bool m_disable_pooling { false };
 #endif
 };
