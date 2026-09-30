@@ -155,7 +155,10 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     // service-manager stop does not depend on a console signal.  The timer is
     // deliberately kept out of the public EventLoop and transport adapters.
     auto service_lifecycle_timer = Core::Timer::create_repeating(50, [&event_loop] {
-        if (rin_service_should_stop())
+        // A WebContent-owned RequestServer helper has no service-manager
+        // slot.  Only the explicit true result is a stop request; a negative
+        // no-service/error result must not terminate the helper.
+        if (rin_service_should_stop() == 1)
             event_loop.quit(0);
     });
     service_lifecycle_timer->start();
