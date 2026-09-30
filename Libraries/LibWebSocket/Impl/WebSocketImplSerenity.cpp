@@ -57,6 +57,10 @@ void WebSocketImplSerenity::connect(ConnectionInfo const& connection_info)
                 options.client_certificate_sign_opaque =
                     connection_info.client_certificate_sign_opaque();
             }
+            options.client_certificate_provider =
+                connection_info.client_certificate_provider();
+            options.client_certificate_provider_opaque =
+                connection_info.client_certificate_provider_opaque();
 #endif
 
             return TRY(Core::BufferedSocket<TLS::TLSv12>::create(

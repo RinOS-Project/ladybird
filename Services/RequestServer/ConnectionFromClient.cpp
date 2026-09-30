@@ -208,6 +208,67 @@ bool ConnectionFromClient::request_client_certificate(
 #endif
 
 #if defined(AK_OS_RINOS)
+int ConnectionFromClient::websocket_client_certificate_provider(
+    rintls_ctx* tls_context, void* opaque)
+{
+    auto* connection = static_cast<ConnectionFromClient*>(opaque);
+    if (connection == nullptr)
+        return RINTLS_ERR_MEMORY;
+    return connection->provide_websocket_client_certificate(tls_context);
+}
+
+int ConnectionFromClient::provide_websocket_client_certificate(rintls_ctx* tls_context)
+{
+    if (tls_context == nullptr || m_active_websocket_id == 0u ||
+        !m_active_websocket_url.has_value())
+        return RINTLS_ERR_CERTIFICATE;
+
+    rintls_client_certificate_request request {
+        sizeof(request),
+        0u,
+        nullptr,
+        0u,
+        nullptr,
+        0u,
+        nullptr,
+        0u,
+        0u,
+        0u,
+    };
+    if (rintls_get_client_certificate_request(tls_context, &request) != RINTLS_OK)
+        return RINTLS_ERR_CERTIFICATE;
+
+    u64 connection_generation = 0u;
+    u16 signature_scheme = 0u;
+    ByteBuffer certificate_list;
+    ByteBuffer signer_capability;
+    if (!request_client_certificate(
+            m_active_websocket_id, *m_active_websocket_url, request,
+            connection_generation, signature_scheme, certificate_list,
+            signer_capability))
+        return RINTLS_ERR_CERTIFICATE;
+
+    if (m_websocket_certificate_requests.contains(connection_generation)) {
+        clear_client_certificate_bytes(signer_capability);
+        return RINTLS_ERR_CERTIFICATE;
+    }
+
+    if (rintls_set_client_certificate_for_scheme(
+            tls_context, certificate_list.data(), certificate_list.size(),
+            &ConnectionFromClient::websocket_client_certificate_sign, this,
+            signature_scheme) != RINTLS_OK) {
+        clear_client_certificate_bytes(signer_capability);
+        return RINTLS_ERR_CERTIFICATE;
+    }
+
+    m_websocket_certificate_requests.set(
+        connection_generation, m_active_websocket_id);
+    m_websocket_certificate_capabilities.set(
+        connection_generation, move(signer_capability));
+    m_active_websocket_certificate_generation = connection_generation;
+    return RINTLS_OK;
+}
+
 int ConnectionFromClient::websocket_client_certificate_sign(
     void* opaque, u16 signature_scheme, const u8* message,
     rin_size_t message_length, u8* signature, rin_size_t signature_capacity,
@@ -786,6 +847,13 @@ void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, Byt
             connection_info.set_dns_result(move(dns_result));
 
             connection_info.set_root_certificates_paths(default_certificate_paths());
+#if defined(AK_OS_RINOS)
+            if (m_client_certificate_identity_available)
+                connection_info.set_client_certificate_provider(
+                    &ConnectionFromClient::websocket_client_certificate_provider,
+                    this);
+#endif
+            auto active_websocket_url = connection_info.url();
 
 #if defined(AK_OS_RINOS)
             auto impl = adopt_ref(*new WebSocket::WebSocketImplSerenity());
@@ -816,9 +884,13 @@ void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, Byt
 
             m_websockets.set(websocket_id, move(connection));
             m_pending_websockets.remove(websocket_id);
+            m_active_websocket_id = websocket_id;
+            m_active_websocket_url = move(active_websocket_url);
             m_active_websocket_certificate_generation = 0u;
             if (auto* live_connection = m_websockets.get(websocket_id).value_or({}))
                 live_connection->start();
+            m_active_websocket_id = 0u;
+            m_active_websocket_url = {};
             m_active_websocket_certificate_generation = 0u;
         });
 }

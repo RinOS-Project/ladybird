@@ -61,6 +61,14 @@ public:
     Optional<ByteBuffer> const& client_certificate_list() const { return m_client_certificate_list; }
     rintls_client_certificate_sign_func client_certificate_sign() const { return m_client_certificate_sign; }
     void* client_certificate_sign_opaque() const { return m_client_certificate_sign_opaque; }
+    void set_client_certificate_provider(
+        rintls_client_certificate_provider_func provider, void* provider_opaque)
+    {
+        m_client_certificate_provider = provider;
+        m_client_certificate_provider_opaque = provider_opaque;
+    }
+    rintls_client_certificate_provider_func client_certificate_provider() const { return m_client_certificate_provider; }
+    void* client_certificate_provider_opaque() const { return m_client_certificate_provider_opaque; }
 #endif
 
     // secure flag - defined in RFC 6455 Section 3
@@ -84,6 +92,8 @@ private:
     Optional<ByteBuffer> m_client_certificate_capability;
     rintls_client_certificate_sign_func m_client_certificate_sign { nullptr };
     void* m_client_certificate_sign_opaque { nullptr };
+    rintls_client_certificate_provider_func m_client_certificate_provider { nullptr };
+    void* m_client_certificate_provider_opaque { nullptr };
 #endif
 };
 

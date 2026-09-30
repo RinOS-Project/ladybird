@@ -83,6 +83,8 @@ private:
     bool transfer_id_in_use(u64) const;
 
 #if defined(AK_OS_RINOS)
+    static int websocket_client_certificate_provider(rintls_ctx*, void*);
+    int provide_websocket_client_certificate(rintls_ctx*);
     static int websocket_client_certificate_sign(
         void*, u16, const u8*, rin_size_t, u8*, rin_size_t, rin_size_t*);
     int sign_websocket_client_certificate(
@@ -151,6 +153,8 @@ private:
     HashMap<u64, u64> m_websocket_certificate_requests;
     HashMap<u64, ByteBuffer> m_websocket_certificate_capabilities;
     u64 m_active_websocket_certificate_generation { 0 };
+    u64 m_active_websocket_id { 0 };
+    Optional<URL::URL> m_active_websocket_url;
     bool m_client_certificate_identity_available { false };
 
     RefPtr<Core::Timer> m_timer;
