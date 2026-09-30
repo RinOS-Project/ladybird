@@ -155,6 +155,10 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     // service-manager stop does not depend on a console signal.  The timer is
     // deliberately kept out of the public EventLoop and transport adapters.
     auto service_lifecycle_timer = Core::Timer::create_repeating(50, [&event_loop] {
+        // Health is a lease, not a one-time startup acknowledgement. Renew it
+        // from the same private lifecycle owner that observes stop requests so
+        // a long-lived helper cannot become stale while its IPC loop is idle.
+        (void)rin_service_health(0u);
         // A WebContent-owned RequestServer helper has no service-manager
         // slot.  Only the explicit true result is a stop request; a negative
         // no-service/error result must not terminate the helper.
@@ -162,7 +166,6 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
             event_loop.quit(0);
     });
     service_lifecycle_timer->start();
-    (void)rin_service_health(0u);
 #endif
 
     auto result = event_loop.exec();
