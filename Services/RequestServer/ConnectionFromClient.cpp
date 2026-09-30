@@ -531,8 +531,11 @@ void ConnectionFromClient::start_streaming_request(u64 request_id, ByteString me
         auto data = response->take_data();
         if (data.size() > output.size() || (response->eof() && !data.is_empty()))
             return Error::from_string_literal("Invalid streaming request-body response");
-        if (data.is_empty())
+        if (data.is_empty()) {
+            if (!response->eof())
+                return Error::from_string_literal("Streaming request body ended before EOF");
             return size_t { 0 };
+        }
 
         __builtin_memcpy(output.data(), data.data(), data.size());
         return data.size();
