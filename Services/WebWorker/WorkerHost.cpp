@@ -320,8 +320,11 @@ void WorkerHost::run(GC::Ref<Web::Page> page, Web::HTML::TransferDataEncoder mes
         //    Fetch a module worker script graph given url, outside settings, destination, the value of the credentials
         //    member of options, inside settings, and with onComplete and performFetch as defined below.
         VERIFY(m_type == Web::Bindings::WorkerType::Module);
-        // FIXME: Pass credentials
-        if (auto err = Web::HTML::fetch_module_worker_script_graph(m_url, outside_settings, destination, inside_settings, perform_fetch, on_complete); err.is_error()) {
+        if (auto err = Web::HTML::fetch_module_worker_script_graph(
+                m_url, outside_settings, destination, inside_settings,
+                perform_fetch, on_complete,
+                Web::Fetch::from_bindings_enum(credentials));
+            err.is_error()) {
             dbgln("Failed to run worker script");
             worker_script_failed();
         }
