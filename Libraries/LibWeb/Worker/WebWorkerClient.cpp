@@ -49,11 +49,27 @@ void WebWorkerClient::did_fail_loading_worker_script()
         on_worker_script_load_failure();
 }
 
+void WebWorkerClient::did_set_cookie(URL::URL url, HTTP::Cookie::ParsedCookie cookie, HTTP::Cookie::Source source)
+{
+    if (on_set_cookie)
+        on_set_cookie(url, cookie, source);
+}
+
 Messages::WebWorkerClient::DidRequestCookieResponse WebWorkerClient::did_request_cookie(URL::URL url, HTTP::Cookie::Source source)
 {
     if (on_request_cookie)
         return on_request_cookie(url, source);
     return HTTP::Cookie::VersionedCookie {};
+}
+
+Messages::WebWorkerClient::RequestHttpCookieOwnerResponse WebWorkerClient::request_http_cookie_owner(
+    u32 operation, ByteString request_url, ByteString origin,
+    ByteString cookie_data, u32 policy)
+{
+    if (on_request_http_cookie_owner)
+        return on_request_http_cookie_owner(operation, move(request_url),
+            move(origin), move(cookie_data), policy);
+    return { false, false, 0, {} };
 }
 
 Messages::WebWorkerClient::RequestWorkerAgentResponse WebWorkerClient::request_worker_agent(Web::Bindings::AgentType worker_type)

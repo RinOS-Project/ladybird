@@ -4,6 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Platform.h>
+#if defined(AK_OS_RINOS)
+#    include <LibURL/Parser.h>
+#    include <LibURL/Site.h>
+#endif
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
@@ -17,8 +22,42 @@
 #include <LibWeb/HTML/WorkerAgentParent.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Worker/WebWorkerClient.h>
+#if defined(AK_OS_RINOS)
+#    include <rin/web/webcontent_protocol.h>
+#endif
 
 namespace Web::HTML {
+
+#if defined(AK_OS_RINOS)
+// A worker helper is a replaceable child process. Cookie site context is
+// rebound from its authenticated creator settings before the request reaches
+// the Browser owner; the helper cannot assert a top-level navigation.
+static ByteString trusted_worker_cookie_context(
+    EnvironmentSettingsObject const& settings, URL::URL const& request_url,
+    bool set_cookie_commit)
+{
+    auto top_level_origin = settings.top_level_origin;
+    if (!top_level_origin.has_value() && settings.top_level_creation_url.has_value())
+        top_level_origin = settings.top_level_creation_url->origin();
+
+    auto partition_site = ByteString("null"sv);
+    if (top_level_origin.has_value() && !top_level_origin->is_opaque())
+        partition_site = URL::Site::obtain(top_level_origin.value()).serialize().to_byte_string();
+
+    auto origin = settings.origin();
+    auto origin_string = origin.serialize().to_byte_string();
+    const bool has_cross_site_ancestor = settings.has_cross_site_ancestor();
+    if (set_cookie_commit) {
+        const bool same_site = !has_cross_site_ancestor &&
+            origin.is_same_site(request_url.origin());
+        return ByteString::formatted("RSC1|{}|0|0|{}\n",
+            same_site ? "1"sv : "0"sv, partition_site);
+    }
+    return ByteString::formatted("RCX1|{}|{}|0|{}",
+        origin_string, has_cross_site_ancestor ? "1"sv : "0"sv,
+        partition_site);
+}
+#endif
 
 GC_DEFINE_ALLOCATOR(WorkerAgentParent);
 
@@ -110,6 +149,57 @@ void WorkerAgentParent::setup_worker_ipc_callbacks(JS::Realm& realm)
         auto& client = Bindings::principal_host_defined_page(realm).client();
         return client.page_did_request_cookie(url, source);
     };
+    m_worker_ipc->on_set_cookie = [realm = GC::RawRef<JS::Realm> { realm }](URL::URL const& url, HTTP::Cookie::ParsedCookie const& cookie, HTTP::Cookie::Source source) {
+        auto& client = Bindings::principal_host_defined_page(realm).client();
+        client.page_did_set_cookie(url, cookie, source);
+    };
+#if defined(AK_OS_RINOS)
+    m_worker_ipc->on_request_http_cookie_owner = [
+        realm = GC::RawRef<JS::Realm> { realm },
+        outside_settings = GC::RawRef<EnvironmentSettingsObject> { *m_outside_settings }](
+            u32 operation, ByteString request_url, ByteString origin,
+            ByteString cookie_data, u32 policy) {
+        if ((operation != RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER &&
+             operation != RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_HTTP_COOKIES) ||
+            request_url.is_empty() ||
+            cookie_data.length() > RIN_WEBCONTENT_HTTP_COOKIE_OWNER_MAX_DATA_BYTES)
+            return Messages::WebWorkerClient::RequestHttpCookieOwnerResponse { false, false, 0, {} };
+
+        auto parsed_url = URL::Parser::basic_parse(
+            StringView { request_url.characters(), request_url.length() });
+        if (!parsed_url.has_value())
+            return Messages::WebWorkerClient::RequestHttpCookieOwnerResponse { false, false, 0, {} };
+
+        ByteString trusted_data;
+        ByteString trusted_origin;
+        if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER) {
+            if (origin != parsed_url->origin().serialize().to_byte_string())
+                return Messages::WebWorkerClient::RequestHttpCookieOwnerResponse { false, false, 0, {} };
+            trusted_data = trusted_worker_cookie_context(*outside_settings, *parsed_url, false);
+            trusted_origin = parsed_url->origin().serialize().to_byte_string();
+        } else {
+            auto expected_origin = outside_settings->origin().serialize().to_byte_string();
+            if (origin != expected_origin)
+                return Messages::WebWorkerClient::RequestHttpCookieOwnerResponse { false, false, 0, {} };
+            auto line_end = cookie_data.find('\n');
+            if (!line_end.has_value() || line_end.value() + 1u >= cookie_data.length())
+                return Messages::WebWorkerClient::RequestHttpCookieOwnerResponse { false, false, 0, {} };
+            auto context = trusted_worker_cookie_context(*outside_settings, *parsed_url, true);
+            trusted_data = ByteString::formatted("{}{}", context,
+                cookie_data.substring(line_end.value() + 1u,
+                    cookie_data.length() - line_end.value() - 1u));
+            trusted_origin = move(expected_origin);
+        }
+
+        auto& client = Bindings::principal_host_defined_page(realm).client();
+        auto response = client.request_http_cookie_owner(
+            operation, move(request_url), move(trusted_origin),
+            move(trusted_data), policy);
+        return Messages::WebWorkerClient::RequestHttpCookieOwnerResponse {
+            response.accepted, response.found, response.generation,
+            move(response.data) };
+    };
+#endif
     m_worker_ipc->on_request_worker_agent = [realm = GC::RawRef<JS::Realm> { realm }](Web::Bindings::AgentType worker_type) -> Messages::WebWorkerClient::RequestWorkerAgentResponse {
         auto& client = Bindings::principal_host_defined_page(realm).client();
         auto response = client.request_worker_agent(worker_type);

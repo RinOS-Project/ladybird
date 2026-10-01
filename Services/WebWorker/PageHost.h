@@ -37,6 +37,10 @@ public:
     virtual Web::CSS::PreferredMotion preferred_motion() const override;
     virtual size_t screen_count() const override { return 1; }
     virtual HTTP::Cookie::VersionedCookie page_did_request_cookie(URL::URL const&, HTTP::Cookie::Source) override;
+    virtual void page_did_set_cookie(URL::URL const&, HTTP::Cookie::ParsedCookie const&, HTTP::Cookie::Source) override;
+    virtual HttpCookieOwnerResponse request_http_cookie_owner(
+        u32 operation, ByteString request_url, ByteString origin,
+        ByteString cookie_data, u32 policy) override;
     virtual void request_file(Web::FileRequest) override;
     virtual WorkerAgentResponse request_worker_agent(Web::Bindings::AgentType) override;
     virtual Web::DisplayListPlayerType display_list_player_type() const override { VERIFY_NOT_REACHED(); }

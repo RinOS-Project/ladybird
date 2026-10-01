@@ -91,6 +91,23 @@ HTTP::Cookie::VersionedCookie PageHost::page_did_request_cookie(URL::URL const& 
     return m_client.did_request_cookie(url, source);
 }
 
+void PageHost::page_did_set_cookie(
+    URL::URL const& url, HTTP::Cookie::ParsedCookie const& cookie,
+    HTTP::Cookie::Source source)
+{
+    m_client.async_did_set_cookie(url, cookie, source);
+}
+
+Web::PageClient::HttpCookieOwnerResponse PageHost::request_http_cookie_owner(
+    u32 operation, ByteString request_url, ByteString origin,
+    ByteString cookie_data, u32 policy)
+{
+    auto response = m_client.request_http_cookie_owner(
+        operation, move(request_url), move(origin), move(cookie_data), policy);
+    return { response.accepted(), response.found(), response.generation(),
+             response.take_response_data() };
+}
+
 void PageHost::request_file(Web::FileRequest request)
 {
     m_client.request_file(move(request));
