@@ -7,6 +7,8 @@
 #pragma once
 
 #include <LibWeb/DOM/EventTarget.h>
+#include <LibWeb/ServiceWorker/Registration.h>
+#include <LibWeb/WebIDL/Promise.h>
 
 namespace Web::ServiceWorker {
 
@@ -18,8 +20,6 @@ class ServiceWorkerRegistration : public DOM::EventTarget {
 public:
     [[nodiscard]] static GC::Ref<ServiceWorkerRegistration> create(JS::Realm& realm, Registration const& registration);
 
-    Registration const& registration() { return m_registration; }
-
     GC::Ptr<ServiceWorker> installing() const { return m_installing; }
     void set_installing(GC::Ptr<ServiceWorker> installing) { m_installing = installing; }
 
@@ -30,10 +30,12 @@ public:
     void set_active(GC::Ptr<ServiceWorker> active) { m_active = active; }
 
     // https://w3c.github.io/ServiceWorker/#dom-serviceworkerregistration-scope
-    String scope() const { return m_registration.scope_url().serialize(); }
+    String scope() const { return m_scope_url.serialize(); }
 
     // https://w3c.github.io/ServiceWorker/#dom-serviceworkerregistration-updateviacache
-    Bindings::ServiceWorkerUpdateViaCache update_via_cache() const { return m_registration.update_via_cache(); }
+    Bindings::ServiceWorkerUpdateViaCache update_via_cache() const { return m_update_via_cache; }
+
+    GC::Ref<WebIDL::Promise> unregister();
 
     explicit ServiceWorkerRegistration(JS::Realm&, Registration const&);
     virtual ~ServiceWorkerRegistration() override = default;
@@ -42,7 +44,9 @@ private:
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
-    Registration const& m_registration;
+    StorageAPI::StorageKey m_storage_key;
+    URL::URL m_scope_url;
+    Bindings::ServiceWorkerUpdateViaCache m_update_via_cache;
     GC::Ptr<ServiceWorker> m_installing;
     GC::Ptr<ServiceWorker> m_waiting;
     GC::Ptr<ServiceWorker> m_active;

@@ -19,10 +19,13 @@
 #include <LibWeb/HTML/Scripting/ModuleScript.h>
 #include <LibWeb/HTML/Scripting/Script.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
+#include <LibWeb/HTML/Window.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/SecureContexts/AbstractOperations.h>
 #include <LibWeb/ServiceWorker/Job.h>
 #include <LibWeb/ServiceWorker/Registration.h>
 #include <LibWeb/WebIDL/Promise.h>
+#include <rin/web/webcontent_protocol.h>
 
 namespace Web::ServiceWorker {
 
@@ -467,7 +470,39 @@ static void unregister(JS::VM& vm, GC::Ref<Job> job)
     if (job->client) {
         auto& realm = job->client->realm();
         auto context = HTML::TemporaryExecutionContext(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
-        WebIDL::reject_promise(realm, *job->job_promise, vm.throw_completion<JS::InternalError>(JS::ErrorType::NotImplemented, "Service Worker unregistration"sv).value());
+        auto& global_object = job->client->global_object();
+        if (!is<HTML::Window>(global_object)) {
+            reject_job_promise<WebIDL::InvalidStateError>(
+                job, "Service Worker unregistration requires a Browser-owned Window client"_utf16);
+            finish_job(vm, job);
+            return;
+        }
+
+        auto origin = job->scope_url.origin().serialize().to_byte_string();
+        auto scope = job->scope_url.serialize(URL::ExcludeFragment::Yes).to_byte_string();
+        auto owner_response = as<HTML::Window>(global_object).page().client()
+            .request_service_worker_owner(
+            RIN_WEBCONTENT_SERVICE_WORKER_OWNER_UNREGISTER, {}, origin, {}, scope, 0u);
+        if (!owner_response.accepted ||
+            (owner_response.found &&
+             (owner_response.generation == 0u ||
+              owner_response.origin != origin ||
+              owner_response.scope != scope ||
+              owner_response.script_url.is_empty() ||
+              owner_response.state > 3u)) ||
+            (!owner_response.found &&
+             (owner_response.generation != 0u ||
+              !owner_response.origin.is_empty() ||
+              !owner_response.script_url.is_empty() ||
+              !owner_response.scope.is_empty()))) {
+            reject_job_promise<WebIDL::InvalidStateError>(
+                job, "The Browser profile owner could not confirm ServiceWorker unregistration"_utf16);
+            finish_job(vm, job);
+            return;
+        }
+
+        Registration::remove(job->storage_key, job->scope_url);
+        resolve_job_promise(job, {}, JS::Value(owner_response.found));
         finish_job(vm, job);
     }
 }
