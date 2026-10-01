@@ -100,6 +100,7 @@ private:
     virtual Messages::RequestServer::InitTransportResponse init_transport(int peer_pid) override;
     virtual Messages::RequestServer::ConnectNewClientResponse connect_new_client() override;
     virtual Messages::RequestServer::ConnectNewClientsResponse connect_new_clients(size_t count) override;
+    virtual void release_client_id(int client_id) override;
 
     virtual void set_disk_cache_settings(HTTP::DiskCacheSettings) override;
 
@@ -133,7 +134,11 @@ private:
     void check_active_requests();
 #endif
 
-    ErrorOr<IPC::TransportHandle> create_client_socket();
+    struct ClientSocket {
+        IPC::TransportHandle handle;
+        int client_id { 0 };
+    };
+    ErrorOr<ClientSocket> create_client_socket();
 
     ConnectionMap& m_connections;
     Optional<HTTP::DiskCache&> m_disk_cache;

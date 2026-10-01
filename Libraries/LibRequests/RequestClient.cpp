@@ -222,9 +222,19 @@ void RequestClient::retrieve_http_cookie(int client_id, u64 request_id, URL::URL
     String cookie;
 
     if (on_retrieve_http_cookie)
-        cookie = on_retrieve_http_cookie(url, cookie_context, method);
+        cookie = on_retrieve_http_cookie(client_id, url, cookie_context, method);
 
     async_retrieved_http_cookie(client_id, request_id, cookie);
+}
+
+void RequestClient::request_server_client_closed(int client_id)
+{
+    if (on_request_server_client_closed)
+        on_request_server_client_closed(client_id);
+
+    // The Browser callback removes any owner association before acknowledging
+    // this ID for reuse by RequestServer.
+    async_release_client_id(client_id);
 }
 
 void RequestClient::certificate_requested(u64 request_id)

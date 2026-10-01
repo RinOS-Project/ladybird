@@ -378,14 +378,14 @@ void Application::open_url_in_new_tab(URL::URL const& url, Web::HTML::ActivateTa
 
 static ErrorOr<NonnullRefPtr<WebContentClient>> create_web_content_client(Optional<ViewImplementation&> view)
 {
-    auto request_server_handle = TRY(connect_new_request_server_client());
+    auto request_server_connection = TRY(connect_new_request_server_client());
     auto image_decoder_handle = TRY(connect_new_image_decoder_client());
 
     NonnullRefPtr<WebContentClient> client = view.has_value()
         ? TRY(WebView::launch_web_content_process(*view))
         : TRY(WebView::launch_spare_web_content_process());
 
-    client->async_connect_to_request_server(move(request_server_handle));
+    client->async_connect_to_request_server(move(request_server_connection.handle));
     client->async_connect_to_image_decoder(move(image_decoder_handle));
 
     return client;
@@ -507,20 +507,26 @@ ErrorOr<void> Application::launch_request_server()
     m_request_server_client = TRY(launch_request_server_process());
 
 #if defined(AK_OS_RINOS)
-    m_request_server_client->on_retrieve_http_cookie = [](URL::URL const& url,
-                                                           ByteString const& context,
-                                                           ByteString const& method) {
-        return WebContentClient::retrieve_http_cookie_header(url, context, method);
+    m_request_server_client->on_retrieve_http_cookie = [](
+        int client_id, URL::URL const& url, ByteString const& context,
+        ByteString const& method) {
+        return WebContentClient::retrieve_http_cookie_header(client_id, url, context, method);
+    };
+    m_request_server_client->on_request_server_client_closed = [](int client_id) {
+        WebContentClient::forget_request_server_client(client_id);
     };
 #else
-    m_request_server_client->on_retrieve_http_cookie = [this](URL::URL const& url,
-                                                              ByteString const&,
-                                                              ByteString const&) {
+    m_request_server_client->on_retrieve_http_cookie = [this](
+        [[maybe_unused]] int client_id, URL::URL const& url,
+        ByteString const&, ByteString const&) {
         return m_cookie_jar->get_cookie(url, HTTP::Cookie::Source::Http);
     };
 #endif
 
     m_request_server_client->on_request_server_died = [this]() {
+#if defined(AK_OS_RINOS)
+        WebContentClient::forget_all_request_server_clients();
+#endif
         m_request_server_client = nullptr;
 
         if (Core::EventLoop::current().was_exit_requested())

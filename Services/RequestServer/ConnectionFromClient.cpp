@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/HashTable.h>
 #include <AK/IDAllocator.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/WeakPtr.h>
@@ -34,6 +35,7 @@ namespace RequestServer {
 
 static ConnectionFromClient* g_primary_connection = nullptr;
 static IDAllocator s_client_ids;
+static HashTable<int> s_pending_client_id_releases;
 static ConnectionFromClient::ClientCertificateOwner g_client_certificate_owner = nullptr;
 static void* g_client_certificate_owner_context = nullptr;
 
@@ -430,12 +432,22 @@ bool ConnectionFromClient::transfer_id_in_use(u64 transfer_id) const
 void ConnectionFromClient::die()
 {
     clear_all_websocket_client_certificates();
-    if (g_primary_connection == this)
+    auto const is_primary_connection = g_primary_connection == this;
+    if (is_primary_connection)
         g_primary_connection = nullptr;
 
     auto client_id = this->client_id();
     m_connections.remove(client_id);
-    s_client_ids.deallocate(client_id);
+
+    if (is_primary_connection) {
+        s_client_ids.deallocate(client_id);
+    } else if (g_primary_connection) {
+        auto insert_result = s_pending_client_id_releases.set(client_id);
+        VERIFY(insert_result == AK::HashSetResult::InsertedNewEntry);
+        g_primary_connection->async_request_server_client_closed(client_id);
+    } else {
+        s_client_ids.deallocate(client_id);
+    }
 
     if (m_connections.is_empty())
         Core::EventLoop::current().quit(0);
@@ -455,31 +467,46 @@ Messages::RequestServer::ConnectNewClientResponse ConnectionFromClient::connect_
     auto client_socket = create_client_socket();
     if (client_socket.is_error()) {
         dbgln("Failed to create client socket: {}", client_socket.error());
-        return IPC::TransportHandle {};
+        return { IPC::TransportHandle {}, 0 };
     }
 
-    return client_socket.release_value();
+    auto socket = client_socket.release_value();
+    return { move(socket.handle), socket.client_id };
 }
 
 Messages::RequestServer::ConnectNewClientsResponse ConnectionFromClient::connect_new_clients(size_t count)
 {
     Vector<IPC::TransportHandle> handles;
+    Vector<int> client_ids;
     handles.ensure_capacity(count);
+    client_ids.ensure_capacity(count);
 
     for (size_t i = 0; i < count; ++i) {
         auto client_socket = create_client_socket();
         if (client_socket.is_error()) {
             dbgln("Failed to create client socket: {}", client_socket.error());
-            return Vector<IPC::TransportHandle> {};
+            return { Vector<IPC::TransportHandle> {}, Vector<int> {} };
         }
 
-        handles.unchecked_append(client_socket.release_value());
+        auto socket = client_socket.release_value();
+        handles.unchecked_append(move(socket.handle));
+        client_ids.unchecked_append(socket.client_id);
     }
 
-    return handles;
+    return { move(handles), move(client_ids) };
 }
 
-ErrorOr<IPC::TransportHandle> ConnectionFromClient::create_client_socket()
+void ConnectionFromClient::release_client_id(int client_id)
+{
+    if (this != g_primary_connection || !s_pending_client_id_releases.remove(client_id)) {
+        dbgln("Ignoring invalid RequestServer client ID release for {}", client_id);
+        return;
+    }
+
+    s_client_ids.deallocate(client_id);
+}
+
+ErrorOr<ConnectionFromClient::ClientSocket> ConnectionFromClient::create_client_socket()
 {
     auto paired = TRY(IPC::Transport::create_paired());
     auto handle = move(paired.remote_handle);
@@ -487,7 +514,7 @@ ErrorOr<IPC::TransportHandle> ConnectionFromClient::create_client_socket()
     // Note: A ref is stored in the m_connections map
     auto client = adopt_ref(*new ConnectionFromClient(move(paired.local), IsPrimaryConnection::No, m_connections, m_disk_cache));
 
-    return handle;
+    return ClientSocket { move(handle), client->client_id() };
 }
 
 void ConnectionFromClient::set_disk_cache_settings(HTTP::DiskCacheSettings disk_cache_settings)

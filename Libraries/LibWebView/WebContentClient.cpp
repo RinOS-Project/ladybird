@@ -1231,9 +1231,9 @@ Messages::WebContentClient::RequestWorkerAgentResponse WebContentClient::request
     if (worker_type != Web::Bindings::AgentType::DedicatedWorker && worker_type != Web::Bindings::AgentType::SharedWorker)
         return { IPC::TransportHandle {}, IPC::TransportHandle {}, IPC::TransportHandle {} };
 
-    auto request_server_handle = connect_new_request_server_client();
-    if (request_server_handle.is_error()) {
-        dbgln("WebContentClient: unable to connect worker to RequestServer: {}", request_server_handle.error());
+    auto request_server_connection = connect_new_request_server_client();
+    if (request_server_connection.is_error()) {
+        dbgln("WebContentClient: unable to connect worker to RequestServer: {}", request_server_connection.error());
         return { IPC::TransportHandle {}, IPC::TransportHandle {}, IPC::TransportHandle {} };
     }
     auto image_decoder_handle = connect_new_image_decoder_client();
@@ -1252,7 +1252,11 @@ Messages::WebContentClient::RequestWorkerAgentResponse WebContentClient::request
         return { IPC::TransportHandle {}, IPC::TransportHandle {}, IPC::TransportHandle {} };
     }
 
-    return { worker_handle.release_value(), request_server_handle.release_value(), image_decoder_handle.release_value() };
+    auto request_server = request_server_connection.release_value();
+#if defined(AK_OS_RINOS)
+    m_request_server_cookie_owner_pages.set(request_server.client_id, page_id);
+#endif
+    return { worker_handle.release_value(), move(request_server.handle), image_decoder_handle.release_value() };
 }
 
 Messages::WebContentClient::RequestServiceWorkerOwnerResponse WebContentClient::request_service_worker_owner(
@@ -1365,38 +1369,86 @@ static ByteString serialize_cookie_owner_context(
 }
 
 String WebContentClient::retrieve_http_cookie_header(
-    URL::URL const& url, ByteString const& request_context,
+    int request_server_client_id, URL::URL const& url,
+    ByteString const& request_context,
     ByteString const& method)
 {
     auto cookie_context = serialize_cookie_owner_context(url, request_context, method);
     if (cookie_context.is_empty())
         return {};
+    auto request_cookie_header_from_page = [&](WebContentClient& client, u64 page_id) -> Optional<String> {
+        if (page_id == 0u || !client.m_views.contains(page_id))
+            return {};
+        auto serialized_origin = url.origin().serialize();
+        auto response = client.request_http_cookie_owner(
+            page_id,
+            RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER,
+            url.to_byte_string(), serialized_origin.to_byte_string(), cookie_context,
+            RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_CREDENTIALS_INCLUDE);
+        if (!response.accepted || !response.found || response.generation == 0u)
+            return {};
+
+        StringBuilder builder;
+        builder.append(response.response_data());
+        auto header = builder.to_string();
+        if (header.is_error())
+            return {};
+        return header.release_value();
+    };
+
+    Optional<String> owner_cookie_header;
+    WebContentClient::for_each_client([&](WebContentClient& client) {
+        if (auto page_id = client.m_request_server_cookie_owner_pages.get(request_server_client_id);
+            page_id.has_value()) {
+            auto page_cookie_header = request_cookie_header_from_page(client, page_id.value());
+            owner_cookie_header = page_cookie_header.has_value()
+                ? page_cookie_header.release_value()
+                : String {};
+            return IterationDecision::Break;
+        }
+        return IterationDecision::Continue;
+    });
+    if (owner_cookie_header.has_value())
+        return owner_cookie_header.release_value();
+
+    // Main WebContent RequestServer connections predate per-worker client
+    // ownership. Keep their established routing while worker connections
+    // above are constrained to their recorded creator page.
     String cookie_header;
     WebContentClient::for_each_client([&](WebContentClient& client) {
         for (auto const& [page_id, view] : client.m_views) {
             (void)view;
-            if (page_id == 0u)
+            auto page_cookie_header = request_cookie_header_from_page(client, page_id);
+            if (!page_cookie_header.has_value())
                 continue;
-            auto serialized_origin = url.origin().serialize();
-            auto response = client.request_http_cookie_owner(
-                page_id,
-                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER,
-                url.to_byte_string(), serialized_origin.to_byte_string(), cookie_context,
-                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_CREDENTIALS_INCLUDE);
-            if (!response.accepted || !response.found || response.generation == 0u)
-                continue;
-
-            StringBuilder builder;
-            builder.append(response.response_data());
-            auto header = builder.to_string();
-            if (header.is_error())
-                continue;
-            cookie_header = header.release_value();
+            cookie_header = page_cookie_header.release_value();
             return IterationDecision::Break;
         }
         return IterationDecision::Continue;
     });
     return cookie_header;
+}
+
+void WebContentClient::forget_request_server_client(int client_id)
+{
+#if defined(AK_OS_RINOS)
+    WebContentClient::for_each_client([&](WebContentClient& client) {
+        client.m_request_server_cookie_owner_pages.remove(client_id);
+        return IterationDecision::Continue;
+    });
+#else
+    (void)client_id;
+#endif
+}
+
+void WebContentClient::forget_all_request_server_clients()
+{
+#if defined(AK_OS_RINOS)
+    WebContentClient::for_each_client([](WebContentClient& client) {
+        client.m_request_server_cookie_owner_pages.clear();
+        return IterationDecision::Continue;
+    });
+#endif
 }
 
 Messages::WebContentClient::RequestNotificationPermissionResponse

@@ -267,12 +267,14 @@ ErrorOr<NonnullRefPtr<Requests::RequestClient>> launch_request_server_process()
     return client;
 }
 
-ErrorOr<IPC::TransportHandle> connect_new_request_server_client()
+ErrorOr<RequestServerClientHandle> connect_new_request_server_client()
 {
     auto response = Application::request_server_client().send_sync_but_allow_failure<Messages::RequestServer::ConnectNewClient>();
     if (!response)
         return Error::from_string_literal("Failed to connect to RequestServer");
-    return response->take_handle();
+    if (response->client_id() <= 0)
+        return Error::from_string_literal("RequestServer returned an invalid client ID");
+    return RequestServerClientHandle { response->take_handle(), response->client_id() };
 }
 
 ErrorOr<IPC::TransportHandle> connect_new_image_decoder_client()

@@ -27,7 +27,12 @@ WEBVIEW_API ErrorOr<NonnullRefPtr<ImageDecoderClient::Client>> launch_image_deco
 WEBVIEW_API ErrorOr<NonnullRefPtr<Web::HTML::WebWorkerClient>> launch_web_worker_process(Web::Bindings::AgentType);
 WEBVIEW_API ErrorOr<NonnullRefPtr<Requests::RequestClient>> launch_request_server_process();
 
-WEBVIEW_API ErrorOr<IPC::TransportHandle> connect_new_request_server_client();
+struct RequestServerClientHandle {
+    IPC::TransportHandle handle;
+    int client_id { 0 };
+};
+
+WEBVIEW_API ErrorOr<RequestServerClientHandle> connect_new_request_server_client();
 WEBVIEW_API ErrorOr<IPC::TransportHandle> connect_new_image_decoder_client();
 
 }

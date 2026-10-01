@@ -15,6 +15,7 @@ endpoint RequestClient
     headers_became_available(u64 request_id, Vector<HTTP::Header> response_headers, Optional<u32> status_code, Optional<String> reason_phrase) =|
 
     retrieve_http_cookie(int client_id, u64 request_id, URL::URL url, ByteString cookie_context, ByteString method) =|
+    request_server_client_closed(int client_id) =|
 
     // WebSocket API. These messages intentionally remain a separate family:
     // unlike a request, a WebSocket is bidirectional and long-lived. Both

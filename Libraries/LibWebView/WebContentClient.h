@@ -42,9 +42,11 @@ public:
     static void for_each_client(Callback callback);
 
     static size_t client_count() { return s_clients.size(); }
-    static String retrieve_http_cookie_header(URL::URL const&,
+    static String retrieve_http_cookie_header(int request_server_client_id, URL::URL const&,
                                               ByteString const& request_context,
                                               ByteString const& method);
+    static void forget_request_server_client(int client_id);
+    static void forget_all_request_server_clients();
 
     explicit WebContentClient(NonnullOwnPtr<IPC::Transport>);
     WebContentClient(NonnullOwnPtr<IPC::Transport>, ViewImplementation&);
@@ -166,6 +168,7 @@ private:
     Optional<ViewImplementation&> view_for_page_id(u64, SourceLocation = SourceLocation::current());
 
     HashMap<u64, NonnullRawPtr<ViewImplementation>> m_views;
+    HashMap<int, u64> m_request_server_cookie_owner_pages;
 
     ProcessHandle m_process_handle;
 
