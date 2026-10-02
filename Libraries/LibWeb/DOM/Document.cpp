@@ -5050,13 +5050,13 @@ static bool permissions_policy_allowlist_matches(
     return allowed;
 }
 
-static bool microphone_policy_header_segment_allows(
+static bool policy_header_segment_allows(
     char const* input, size_t start, size_t end,
     URL::Origin const& owner_origin, URL::Origin const& target_origin,
-    bool& is_microphone_directive)
+    StringView feature_name, bool& is_feature_directive)
 {
     trim_policy_range(input, start, end);
-    is_microphone_directive = false;
+    is_feature_directive = false;
     if (start == end)
         return true;
 
@@ -5065,10 +5065,10 @@ static bool microphone_policy_header_segment_allows(
         ++equals;
     size_t feature_end = equals;
     trim_policy_range(input, start, feature_end);
-    if (!policy_range_equals(input, start, feature_end, "microphone"sv))
+    if (!policy_range_equals(input, start, feature_end, feature_name))
         return true;
 
-    is_microphone_directive = true;
+    is_feature_directive = true;
     if (equals == end)
         return false;
     size_t value_start = equals + 1u;
@@ -5090,13 +5090,15 @@ static bool microphone_policy_header_segment_allows(
         true);
 }
 
-static bool microphone_policy_headers_allow(
+static bool permissions_policy_headers_allow(
     HTML::PolicyContainer const& policy_container,
-    URL::Origin const& owner_origin, URL::Origin const& target_origin)
+    URL::Origin const& owner_origin, URL::Origin const& target_origin,
+    StringView feature_name)
 {
     if (policy_container.permissions_policy_parse_failed)
         return false;
 
+    bool saw_feature_directive = false;
     for (auto const& header : policy_container.permissions_policy_headers) {
         auto bytes = header.to_byte_string();
         auto const* input = bytes.characters();
@@ -5119,20 +5121,26 @@ static bool microphone_policy_headers_allow(
             if (parenthesis_depth != 0u)
                 return false;
 
-            bool is_microphone_directive = false;
-            if (!microphone_policy_header_segment_allows(
+            bool is_feature_directive = false;
+            if (!policy_header_segment_allows(
                     input, segment_start, index, owner_origin, target_origin,
-                    is_microphone_directive))
+                    feature_name, is_feature_directive))
                 return false;
+            saw_feature_directive |= is_feature_directive;
             segment_start = index + 1u;
         }
     }
+    /* Unspecified features use the default "self" allowlist. */
+    if (!saw_feature_directive &&
+        !target_origin.is_same_origin(owner_origin))
+        return false;
     return true;
 }
 
-static bool iframe_microphone_policy_allows(
+static bool iframe_permissions_policy_allows(
     HTML::NavigableContainer const& container,
-    URL::Origin const& owner_origin, URL::Origin const& target_origin)
+    URL::Origin const& owner_origin, URL::Origin const& target_origin,
+    StringView feature_name)
 {
     auto* source_document = container.content_document_without_origin_check();
     Optional<URL::Origin> src_origin;
@@ -5174,7 +5182,7 @@ static bool iframe_microphone_policy_allows(
                !is_ascii_policy_space(input[feature_end]))
             ++feature_end;
         if (policy_range_equals(input, feature_start, feature_end,
-                                "microphone"sv)) {
+                                feature_name)) {
             size_t value_start = feature_end;
             trim_policy_range(input, value_start, segment_end);
             if (value_start == segment_end) {
@@ -5193,7 +5201,8 @@ static bool iframe_microphone_policy_allows(
     return target_origin.is_same_origin(owner_origin);
 }
 
-static bool document_allows_microphone_capture(Document const& document)
+static bool document_allows_permissions_policy_feature(
+    Document const& document, StringView feature_name)
 {
     if (document.origin().is_opaque())
         return false;
@@ -5206,9 +5215,9 @@ static bool document_allows_microphone_capture(Document const& document)
     while (current_navigable != nullptr) {
         auto* current_document = current_navigable->active_document();
         if (current_document == nullptr ||
-            !microphone_policy_headers_allow(
+            !permissions_policy_headers_allow(
                 current_document->policy_container(), current_document->origin(),
-                document.origin()))
+                document.origin(), feature_name))
             return false;
 
         auto parent_navigable = current_navigable->parent();
@@ -5217,9 +5226,9 @@ static bool document_allows_microphone_capture(Document const& document)
         auto container = current_navigable->container();
         auto* parent_document = current_navigable->container_document();
         if (!container || parent_document == nullptr ||
-            !iframe_microphone_policy_allows(*container,
-                                             parent_document->origin(),
-                                             document.origin()))
+            !iframe_permissions_policy_allows(*container,
+                                              parent_document->origin(),
+                                              document.origin(), feature_name))
             return false;
         current_navigable = parent_navigable.ptr();
     }
@@ -5245,7 +5254,10 @@ bool Document::is_allowed_to_use_feature(PolicyControlledFeature feature) const
             return true;
         break;
     case PolicyControlledFeature::Microphone:
-        return document_allows_microphone_capture(*this);
+        return document_allows_permissions_policy_feature(*this,
+                                                         "microphone"sv);
+    case PolicyControlledFeature::WebSerial:
+        return document_allows_permissions_policy_feature(*this, "serial"sv);
     case PolicyControlledFeature::FocusWithoutUserActivation:
     case PolicyControlledFeature::EncryptedMedia:
         // FIXME: Implement allowlist for this.

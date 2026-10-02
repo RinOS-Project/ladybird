@@ -7,8 +7,10 @@
 #include <AK/ByteBuffer.h>
 #include <LibCore/Timer.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/HTML/EventNames.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Serial/SerialPort.h>
 #include <LibWeb/Streams/ReadableStreamOperations.h>
 #include <LibWeb/Streams/WritableStreamDefaultController.h>
@@ -111,6 +113,13 @@ SerialPortInfo SerialPort::get_info() const
 GC::Ref<WebIDL::Promise> SerialPort::open(SerialOptions options)
 {
     auto& realm = this->realm();
+    auto* window = as_if<HTML::Window>(realm.global_object());
+    if (window == nullptr ||
+        !window->associated_document().is_allowed_to_use_feature(
+            DOM::PolicyControlledFeature::WebSerial))
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NotAllowedError::create(
+                realm, "The serial feature is disabled by Permissions Policy"_utf16));
     if (m_state != SerialPortState::Closed)
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::InvalidStateError::create(realm, "Serial port is not closed"_utf16));

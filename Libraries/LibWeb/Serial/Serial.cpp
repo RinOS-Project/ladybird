@@ -8,6 +8,7 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Bindings/SerialPrototype.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
@@ -79,6 +80,8 @@ void Serial::poll_portal_events()
                 }
                 if (window == nullptr ||
                     !window->associated_document().is_fully_active() ||
+                    !window->associated_document().is_allowed_to_use_feature(
+                        DOM::PolicyControlledFeature::WebSerial) ||
                     current_origin != pending_origin) {
                     WebIDL::reject_promise(request_realm, *promise,
                         WebIDL::NotAllowedError::create(
@@ -136,6 +139,13 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> Serial::request_port(SerialPortReq
     if (HTML::is_non_secure_context(HTML::relevant_settings_object(*this)))
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::SecurityError::create(realm, "Web Serial requires a secure context"_utf16));
+    auto* window = as_if<HTML::Window>(realm.global_object());
+    if (window == nullptr ||
+        !window->associated_document().is_allowed_to_use_feature(
+            DOM::PolicyControlledFeature::WebSerial))
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NotAllowedError::create(
+                realm, "The serial feature is disabled by Permissions Policy"_utf16));
     if (!is<HTML::Window>(realm.global_object()) ||
         !as<HTML::Window>(realm.global_object()).has_transient_activation())
         return WebIDL::create_rejected_promise_from_exception(realm,
@@ -179,7 +189,6 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> Serial::request_port(SerialPortReq
         }
     }
 
-    auto* window = as_if<HTML::Window>(realm.global_object());
     if (window == nullptr || !window->associated_document().is_fully_active())
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::InvalidStateError::create(
@@ -221,6 +230,12 @@ GC::Ref<WebIDL::Promise> Serial::get_ports()
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::SecurityError::create(realm, "Web Serial requires a secure context"_utf16));
     auto* window = as_if<HTML::Window>(realm.global_object());
+    if (window == nullptr ||
+        !window->associated_document().is_allowed_to_use_feature(
+            DOM::PolicyControlledFeature::WebSerial))
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NotAllowedError::create(
+                realm, "The serial feature is disabled by Permissions Policy"_utf16));
     if (window == nullptr || window->page().client().id() == 0u ||
         window->page().client().id() > UINT32_MAX)
         return WebIDL::create_rejected_promise_from_exception(realm,
