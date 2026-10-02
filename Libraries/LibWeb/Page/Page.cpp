@@ -57,6 +57,13 @@ void PageClient::page_did_request_notification_permission(
         JS::PrimitiveString::create(realm.vm(), "default"_string));
 }
 
+void PageClient::page_did_request_microphone_permission(
+    JS::PromiseCapability& promise)
+{
+    auto& realm = promise.promise()->shape().realm();
+    WebIDL::resolve_promise(realm, promise, JS::Value(false));
+}
+
 void Page::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);

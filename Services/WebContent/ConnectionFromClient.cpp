@@ -1247,6 +1247,14 @@ void ConnectionFromClient::complete_notification_permission(
                                               move(permission));
 }
 
+void ConnectionFromClient::complete_microphone_permission(
+    u64 page_id, u32 navigation_generation, u64 request_id, bool allowed)
+{
+    if (auto page = this->page(page_id); page.has_value())
+        page->complete_microphone_permission(navigation_generation, request_id,
+                                            allowed);
+}
+
 void ConnectionFromClient::request_file(u64 page_id, Web::FileRequest file_request)
 {
     i32 const id = last_id++;

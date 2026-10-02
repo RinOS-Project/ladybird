@@ -95,6 +95,8 @@ public:
     void console_peer_did_misbehave(char const* reason);
     void complete_notification_permission(u32 navigation_generation, u64 request_id,
                                           String permission);
+    void complete_microphone_permission(u32 navigation_generation, u64 request_id,
+                                        bool allowed);
 
     Vector<Web::CSS::StyleSheetIdentifier> list_style_sheets() const;
 
@@ -146,6 +148,7 @@ private:
     virtual void page_did_request_media_context_menu(Web::CSSPixelPoint, ByteString const& target, unsigned modifiers, Web::Page::MediaContextMenu const&) override;
     virtual void page_did_request_download(URL::URL const&, ByteString const&) override;
     virtual void page_did_request_notification_permission(JS::PromiseCapability&) override;
+    virtual void page_did_request_microphone_permission(JS::PromiseCapability&) override;
     virtual void page_did_start_loading(URL::URL const&, bool) override;
     virtual void page_did_create_new_document(Web::DOM::Document&) override;
     virtual void page_did_change_active_document_in_top_level_browsing_context(Web::DOM::Document&) override;
@@ -213,6 +216,7 @@ private:
 
     void setup_palette();
     void resolve_pending_notification_permissions();
+    void resolve_pending_microphone_permissions();
     ConnectionFromClient& client() const;
 
     PageHost& m_owner;
@@ -247,6 +251,12 @@ private:
         GC::Ref<JS::PromiseCapability> promise;
     };
     Vector<PendingNotificationPermission> m_pending_notification_permissions;
+    struct PendingMicrophonePermission {
+        u32 navigation_generation { 0 };
+        u64 request_id { 0 };
+        GC::Ref<JS::PromiseCapability> promise;
+    };
+    Vector<PendingMicrophonePermission> m_pending_microphone_permissions;
 };
 
 }

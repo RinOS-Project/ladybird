@@ -112,6 +112,15 @@ void ViewImplementation::complete_notification_permission(
         page_id(), navigation_generation, request_id, move(permission));
 }
 
+void ViewImplementation::complete_microphone_permission(
+    u32 navigation_generation, u64 request_id, bool allowed)
+{
+    if (navigation_generation == 0u || request_id == 0u)
+        return;
+    client().async_complete_microphone_permission(
+        page_id(), navigation_generation, request_id, allowed);
+}
+
 u64 ViewImplementation::page_id() const
 {
     VERIFY(m_client_state.client);

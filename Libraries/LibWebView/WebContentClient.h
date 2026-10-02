@@ -162,6 +162,7 @@ private:
         u64 page_id, u32 operation, ByteString request_url, ByteString origin,
         ByteString cookie_data, u32 policy) override;
     virtual Messages::WebContentClient::RequestNotificationPermissionResponse request_notification_permission(u64 page_id) override;
+    virtual Messages::WebContentClient::RequestMicrophonePermissionResponse request_microphone_permission(u64 page_id) override;
 
     bool storage_owner_is_authorized(u64 page_id, Web::StorageAPI::StorageEndpointType endpoint,
                                      String const& storage_key, u64 owner_generation);

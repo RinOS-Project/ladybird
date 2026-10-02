@@ -113,6 +113,8 @@ void PageClient::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_top_level_document_console_client);
     for (auto const& pending : m_pending_notification_permissions)
         visitor.visit(pending.promise);
+    for (auto const& pending : m_pending_microphone_permissions)
+        visitor.visit(pending.promise);
 
     if (m_webdriver)
         m_webdriver->visit_edges(visitor);
@@ -364,6 +366,7 @@ void PageClient::page_did_create_new_document(Web::DOM::Document& document)
 void PageClient::page_did_change_active_document_in_top_level_browsing_context(Web::DOM::Document& document)
 {
     resolve_pending_notification_permissions();
+    resolve_pending_microphone_permissions();
 
     auto& realm = document.realm();
 
@@ -803,6 +806,38 @@ void PageClient::page_did_request_notification_permission(
         response->navigation_generation(), response->request_id(), promise });
 }
 
+void PageClient::page_did_request_microphone_permission(
+    JS::PromiseCapability& promise)
+{
+    auto resolve_denied = [&] {
+        auto& realm = promise.promise()->shape().realm();
+        Web::WebIDL::resolve_promise(realm, promise, JS::Value(false));
+    };
+
+    if (m_pending_microphone_permissions.size() >= 4u) {
+        resolve_denied();
+        return;
+    }
+
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentClient::RequestMicrophonePermission>(m_id);
+    if (!response || response->navigation_generation() == 0u ||
+        response->request_id() == 0u) {
+        resolve_denied();
+        return;
+    }
+
+    for (auto const& pending : m_pending_microphone_permissions) {
+        if (pending.navigation_generation == response->navigation_generation() &&
+            pending.request_id == response->request_id()) {
+            resolve_denied();
+            return;
+        }
+    }
+    m_pending_microphone_permissions.append({
+        response->navigation_generation(), response->request_id(), promise });
+}
+
 void PageClient::resolve_pending_notification_permissions()
 {
     for (auto& pending : m_pending_notification_permissions) {
@@ -811,6 +846,16 @@ void PageClient::resolve_pending_notification_permissions()
             JS::PrimitiveString::create(pending_realm.vm(), "default"_string));
     }
     m_pending_notification_permissions.clear();
+}
+
+void PageClient::resolve_pending_microphone_permissions()
+{
+    for (auto& pending : m_pending_microphone_permissions) {
+        auto& pending_realm = pending.promise->promise()->shape().realm();
+        Web::WebIDL::resolve_promise(pending_realm, *pending.promise,
+            JS::Value(false));
+    }
+    m_pending_microphone_permissions.clear();
 }
 
 void PageClient::complete_notification_permission(
@@ -836,9 +881,30 @@ void PageClient::complete_notification_permission(
     }
 }
 
+void PageClient::complete_microphone_permission(
+    u32 navigation_generation, u64 request_id, bool allowed)
+{
+    if (navigation_generation == 0u || request_id == 0u)
+        return;
+
+    for (size_t index = 0; index < m_pending_microphone_permissions.size(); ++index) {
+        auto const& pending = m_pending_microphone_permissions[index];
+        if (pending.navigation_generation != navigation_generation ||
+            pending.request_id != request_id)
+            continue;
+
+        auto promise = pending.promise;
+        m_pending_microphone_permissions.remove(index);
+        auto& realm = promise->promise()->shape().realm();
+        Web::WebIDL::resolve_promise(realm, *promise, JS::Value(allowed));
+        return;
+    }
+}
+
 void PageClient::page_did_close_top_level_traversable()
 {
     resolve_pending_notification_permissions();
+    resolve_pending_microphone_permissions();
 
     // FIXME: Rename this IPC call
     client().async_did_close_browsing_context(m_id);

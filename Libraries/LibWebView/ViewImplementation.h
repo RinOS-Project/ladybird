@@ -299,14 +299,17 @@ public:
     Function<bool()> on_cache_storage_owner_batch_active;
     String cache_storage_synchronized_origin;
     u64 cache_storage_synchronized_generation { 0 };
-    struct NotificationPermissionRequest {
+    struct PermissionRequest {
         u32 navigation_generation { 0 };
         u64 request_id { 0 };
     };
-    Function<NotificationPermissionRequest()> on_request_notification_permission;
+    Function<PermissionRequest()> on_request_notification_permission;
+    Function<PermissionRequest()> on_request_microphone_permission;
 
     void complete_notification_permission(u32 navigation_generation, u64 request_id,
                                           String permission);
+    void complete_microphone_permission(u32 navigation_generation, u64 request_id,
+                                        bool allowed);
 
     Menu& page_context_menu() { return *m_page_context_menu; }
     Menu& link_context_menu() { return *m_link_context_menu; }

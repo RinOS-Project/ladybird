@@ -908,6 +908,9 @@ struct PageSession {
         view->on_request_notification_permission = [this] {
             return request_notification_permission();
         };
+        view->on_request_microphone_permission = [this] {
+            return request_microphone_permission();
+        };
 
         view->initialize_bridge_client();
         kick_first_frame_if_needed("create-page"sv, true);
@@ -1872,28 +1875,36 @@ struct PageSession {
             return -ESTALE;
         if (permission_producer.bound != 1u)
             return -ENOTSUP;
-        if (!rin_webcontent_permission_producer_complete_type(
+        if (rin_webcontent_permission_producer_complete_type(
                 &permission_producer, page_id, permission_renderer_generation,
-                &completion, "notifications"))
-            return -ESTALE;
-
-        String permission;
-        if (completion.result == RIN_WEBCONTENT_PERMISSION_RESULT_ALLOW)
-            permission = "granted"_string;
-        else if (completion.result == RIN_WEBCONTENT_PERMISSION_RESULT_BLOCK)
-            permission = "denied"_string;
-        else
-            permission = "default"_string;
-        view->complete_notification_permission(
-            completion.navigation_generation, completion.request_id,
-            move(permission));
-        return 0;
+                &completion, "notifications")) {
+            String permission;
+            if (completion.result == RIN_WEBCONTENT_PERMISSION_RESULT_ALLOW)
+                permission = "granted"_string;
+            else if (completion.result == RIN_WEBCONTENT_PERMISSION_RESULT_BLOCK)
+                permission = "denied"_string;
+            else
+                permission = "default"_string;
+            view->complete_notification_permission(
+                completion.navigation_generation, completion.request_id,
+                move(permission));
+            return 0;
+        }
+        if (rin_webcontent_permission_producer_complete_type(
+                &permission_producer, page_id, permission_renderer_generation,
+                &completion, "microphone")) {
+            view->complete_microphone_permission(
+                completion.navigation_generation, completion.request_id,
+                completion.result == RIN_WEBCONTENT_PERMISSION_RESULT_ALLOW);
+            return 0;
+        }
+        return -ESTALE;
     }
 
-    WebView::ViewImplementation::NotificationPermissionRequest
+    WebView::ViewImplementation::PermissionRequest
     request_notification_permission()
     {
-        WebView::ViewImplementation::NotificationPermissionRequest result {};
+        WebView::ViewImplementation::PermissionRequest result {};
         u64 request_id = 0u;
         if (permission_producer.bound != 1u ||
             permission_navigation_generation == 0u ||
@@ -1902,6 +1913,25 @@ struct PageSession {
                 permission_navigation_generation,
                 permission_renderer_generation, "notifications",
                 "Allow this site to show notifications?", &request_id))
+            return result;
+
+        result.navigation_generation = permission_navigation_generation;
+        result.request_id = request_id;
+        return result;
+    }
+
+    WebView::ViewImplementation::PermissionRequest
+    request_microphone_permission()
+    {
+        WebView::ViewImplementation::PermissionRequest result {};
+        u64 request_id = 0u;
+        if (permission_producer.bound != 1u ||
+            permission_navigation_generation == 0u ||
+            !rin_webcontent_permission_producer_request_bound(
+                &permission_producer, page_id,
+                permission_navigation_generation,
+                permission_renderer_generation, "microphone",
+                "Allow this site to use your microphone?", &request_id))
             return result;
 
         result.navigation_generation = permission_navigation_generation;
