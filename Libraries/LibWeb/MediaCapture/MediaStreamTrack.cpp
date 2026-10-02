@@ -6,6 +6,7 @@
 
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/MediaCapture/MediaStreamTrack.h>
+#include <string.h>
 
 namespace Web::MediaCapture {
 
@@ -48,12 +49,21 @@ void MediaStreamTrack::stop()
 
 int MediaStreamTrack::read_audio(void* samples, uint32_t bytes)
 {
-    if (!m_enabled || !is_live())
+    if (!is_live())
         return 0;
 
     auto result = rin_audio_service_capture_stream_read(m_audio_stream, samples, bytes);
-    if (result < 0)
+    if (result < 0) {
         stop();
+        return result;
+    }
+
+    // A disabled live track continues consuming its source while exposing
+    // silence, so toggling enabled does not replay microphone data that was
+    // buffered while the track was disabled.
+    if (!m_enabled && result > 0)
+        memset(samples, 0, static_cast<size_t>(result));
+
     return result;
 }
 
