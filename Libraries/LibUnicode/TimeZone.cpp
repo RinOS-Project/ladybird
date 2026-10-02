@@ -407,10 +407,23 @@ Optional<TimeZoneOffset> time_zone_offset(StringView time_zone, UnixDateTime tim
 
 Vector<TimeZoneOffset> disambiguated_time_zone_offsets(StringView time_zone, UnixDateTime time)
 {
-    auto offset = time_zone_offset(time_zone, time);
-    if (offset.has_value())
-        return { *offset };
-    return {};
+    ByteString tz_z(time_zone);
+    int offsets[RIN_ICU_TIME_ZONE_LOCAL_OFFSET_MAX] = {};
+    int in_dst[RIN_ICU_TIME_ZONE_LOCAL_OFFSET_MAX] = {};
+    size_t count = 0;
+    if (rin_icu_time_zone_local_offsets(&rin_icu_client(), tz_z.characters(),
+            time.milliseconds_since_epoch(), offsets, in_dst,
+            RIN_ICU_TIME_ZONE_LOCAL_OFFSET_MAX, &count) != 0)
+        return {};
+
+    Vector<TimeZoneOffset> result;
+    for (size_t index = 0; index < count; ++index) {
+        result.append(TimeZoneOffset {
+            .offset = AK::Duration::from_milliseconds(static_cast<i64>(offsets[index]) * 60 * 1000),
+            .in_dst = in_dst[index] != 0 ? TimeZoneOffset::InDST::Yes : TimeZoneOffset::InDST::No,
+        });
+    }
+    return result;
 }
 
 Optional<TimeZoneTransition> get_time_zone_transition(StringView time_zone, UnixDateTime time, TimeZoneTransition::Options options)
