@@ -208,6 +208,7 @@ void WorkerAgentParent::setup_worker_ipc_callbacks(JS::Realm& realm)
                 move(script_url), move(scope), update_via_cache);
         return Messages::WebWorkerClient::RequestServiceWorkerOwnerResponse {
             response.accepted, response.found, response.generation, response.state,
+            response.update_via_cache,
             move(response.origin), move(response.script_url), move(response.scope) };
     };
     m_worker_ipc->on_request_worker_agent = [realm = GC::RawRef<JS::Realm> { realm }](Web::Bindings::AgentType worker_type) -> Messages::WebWorkerClient::RequestWorkerAgentResponse {

@@ -1027,6 +1027,7 @@ struct PageSession {
             response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_PERMISSION;
         result.generation = response.generation;
         result.state = response.state;
+        result.update_via_cache = response.update_via_cache;
         result.origin = ByteString { response.origin };
         result.script_url = ByteString { response.script_url };
         result.scope = ByteString { response.scope };

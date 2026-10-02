@@ -116,7 +116,8 @@ Web::PageClient::ServiceWorkerOwnerResponse PageHost::request_service_worker_own
         operation, move(client_url), move(origin), move(script_url),
         move(scope), update_via_cache);
     return { response.accepted(), response.found(), response.generation(),
-             response.state(), response.take_response_origin(),
+             response.state(), response.response_update_via_cache(),
+             response.take_response_origin(),
              response.take_response_script_url(), response.take_response_scope() };
 }
 

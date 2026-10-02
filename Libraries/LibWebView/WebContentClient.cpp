@@ -1265,12 +1265,13 @@ Messages::WebContentClient::RequestServiceWorkerOwnerResponse WebContentClient::
 {
     auto view = view_for_page_id(page_id);
     if (!view.has_value() || !view->on_service_worker_owner_request)
-        return { false, false, 0, 0, {}, {}, {} };
+        return { false, false, 0, 0, 0, {}, {}, {} };
 
     auto result = view->on_service_worker_owner_request(
         operation, move(client_url), move(origin), move(script_url),
         move(scope), update_via_cache);
     return { result.accepted, result.found, result.generation, result.state,
+             result.update_via_cache,
              move(result.origin), move(result.script_url), move(result.scope) };
 }
 

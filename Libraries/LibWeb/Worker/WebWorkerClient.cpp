@@ -79,7 +79,7 @@ Messages::WebWorkerClient::RequestServiceWorkerOwnerResponse WebWorkerClient::re
     if (on_request_service_worker_owner)
         return on_request_service_worker_owner(operation, move(client_url),
             move(origin), move(script_url), move(scope), update_via_cache);
-    return { false, false, 0, 0, {}, {}, {} };
+    return { false, false, 0, 0, 0, {}, {}, {} };
 }
 
 Messages::WebWorkerClient::RequestWorkerAgentResponse WebWorkerClient::request_worker_agent(Web::Bindings::AgentType worker_type)

@@ -34,6 +34,7 @@ public:
 
     // https://w3c.github.io/ServiceWorker/#dom-serviceworkerregistration-updateviacache
     Bindings::ServiceWorkerUpdateViaCache update_via_cache() const { return m_update_via_cache; }
+    void set_update_via_cache(Bindings::ServiceWorkerUpdateViaCache value) { m_update_via_cache = value; }
 
     GC::Ref<WebIDL::Promise> unregister();
 

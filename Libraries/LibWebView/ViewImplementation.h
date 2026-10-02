@@ -54,6 +54,7 @@ public:
         bool found { false };
         u64 generation { 0 };
         u32 state { 0 };
+        u32 update_via_cache { 0 };
         ByteString origin;
         ByteString script_url;
         ByteString scope;

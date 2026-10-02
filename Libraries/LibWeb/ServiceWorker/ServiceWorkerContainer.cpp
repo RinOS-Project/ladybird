@@ -7,6 +7,7 @@
 
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/PrincipalHostDefined.h>
 #include <LibWeb/Bindings/ServiceWorkerContainerPrototype.h>
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
@@ -22,6 +23,7 @@
 #include <LibWeb/TrustedTypes/RequireTrustedTypesForDirective.h>
 #include <LibWeb/TrustedTypes/TrustedScriptURL.h>
 #include <LibWeb/TrustedTypes/TrustedTypePolicy.h>
+#include <rin/web/webcontent_protocol.h>
 
 namespace Web::ServiceWorker {
 
@@ -133,17 +135,72 @@ GC::Ref<WebIDL::Promise> ServiceWorkerContainer::get_registration(String const& 
         auto& realm = HTML::relevant_realm(promise->promise());
         HTML::TemporaryExecutionContext const execution_context { realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
 
-        // 1. Let registration be the result of running Match Service Worker Registration given storage key and clientURL.
-        auto maybe_registration = Registration::match(storage_key.value(), parsed_client_url);
+        auto const client_url = parsed_client_url.serialize(URL::ExcludeFragment::Yes).to_byte_string();
+        auto owner_response = Bindings::principal_host_defined_page(realm).client()
+            .request_service_worker_owner(
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_MATCH,
+                client_url, {}, {}, {}, 0u);
+        if (!owner_response.accepted) {
+            WebIDL::reject_promise(realm, promise,
+                JS::TypeError::create(realm,
+                    "The Browser profile owner could not look up this ServiceWorker registration"sv));
+            return;
+        }
 
-        // 2. If registration is null, resolve promise with undefined and abort these steps.
-        if (!maybe_registration.has_value()) {
+        // The Browser profile owner is authoritative. A not-found response
+        // must be empty so stale renderer-local registrations cannot leak into
+        // the result.
+        if (!owner_response.found) {
+            if (owner_response.generation != 0u || owner_response.state != 0u ||
+                owner_response.update_via_cache != 0u ||
+                !owner_response.origin.is_empty() ||
+                !owner_response.script_url.is_empty() ||
+                !owner_response.scope.is_empty()) {
+                WebIDL::reject_promise(realm, promise,
+                    JS::TypeError::create(realm,
+                        "The Browser profile owner returned an invalid ServiceWorker lookup result"sv));
+                return;
+            }
             WebIDL::resolve_promise(realm, promise, JS::js_undefined());
             return;
         }
 
-        // 3. Resolve promise with the result of getting the service worker registration object that represents registration in promise’s relevant settings object.
-        auto registration_object = HTML::relevant_settings_object(promise->promise()).get_service_worker_registration_object(maybe_registration.value());
+        auto parsed_scope = DOMURL::parse(owner_response.scope);
+        auto parsed_script = DOMURL::parse(owner_response.script_url);
+        auto const expected_origin = parsed_client_url.origin().serialize().to_byte_string();
+        auto const serialized_scope = parsed_scope.has_value()
+            ? parsed_scope->serialize(URL::ExcludeFragment::Yes).to_byte_string()
+            : ByteString {};
+        auto const serialized_script = parsed_script.has_value()
+            ? parsed_script->serialize(URL::ExcludeFragment::Yes).to_byte_string()
+            : ByteString {};
+        if (owner_response.generation == 0u || owner_response.state > 3u ||
+            owner_response.state == 3u || owner_response.update_via_cache > 2u ||
+            owner_response.origin != expected_origin ||
+            !parsed_scope.has_value() || !parsed_script.has_value() ||
+            serialized_scope != owner_response.scope ||
+            serialized_script != owner_response.script_url ||
+            !parsed_scope->origin().is_same_origin(parsed_client_url.origin()) ||
+            !parsed_script->origin().is_same_origin(parsed_client_url.origin()) ||
+            !client_url.starts_with(serialized_scope)) {
+            WebIDL::reject_promise(realm, promise,
+                JS::TypeError::create(realm,
+                    "The Browser profile owner returned a mismatched ServiceWorker registration"sv));
+            return;
+        }
+
+        auto maybe_registration = Registration::get(storage_key.value(), parsed_scope.value());
+        auto& registration = maybe_registration.has_value()
+            ? maybe_registration.value()
+            : Registration::set(storage_key.value(), parsed_scope.value(),
+                static_cast<Bindings::ServiceWorkerUpdateViaCache>(owner_response.update_via_cache));
+        registration.set_update_via_cache(
+            static_cast<Bindings::ServiceWorkerUpdateViaCache>(owner_response.update_via_cache));
+
+        // Resolve with the object cached for this environment, synchronized
+        // with Browser-owned updateViaCache state.
+        auto registration_object = HTML::relevant_settings_object(promise->promise())
+            .get_service_worker_registration_object(registration);
         WebIDL::resolve_promise(realm, promise, registration_object);
     }));
 

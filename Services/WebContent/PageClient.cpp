@@ -1063,6 +1063,7 @@ Web::PageClient::ServiceWorkerOwnerResponse PageClient::request_service_worker_o
         response->found(),
         response->generation(),
         response->state(),
+        response->response_update_via_cache(),
         response->take_response_origin(),
         response->take_response_script_url(),
         response->take_response_scope(),

@@ -673,7 +673,9 @@ GC::Ref<ServiceWorker::ServiceWorkerRegistration> EnvironmentSettingsObject::get
     }
 
     // 3. Return objectMap[registration].
-    return *object_map.get(key);
+    auto registration_object = *object_map.get(key);
+    registration_object->set_update_via_cache(registration.update_via_cache());
+    return registration_object;
 }
 
 GC::Ref<ServiceWorker::ServiceWorker> EnvironmentSettingsObject::get_service_worker_object(ServiceWorker::ServiceWorkerRecord* service_worker)
