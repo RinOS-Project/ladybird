@@ -447,7 +447,9 @@ int RinHTTPFetch::client_certificate_session_sign(
         signature_scheme, ReadonlyBytes { message, message_size },
         Bytes { signature, signature_capacity }, written);
     if (result != 0 || written == 0u || written > signature_capacity) {
-        __builtin_memset(signature, 0, signature_capacity);
+        __builtin_memset(
+            signature, 0,
+            signature_capacity < 512u ? signature_capacity : 512u);
         return -1;
     }
     *signature_size = written;
@@ -469,9 +471,10 @@ int RinHTTPFetch::client_certificate_signer(
         if (fetch != nullptr)
             rin_requestserver_tls_client_certificate_session_reset(
                 &fetch->m_client_certificate_session);
-        if (signature != nullptr && signature_capacity != 0u &&
-            signature_capacity <= 512u)
-            __builtin_memset(signature, 0, signature_capacity);
+        if (signature != nullptr && signature_capacity != 0u)
+            __builtin_memset(
+                signature, 0,
+                signature_capacity < 512u ? signature_capacity : 512u);
         return -1;
     }
 

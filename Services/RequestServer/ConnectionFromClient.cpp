@@ -50,10 +50,11 @@ static void clear_client_certificate_bytes(ByteBuffer& bytes)
 static void clear_client_certificate_signature_output(Bytes output)
 {
     constexpr size_t max_signature_size = 512u;
-    if (output.is_empty() || output.size() > max_signature_size)
+    if (output.is_empty())
         return;
+    auto size = output.size() < max_signature_size ? output.size() : max_signature_size;
     volatile u8* bytes = output.data();
-    for (size_t index = 0; index < output.size(); ++index)
+    for (size_t index = 0; index < size; ++index)
         bytes[index] = 0;
 }
 
