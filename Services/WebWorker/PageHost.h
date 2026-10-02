@@ -41,6 +41,9 @@ public:
     virtual HttpCookieOwnerResponse request_http_cookie_owner(
         u32 operation, ByteString request_url, ByteString origin,
         ByteString cookie_data, u32 policy) override;
+    virtual ServiceWorkerOwnerResponse request_service_worker_owner(
+        u32 operation, ByteString client_url, ByteString origin,
+        ByteString script_url, ByteString scope, u32 update_via_cache) override;
     virtual void request_file(Web::FileRequest) override;
     virtual WorkerAgentResponse request_worker_agent(Web::Bindings::AgentType) override;
     virtual Web::DisplayListPlayerType display_list_player_type() const override { VERIFY_NOT_REACHED(); }

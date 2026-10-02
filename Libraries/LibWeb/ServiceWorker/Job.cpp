@@ -7,6 +7,7 @@
 #include <LibGC/Heap.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibURL/URL.h>
+#include <LibWeb/Bindings/PrincipalHostDefined.h>
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
@@ -19,7 +20,6 @@
 #include <LibWeb/HTML/Scripting/ModuleScript.h>
 #include <LibWeb/HTML/Scripting/Script.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
-#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/SecureContexts/AbstractOperations.h>
 #include <LibWeb/ServiceWorker/Job.h>
@@ -470,17 +470,19 @@ static void unregister(JS::VM& vm, GC::Ref<Job> job)
     if (job->client) {
         auto& realm = job->client->realm();
         auto context = HTML::TemporaryExecutionContext(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
-        auto& global_object = job->client->global_object();
-        if (!is<HTML::Window>(global_object)) {
+        auto origin = job->scope_url.origin().serialize().to_byte_string();
+        if (!job->client->origin().is_same_origin(job->scope_url.origin())) {
             reject_job_promise<WebIDL::InvalidStateError>(
-                job, "Service Worker unregistration requires a Browser-owned Window client"_utf16);
+                job, "Service Worker unregistration requires a same-origin client"_utf16);
             finish_job(vm, job);
             return;
         }
 
-        auto origin = job->scope_url.origin().serialize().to_byte_string();
         auto scope = job->scope_url.serialize(URL::ExcludeFragment::Yes).to_byte_string();
-        auto owner_response = as<HTML::Window>(global_object).page().client()
+        // Window and worker realms use the PageClient bound to their principal.
+        // For a worker this crosses its isolated helper back to the creating
+        // page before reaching the Browser-owned profile store.
+        auto owner_response = Bindings::principal_host_defined_page(realm).client()
             .request_service_worker_owner(
             RIN_WEBCONTENT_SERVICE_WORKER_OWNER_UNREGISTER, {}, origin, {}, scope, 0u);
         if (!owner_response.accepted ||

@@ -35,6 +35,9 @@ public:
     virtual Messages::WebWorkerClient::RequestHttpCookieOwnerResponse request_http_cookie_owner(
         u32 operation, ByteString request_url, ByteString origin,
         ByteString cookie_data, u32 policy) override;
+    virtual Messages::WebWorkerClient::RequestServiceWorkerOwnerResponse request_service_worker_owner(
+        u32 operation, ByteString client_url, ByteString origin,
+        ByteString script_url, ByteString scope, u32 update_via_cache) override;
     virtual Messages::WebWorkerClient::RequestWorkerAgentResponse request_worker_agent(Web::Bindings::AgentType worker_type) override;
 
     Function<void()> on_worker_close;
@@ -43,6 +46,7 @@ public:
     Function<HTTP::Cookie::VersionedCookie(URL::URL const&, HTTP::Cookie::Source)> on_request_cookie;
     Function<void(URL::URL const&, HTTP::Cookie::ParsedCookie const&, HTTP::Cookie::Source)> on_set_cookie;
     Function<Messages::WebWorkerClient::RequestHttpCookieOwnerResponse(u32, ByteString, ByteString, ByteString, u32)> on_request_http_cookie_owner;
+    Function<Messages::WebWorkerClient::RequestServiceWorkerOwnerResponse(u32, ByteString, ByteString, ByteString, ByteString, u32)> on_request_service_worker_owner;
     Function<Messages::WebWorkerClient::RequestWorkerAgentResponse(Web::Bindings::AgentType)> on_request_worker_agent;
 
 private:

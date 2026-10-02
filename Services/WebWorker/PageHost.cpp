@@ -108,6 +108,18 @@ Web::PageClient::HttpCookieOwnerResponse PageHost::request_http_cookie_owner(
              response.take_response_data() };
 }
 
+Web::PageClient::ServiceWorkerOwnerResponse PageHost::request_service_worker_owner(
+    u32 operation, ByteString client_url, ByteString origin,
+    ByteString script_url, ByteString scope, u32 update_via_cache)
+{
+    auto response = m_client.request_service_worker_owner(
+        operation, move(client_url), move(origin), move(script_url),
+        move(scope), update_via_cache);
+    return { response.accepted(), response.found(), response.generation(),
+             response.state(), response.take_response_origin(),
+             response.take_response_script_url(), response.take_response_scope() };
+}
+
 void PageHost::request_file(Web::FileRequest request)
 {
     m_client.request_file(move(request));
