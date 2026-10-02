@@ -43,6 +43,48 @@ static void register_(JS::VM&, GC::Ref<Job>);
 static void update(JS::VM&, GC::Ref<Job>);
 static void unregister(JS::VM&, GC::Ref<Job>);
 
+static bool begin_browser_registration_transaction(GC::Ref<Job> job)
+{
+    if (!job->client)
+        return false;
+    auto const client_url = job->client->creation_url.serialize(URL::ExcludeFragment::Yes).to_byte_string();
+    auto const expected_origin = job->script_url.origin().serialize().to_byte_string();
+    auto const expected_script = job->script_url.serialize(URL::ExcludeFragment::Yes).to_byte_string();
+    auto const expected_scope = job->scope_url.serialize(URL::ExcludeFragment::Yes).to_byte_string();
+    auto response = Bindings::principal_host_defined_page(job->client->realm()).client()
+        .request_service_worker_owner(
+            RIN_WEBCONTENT_SERVICE_WORKER_OWNER_REGISTER,
+            client_url, {}, expected_script, expected_scope,
+            static_cast<u32>(job->update_via_cache));
+    if (response.generation != 0u && response.generation <= 0xffffffffu)
+        job->browser_registration_transaction_id = static_cast<u32>(response.generation);
+    if (!response.accepted || job->browser_registration_transaction_id == 0u ||
+        response.origin != expected_origin || response.script_url != expected_script ||
+        response.scope != expected_scope || response.state > 3u)
+        return false;
+    return true;
+}
+
+static bool finish_browser_registration_transaction(GC::Ref<Job> job, u32 operation)
+{
+    if (job->browser_registration_transaction_id == 0u || !job->client)
+        return false;
+    auto const expected_origin = job->script_url.origin().serialize().to_byte_string();
+    auto const expected_script = job->script_url.serialize(URL::ExcludeFragment::Yes).to_byte_string();
+    auto const expected_scope = job->scope_url.serialize(URL::ExcludeFragment::Yes).to_byte_string();
+    const u32 transaction_id = job->browser_registration_transaction_id;
+    auto response = Bindings::principal_host_defined_page(job->client->realm()).client()
+        .request_service_worker_owner(operation, {}, expected_origin, {},
+            expected_scope, transaction_id);
+    if (!response.accepted || response.generation == 0u ||
+        response.origin != expected_origin || response.script_url != expected_script ||
+        response.scope != expected_scope ||
+        response.state > 3u)
+        return false;
+    job->browser_registration_transaction_id = 0u;
+    return true;
+}
+
 GC_DEFINE_ALLOCATOR(Job);
 
 // https://w3c.github.io/ServiceWorker/#create-job-algorithm
@@ -143,11 +185,18 @@ static void register_(JS::VM& vm, GC::Ref<Job> job)
             return;
         }
     }
-    // 6. Else:
-    else {
-        // 1. Invoke Set Registration algorithm with job’s storage key, job’s scope url, and job’s update via cache mode.
-        Registration::set(job->storage_key, job->scope_url, job->update_via_cache);
+    // Browser-owned durable state is only staged once this serialized job is
+    // actually running. Equivalent queued jobs therefore share the same owner
+    // transaction, and an abandoned job cannot publish an Installing record.
+    if (!begin_browser_registration_transaction(job)) {
+        reject_job_promise<WebIDL::InvalidStateError>(
+            job, "The Browser profile owner rejected the ServiceWorker registration transaction"_utf16);
+        finish_job(vm, job);
+        return;
     }
+
+    if (!registration.has_value())
+        Registration::set(job->storage_key, job->scope_url, job->update_via_cache);
 
     // Invoke Update algorithm passing job as the argument.
     update(vm, job);
@@ -464,6 +513,14 @@ static void update(JS::VM& vm, GC::Ref<Job> job)
 
         // 9. If hasUpdatedResources is false, then:
         if (!state->has_updated_resources()) {
+            if (!finish_browser_registration_transaction(
+                    job, RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_REGISTER)) {
+                reject_job_promise<WebIDL::InvalidStateError>(
+                    job, "The Browser profile owner could not commit the ServiceWorker registration"_utf16);
+                finish_job(vm, job);
+                return;
+            }
+
             // 1. Set registration’s update via cache mode to job’s update via cache mode.
             registration.set_update_via_cache(job->update_via_cache);
 
@@ -593,6 +650,10 @@ static void run_job(JS::VM& vm, JobQueue& job_queue)
 // https://w3c.github.io/ServiceWorker/#finish-job-algorithm
 static void finish_job(JS::VM& vm, GC::Ref<Job> job)
 {
+    if (job->browser_registration_transaction_id != 0u)
+        (void)finish_browser_registration_transaction(
+            job, RIN_WEBCONTENT_SERVICE_WORKER_OWNER_ABORT_REGISTER);
+
     // 1. Let jobQueue be job’s containing job queue.
     auto& job_queue = *job->containing_job_queue;
 

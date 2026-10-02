@@ -49,6 +49,9 @@ public:
     RawPtr<JobQueue> containing_job_queue = nullptr;
     Vector<GC::Ref<Job>> list_of_equivalent_jobs;
     bool force_cache_bypass = false;
+    // Browser-owned registration candidates are committed only after the
+    // update algorithm succeeds; finish_job aborts any remaining candidate.
+    u32 browser_registration_transaction_id = 0;
 
     // https://w3c.github.io/ServiceWorker/#dfn-job-equivalent
     friend bool operator==(Job const& a, Job const& b)
