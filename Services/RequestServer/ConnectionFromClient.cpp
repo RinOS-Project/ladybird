@@ -775,9 +775,23 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
         dbgln("SetCertificate: authenticated signer owner is unavailable (request {})", request_id);
         return false;
     }
-    const bool admitted = g_client_certificate_owner(
-        g_client_certificate_owner_context, request_id, connection_generation,
-        move(certificate_list), move(signer_capability));
+    bool admitted = false;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    try {
+#endif
+        admitted = g_client_certificate_owner(
+            g_client_certificate_owner_context, request_id,
+            connection_generation, move(certificate_list),
+            move(signer_capability));
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    } catch (...) {
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
+        dbgln("SetCertificate: client-certificate owner failed (request {})",
+              request_id);
+        return false;
+    }
+#endif
     if (admitted)
         dbgln("SetCertificate: client-certificate owner admitted request {}", request_id);
     return admitted;
@@ -955,9 +969,24 @@ Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::w
         dbgln("WebSocketSetCertificate: authenticated signer owner is unavailable (websocket {})", websocket_id);
         return false;
     }
-    const bool admitted = g_client_certificate_owner(
-        g_client_certificate_owner_context, websocket_id,
-        connection_generation, move(certificate_list), move(signer_capability));
+    bool admitted = false;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    try {
+#endif
+        admitted = g_client_certificate_owner(
+            g_client_certificate_owner_context, websocket_id,
+            connection_generation, move(certificate_list),
+            move(signer_capability));
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    } catch (...) {
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
+        dbgln(
+            "WebSocketSetCertificate: client-certificate owner failed (websocket {})",
+            websocket_id);
+        return false;
+    }
+#endif
     if (admitted)
         dbgln("WebSocketSetCertificate: client-certificate owner admitted websocket {}", websocket_id);
     return admitted;

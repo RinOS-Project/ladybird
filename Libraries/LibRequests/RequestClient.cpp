@@ -41,8 +41,22 @@ bool RequestClient::provide_client_certificate(
     signer_capability = {};
     if (!m_client_certificate_provider)
         return false;
-    const bool provided = m_client_certificate_provider(
-        url, connection_generation, certificate_list, signer_capability);
+    bool provided = false;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    try {
+#endif
+        provided = m_client_certificate_provider(
+            url, connection_generation, certificate_list, signer_capability);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    } catch (...) {
+        connection_generation = 0;
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
+        return false;
+    }
+#endif
+    if (!provided)
+        clear_client_certificate_bytes(certificate_list);
     if (!provided)
         clear_client_certificate_bytes(signer_capability);
     return provided;
@@ -270,13 +284,24 @@ RequestClient::request_client_certificate(
             signature_algorithms_cert.data(),
             signature_algorithms_cert.size(), certificate_authorities.data(),
             certificate_authorities.size());
-    const bool provided = request_live && constraints_valid &&
-        m_client_certificate_request_provider &&
-        m_client_certificate_request_provider(
-            url, signature_algorithms.bytes(),
-            signature_algorithms_cert.bytes(), certificate_authorities.bytes(),
-            connection_generation, signature_scheme, certificate_list,
-            signer_capability);
+    bool provided = false;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    try {
+#endif
+        provided = request_live && constraints_valid &&
+            m_client_certificate_request_provider &&
+            m_client_certificate_request_provider(
+                url, signature_algorithms.bytes(),
+                signature_algorithms_cert.bytes(),
+                certificate_authorities.bytes(), connection_generation,
+                signature_scheme, certificate_list, signer_capability);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    } catch (...) {
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
+        return { 0u, 0u, {}, {}, false };
+    }
+#endif
     if (!provided ||
         connection_generation == 0u || certificate_list.is_empty() ||
         certificate_list.size() > 16u * 1024u ||
@@ -345,9 +370,20 @@ RequestClient::sign_client_certificate(u64 request_id,
     }
 
     ByteBuffer signature;
-    const bool signed_ok = m_client_certificate_signer(
+    bool signed_ok = false;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    try {
+#endif
+        signed_ok = m_client_certificate_signer(
             request_id, connection_generation, signer_capability.bytes(),
             signature_scheme, message.bytes(), signature);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    } catch (...) {
+        clear_client_certificate_bytes(signer_capability);
+        clear_client_certificate_bytes(signature);
+        return { {}, false };
+    }
+#endif
     clear_client_certificate_bytes(signer_capability);
     if (!signed_ok || signature.is_empty() ||
         signature.size() > max_signature_size) {
