@@ -16,6 +16,8 @@ struct SerializedPolicyContainer {
     Vector<ContentSecurityPolicy::SerializedPolicy> csp_list;
     EmbedderPolicy embedder_policy;
     ReferrerPolicy::ReferrerPolicy referrer_policy;
+    Vector<String> permissions_policy_headers;
+    bool permissions_policy_parse_failed { false };
 };
 
 }

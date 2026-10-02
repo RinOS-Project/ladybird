@@ -1255,6 +1255,15 @@ void ConnectionFromClient::complete_microphone_permission(
                                             allowed);
 }
 
+Messages::WebContentServer::RevokeMicrophoneCaptureResponse
+ConnectionFromClient::revoke_microphone_capture(
+    u64 page_id, String domain, u64 sequence)
+{
+    if (auto page = this->page(page_id); page.has_value())
+        return page->revoke_microphone_capture(move(domain), sequence);
+    return false;
+}
+
 void ConnectionFromClient::request_file(u64 page_id, Web::FileRequest file_request)
 {
     i32 const id = last_id++;

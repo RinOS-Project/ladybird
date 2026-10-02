@@ -31,11 +31,12 @@ public:
     bool muted() const { return m_muted; }
     String ready_state() const { return is_live() ? "live"_string : "ended"_string; }
     void stop();
+    bool revoke_capture();
 
     // Internal capture consumer hook. The returned byte count is the number
     // of PCM bytes read from the authenticated Audio Service ring.
     int read_audio(void* samples, uint32_t bytes);
-    bool is_live() const { return m_audio_stream >= 0; }
+    bool is_live() const { return m_audio_stream >= 0 && !m_capture_revoked; }
 
 private:
     explicit MediaStreamTrack(JS::Realm&);
@@ -47,6 +48,7 @@ private:
     int m_audio_stream { -1 };
     bool m_enabled { true };
     bool m_muted { false };
+    bool m_capture_revoked { false };
 };
 
 }

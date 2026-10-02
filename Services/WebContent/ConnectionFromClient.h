@@ -127,6 +127,8 @@ private:
                                                   u64 request_id, String permission) override;
     virtual void complete_microphone_permission(u64 page_id, u32 navigation_generation,
                                                 u64 request_id, bool allowed) override;
+    virtual Messages::WebContentServer::RevokeMicrophoneCaptureResponse
+    revoke_microphone_capture(u64 page_id, String domain, u64 sequence) override;
     virtual void set_system_visibility_state(u64 page_id, Web::HTML::VisibilityState) override;
     virtual void reset_zoom(u64 page_id) override;
 

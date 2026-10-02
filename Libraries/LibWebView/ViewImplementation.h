@@ -304,12 +304,13 @@ public:
         u64 request_id { 0 };
     };
     Function<PermissionRequest()> on_request_notification_permission;
-    Function<PermissionRequest()> on_request_microphone_permission;
+    Function<PermissionRequest(ByteString)> on_request_microphone_permission;
 
     void complete_notification_permission(u32 navigation_generation, u64 request_id,
                                           String permission);
     void complete_microphone_permission(u32 navigation_generation, u64 request_id,
                                         bool allowed);
+    bool revoke_microphone_capture(ByteString domain, u64 sequence);
 
     Menu& page_context_menu() { return *m_page_context_menu; }
     Menu& link_context_menu() { return *m_link_context_menu; }

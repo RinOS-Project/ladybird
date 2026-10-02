@@ -29,6 +29,7 @@
 #include <LibWeb/DOM/NodeList.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/HTMLLinkElement.h>
+#include <LibWeb/MediaCapture/MediaStreamTrack.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/WebIDL/Promise.h>
@@ -807,20 +808,28 @@ void PageClient::page_did_request_notification_permission(
 }
 
 void PageClient::page_did_request_microphone_permission(
-    JS::PromiseCapability& promise)
+    JS::PromiseCapability& promise, Web::DOM::Document const& document)
 {
     auto resolve_denied = [&] {
         auto& realm = promise.promise()->shape().realm();
         Web::WebIDL::resolve_promise(realm, promise, JS::Value(false));
     };
 
-    if (m_pending_microphone_permissions.size() >= 4u) {
+    auto const& origin = document.origin();
+    if (origin.is_opaque() || m_pending_microphone_permissions.size() >= 4u) {
         resolve_denied();
         return;
     }
 
+    auto serialized_origin = origin.serialize().to_byte_string();
+    if (serialized_origin.is_empty() ||
+        serialized_origin.length() >= RIN_WEBCONTENT_URL_MAX) {
+        resolve_denied();
+        return;
+    }
     auto response = client().send_sync_but_allow_failure<
-        Messages::WebContentClient::RequestMicrophonePermission>(m_id);
+        Messages::WebContentClient::RequestMicrophonePermission>(
+            m_id, move(serialized_origin));
     if (!response || response->navigation_generation() == 0u ||
         response->request_id() == 0u) {
         resolve_denied();
@@ -835,7 +844,62 @@ void PageClient::page_did_request_microphone_permission(
         }
     }
     m_pending_microphone_permissions.append({
-        response->navigation_generation(), response->request_id(), promise });
+        response->navigation_generation(), response->request_id(), promise,
+        GC::Weak { document }, origin });
+}
+
+bool PageClient::page_did_create_microphone_track(
+    Web::MediaCapture::MediaStreamTrack& track, URL::Origin const& origin)
+{
+    if (origin.is_opaque() || !track.is_live())
+        return false;
+
+    auto domain = origin.host().serialize();
+    if (domain.is_empty())
+        return false;
+
+    for (size_t index = 0; index < m_active_microphone_tracks.size();) {
+        auto const& active = m_active_microphone_tracks[index];
+        if (!active.track || !active.track->is_live()) {
+            m_active_microphone_tracks.remove(index);
+            continue;
+        }
+        ++index;
+    }
+    if (m_active_microphone_tracks.size() >= 64u)
+        return false;
+
+    m_active_microphone_tracks.append({ GC::Weak { track }, move(domain) });
+    return true;
+}
+
+bool PageClient::revoke_microphone_capture(String domain, u64 sequence)
+{
+    if (sequence == 0u || sequence <= m_last_microphone_revocation_sequence)
+        return sequence == m_last_microphone_revocation_sequence;
+
+    bool const revoke_all = domain == "*"_string;
+    bool stopped = true;
+    for (size_t index = 0; index < m_active_microphone_tracks.size();) {
+        auto& active = m_active_microphone_tracks[index];
+        if (!active.track) {
+            m_active_microphone_tracks.remove(index);
+            continue;
+        }
+        if (revoke_all || active.domain == domain) {
+            if (active.track->revoke_capture()) {
+                m_active_microphone_tracks.remove(index);
+            } else {
+                stopped = false;
+                ++index;
+            }
+            continue;
+        }
+        ++index;
+    }
+    if (stopped)
+        m_last_microphone_revocation_sequence = sequence;
+    return stopped;
 }
 
 void PageClient::resolve_pending_notification_permissions()
@@ -896,7 +960,11 @@ void PageClient::complete_microphone_permission(
         auto promise = pending.promise;
         m_pending_microphone_permissions.remove(index);
         auto& realm = promise->promise()->shape().realm();
-        Web::WebIDL::resolve_promise(realm, *promise, JS::Value(allowed));
+        bool const still_authorized = pending.document &&
+            pending.document->is_fully_active() &&
+            pending.document->origin().is_same_origin(pending.origin);
+        Web::WebIDL::resolve_promise(
+            realm, *promise, JS::Value(allowed && still_authorized));
         return;
     }
 }

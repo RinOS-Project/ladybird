@@ -1463,13 +1463,13 @@ WebContentClient::request_notification_permission(u64 page_id)
 }
 
 Messages::WebContentClient::RequestMicrophonePermissionResponse
-WebContentClient::request_microphone_permission(u64 page_id)
+WebContentClient::request_microphone_permission(u64 page_id, ByteString origin)
 {
     auto view = view_for_page_id(page_id);
     if (!view.has_value() || !view->on_request_microphone_permission)
         return { 0u, 0u };
 
-    auto request = view->on_request_microphone_permission();
+    auto request = view->on_request_microphone_permission(move(origin));
     return { request.navigation_generation, request.request_id };
 }
 

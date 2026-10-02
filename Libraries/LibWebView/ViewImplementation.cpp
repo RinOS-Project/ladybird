@@ -121,6 +121,16 @@ void ViewImplementation::complete_microphone_permission(
         page_id(), navigation_generation, request_id, allowed);
 }
 
+bool ViewImplementation::revoke_microphone_capture(ByteString domain, u64 sequence)
+{
+    if (sequence == 0u || domain.is_empty())
+        return false;
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentServer::RevokeMicrophoneCapture>(
+            page_id(), move(domain), sequence);
+    return response.has_value() && response->stopped();
+}
+
 u64 ViewImplementation::page_id() const
 {
     VERIFY(m_client_state.client);

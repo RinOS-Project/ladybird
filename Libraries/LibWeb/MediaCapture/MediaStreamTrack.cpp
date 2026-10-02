@@ -39,12 +39,19 @@ void MediaStreamTrack::initialize(JS::Realm& realm)
 
 void MediaStreamTrack::stop()
 {
-    if (m_audio_stream < 0)
-        return;
+    (void)revoke_capture();
+}
 
-    auto audio_stream = m_audio_stream;
+bool MediaStreamTrack::revoke_capture()
+{
+    m_capture_revoked = true;
+    if (m_audio_stream < 0)
+        return true;
+
+    if (rin_audio_service_stream_destroy(m_audio_stream) != 0)
+        return false;
     m_audio_stream = -1;
-    (void)rin_audio_service_stream_destroy(audio_stream);
+    return true;
 }
 
 int MediaStreamTrack::read_audio(void* samples, uint32_t bytes)

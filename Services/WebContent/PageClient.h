@@ -148,7 +148,11 @@ private:
     virtual void page_did_request_media_context_menu(Web::CSSPixelPoint, ByteString const& target, unsigned modifiers, Web::Page::MediaContextMenu const&) override;
     virtual void page_did_request_download(URL::URL const&, ByteString const&) override;
     virtual void page_did_request_notification_permission(JS::PromiseCapability&) override;
-    virtual void page_did_request_microphone_permission(JS::PromiseCapability&) override;
+    virtual void page_did_request_microphone_permission(
+        JS::PromiseCapability&, Web::DOM::Document const&) override;
+    virtual bool page_did_create_microphone_track(
+        Web::MediaCapture::MediaStreamTrack&, URL::Origin const&) override;
+    bool revoke_microphone_capture(String domain, u64 sequence);
     virtual void page_did_start_loading(URL::URL const&, bool) override;
     virtual void page_did_create_new_document(Web::DOM::Document&) override;
     virtual void page_did_change_active_document_in_top_level_browsing_context(Web::DOM::Document&) override;
@@ -255,8 +259,16 @@ private:
         u32 navigation_generation { 0 };
         u64 request_id { 0 };
         GC::Ref<JS::PromiseCapability> promise;
+        GC::Weak<Web::DOM::Document> document;
+        URL::Origin origin { URL::Origin::create_opaque() };
     };
     Vector<PendingMicrophonePermission> m_pending_microphone_permissions;
+    struct ActiveMicrophoneTrack {
+        GC::Weak<Web::MediaCapture::MediaStreamTrack> track;
+        String domain;
+    };
+    Vector<ActiveMicrophoneTrack> m_active_microphone_tracks;
+    u64 m_last_microphone_revocation_sequence { 0 };
 };
 
 }

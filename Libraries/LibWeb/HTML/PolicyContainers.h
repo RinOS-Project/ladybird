@@ -55,6 +55,11 @@ public:
     // A report only integrity policy, which is an integrity policy, initially a new integrity policy.
     IntegrityPolicy report_only_integrity_policy {};
 
+    // Retain response policy headers so Documents restored from navigation
+    // history enforce the same microphone delegation boundary.
+    Vector<String> permissions_policy_headers;
+    bool permissions_policy_parse_failed { false };
+
     [[nodiscard]] GC::Ref<PolicyContainer> clone(GC::Heap&) const;
     [[nodiscard]] SerializedPolicyContainer serialize() const;
 

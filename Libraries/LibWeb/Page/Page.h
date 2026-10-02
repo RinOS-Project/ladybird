@@ -407,7 +407,8 @@ public:
     // receive a destination pathname or a writable file descriptor.
     virtual void page_did_request_download(URL::URL const&, ByteString const&) { }
     virtual void page_did_request_notification_permission(JS::PromiseCapability&);
-    virtual void page_did_request_microphone_permission(JS::PromiseCapability&);
+    virtual void page_did_request_microphone_permission(JS::PromiseCapability&, DOM::Document const&);
+    virtual bool page_did_create_microphone_track(MediaCapture::MediaStreamTrack&, URL::Origin const&) { return false; }
     virtual String page_get_notification_permission([[maybe_unused]] URL::Origin const&) { return {}; }
     virtual void page_did_click_link(URL::URL const&, [[maybe_unused]] ByteString const& target, [[maybe_unused]] unsigned modifiers) { }
     virtual void page_did_middle_click_link(URL::URL const&, [[maybe_unused]] ByteString const& target, [[maybe_unused]] unsigned modifiers) { }

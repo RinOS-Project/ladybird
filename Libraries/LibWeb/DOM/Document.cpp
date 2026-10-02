@@ -74,6 +74,7 @@
 #include <LibWeb/ContentSecurityPolicy/Directives/Directive.h>
 #include <LibWeb/ContentSecurityPolicy/Policy.h>
 #include <LibWeb/ContentSecurityPolicy/PolicyList.h>
+#include <LibWeb/ContentSecurityPolicy/Directives/DirectiveOperations.h>
 #include <LibWeb/DOM/AbstractElement.h>
 #include <LibWeb/DOM/AccessibilityTreeNode.h>
 #include <LibWeb/DOM/AdoptedStyleSheets.h>
@@ -4924,6 +4925,307 @@ void Document::unload_a_document_and_its_descendants(GC::Ptr<Document> new_docum
 }
 
 // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#allowed-to-use
+static bool is_ascii_policy_space(char value)
+{
+    return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\f';
+}
+
+static void trim_policy_range(char const* input, size_t& start, size_t& end)
+{
+    while (start < end && is_ascii_policy_space(input[start]))
+        ++start;
+    while (end > start && is_ascii_policy_space(input[end - 1u]))
+        --end;
+}
+
+static bool policy_range_equals(char const* input, size_t start, size_t end,
+                                StringView expected)
+{
+    if (end - start != expected.length())
+        return false;
+    for (size_t index = 0; index < expected.length(); ++index) {
+        char left = input[start + index];
+        char right = expected[index];
+        if (left >= 'A' && left <= 'Z')
+            left = static_cast<char>(left + ('a' - 'A'));
+        if (right >= 'A' && right <= 'Z')
+            right = static_cast<char>(right + ('a' - 'A'));
+        if (left != right)
+            return false;
+    }
+    return true;
+}
+
+static bool permissions_policy_token_matches(
+    char const* input, size_t start, size_t end,
+    URL::Origin const& owner_origin, URL::Origin const& target_origin,
+    bool allow_src, URL::Origin const* src_origin,
+    bool structured_header = false)
+{
+    trim_policy_range(input, start, end);
+    bool const single_quoted = end > start + 1u && input[start] == '\'' &&
+        input[end - 1u] == '\'';
+    bool const double_quoted = end > start + 1u && input[start] == '"' &&
+        input[end - 1u] == '"';
+    if (structured_header ? single_quoted : double_quoted)
+        return false;
+
+    if (structured_header &&
+        !double_quoted &&
+        !policy_range_equals(input, start, end, "*"sv) &&
+        !policy_range_equals(input, start, end, "self"sv))
+        return false;
+    if (!structured_header && !single_quoted &&
+        (policy_range_equals(input, start, end, "self"sv) ||
+         policy_range_equals(input, start, end, "src"sv) ||
+         policy_range_equals(input, start, end, "none"sv)))
+        return false;
+    if (!structured_header && single_quoted &&
+        !policy_range_equals(input, start + 1u, end - 1u, "self"sv) &&
+        !policy_range_equals(input, start + 1u, end - 1u, "src"sv) &&
+        !policy_range_equals(input, start + 1u, end - 1u, "none"sv))
+        return false;
+
+    if ((structured_header && double_quoted &&
+         (policy_range_equals(input, start + 1u, end - 1u, "*"sv) ||
+          policy_range_equals(input, start + 1u, end - 1u, "self"sv))) ||
+        (!structured_header && single_quoted &&
+         policy_range_equals(input, start + 1u, end - 1u, "none"sv)))
+        return false;
+
+    if (single_quoted || double_quoted) {
+        ++start;
+        --end;
+    }
+    if (policy_range_equals(input, start, end, "*"sv))
+        return true;
+    if (policy_range_equals(input, start, end, "self"sv))
+        return target_origin.is_same_origin(owner_origin);
+    if (allow_src && policy_range_equals(input, start, end, "src"sv))
+        return src_origin != nullptr && target_origin.is_same_origin(*src_origin);
+
+    auto target_url = URL::Parser::basic_parse(target_origin.serialize());
+    auto expression = String::from_utf8(StringView { input + start, end - start });
+    if (!target_url.has_value() || target_url->origin().is_opaque() ||
+        expression.is_error())
+        return false;
+    return Web::ContentSecurityPolicy::Directives::
+        does_url_match_expression_in_origin_with_redirect_count(
+            *target_url, expression.release_value(), owner_origin, 0u) ==
+        Web::ContentSecurityPolicy::Directives::MatchResult::Matches;
+}
+
+static bool permissions_policy_allowlist_matches(
+    char const* input, size_t start, size_t end,
+    URL::Origin const& owner_origin, URL::Origin const& target_origin,
+    bool allow_src = false, URL::Origin const* src_origin = nullptr,
+    bool structured_header = false)
+{
+    trim_policy_range(input, start, end);
+    if (end >= start + 2u && input[start] == '(' && input[end - 1u] == ')') {
+        ++start;
+        --end;
+    }
+    trim_policy_range(input, start, end);
+    if (start == end)
+        return false;
+
+    bool allowed = false;
+    size_t token_start = start;
+    while (token_start < end) {
+        while (token_start < end && is_ascii_policy_space(input[token_start]))
+            ++token_start;
+        if (token_start == end)
+            break;
+        size_t token_end = token_start;
+        while (token_end < end && !is_ascii_policy_space(input[token_end]))
+            ++token_end;
+        if (permissions_policy_token_matches(input, token_start, token_end,
+                                             owner_origin, target_origin,
+                                             allow_src, src_origin,
+                                             structured_header))
+            allowed = true;
+        token_start = token_end;
+    }
+    return allowed;
+}
+
+static bool microphone_policy_header_segment_allows(
+    char const* input, size_t start, size_t end,
+    URL::Origin const& owner_origin, URL::Origin const& target_origin,
+    bool& is_microphone_directive)
+{
+    trim_policy_range(input, start, end);
+    is_microphone_directive = false;
+    if (start == end)
+        return true;
+
+    size_t equals = start;
+    while (equals < end && input[equals] != '=')
+        ++equals;
+    size_t feature_end = equals;
+    trim_policy_range(input, start, feature_end);
+    if (!policy_range_equals(input, start, feature_end, "microphone"sv))
+        return true;
+
+    is_microphone_directive = true;
+    if (equals == end)
+        return false;
+    size_t value_start = equals + 1u;
+    trim_policy_range(input, value_start, end);
+    if (policy_range_equals(input, value_start, end, "*"sv) ||
+        policy_range_equals(input, value_start, end, "self"sv))
+        return permissions_policy_token_matches(
+            input, value_start, end, owner_origin, target_origin, false,
+            nullptr, true);
+    if (end > value_start + 1u && input[value_start] == '"' &&
+        input[end - 1u] == '"')
+        return permissions_policy_token_matches(
+            input, value_start, end, owner_origin, target_origin, false,
+            nullptr, true);
+    if (value_start == end || input[value_start] != '(' || input[end - 1u] != ')')
+        return false;
+    return permissions_policy_allowlist_matches(
+        input, value_start, end, owner_origin, target_origin, false, nullptr,
+        true);
+}
+
+static bool microphone_policy_headers_allow(
+    HTML::PolicyContainer const& policy_container,
+    URL::Origin const& owner_origin, URL::Origin const& target_origin)
+{
+    if (policy_container.permissions_policy_parse_failed)
+        return false;
+
+    for (auto const& header : policy_container.permissions_policy_headers) {
+        auto bytes = header.to_byte_string();
+        auto const* input = bytes.characters();
+        size_t const length = bytes.length();
+        size_t segment_start = 0u;
+        size_t parenthesis_depth = 0u;
+        for (size_t index = 0u; index <= length; ++index) {
+            if (index < length && input[index] == '(') {
+                ++parenthesis_depth;
+                continue;
+            }
+            if (index < length && input[index] == ')') {
+                if (parenthesis_depth == 0u)
+                    return false;
+                --parenthesis_depth;
+                continue;
+            }
+            if (index < length && (input[index] != ',' || parenthesis_depth != 0u))
+                continue;
+            if (parenthesis_depth != 0u)
+                return false;
+
+            bool is_microphone_directive = false;
+            if (!microphone_policy_header_segment_allows(
+                    input, segment_start, index, owner_origin, target_origin,
+                    is_microphone_directive))
+                return false;
+            segment_start = index + 1u;
+        }
+    }
+    return true;
+}
+
+static bool iframe_microphone_policy_allows(
+    HTML::NavigableContainer const& container,
+    URL::Origin const& owner_origin, URL::Origin const& target_origin)
+{
+    auto* source_document = container.content_document_without_origin_check();
+    Optional<URL::Origin> src_origin;
+    if (container.has_attribute(HTML::AttributeNames::srcdoc)) {
+        if (source_document != nullptr)
+            src_origin = source_document->origin();
+        else
+            src_origin = owner_origin;
+    } else {
+        auto src = container.get_attribute_value(HTML::AttributeNames::src);
+        if (src.is_empty()) {
+            src_origin = owner_origin;
+        } else if (auto src_url = container.document().encoding_parse_url(src);
+                   src_url.has_value()) {
+            auto parsed_src_origin = src_url->origin();
+            /* A redirect must not turn an allowlist based on the iframe's
+             * declared src into a grant for the redirect destination. */
+            if (!parsed_src_origin.is_opaque() && source_document != nullptr &&
+                source_document->origin().is_same_origin(parsed_src_origin))
+                src_origin = parsed_src_origin;
+        }
+    }
+
+    auto allow_attribute = container.get_attribute(HTML::AttributeNames::allow);
+    if (!allow_attribute.has_value())
+        return target_origin.is_same_origin(owner_origin);
+
+    auto bytes = allow_attribute->to_byte_string();
+    auto const* input = bytes.characters();
+    size_t const length = bytes.length();
+    size_t segment_start = 0u;
+    while (segment_start <= length) {
+        size_t segment_end = segment_start;
+        while (segment_end < length && input[segment_end] != ';')
+            ++segment_end;
+        size_t feature_start = segment_start;
+        size_t feature_end = feature_start;
+        while (feature_end < segment_end &&
+               !is_ascii_policy_space(input[feature_end]))
+            ++feature_end;
+        if (policy_range_equals(input, feature_start, feature_end,
+                                "microphone"sv)) {
+            size_t value_start = feature_end;
+            trim_policy_range(input, value_start, segment_end);
+            if (value_start == segment_end) {
+                return src_origin.has_value() &&
+                       target_origin.is_same_origin(*src_origin);
+            }
+            return permissions_policy_allowlist_matches(
+                input, value_start, segment_end, owner_origin, target_origin,
+                true, src_origin.has_value() ? &*src_origin : nullptr,
+                false);
+        }
+        if (segment_end == length)
+            break;
+        segment_start = segment_end + 1u;
+    }
+    return target_origin.is_same_origin(owner_origin);
+}
+
+static bool document_allows_microphone_capture(Document const& document)
+{
+    if (document.origin().is_opaque())
+        return false;
+    auto navigable = HTML::Navigable::navigable_with_active_document(
+        const_cast<Document&>(document));
+    if (!navigable)
+        return false;
+
+    auto* current_navigable = navigable.ptr();
+    while (current_navigable != nullptr) {
+        auto* current_document = current_navigable->active_document();
+        if (current_document == nullptr ||
+            !microphone_policy_headers_allow(
+                current_document->policy_container(), current_document->origin(),
+                document.origin()))
+            return false;
+
+        auto parent_navigable = current_navigable->parent();
+        if (!parent_navigable)
+            return true;
+        auto container = current_navigable->container();
+        auto* parent_document = current_navigable->container_document();
+        if (!container || parent_document == nullptr ||
+            !iframe_microphone_policy_allows(*container,
+                                             parent_document->origin(),
+                                             document.origin()))
+            return false;
+        current_navigable = parent_navigable.ptr();
+    }
+    return false;
+}
+
 bool Document::is_allowed_to_use_feature(PolicyControlledFeature feature) const
 {
     // 1. If document's browsing context is null, then return false.
@@ -4942,6 +5244,8 @@ bool Document::is_allowed_to_use_feature(PolicyControlledFeature feature) const
         if (PermissionsPolicy::AutoplayAllowlist::the().is_allowed_for_origin(*this, origin()) == PermissionsPolicy::Decision::Enabled)
             return true;
         break;
+    case PolicyControlledFeature::Microphone:
+        return document_allows_microphone_capture(*this);
     case PolicyControlledFeature::FocusWithoutUserActivation:
     case PolicyControlledFeature::EncryptedMedia:
         // FIXME: Implement allowlist for this.

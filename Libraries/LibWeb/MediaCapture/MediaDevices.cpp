@@ -32,7 +32,8 @@ void MediaDevices::initialize(JS::Realm& realm)
     Base::initialize(realm);
 }
 
-static WebIDL::ExceptionOr<GC::Ref<MediaStream>> start_audio_capture(JS::Realm& realm)
+static WebIDL::ExceptionOr<GC::Ref<MediaStream>> start_audio_capture(
+    JS::Realm& realm, Web::PageClient& page_client, URL::Origin const& origin)
 {
     RinAudioServiceDeviceListV1 devices {};
     if (rin_audio_service_client_devices(&devices) != 0)
@@ -68,6 +69,11 @@ static WebIDL::ExceptionOr<GC::Ref<MediaStream>> start_audio_capture(JS::Realm& 
 
     auto track_id = Crypto::generate_random_uuid();
     auto track = MediaStreamTrack::create(realm, audio_stream, move(track_id), "RinOS Audio Input"_string);
+    if (!page_client.page_did_create_microphone_track(*track, origin)) {
+        track->stop();
+        return WebIDL::NotAllowedError::create(
+            realm, "Microphone capture could not be registered for revocation"_utf16);
+    }
     return MediaStream::create(realm, track);
 }
 
@@ -88,24 +94,39 @@ GC::Ref<WebIDL::Promise> MediaDevices::get_user_media(MediaStreamConstraints con
             WebIDL::NotSupportedError::create(realm, "RinOS camera capture is not implemented"_utf16));
 
     auto* window = as_if<HTML::Window>(realm.global_object());
-    if (window == nullptr || window->browsing_context() == nullptr ||
-        !window->browsing_context()->is_top_level())
+    if (window == nullptr || window->browsing_context() == nullptr)
         return WebIDL::create_rejected_promise_from_exception(realm,
-            WebIDL::NotAllowedError::create(realm, "Microphone permission requires a top-level page"_utf16));
-    if (!window->associated_document().is_fully_active())
+            WebIDL::NotAllowedError::create(realm, "Microphone permission requires an active browsing context"_utf16));
+    auto& document = window->associated_document();
+    if (!document.is_fully_active())
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::InvalidStateError::create(realm, "Document is not fully active"_utf16));
+    if (!document.is_allowed_to_use_feature(DOM::PolicyControlledFeature::Microphone))
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NotAllowedError::create(realm, "Permissions Policy blocks microphone capture"_utf16));
 
+    GC::Ptr<HTML::Window> request_window = window;
+    auto request_origin = document.origin();
     auto permission_promise = WebIDL::create_promise(realm);
-    window->page().client().page_did_request_microphone_permission(*permission_promise);
+    window->page().client().page_did_request_microphone_permission(
+        *permission_promise, document);
     return WebIDL::upon_fulfillment(*permission_promise,
-        GC::create_function(realm.heap(), [this](JS::Value allowed) -> WebIDL::ExceptionOr<JS::Value> {
+        GC::create_function(realm.heap(), [this, request_window, request_origin](JS::Value allowed) -> WebIDL::ExceptionOr<JS::Value> {
             auto& permission_realm = this->realm();
             if (!allowed.is_boolean() || !allowed.as_bool())
                 return JS::throw_completion(WebIDL::NotAllowedError::create(
                     permission_realm, "Microphone permission was denied"_utf16));
 
-            auto stream_or_error = start_audio_capture(permission_realm);
+            if (!request_window ||
+                !request_window->associated_document().is_fully_active() ||
+                !request_window->associated_document().is_allowed_to_use_feature(
+                    DOM::PolicyControlledFeature::Microphone) ||
+                !request_window->associated_document().origin().is_same_origin(request_origin))
+                return JS::throw_completion(WebIDL::NotAllowedError::create(
+                    permission_realm, "Microphone request document is no longer authorized"_utf16));
+
+            auto stream_or_error = start_audio_capture(
+                permission_realm, request_window->page().client(), request_origin);
             if (stream_or_error.is_error())
                 return stream_or_error.release_error();
             return JS::Value(stream_or_error.release_value().ptr());

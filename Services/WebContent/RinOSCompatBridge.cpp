@@ -908,8 +908,8 @@ struct PageSession {
         view->on_request_notification_permission = [this] {
             return request_notification_permission();
         };
-        view->on_request_microphone_permission = [this] {
-            return request_microphone_permission();
+        view->on_request_microphone_permission = [this](ByteString origin) {
+            return request_microphone_permission(move(origin));
         };
 
         view->initialize_bridge_client();
@@ -1901,6 +1901,21 @@ struct PageSession {
         return -ESTALE;
     }
 
+    int revoke_microphone(RinWebContentMicrophoneRevokeV1 const& revocation)
+    {
+        if (!rin_webcontent_client_microphone_revoke_valid(&revocation))
+            return -EINVAL;
+        if (revocation.sequence == last_microphone_revocation_sequence)
+            return 0;
+        if (revocation.sequence < last_microphone_revocation_sequence)
+            return -ESTALE;
+        if (!view->revoke_microphone_capture(
+                ByteString { revocation.domain }, revocation.sequence))
+            return -EIO;
+        last_microphone_revocation_sequence = revocation.sequence;
+        return 0;
+    }
+
     WebView::ViewImplementation::PermissionRequest
     request_notification_permission()
     {
@@ -1921,16 +1936,17 @@ struct PageSession {
     }
 
     WebView::ViewImplementation::PermissionRequest
-    request_microphone_permission()
+    request_microphone_permission(ByteString origin)
     {
         WebView::ViewImplementation::PermissionRequest result {};
         u64 request_id = 0u;
         if (permission_producer.bound != 1u ||
             permission_navigation_generation == 0u ||
-            !rin_webcontent_permission_producer_request_bound(
+            !rin_webcontent_permission_producer_request_from_document(
                 &permission_producer, page_id,
                 permission_navigation_generation,
-                permission_renderer_generation, "microphone",
+                permission_renderer_generation, origin.characters(),
+                "microphone",
                 "Allow this site to use your microphone?", &request_id))
             return result;
 
@@ -2688,6 +2704,7 @@ struct PageSession {
     uint32_t permission_navigation_generation { 0 };
     uint64_t permission_renderer_generation { 1 };
     ByteString permission_authenticated_origin;
+    uint64_t last_microphone_revocation_sequence { 0 };
 
     int paint_shm_handle { -1 };
     void* paint_shm_addr { nullptr };
@@ -2968,6 +2985,26 @@ static int handle_complete_permission(PageSession& page, int client_fd,
     auto result = page.complete_permission(completion);
     return send_message(client_fd, RIN_WEBCONTENT_CMD_COMPLETE_PERMISSION_V1,
                         result, page.page_id, nullptr, 0, deadline_ms)
+        ? 0
+        : -EIO;
+}
+
+static int handle_revoke_microphone(PageSession& page, int client_fd,
+                                    ReadonlyBytes payload, u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentMicrophoneRevokeV1))
+        return send_message(client_fd,
+                            RIN_WEBCONTENT_CMD_REVOKE_MICROPHONE_V1, -EINVAL,
+                            page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+
+    auto const& revocation =
+        *reinterpret_cast<RinWebContentMicrophoneRevokeV1 const*>(payload.data());
+    auto result = page.revoke_microphone(revocation);
+    return send_message(client_fd,
+                        RIN_WEBCONTENT_CMD_REVOKE_MICROPHONE_V1, result,
+                        page.page_id, nullptr, 0, deadline_ms)
         ? 0
         : -EIO;
 }
@@ -3585,6 +3622,10 @@ static void handle_client(int client_fd)
     case RIN_WEBCONTENT_CMD_COMPLETE_PERMISSION_V1:
         (void)handle_complete_permission(*page, client_fd, payload_bytes,
                                          deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_REVOKE_MICROPHONE_V1:
+        (void)handle_revoke_microphone(*page, client_fd, payload_bytes,
+                                       deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_GET_PAGE_STATE_V1:
         (void)handle_get_state(*page, client_fd, header.command, deadline_ms);

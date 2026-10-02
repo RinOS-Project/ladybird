@@ -48,6 +48,27 @@ GC::Ref<PolicyContainer> create_a_policy_container_from_a_fetch_response(GC::Hea
     // 3. Set result's CSP list to the result of parsing a response's Content Security Policies given response.
     result->csp_list = ContentSecurityPolicy::Policy::parse_a_responses_content_security_policies(heap, response);
 
+    size_t permissions_policy_header_bytes = 0u;
+    size_t permissions_policy_header_count = 0u;
+    response->header_list()->for_each_header_value(
+        "Permissions-Policy"sv, [&](StringView value) {
+            ++permissions_policy_header_count;
+            if (permissions_policy_header_count > 32u ||
+                value.length() > 16384u ||
+                permissions_policy_header_bytes > 65536u - value.length()) {
+                result->permissions_policy_parse_failed = true;
+                return IterationDecision::Break;
+            }
+            permissions_policy_header_bytes += value.length();
+            auto decoded = String::from_utf8(value);
+            if (decoded.is_error()) {
+                result->permissions_policy_parse_failed = true;
+                return IterationDecision::Break;
+            }
+            result->permissions_policy_headers.append(decoded.release_value());
+            return IterationDecision::Continue;
+        });
+
     // FIXME: 4. If environment is non-null, then set result's embedder policy to the result of obtaining an embedder
     //           policy given response and environment. Otherwise, set it to "unsafe-none".
 
@@ -69,6 +90,8 @@ GC::Ref<PolicyContainer> create_a_policy_container_from_serialized_policy_contai
     result->csp_list = ContentSecurityPolicy::PolicyList::create(heap, serialized_policy_container.csp_list);
     result->embedder_policy = serialized_policy_container.embedder_policy;
     result->referrer_policy = serialized_policy_container.referrer_policy;
+    result->permissions_policy_headers = serialized_policy_container.permissions_policy_headers;
+    result->permissions_policy_parse_failed = serialized_policy_container.permissions_policy_parse_failed;
     return result;
 }
 
@@ -90,6 +113,9 @@ GC::Ref<PolicyContainer> PolicyContainer::clone(GC::Heap& heap) const
 
     // 5. Set clone's integrity policy to a copy of policyContainer's integrity policy.
     clone->integrity_policy = integrity_policy;
+    clone->report_only_integrity_policy = report_only_integrity_policy;
+    clone->permissions_policy_headers = permissions_policy_headers;
+    clone->permissions_policy_parse_failed = permissions_policy_parse_failed;
 
     // 6. Return clone.
     return clone;
@@ -101,6 +127,8 @@ SerializedPolicyContainer PolicyContainer::serialize() const
         .csp_list = csp_list->serialize(),
         .embedder_policy = embedder_policy,
         .referrer_policy = referrer_policy,
+        .permissions_policy_headers = permissions_policy_headers,
+        .permissions_policy_parse_failed = permissions_policy_parse_failed,
     };
 }
 
