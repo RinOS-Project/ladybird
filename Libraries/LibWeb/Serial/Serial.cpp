@@ -71,23 +71,6 @@ void Serial::poll_portal_events()
     }
 }
 
-static bool serial_filter_matches(RinWebSerialDeviceV1 const& device,
-                                  SerialPortRequestOptions const& options)
-{
-    if (!options.filters.has_value()) return true;
-    for (auto const& filter : *options.filters) {
-        if (filter.usb_vendor_id.has_value() &&
-            device.info.vendor_id != *filter.usb_vendor_id)
-            continue;
-        if (filter.usb_product_id.has_value() &&
-            device.info.product_id != *filter.usb_product_id)
-            continue;
-        if (filter.bluetooth_service_class_id.has_value()) continue;
-        return true;
-    }
-    return false;
-}
-
 // https://wicg.github.io/serial/#requestport-method
 WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> Serial::request_port(SerialPortRequestOptions const options)
 {
@@ -117,54 +100,13 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> Serial::request_port(SerialPortReq
                     WebIDL::NotSupportedError::create(realm, "Bluetooth serial is not supported"_utf16));
         }
     }
-    RinWebSerialDeviceV1 devices[RIN_WEB_SERIAL_MAX_DEVICES] {};
-    uint32_t count = 0u;
-    int result = rin_web_serial_enumerate(devices, RIN_WEB_SERIAL_MAX_DEVICES,
-                                          &count);
-    if (result != RIN_SERIAL_OK && result != RIN_SERIAL_EOVERFLOW)
-        return WebIDL::create_rejected_promise_from_exception(realm,
-            WebIDL::NetworkError::create(realm, "Serial device enumeration failed"_utf16));
-    std::uint64_t selected_object_id = 0u;
-    for (uint32_t index = 0u; index < count && index < RIN_WEB_SERIAL_MAX_DEVICES;
-         ++index) {
-        if (!serial_filter_matches(devices[index], options)) continue;
-        selected_object_id = devices[index].info.object_id;
-        break;
-    }
-    if (selected_object_id == 0u)
-        return WebIDL::create_rejected_promise_from_exception(realm,
-            WebIDL::NotFoundError::create(realm, "No permitted serial device is available"_utf16));
 
-    Vector<RinSerialPortalFilterV1> portal_filters;
-    if (options.filters.has_value()) {
-        portal_filters.ensure_capacity(options.filters->size());
-        for (auto const& filter : *options.filters) {
-            RinSerialPortalFilterV1 portal_filter {};
-            if (filter.usb_vendor_id.has_value()) {
-                portal_filter.has_vendor_id = 1u;
-                portal_filter.vendor_id = *filter.usb_vendor_id;
-            }
-            if (filter.usb_product_id.has_value()) {
-                portal_filter.has_product_id = 1u;
-                portal_filter.product_id = *filter.usb_product_id;
-            }
-            portal_filters.append(portal_filter);
-        }
-    }
-    auto origin = HTML::relevant_settings_object(*this).origin().serialize().to_byte_string();
-    RinWebSerialDeviceV1 granted_device {};
-    int permission_result = rin_web_serial_request_port(
-        origin.characters(), 1u, portal_filters.data(), portal_filters.size(),
-        selected_object_id, &granted_device);
-    if (permission_result != RIN_SERIAL_OK)
-        return WebIDL::create_rejected_promise_from_exception(realm,
-            WebIDL::NotFoundError::create(realm, "Serial device permission was denied"_utf16));
-    // Allocate through the realm so this remains compatible with LibJS
-    // versions where platform objects inherit Object::create(Realm&, Object*).
-    auto port = realm.create<SerialPort>(realm);
-    port->set_backend_device(granted_device);
-    m_granted_ports.append(port);
-    return WebIDL::create_resolved_promise(realm, port);
+    /* Never let the renderer choose the first matching device as a substitute
+     * for the missing Browser-owned trusted chooser.  The Browser must return
+     * an explicitly selected object before requestPort() can grant access. */
+    return WebIDL::create_rejected_promise_from_exception(realm,
+        WebIDL::NotAllowedError::create(realm,
+            "The Browser serial-device chooser is unavailable"_utf16));
 }
 
 // https://wicg.github.io/serial/#getports-method
