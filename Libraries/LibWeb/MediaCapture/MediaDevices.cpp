@@ -6,6 +6,7 @@
 
 #include <LibJS/Runtime/Error.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Crypto/Crypto.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/MediaCapture/MediaDevices.h>
 #include <LibWeb/WebIDL/DOMException.h>
@@ -80,7 +81,7 @@ GC::Ref<WebIDL::Promise> MediaDevices::get_user_media(MediaStreamConstraints con
             WebIDL::NotAllowedError::create(realm, "Audio capture could not be started"_utf16));
     }
 
-    auto track_id = MUST(String::formatted("rinos-audio-track-{}", audio_stream));
+    auto track_id = Crypto::generate_random_uuid();
     auto track = MediaStreamTrack::create(realm, audio_stream, move(track_id), "RinOS Audio Input"_string);
     auto stream = MediaStream::create(realm, track);
     return WebIDL::create_resolved_promise(realm, stream);
