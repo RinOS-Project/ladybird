@@ -11,6 +11,7 @@
 #include <LibMedia/Audio/ChannelMap.h>
 #include <LibThreading/Thread.h>
 #include <rinruntime/rin_audio_service_client.h>
+#include <math.h>
 #include <unistd.h>
 
 #include "PlaybackStreamRinOS.h"
@@ -206,7 +207,9 @@ void PlaybackStreamRinOS::InternalState::render_one_chunk()
     } else {
         for (size_t index = 0; index < sample_count_to_write; ++index) {
             auto sample = supplied[index];
-            if (sample <= -1.0f)
+            if (!isfinite(sample))
+                pcm_samples[index] = 0;
+            else if (sample <= -1.0f)
                 pcm_samples[index] = -32768;
             else if (sample >= 1.0f)
                 pcm_samples[index] = 32767;
