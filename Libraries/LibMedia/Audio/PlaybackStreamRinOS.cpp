@@ -220,7 +220,7 @@ void PlaybackStreamRinOS::InternalState::render_one_chunk()
 
     auto bytes = ReadonlyBytes { reinterpret_cast<u8 const*>(pcm_samples.data()), sample_count_to_write * sizeof(i16) };
     size_t offset = 0;
-    while (offset < bytes.size()) {
+    while (offset < bytes.size() && !m_exit.load()) {
         auto written = rin_audio_service_stream_write(
             audio_handle, bytes.data() + offset,
             static_cast<u32>(bytes.size() - offset));
