@@ -492,6 +492,8 @@ public:
         u64 generation { 0 };
         u32 state { 0 };
         u32 update_via_cache { 0 };
+        u64 list_snapshot_id { 0 };
+        u32 list_next_index { 0 };
         ByteString origin;
         ByteString script_url;
         ByteString scope;
@@ -500,7 +502,9 @@ public:
         [[maybe_unused]] u32 operation, [[maybe_unused]] ByteString client_url,
         [[maybe_unused]] ByteString origin, [[maybe_unused]] ByteString script_url,
         [[maybe_unused]] ByteString scope,
-        [[maybe_unused]] u32 update_via_cache)
+        [[maybe_unused]] u32 update_via_cache = 0,
+        [[maybe_unused]] u64 list_snapshot_id = 0,
+        [[maybe_unused]] u32 list_index = 0)
     {
         return {};
     }

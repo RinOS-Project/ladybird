@@ -5,6 +5,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/HashTable.h>
+#include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
@@ -28,6 +30,159 @@
 namespace Web::ServiceWorker {
 
 GC_DEFINE_ALLOCATOR(ServiceWorkerContainer);
+
+class RegistrationListRequest final : public JS::Cell {
+    GC_CELL(RegistrationListRequest, JS::Cell);
+    GC_DECLARE_ALLOCATOR(RegistrationListRequest);
+
+public:
+    static GC::Ref<RegistrationListRequest> create(
+        JS::Realm& realm, GC::Ref<WebIDL::Promise> promise,
+        StorageAPI::StorageKey storage_key, ByteString client_url)
+    {
+        return realm.create<RegistrationListRequest>(
+            realm, promise, move(storage_key), move(client_url));
+    }
+
+    void start()
+    {
+        schedule_next();
+    }
+
+private:
+    RegistrationListRequest(JS::Realm& realm,
+                            GC::Ref<WebIDL::Promise> promise,
+                            StorageAPI::StorageKey storage_key,
+                            ByteString client_url)
+        : m_promise(promise)
+        , m_storage_key(move(storage_key))
+        , m_client_url(move(client_url))
+        , m_results(MUST(JS::Array::create(realm, 0)))
+    {
+    }
+
+    virtual void visit_edges(Cell::Visitor& visitor) override
+    {
+        Base::visit_edges(visitor);
+        visitor.visit(m_promise);
+        visitor.visit(m_results);
+    }
+
+    void reject(JS::Realm& realm, StringView message)
+    {
+        WebIDL::reject_promise(realm, m_promise,
+            JS::TypeError::create(realm, message));
+    }
+
+    void schedule_next()
+    {
+        auto self = GC::Ref { *this };
+        auto& realm = HTML::relevant_realm(m_promise->promise());
+        Platform::EventLoopPlugin::the().deferred_invoke(
+            GC::create_function(realm.heap(),
+                [self] { self->request_next(); }));
+    }
+
+    void request_next()
+    {
+        auto& realm = HTML::relevant_realm(m_promise->promise());
+        HTML::TemporaryExecutionContext const execution_context {
+            realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
+        auto parsed_client_url = DOMURL::parse(m_client_url);
+        if (!parsed_client_url.has_value()) {
+            reject(realm, "The ServiceWorker client URL is no longer valid"sv);
+            return;
+        }
+        auto const expected_origin =
+            parsed_client_url->origin().serialize().to_byte_string();
+        auto response = Bindings::principal_host_defined_page(realm).client()
+            .request_service_worker_owner(
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_LIST,
+                m_client_url, {}, {}, {}, 0u,
+                m_snapshot_id, m_next_index);
+        if (!response.accepted) {
+            reject(realm,
+                "The Browser profile owner could not enumerate ServiceWorker registrations"sv);
+            return;
+        }
+
+        if (!response.found) {
+            if (response.generation != 0u || response.state != 0u ||
+                response.update_via_cache != 0u ||
+                response.list_snapshot_id != 0u ||
+                response.list_next_index != 0u ||
+                !response.origin.is_empty() ||
+                !response.script_url.is_empty() ||
+                !response.scope.is_empty()) {
+                reject(realm,
+                    "The Browser profile owner returned an invalid registration list terminator"sv);
+                return;
+            }
+            MUST(m_results->set_integrity_level(JS::Object::IntegrityLevel::Frozen));
+            WebIDL::resolve_promise(realm, m_promise, m_results);
+            return;
+        }
+
+        if (m_item_count >= 256u || response.generation == 0u ||
+            response.state > 2u || response.update_via_cache > 2u ||
+            response.list_snapshot_id == 0u ||
+            response.list_next_index != m_next_index + 1u ||
+            (m_snapshot_id != 0u && response.list_snapshot_id != m_snapshot_id) ||
+            response.origin != expected_origin) {
+            reject(realm,
+                "The Browser profile owner returned a malformed registration list item"sv);
+            return;
+        }
+
+        auto parsed_scope = DOMURL::parse(response.scope);
+        auto parsed_script = DOMURL::parse(response.script_url);
+        auto const serialized_scope = parsed_scope.has_value()
+            ? parsed_scope->serialize(URL::ExcludeFragment::Yes).to_byte_string()
+            : ByteString {};
+        auto const serialized_script = parsed_script.has_value()
+            ? parsed_script->serialize(URL::ExcludeFragment::Yes).to_byte_string()
+            : ByteString {};
+        if (!parsed_scope.has_value() || !parsed_script.has_value() ||
+            serialized_scope != response.scope ||
+            serialized_script != response.script_url ||
+            !parsed_scope->origin().is_same_origin(parsed_client_url->origin()) ||
+            !parsed_script->origin().is_same_origin(parsed_client_url->origin()) ||
+            m_seen_scopes.contains(serialized_scope)) {
+            reject(realm,
+                "The Browser profile owner returned a mismatched registration list item"sv);
+            return;
+        }
+
+        m_seen_scopes.set(serialized_scope);
+        auto maybe_registration = Registration::get(
+            m_storage_key, parsed_scope.value());
+        auto& registration = maybe_registration.has_value()
+            ? maybe_registration.value()
+            : Registration::set(m_storage_key, parsed_scope.value(),
+                static_cast<Bindings::ServiceWorkerUpdateViaCache>(response.update_via_cache));
+        registration.set_update_via_cache(
+            static_cast<Bindings::ServiceWorkerUpdateViaCache>(response.update_via_cache));
+
+        auto registration_object = HTML::relevant_settings_object(m_promise->promise())
+            .get_service_worker_registration_object(registration);
+        VERIFY(MUST(m_results->create_data_property(m_item_count, registration_object)));
+        ++m_item_count;
+        m_snapshot_id = response.list_snapshot_id;
+        m_next_index = response.list_next_index;
+        schedule_next();
+    }
+
+    GC::Ref<WebIDL::Promise> m_promise;
+    StorageAPI::StorageKey m_storage_key;
+    ByteString m_client_url;
+    GC::Ref<JS::Array> m_results;
+    AK::HashTable<ByteString> m_seen_scopes;
+    u64 m_snapshot_id { 0 };
+    u32 m_next_index { 0 };
+    u32 m_item_count { 0 };
+};
+
+GC_DEFINE_ALLOCATOR(RegistrationListRequest);
 
 ServiceWorkerContainer::ServiceWorkerContainer(JS::Realm& realm)
     : DOM::EventTarget(realm)
@@ -204,6 +359,24 @@ GC::Ref<WebIDL::Promise> ServiceWorkerContainer::get_registration(String const& 
         WebIDL::resolve_promise(realm, promise, registration_object);
     }));
 
+    return promise;
+}
+
+// https://w3c.github.io/ServiceWorker/#navigator-service-worker-getregistrations
+GC::Ref<WebIDL::Promise> ServiceWorkerContainer::get_registrations()
+{
+    auto& realm = this->realm();
+    auto client = m_service_worker_client;
+    auto storage_key = StorageAPI::obtain_a_storage_key(client);
+    if (!storage_key.has_value())
+        return WebIDL::create_rejected_promise(realm,
+            JS::TypeError::create(realm, "Failed to obtain a storage key"sv));
+
+    auto promise = WebIDL::create_promise(realm);
+    auto const client_url = client->creation_url
+        .serialize(URL::ExcludeFragment::Yes).to_byte_string();
+    RegistrationListRequest::create(
+        realm, promise, storage_key.release_value(), client_url)->start();
     return promise;
 }
 

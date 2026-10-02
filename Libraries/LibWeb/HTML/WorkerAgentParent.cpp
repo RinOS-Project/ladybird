@@ -202,13 +202,16 @@ void WorkerAgentParent::setup_worker_ipc_callbacks(JS::Realm& realm)
 #endif
     m_worker_ipc->on_request_service_worker_owner = [realm = GC::RawRef<JS::Realm> { realm }](
         u32 operation, ByteString client_url, ByteString origin,
-        ByteString script_url, ByteString scope, u32 update_via_cache) {
+        ByteString script_url, ByteString scope, u32 update_via_cache,
+        u64 list_snapshot_id, u32 list_index) {
         auto response = Bindings::principal_host_defined_page(realm).client()
             .request_service_worker_owner(operation, move(client_url), move(origin),
-                move(script_url), move(scope), update_via_cache);
+                move(script_url), move(scope), update_via_cache,
+                list_snapshot_id, list_index);
         return Messages::WebWorkerClient::RequestServiceWorkerOwnerResponse {
             response.accepted, response.found, response.generation, response.state,
             response.update_via_cache,
+            response.list_snapshot_id, response.list_next_index,
             move(response.origin), move(response.script_url), move(response.scope) };
     };
     m_worker_ipc->on_request_worker_agent = [realm = GC::RawRef<JS::Realm> { realm }](Web::Bindings::AgentType worker_type) -> Messages::WebWorkerClient::RequestWorkerAgentResponse {

@@ -55,6 +55,8 @@ public:
         u64 generation { 0 };
         u32 state { 0 };
         u32 update_via_cache { 0 };
+        u64 list_snapshot_id { 0 };
+        u32 list_next_index { 0 };
         ByteString origin;
         ByteString script_url;
         ByteString scope;
@@ -285,7 +287,8 @@ public:
     Function<void()> on_web_content_process_change_for_cross_site_navigation;
     Function<ServiceWorkerOwnerResponse(u32 operation, ByteString client_url,
                                         ByteString origin, ByteString script_url,
-                                        ByteString scope, u32 update_via_cache)>
+                                        ByteString scope, u32 update_via_cache,
+                                        u64 list_snapshot_id, u32 list_index)>
         on_service_worker_owner_request;
     Function<HttpCookieOwnerResponse(u32 operation, ByteString request_url,
                                      ByteString origin, ByteString cookie_data,

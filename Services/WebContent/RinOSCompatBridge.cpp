@@ -900,10 +900,12 @@ struct PageSession {
         view->on_service_worker_owner_request =
             [this](u32 operation, ByteString client_url, ByteString origin,
                    ByteString script_url, ByteString scope,
-                   u32 update_via_cache) {
+                   u32 update_via_cache, u64 list_snapshot_id,
+                   u32 list_index) {
                 return service_worker_owner_request(
                     operation, move(client_url), move(origin),
-                    move(script_url), move(scope), update_via_cache);
+                    move(script_url), move(scope), update_via_cache,
+                    list_snapshot_id, list_index);
             };
         view->on_http_cookie_owner_request =
             [this](u32 operation, ByteString request_url, ByteString origin,
@@ -949,7 +951,8 @@ struct PageSession {
     WebView::ViewImplementation::ServiceWorkerOwnerResponse
     service_worker_owner_request(u32 operation, ByteString client_url,
                                  ByteString origin, ByteString script_url,
-                                 ByteString scope, u32 update_via_cache)
+                                 ByteString scope, u32 update_via_cache,
+                                 u64 list_snapshot_id, u32 list_index)
     {
         WebView::ViewImplementation::ServiceWorkerOwnerResponse result;
         if (s_service_worker_owner_fd < 0 ||
@@ -963,7 +966,12 @@ struct PageSession {
         request.struct_size = sizeof(request);
         request.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
         request.operation = static_cast<u16>(operation);
-        request.update_via_cache = update_via_cache;
+        request.update_via_cache = operation ==
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_LIST
+            ? list_index
+            : update_via_cache;
+        if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_LIST)
+            request.reserved[0] = list_snapshot_id;
         copy_c_string(request.client_url, sizeof(request.client_url), client_url);
         copy_c_string(request.origin, sizeof(request.origin), origin);
         copy_c_string(request.script_url, sizeof(request.script_url), script_url);
@@ -1018,16 +1026,25 @@ struct PageSession {
             rin_web_serial_set_portal_transport(nullptr);
             return result;
         }
-        result.accepted =
-            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED ||
-            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_NOT_FOUND ||
-            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_PERMISSION;
+        if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_LIST) {
+            result.accepted =
+                response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_LIST_ITEM ||
+                response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_LIST_DONE;
+        } else {
+            result.accepted =
+                response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED ||
+                response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_NOT_FOUND ||
+                response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_PERMISSION;
+        }
         result.found =
             response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED ||
-            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_PERMISSION;
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_PERMISSION ||
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_LIST_ITEM;
         result.generation = response.generation;
         result.state = response.state;
         result.update_via_cache = response.update_via_cache;
+        result.list_snapshot_id = response.reserved[0];
+        result.list_next_index = static_cast<u32>(response.reserved[1]);
         result.origin = ByteString { response.origin };
         result.script_url = ByteString { response.script_url };
         result.scope = ByteString { response.scope };

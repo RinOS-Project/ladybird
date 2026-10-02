@@ -204,7 +204,8 @@ private:
     virtual ServiceWorkerOwnerResponse request_service_worker_owner(
         u32 operation, ByteString client_url, ByteString origin,
         ByteString script_url, ByteString scope,
-        u32 update_via_cache) override;
+        u32 update_via_cache, u64 list_snapshot_id = 0,
+        u32 list_index = 0) override;
     virtual HttpCookieOwnerResponse request_http_cookie_owner(
         u32 operation, ByteString request_url, ByteString origin,
         ByteString cookie_data, u32 policy) override;

@@ -138,7 +138,7 @@ endpoint WebContentClient
     did_find_in_page(u64 page_id, size_t current_match_index, Optional<size_t> total_match_count) =|
 
     request_worker_agent(u64 page_id, Web::Bindings::AgentType worker_type) => (IPC::TransportHandle handle, IPC::TransportHandle request_server_handle, IPC::TransportHandle image_decoder_handle) // FIXME: Add required attributes to select a SharedWorker Agent
-    request_service_worker_owner(u64 page_id, u32 operation, ByteString client_url, ByteString origin, ByteString script_url, ByteString scope, u32 update_via_cache) => (bool accepted, bool found, u64 generation, u32 state, u32 response_update_via_cache, ByteString response_origin, ByteString response_script_url, ByteString response_scope)
+    request_service_worker_owner(u64 page_id, u32 operation, ByteString client_url, ByteString origin, ByteString script_url, ByteString scope, u32 update_via_cache, u64 list_snapshot_id, u32 list_index) => (bool accepted, bool found, u64 generation, u32 state, u32 response_update_via_cache, u64 response_list_snapshot_id, u32 response_list_next_index, ByteString response_origin, ByteString response_script_url, ByteString response_scope)
     request_http_cookie_owner(u64 page_id, u32 operation, ByteString request_url, ByteString origin, ByteString cookie_data, u32 policy) => (bool accepted, bool found, u64 generation, ByteString response_data)
     request_notification_permission(u64 page_id) => (u32 navigation_generation, u64 request_id)
     request_microphone_permission(u64 page_id, ByteString origin) => (u32 navigation_generation, u64 request_id)

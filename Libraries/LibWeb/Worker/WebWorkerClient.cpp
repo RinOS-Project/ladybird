@@ -74,12 +74,14 @@ Messages::WebWorkerClient::RequestHttpCookieOwnerResponse WebWorkerClient::reque
 
 Messages::WebWorkerClient::RequestServiceWorkerOwnerResponse WebWorkerClient::request_service_worker_owner(
     u32 operation, ByteString client_url, ByteString origin,
-    ByteString script_url, ByteString scope, u32 update_via_cache)
+    ByteString script_url, ByteString scope, u32 update_via_cache,
+    u64 list_snapshot_id, u32 list_index)
 {
     if (on_request_service_worker_owner)
         return on_request_service_worker_owner(operation, move(client_url),
-            move(origin), move(script_url), move(scope), update_via_cache);
-    return { false, false, 0, 0, 0, {}, {}, {} };
+            move(origin), move(script_url), move(scope), update_via_cache,
+            list_snapshot_id, list_index);
+    return { false, false, 0, 0, 0, 0, 0, {}, {}, {} };
 }
 
 Messages::WebWorkerClient::RequestWorkerAgentResponse WebWorkerClient::request_worker_agent(Web::Bindings::AgentType worker_type)

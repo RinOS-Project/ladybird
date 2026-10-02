@@ -157,7 +157,8 @@ private:
     virtual Messages::WebContentClient::RequestServiceWorkerOwnerResponse request_service_worker_owner(
         u64 page_id, u32 operation, ByteString client_url, ByteString origin,
         ByteString script_url, ByteString scope,
-        u32 update_via_cache) override;
+        u32 update_via_cache, u64 list_snapshot_id,
+        u32 list_index) override;
     virtual Messages::WebContentClient::RequestHttpCookieOwnerResponse request_http_cookie_owner(
         u64 page_id, u32 operation, ByteString request_url, ByteString origin,
         ByteString cookie_data, u32 policy) override;

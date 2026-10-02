@@ -1048,11 +1048,12 @@ Web::PageClient::WorkerAgentResponse PageClient::request_worker_agent(Web::Bindi
 
 Web::PageClient::ServiceWorkerOwnerResponse PageClient::request_service_worker_owner(
     u32 operation, ByteString client_url, ByteString origin,
-    ByteString script_url, ByteString scope, u32 update_via_cache)
+    ByteString script_url, ByteString scope, u32 update_via_cache,
+    u64 list_snapshot_id, u32 list_index)
 {
     auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::RequestServiceWorkerOwner>(
         m_id, operation, move(client_url), move(origin), move(script_url),
-        move(scope), update_via_cache);
+        move(scope), update_via_cache, list_snapshot_id, list_index);
     if (!response) {
         dbgln("WebContent client disconnected during RequestServiceWorkerOwner.");
         return {};
@@ -1064,6 +1065,8 @@ Web::PageClient::ServiceWorkerOwnerResponse PageClient::request_service_worker_o
         response->generation(),
         response->state(),
         response->response_update_via_cache(),
+        response->response_list_snapshot_id(),
+        response->response_list_next_index(),
         response->take_response_origin(),
         response->take_response_script_url(),
         response->take_response_scope(),
