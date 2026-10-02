@@ -205,8 +205,18 @@ public:
 
     void report(u64 transfer_id, FileDownloader::DownloadFailure failure)
     {
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+        try {
+#endif
         if (m_callback)
             m_callback(transfer_id, failure);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+        } catch (...) {
+            /* The Browser bridge is an owner callback.  A callback failure
+             * must not unwind through the event loop or the transfer worker;
+             * the transfer has already been closed before this report. */
+        }
+#endif
     }
 
 private:
@@ -224,10 +234,19 @@ public:
                 ByteString url, ByteString referrer, ByteString filename, u64 size,
                 u64 generation, ByteString validator, u64 committed_bytes)
     {
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+        try {
+#endif
         if (m_callback)
             m_callback(transfer_id, event, move(url), move(referrer),
                        move(filename), size, generation, move(validator),
                        committed_bytes);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+        } catch (...) {
+            /* Event delivery is advisory metadata.  Never let a Browser
+             * owner callback tear down the worker or event-loop boundary. */
+        }
+#endif
     }
 
 private:
