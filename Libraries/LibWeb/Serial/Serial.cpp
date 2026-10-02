@@ -46,10 +46,68 @@ void Serial::visit_edges(Cell::Visitor& visitor)
     Base::visit_edges(visitor);
     for (auto& port : m_granted_ports)
         visitor.visit(port);
+    visitor.visit(m_pending_request_port_promise);
 }
 
 void Serial::poll_portal_events()
 {
+    if (m_pending_request_port_promise &&
+        m_pending_request_port_id != 0u &&
+        m_pending_request_port_page_id != 0u) {
+        RinWebSerialDeviceV1 selected_device {};
+        const int result = rin_web_serial_request_port_poll(
+            m_pending_request_port_page_id,
+            m_pending_request_port_origin.c_str(),
+            m_pending_request_port_id, &selected_device);
+        if (result != RIN_SERIAL_EAGAIN) {
+            auto promise = m_pending_request_port_promise;
+            const std::string pending_origin = m_pending_request_port_origin;
+            m_pending_request_port_promise = nullptr;
+            m_pending_request_port_id = 0u;
+            m_pending_request_port_page_id = 0u;
+            m_pending_request_port_origin.clear();
+
+            auto& request_realm = this->realm();
+            auto* window = as_if<HTML::Window>(request_realm.global_object());
+            if (result == RIN_SERIAL_OK) {
+                std::string current_origin;
+                if (window != nullptr) {
+                    auto serialized = window->associated_document().origin()
+                                          .serialize().to_byte_string();
+                    current_origin.assign(serialized.characters(),
+                                          serialized.length());
+                }
+                if (window == nullptr ||
+                    !window->associated_document().is_fully_active() ||
+                    current_origin != pending_origin) {
+                    WebIDL::reject_promise(request_realm, *promise,
+                        WebIDL::NotAllowedError::create(
+                            request_realm,
+                            "Serial request document is no longer authorized"_utf16));
+                } else {
+                    auto port = request_realm.create<SerialPort>(request_realm);
+                    port->set_backend_device(selected_device);
+                    m_granted_ports.append(port);
+                    WebIDL::resolve_promise(request_realm, *promise,
+                                            JS::Value(port.ptr()));
+                }
+            } else if (result == RIN_SERIAL_EPERM ||
+                       result == RIN_SERIAL_EBADF) {
+                WebIDL::reject_promise(request_realm, *promise,
+                    WebIDL::NotAllowedError::create(
+                        request_realm, "Serial device selection was cancelled or denied"_utf16));
+            } else if (result == RIN_SERIAL_ENODEV) {
+                WebIDL::reject_promise(request_realm, *promise,
+                    WebIDL::NotFoundError::create(
+                        request_realm, "Selected serial device is no longer available"_utf16));
+            } else {
+                WebIDL::reject_promise(request_realm, *promise,
+                    WebIDL::NetworkError::create(
+                        request_realm, "Serial device chooser transport failed"_utf16));
+            }
+        }
+    }
+
     /* The portal client owns the authenticated snapshot and returns at most
      * one transition per poll.  Keep the Web Serial event delivery on the
      * Ladybird event-loop timer so no portal/socket callback runs user code
@@ -100,13 +158,59 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> Serial::request_port(SerialPortReq
                     WebIDL::NotSupportedError::create(realm, "Bluetooth serial is not supported"_utf16));
         }
     }
+    if (m_pending_request_port_promise)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::InvalidStateError::create(
+                realm, "A serial-device chooser is already open"_utf16));
 
-    /* Never let the renderer choose the first matching device as a substitute
-     * for the missing Browser-owned trusted chooser.  The Browser must return
-     * an explicitly selected object before requestPort() can grant access. */
-    return WebIDL::create_rejected_promise_from_exception(realm,
-        WebIDL::NotAllowedError::create(realm,
-            "The Browser serial-device chooser is unavailable"_utf16));
+    RinSerialPortalFilterV1 portal_filters[RIN_SERIAL_PORTAL_MAX_FILTERS] {};
+    uint32_t filter_count = 0u;
+    if (options.filters.has_value()) {
+        for (auto const& filter : *options.filters) {
+            auto& portal_filter = portal_filters[filter_count++];
+            if (filter.usb_vendor_id.has_value()) {
+                portal_filter.has_vendor_id = 1u;
+                portal_filter.vendor_id = *filter.usb_vendor_id;
+            }
+            if (filter.usb_product_id.has_value()) {
+                portal_filter.has_product_id = 1u;
+                portal_filter.product_id = *filter.usb_product_id;
+            }
+        }
+    }
+
+    auto* window = as_if<HTML::Window>(realm.global_object());
+    if (window == nullptr || !window->associated_document().is_fully_active())
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::InvalidStateError::create(
+                realm, "Serial request document is not fully active"_utf16));
+    const uint64_t page_id = window->page().client().id();
+    if (page_id == 0u || page_id > UINT32_MAX)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NotAllowedError::create(
+                realm, "Serial request has no authenticated page identity"_utf16));
+    auto origin = window->associated_document().origin().serialize().to_byte_string();
+    const std::string request_origin(origin.characters(), origin.length());
+    uint64_t request_id = 0u;
+    const int result = rin_web_serial_request_port_begin(
+        static_cast<uint32_t>(page_id), request_origin.c_str(), 1u,
+        portal_filters, filter_count, &request_id);
+    if (result != RIN_SERIAL_EAGAIN || request_id == 0u) {
+        if (result == RIN_SERIAL_EPERM)
+            return WebIDL::create_rejected_promise_from_exception(realm,
+                WebIDL::NotAllowedError::create(
+                    realm, "Browser denied the serial-device chooser"_utf16));
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NetworkError::create(
+                realm, "Serial device chooser could not be started"_utf16));
+    }
+
+    auto promise = WebIDL::create_promise(realm);
+    m_pending_request_port_promise = promise;
+    m_pending_request_port_origin = request_origin;
+    m_pending_request_port_id = request_id;
+    m_pending_request_port_page_id = static_cast<uint32_t>(page_id);
+    return promise;
 }
 
 // https://wicg.github.io/serial/#getports-method
@@ -116,11 +220,18 @@ GC::Ref<WebIDL::Promise> Serial::get_ports()
     if (HTML::is_non_secure_context(HTML::relevant_settings_object(*this)))
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::SecurityError::create(realm, "Web Serial requires a secure context"_utf16));
+    auto* window = as_if<HTML::Window>(realm.global_object());
+    if (window == nullptr || window->page().client().id() == 0u ||
+        window->page().client().id() > UINT32_MAX)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NotAllowedError::create(
+                realm, "Serial request has no authenticated page identity"_utf16));
     auto origin = HTML::relevant_settings_object(*this).origin().serialize().to_byte_string();
     RinWebSerialDeviceV1 devices[RIN_WEB_SERIAL_MAX_DEVICES] {};
     uint32_t count = 0u;
-    if (rin_web_serial_get_ports(origin.characters(), devices,
-                                 RIN_WEB_SERIAL_MAX_DEVICES, &count) !=
+    if (rin_web_serial_get_ports_for_page(
+            static_cast<uint32_t>(window->page().client().id()),
+            origin.characters(), devices, RIN_WEB_SERIAL_MAX_DEVICES, &count) !=
         RIN_SERIAL_OK)
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::NetworkError::create(realm,

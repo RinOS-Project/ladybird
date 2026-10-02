@@ -10,6 +10,9 @@
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/WebIDL/Types.h>
 
+#include <cstdint>
+#include <string>
+
 #include "../../../../../public-base/libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
 
 namespace Web::Serial {
@@ -59,6 +62,10 @@ private:
 
     Vector<GC::Ref<SerialPort>> m_granted_ports;
     RefPtr<Core::Timer> m_portal_event_timer = {};
+    GC::Ptr<WebIDL::Promise> m_pending_request_port_promise;
+    std::string m_pending_request_port_origin;
+    uint64_t m_pending_request_port_id { 0u };
+    uint32_t m_pending_request_port_page_id { 0u };
 };
 
 }

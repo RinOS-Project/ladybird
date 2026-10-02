@@ -317,10 +317,11 @@ static bool recv_all(int fd, void* data, size_t len, u64 deadline_ms)
  * This callback is the concrete transport boundary: a portal frame is
  * wrapped in the existing bounded socket envelope and the response is copied
  * back only after command/size/status validation. */
-static int serial_portal_exchange(void*, const void* request,
-                                  size_t request_size, void* response,
-                                  size_t response_capacity,
-                                  size_t* response_size)
+static int serial_portal_exchange_internal(uint32_t page_id, const void*,
+                                          const void* request,
+                                          size_t request_size, void* response,
+                                          size_t response_capacity,
+                                          size_t* response_size)
 {
     if (response_size != nullptr)
         *response_size = 0u;
@@ -351,7 +352,7 @@ static int serial_portal_exchange(void*, const void* request,
     request_header.magic = RIN_WEBCONTENT_MAGIC;
     request_header.version = RIN_WEBCONTENT_VERSION;
     request_header.command = RIN_WEBCONTENT_CMD_SERIAL_PORTAL_V1;
-    request_header.page_id = 0u;
+    request_header.page_id = page_id;
     request_header.payload_len = static_cast<u32>(request_size);
     if (!send_all(s_service_worker_owner_fd, &request_header,
                   sizeof(request_header), deadline_ms) ||
@@ -363,7 +364,7 @@ static int serial_portal_exchange(void*, const void* request,
         return -1;
     }
     auto validation = rin_webcontent_client_response_header_validate(
-        &request_header, RIN_WEBCONTENT_CMD_SERIAL_PORTAL_V1, 0u,
+        &request_header, RIN_WEBCONTENT_CMD_SERIAL_PORTAL_V1, page_id,
         request_header.payload_len);
     if (validation != RIN_WEBCONTENT_CLIENT_VALID) {
         errno = validation == RIN_WEBCONTENT_CLIENT_INVALID_SIZE
@@ -387,6 +388,29 @@ static int serial_portal_exchange(void*, const void* request,
     }
     *response_size = request_header.payload_len;
     return 0;
+}
+
+static int serial_portal_exchange(void* context, const void* request,
+                                  size_t request_size, void* response,
+                                  size_t response_capacity,
+                                  size_t* response_size)
+{
+    return serial_portal_exchange_internal(0u, context, request, request_size,
+                                           response, response_capacity,
+                                           response_size);
+}
+
+static int serial_portal_exchange_for_page(
+    void* context, uint32_t page_id, const void* request, size_t request_size,
+    void* response, size_t response_capacity, size_t* response_size)
+{
+    if (page_id == 0u) {
+        errno = EINVAL;
+        return -1;
+    }
+    return serial_portal_exchange_internal(page_id, context, request,
+                                           request_size, response,
+                                           response_capacity, response_size);
 }
 
 static bool send_message(int fd, u32 command, i32 status, u32 page_id, void const* payload, u32 payload_len, u64 deadline_ms)
@@ -3519,6 +3543,8 @@ static void handle_client(int client_fd)
         serial_transport.session_id = session.session_id;
         serial_transport.session_generation = session.session_generation;
         rin_web_serial_set_portal_transport(&serial_transport);
+        rin_web_serial_set_portal_page_exchange(
+            serial_portal_exchange_for_page);
         rin_log("[webcontent] ServiceWorker owner channel connected\n");
         return;
     }
