@@ -41,6 +41,10 @@ public:
     ModuleStatus status() const { return m_status; }
     void set_status(ModuleStatus status) { m_status = status; }
 
+    // [[HasTLA]] is part of the module record and is needed by hosts that must
+    // determine whether evaluating this module graph is asynchronous.
+    bool has_top_level_await() const { return m_has_top_level_await; }
+
     Vector<ModuleRequest> const& requested_modules() const { return m_requested_modules; }
     Vector<LoadedModuleRequest> const& loaded_modules() const { return m_loaded_modules; }
     Vector<LoadedModuleRequest>& loaded_modules() { return m_loaded_modules; }

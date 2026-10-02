@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/HashTable.h>
+#include <AK/TypeCasts.h>
 #include <LibGC/Heap.h>
+#include <LibJS/CyclicModule.h>
+#include <LibJS/Runtime/ModuleRequest.h>
 #include <LibJS/Runtime/VM.h>
+#include <LibJS/SourceTextModule.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
 #include <LibWeb/DOMURL/DOMURL.h>
@@ -177,6 +182,43 @@ private:
 };
 
 GC_DEFINE_ALLOCATOR(UpdateAlgorithmState);
+
+// https://w3c.github.io/ServiceWorker/#is-async-module
+static bool is_async_module(JS::Module const& record, HashTable<JS::CyclicModule const*>& seen)
+{
+    auto* cyclic_record = as_if<JS::CyclicModule>(record);
+    if (!cyclic_record)
+        return false;
+
+    if (seen.set(cyclic_record) == HashSetResult::KeptExistingEntry)
+        return false;
+
+    if (cyclic_record->has_top_level_await())
+        return true;
+
+    for (auto const& request : cyclic_record->requested_modules()) {
+        auto loaded_module = AK::find_value(cyclic_record->loaded_modules(), [&](auto const& loaded) {
+            return JS::module_requests_equal(loaded, request);
+        });
+        if (!loaded_module.has_value())
+            return false;
+
+        if (is_async_module(*loaded_module->module, seen))
+            return true;
+    }
+
+    return false;
+}
+
+static bool is_async_module(HTML::JavaScriptModuleScript const& script)
+{
+    auto* record = script.record();
+    if (!record)
+        return false;
+
+    HashTable<JS::CyclicModule const*> seen;
+    return is_async_module(*record, seen);
+}
 
 // https://w3c.github.io/ServiceWorker/#update-algorithm
 static void update(JS::VM& vm, GC::Ref<Job> job)
@@ -404,10 +446,12 @@ static void update(JS::VM& vm, GC::Ref<Job> job)
     // When the algorithm asynchronously completes, continue the rest of these steps, with script being the asynchronous completion value.
     auto on_fetch_complete = HTML::create_on_fetch_script_complete(vm.heap(), [job, newest_worker, state, &registration = *registration, &vm](GC::Ptr<HTML::Script> script) -> void {
         // 8. If script is null or Is Async Module with script’s record, script’s base URL, and « » is true, then:
-        // FIXME: Reject async modules
-        if (!script) {
+        auto* module_script = script ? as_if<HTML::JavaScriptModuleScript>(*script) : nullptr;
+        if (!script || (module_script && is_async_module(*module_script))) {
             // 1. Invoke Reject Job Promise with job and TypeError.
-            reject_job_promise<JS::TypeError>(job, "Service Worker script is not a valid module"_utf16);
+            reject_job_promise<JS::TypeError>(job, module_script
+                    ? "Service Worker script module graph contains top-level await"_utf16
+                    : "Service Worker script is not a valid module"_utf16);
 
             // 2. If newestWorker is null, then remove registration map[(registration’s storage key, serialized scopeURL)].
             if (newest_worker == nullptr)
