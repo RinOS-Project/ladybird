@@ -32,7 +32,7 @@
 - RelativeTimeFormat.cpp: RinRelativeTimeFormatImpl
 - TimeZone.cpp: rinicu タイムゾーンAPI
 - CharacterTypes.cpp: libunicodeベース文字分類 + ハードコード属性テーブル
-- IDNA.cpp: ASCII通過、非ASCII拒否の簡易実装
+- IDNA.cpp: RinOSはUnicode 17.0.0 UTS #46のToASCII／NFC／Punycode／IDNA derived-property／bidi／context ruleを実装し、Browser URL parser経由でWPT `IdnaTestV2` 2670ケースをPASSした。
 - DurationFormat.cpp: 標準デジタルフォーマット（":"区切り）
 - UnicodeKeywords.cpp: 静的キーワードデータ
 - Calendar.cpp: グレゴリオ暦のみ実装
@@ -58,9 +58,6 @@
 - CMakeLists.txt: aquamarineリンク追加、AK_OS_RINOS定義追加
 
 ## 未完了フェーズ
-
-### Unicode / IDNA
-- [ ] RinOS の `Unicode::IDNA::to_ascii()` はUnicode 17.0のUTS #46 mapping／NFC／Punycode／IDNA derived-property／bidi・context ruleを使う実装へ更新済み。専用host fixtureでWPT `IdnaTestV2` の2670ケースをPASSしたが、Browser URL parser経由の全ケース実行と本番Browser接続の検証が残るため未完了とする（[implementation status](../../docs/implementation-status-ladybird-idna.md)）。
 
 ### Phase 5: LibWeb/LibWebView 統合
 - ネットワーク層 workerd統合

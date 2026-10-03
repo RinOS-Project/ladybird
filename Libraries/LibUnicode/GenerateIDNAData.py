@@ -30,25 +30,6 @@ def emit_array(lines: list[str], type_name: str, name: str, rows: list[str]) -> 
     lines.append("")
 
 
-def decode_ranges(values: tuple[int, ...]) -> list[tuple[int, int]]:
-    return [(value >> 32, value & 0xFFFFFFFF) for value in values]
-
-
-def compress_ranges(values: list[int]) -> list[tuple[int, int]]:
-    if not values:
-        return []
-    result: list[tuple[int, int]] = []
-    start = previous = values[0]
-    for value in values[1:]:
-        if value == previous + 1:
-            previous = value
-        else:
-            result.append((start, previous + 1))
-            start = previous = value
-    result.append((start, previous + 1))
-    return result
-
-
 def compress_value_ranges(values: bytearray) -> list[tuple[int, int, int]]:
     if not values:
         return []
