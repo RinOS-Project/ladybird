@@ -312,6 +312,90 @@ static bool recv_all(int fd, void* data, size_t len, u64 deadline_ms)
     return true;
 }
 
+static void close_owner_channel()
+{
+    if (s_service_worker_owner_fd >= 0)
+        ::close(s_service_worker_owner_fd);
+    s_service_worker_owner_fd = -1;
+    s_owner_channel_session = {};
+    rin_web_serial_set_portal_transport(nullptr);
+}
+
+/* Send a Browser-owned storage request on the already authenticated,
+ * generation-bound reverse channel.  These are WebContent-side RPCs; the
+ * similarly named RinLadybird runtime calls belong to the Browser process
+ * and must not be linked into this service. */
+static bool owner_channel_request(u32 command, u32 page_id,
+                                  void const* payload, size_t payload_size,
+                                  size_t minimum_response_size,
+                                  size_t maximum_response_size,
+                                  RinWebContentMsgHeader* response_header,
+                                  u64* deadline_out)
+{
+    if (s_service_worker_owner_fd < 0 ||
+        s_owner_channel_session.session_id == 0u ||
+        s_owner_channel_session.session_generation == 0u) {
+        errno = ENOTCONN;
+        return false;
+    }
+    if (payload == nullptr || payload_size > UINT32_MAX ||
+        minimum_response_size > maximum_response_size ||
+        maximum_response_size > UINT32_MAX || response_header == nullptr ||
+        deadline_out == nullptr) {
+        errno = EINVAL;
+        return false;
+    }
+
+    u8 response_marker = 0u;
+    if (!rin_webcontent_client_call_valid(
+            command, page_id, payload, static_cast<u32>(payload_size),
+            &response_marker,
+            static_cast<u32>(minimum_response_size))) {
+        errno = EINVAL;
+        return false;
+    }
+
+    u64 deadline_ms;
+    if (!client_rpc_deadline_create(&deadline_ms))
+        return false;
+    *deadline_out = deadline_ms;
+    RinWebContentMsgHeader request_header {};
+    request_header.magic = RIN_WEBCONTENT_MAGIC;
+    request_header.version = RIN_WEBCONTENT_VERSION;
+    request_header.command = command;
+    request_header.page_id = page_id;
+    request_header.payload_len = static_cast<u32>(payload_size);
+    if (!send_all(s_service_worker_owner_fd, &request_header,
+                  sizeof(request_header), deadline_ms) ||
+        !send_all(s_service_worker_owner_fd, payload, payload_size,
+                  deadline_ms) ||
+        !recv_all(s_service_worker_owner_fd, response_header,
+                  sizeof(*response_header), deadline_ms)) {
+        close_owner_channel();
+        return false;
+    }
+
+    if (response_header->magic != RIN_WEBCONTENT_MAGIC ||
+        response_header->version != RIN_WEBCONTENT_VERSION ||
+        response_header->command != command ||
+        response_header->page_id != page_id ||
+        response_header->reserved0 != 0u || response_header->reserved1 != 0u ||
+        response_header->status > 0 ||
+        (response_header->status == 0 &&
+         (response_header->payload_len < minimum_response_size ||
+          response_header->payload_len > maximum_response_size)) ||
+        (response_header->status < 0 && response_header->payload_len != 0u)) {
+        errno = EPROTO;
+        close_owner_channel();
+        return false;
+    }
+    if (response_header->status != 0) {
+        errno = rin_webcontent_client_status_errno(response_header->status);
+        return false;
+    }
+    return true;
+}
+
 /* WebContent's Serial implementation uses the same authenticated,
  * generation-bound owner channel as the Browser's other profile services.
  * This callback is the concrete transport boundary: a portal frame is
@@ -1065,17 +1149,67 @@ struct PageSession {
         const bool initialize = operation ==
             RIN_WEBCONTENT_CACHE_STORAGE_OWNER_INITIALIZE;
         if (s_service_worker_owner_fd < 0 || origin.is_empty() ||
+            owner_generation == 0u ||
             origin.length() >= RIN_WEBCONTENT_URL_MAX ||
             (key.is_empty() && !initialize) ||
             (!key.is_empty() && initialize) ||
             key.length() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_KEY_BYTES ||
             value.length() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_VALUE_BYTES)
             return false;
-        return RinLadybird::request_cache_storage_owner_mutation(
-            page_id, operation, owner_generation,
-            origin.characters(), origin.length(),
-            key.characters(), key.length(),
-            value.characters(), value.length());
+
+        RinWebContentCacheStorageOwnerRequestV1 request {};
+        request.struct_size = sizeof(request);
+        request.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        request.operation = operation;
+        request.owner_generation = owner_generation;
+        request.origin_size = static_cast<u32>(origin.length());
+        request.key_size = static_cast<u32>(key.length());
+        request.value_size = static_cast<u32>(value.length());
+        const size_t payload_size = sizeof(request) + origin.length() +
+                                    key.length() + value.length();
+        std::vector<u8> payload(payload_size);
+        size_t offset = 0u;
+        __builtin_memcpy(payload.data(), &request, sizeof(request));
+        offset += sizeof(request);
+        __builtin_memcpy(payload.data() + offset, origin.characters(),
+                         origin.length());
+        offset += origin.length();
+        if (!key.is_empty()) {
+            __builtin_memcpy(payload.data() + offset, key.characters(),
+                             key.length());
+            offset += key.length();
+        }
+        if (!value.is_empty())
+            __builtin_memcpy(payload.data() + offset, value.characters(),
+                             value.length());
+
+        RinWebContentMsgHeader response_header {};
+        u64 deadline_ms = 0u;
+        if (!owner_channel_request(
+                RIN_WEBCONTENT_CMD_CACHE_STORAGE_OWNER_V1, page_id,
+                payload.data(), payload.size(),
+                sizeof(RinWebContentCacheStorageOwnerResponseV1),
+                sizeof(RinWebContentCacheStorageOwnerResponseV1),
+                &response_header, &deadline_ms))
+            return false;
+        RinWebContentCacheStorageOwnerResponseV1 response {};
+        if (!recv_all(s_service_worker_owner_fd, &response, sizeof(response),
+                      deadline_ms) ||
+            !rin_webcontent_client_cache_storage_owner_response_valid(&response) ||
+            response.reserved != 0u) {
+            errno = EPROTO;
+            close_owner_channel();
+            return false;
+        }
+        if (response.result != RIN_WEBCONTENT_CACHE_STORAGE_OWNER_RESULT_COMMITTED ||
+            response.owner_generation != owner_generation) {
+            errno = response.result ==
+                    RIN_WEBCONTENT_CACHE_STORAGE_OWNER_RESULT_REJECTED
+                ? EACCES
+                : ESTALE;
+            return false;
+        }
+        return true;
     }
 
     WebView::ViewImplementation::HttpCookieOwnerResponse http_cookie_owner_request(
@@ -1098,19 +1232,77 @@ struct PageSession {
             cookie_data.is_empty())
             return result;
 
-        std::vector<uint8_t> response_data;
-        u64 generation = 0u;
-        if (!RinLadybird::request_http_cookie_owner(
-                page_id, owner_operation, policy,
-                origin.characters(), origin.length(),
-                request_url.characters(), request_url.length(),
-                cookie_data.characters(), cookie_data.length(),
-                response_data, generation) || generation == 0u)
+        RinWebContentHttpCookieOwnerRequestV1 request {};
+        request.struct_size = sizeof(request);
+        request.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        request.operation = owner_operation;
+        request.policy = policy;
+        request.origin_size = static_cast<u32>(origin.length());
+        request.request_url_size = static_cast<u32>(request_url.length());
+        request.cookie_data_size = static_cast<u32>(cookie_data.length());
+        const size_t payload_size = sizeof(request) + origin.length() +
+                                    request_url.length() + cookie_data.length();
+        std::vector<u8> payload(payload_size);
+        size_t offset = 0u;
+        __builtin_memcpy(payload.data(), &request, sizeof(request));
+        offset += sizeof(request);
+        __builtin_memcpy(payload.data() + offset, origin.characters(),
+                         origin.length());
+        offset += origin.length();
+        __builtin_memcpy(payload.data() + offset, request_url.characters(),
+                         request_url.length());
+        offset += request_url.length();
+        __builtin_memcpy(payload.data() + offset, cookie_data.characters(),
+                         cookie_data.length());
+
+        RinWebContentMsgHeader response_header {};
+        u64 deadline_ms = 0u;
+        const size_t maximum_response_size =
+            sizeof(RinWebContentHttpCookieOwnerResponseV1) +
+            RIN_WEBCONTENT_HTTP_COOKIE_OWNER_MAX_DATA_BYTES;
+        if (!owner_channel_request(
+                RIN_WEBCONTENT_CMD_HTTP_COOKIE_OWNER_V1, page_id,
+                payload.data(), payload.size(),
+                sizeof(RinWebContentHttpCookieOwnerResponseV1),
+                maximum_response_size, &response_header, &deadline_ms))
             return result;
+
+        RinWebContentHttpCookieOwnerResponseV1 response {};
+        const size_t response_data_size = response_header.payload_len -
+                                          sizeof(response);
+        std::vector<uint8_t> response_data(response_data_size);
+        if (!recv_all(s_service_worker_owner_fd, &response, sizeof(response),
+                      deadline_ms) ||
+            !rin_webcontent_client_http_cookie_owner_response_valid(&response) ||
+            response.data_size != response_data_size) {
+            errno = EPROTO;
+            close_owner_channel();
+            return result;
+        }
+        if (response.result != RIN_WEBCONTENT_HTTP_COOKIE_OWNER_RESULT_COMMITTED) {
+            errno = EACCES;
+            return result;
+        }
+        if ((response_data_size != 0u &&
+             !recv_all(s_service_worker_owner_fd, response_data.data(),
+                       response_data.size(), deadline_ms)) ||
+            rinruntime_text_utf8_validate(response_data.data(), response_data.size()) !=
+                RINRUNTIME_TEXT_CODEC_OK) {
+            errno = EPROTO;
+            close_owner_channel();
+            return result;
+        }
+        for (auto byte : response_data) {
+            if (byte == 0u) {
+                errno = EPROTO;
+                close_owner_channel();
+                return result;
+            }
+        }
 
         result.accepted = true;
         result.found = true;
-        result.generation = generation;
+        result.generation = response.generation;
         result.data = ByteString {
             reinterpret_cast<char const*>(response_data.data()), response_data.size() };
         return result;
@@ -1121,13 +1313,64 @@ struct PageSession {
                                       ByteString& snapshot)
     {
         if (s_service_worker_owner_fd < 0 || origin.is_empty() ||
-            origin.length() >= RIN_WEBCONTENT_URL_MAX)
+            origin.length() >= RIN_WEBCONTENT_URL_MAX ||
+            owner_generation == 0u)
             return false;
-        std::vector<uint8_t> bytes;
-        if (!RinLadybird::request_cache_storage_owner_snapshot(
-                page_id, owner_generation, origin.characters(),
-                origin.length(), bytes))
+
+        RinWebContentCacheStorageOwnerRequestV1 request {};
+        request.struct_size = sizeof(request);
+        request.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        request.operation = RIN_WEBCONTENT_CACHE_STORAGE_OWNER_READ_SNAPSHOT;
+        request.owner_generation = owner_generation;
+        request.origin_size = static_cast<u32>(origin.length());
+        std::vector<u8> payload(sizeof(request) + origin.length());
+        __builtin_memcpy(payload.data(), &request, sizeof(request));
+        __builtin_memcpy(payload.data() + sizeof(request), origin.characters(),
+                         origin.length());
+
+        RinWebContentMsgHeader response_header {};
+        u64 deadline_ms = 0u;
+        const size_t maximum_response_size =
+            sizeof(RinWebContentCacheStorageOwnerResponseV1) +
+            RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_SNAPSHOT_BYTES;
+        if (!owner_channel_request(
+                RIN_WEBCONTENT_CMD_CACHE_STORAGE_OWNER_V1, page_id,
+                payload.data(), payload.size(),
+                sizeof(RinWebContentCacheStorageOwnerResponseV1),
+                maximum_response_size, &response_header, &deadline_ms))
             return false;
+
+        RinWebContentCacheStorageOwnerResponseV1 response {};
+        if (!recv_all(s_service_worker_owner_fd, &response, sizeof(response),
+                      deadline_ms)) {
+            close_owner_channel();
+            return false;
+        }
+        const size_t snapshot_size = response_header.payload_len - sizeof(response);
+        if (!rin_webcontent_client_cache_storage_owner_response_valid(&response) ||
+            response.reserved != snapshot_size ||
+            snapshot_size > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_SNAPSHOT_BYTES) {
+            errno = EPROTO;
+            close_owner_channel();
+            return false;
+        }
+        if (response.result != RIN_WEBCONTENT_CACHE_STORAGE_OWNER_RESULT_COMMITTED ||
+            response.owner_generation != owner_generation || snapshot_size == 0u) {
+            errno = response.result ==
+                    RIN_WEBCONTENT_CACHE_STORAGE_OWNER_RESULT_REJECTED
+                ? EACCES
+                : ESTALE;
+            return false;
+        }
+        std::vector<uint8_t> bytes(snapshot_size);
+        if (!recv_all(s_service_worker_owner_fd, bytes.data(), bytes.size(),
+                      deadline_ms) ||
+            !rin_webcontent_client_cache_storage_snapshot_valid(
+                bytes.data(), bytes.size(), nullptr, nullptr)) {
+            errno = EPROTO;
+            close_owner_channel();
+            return false;
+        }
         snapshot = ByteString {
             reinterpret_cast<char const*>(bytes.data()), bytes.size() };
         return true;
