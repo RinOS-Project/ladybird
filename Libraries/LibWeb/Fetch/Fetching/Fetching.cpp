@@ -15,6 +15,7 @@
 #include <LibHTTP/Cache/MemoryCache.h>
 #include <LibHTTP/Cache/Utilities.h>
 #include <LibHTTP/Cookie/Cookie.h>
+#include <LibHTTP/Cookie/ParsedCookie.h>
 #include <LibHTTP/Method.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibRequests/Request.h>
@@ -109,7 +110,7 @@ static RinCookieRequestContext rin_cookie_request_context(
     return context;
 }
 
-static ByteString rin_cookie_request_context(
+static ByteString serialize_rin_cookie_request_context(
     Infrastructure::Request const& request)
 {
     auto context = rin_cookie_request_context(request);
@@ -2226,7 +2227,8 @@ GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(
     /* RequestServer consumes this private routing context before it builds the
      * outbound HTTP request. It never reaches the network peer. */
     request->header_list()->set(HTTP::Header::isomorphic_encode(
-        "RinOS-Cookie-Context"sv, rin_cookie_request_context(*request)));
+        "RinOS-Cookie-Context"sv,
+        serialize_rin_cookie_request_context(*request)));
 #endif
 
     LoadRequest load_request { request->header_list() };
@@ -2383,7 +2385,9 @@ GC::Ref<PendingResponse> nonstandard_resource_loader_file_or_http_network_fetch(
                     auto end = separator.has_value() ? separator.value() : accepted_cookies.length();
                     if (end == offset)
                         break;
-                    auto raw_cookie = String::from_utf8(accepted_cookies.substring(offset, end - offset));
+                    auto raw_cookie_view = accepted_cookies.view().substring_view(
+                        offset, end - offset);
+                    auto raw_cookie = String::from_utf8(raw_cookie_view);
                     if (!raw_cookie.is_error()) {
                         if (auto parsed_cookie = HTTP::Cookie::parse_cookie(request->current_url(), raw_cookie.value()); parsed_cookie.has_value())
                             page.client().page_did_set_cookie(request->current_url(), parsed_cookie.value(), HTTP::Cookie::Source::Http);
