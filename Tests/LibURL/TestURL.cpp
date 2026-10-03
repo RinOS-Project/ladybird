@@ -8,6 +8,10 @@
 
 #include <LibTest/TestCase.h>
 
+#include <AK/JsonArray.h>
+#include <AK/JsonObject.h>
+#include <AK/JsonParser.h>
+#include <LibCore/File.h>
 #include <LibURL/Parser.h>
 #include <LibURL/URL.h>
 
@@ -92,6 +96,49 @@ TEST_CASE(basic)
         EXPECT_EQ(url->serialize_path(), "/index.html");
         EXPECT_EQ(url->query(), "foo=1&bar=2&baz=/?");
         EXPECT_EQ(url->fragment(), "frag/ment?test#");
+    }
+}
+
+TEST_CASE(idna_test_v2_wpt)
+{
+    auto file = MUST(Core::File::open("../LibWeb/Text/input/wpt-import/url/resources/IdnaTestV2.json"sv, Core::File::OpenMode::Read));
+    auto file_size = MUST(file->size());
+    auto contents = MUST(ByteBuffer::create_uninitialized(file_size));
+    MUST(file->read_until_filled(contents.bytes()));
+
+    ByteString file_contents { contents.bytes() };
+    auto test_data = MUST(JsonParser::parse(file_contents.view()));
+    EXPECT(test_data.is_array());
+    if (!test_data.is_array())
+        return;
+
+    auto const& test_cases = test_data.as_array();
+    for (auto const& test_case : test_cases.values()) {
+        if (!test_case.is_object())
+            continue;
+
+        auto const& test = test_case.as_object();
+        auto input = test.get_string("input"sv);
+        auto expected_host = test.get("output"sv);
+        if (!input.has_value() || !expected_host.has_value() || input->is_empty())
+            continue;
+
+        auto url_input = MUST(String::formatted("https://{}/x", input.value()));
+        auto parsed_url = URL::Parser::basic_parse(url_input.bytes_as_string_view());
+        if (expected_host->is_null()) {
+            EXPECT(!parsed_url.has_value());
+            continue;
+        }
+
+        EXPECT(parsed_url.has_value());
+        if (!parsed_url.has_value())
+            continue;
+
+        auto const& expected = expected_host->as_string();
+        EXPECT_EQ(parsed_url->serialized_host(), expected);
+        EXPECT_EQ(parsed_url->serialize_path(), "/x"sv);
+        auto expected_url = MUST(String::formatted("https://{}/x", expected));
+        EXPECT_EQ(parsed_url->serialize(), expected_url);
     }
 }
 
@@ -384,7 +431,7 @@ TEST_CASE(query_with_non_ascii)
         EXPECT(!url->fragment().has_value());
     }
     {
-        Optional<URL::URL> url = URL::Parser::basic_parse("http://example.com/?shift_jis=✓"sv, {}, nullptr, {}, "shift_jis"sv);
+        Optional<URL::URL> url = URL::Parser::basic_parse("http://example.com/?shift_jis=✓"sv, { }, nullptr, { }, "shift_jis"sv);
         EXPECT(url.has_value());
         EXPECT_EQ(url->serialize_path(), "/"sv);
         EXPECT_EQ(url->query(), "shift_jis=%26%2310003%3B");
@@ -402,7 +449,7 @@ TEST_CASE(fragment_with_non_ascii)
         EXPECT_EQ(url->fragment(), "%E2%9C%93");
     }
     {
-        Optional<URL::URL> url = URL::Parser::basic_parse("http://example.com/#✓"sv, {}, nullptr, {}, "shift_jis"sv);
+        Optional<URL::URL> url = URL::Parser::basic_parse("http://example.com/#✓"sv, { }, nullptr, { }, "shift_jis"sv);
         EXPECT(url.has_value());
         EXPECT_EQ(url->serialize_path(), "/"sv);
         EXPECT(!url->query().has_value());
@@ -597,7 +644,7 @@ TEST_CASE(invalid_domain_code_points)
 TEST_CASE(get_registrable_domain)
 {
     {
-        auto domain = URL::get_registrable_domain({});
+        auto domain = URL::get_registrable_domain({ });
         EXPECT(!domain.has_value());
     }
     {
@@ -697,7 +744,7 @@ TEST_CASE(public_suffix)
     }
     {
         auto domain = URL::Parser::parse_host("[2001:0db8:85a3:0000:0000:8a2e:0370:7334]"sv);
-        EXPECT_EQ(domain->public_suffix(), OptionalNone {});
+        EXPECT_EQ(domain->public_suffix(), OptionalNone { });
     }
 }
 

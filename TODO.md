@@ -60,7 +60,7 @@
 ## 未完了フェーズ
 
 ### Unicode / IDNA
-- [ ] RinOS の `Unicode::IDNA::to_ascii()` を ASCII-only pass-through stub から UTS #46 ToASCII 処理へ置き換える。現状は ASCII 入力の限定的な長さ検査だけを行い、非ASCII hostを一律拒否する。mapping、Punycodeの生成・検証、IDNA derived-property、bidi／context rule、DNS label/name lengthを検証し、WPT `IdnaTestV2` とBrowser URL parserで受け入れるまで未完了とする（[implementation status](../../docs/implementation-status-ladybird-idna.md)）。
+- [ ] RinOS の `Unicode::IDNA::to_ascii()` はUnicode 17.0のUTS #46 mapping／NFC／Punycode／IDNA derived-property／bidi・context ruleを使う実装へ更新済み。専用host fixtureでWPT `IdnaTestV2` の2670ケースをPASSしたが、Browser URL parser経由の全ケース実行と本番Browser接続の検証が残るため未完了とする（[implementation status](../../docs/implementation-status-ladybird-idna.md)）。
 
 ### Phase 5: LibWeb/LibWebView 統合
 - ネットワーク層 workerd統合

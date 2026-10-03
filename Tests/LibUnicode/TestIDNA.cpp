@@ -23,8 +23,8 @@ TEST_CASE(to_ascii)
     TEST_TO_ASCII("o\u0308.com"sv, "xn--nda.com"sv);
     TEST_TO_ASCII("\U0001FACD.ge"sv, "xn--i29h.ge"sv);
 
-    // Select cases from IdnaTestV2.txt
-    // FIXME: Download, parse and test all cases
+    // Selected cases from IdnaTestV2. The complete fixture is exercised
+    // through the Browser URL parser in Tests/LibURL/TestURL.cpp.
     TEST_TO_ASCII("Faß.de"sv, "xn--fa-hia.de"sv);
     TEST_TO_ASCII_T("Faß.de"sv, "fass.de"sv);
     TEST_TO_ASCII("¡"sv, "xn--7a"sv);
@@ -37,10 +37,13 @@ TEST_CASE(to_ascii)
 #undef TEST_TO_ASCII
 
     EXPECT(to_ascii(Utf8View("xn--o-ccb.com"sv)).is_error());
+    EXPECT(to_ascii(Utf8View("xn---9ca.com"sv)).is_error());
     EXPECT(to_ascii(Utf8View("wh--f.com"sv)).is_error());
     EXPECT(to_ascii(Utf8View("xn--whf-cec.com"sv)).is_error());
     EXPECT(to_ascii(Utf8View("-whf.com"sv)).is_error());
     EXPECT(to_ascii(Utf8View("whf-.com"sv)).is_error());
+    EXPECT(to_ascii(Utf8View("a\u200C.com"sv)).is_error());
+    EXPECT(to_ascii(Utf8View("a\u05D0.com"sv)).is_error());
 }
 
 }
