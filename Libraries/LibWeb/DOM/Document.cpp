@@ -5213,8 +5213,8 @@ static bool document_allows_permissions_policy_feature(
 
     auto* current_navigable = navigable.ptr();
     while (current_navigable != nullptr) {
-        auto* current_document = current_navigable->active_document();
-        if (current_document == nullptr ||
+        auto current_document = current_navigable->active_document();
+        if (!current_document ||
             !permissions_policy_headers_allow(
                 current_document->policy_container(), current_document->origin(),
                 document.origin(), feature_name))
@@ -5224,8 +5224,8 @@ static bool document_allows_permissions_policy_feature(
         if (!parent_navigable)
             return true;
         auto container = current_navigable->container();
-        auto* parent_document = current_navigable->container_document();
-        if (!container || parent_document == nullptr ||
+        auto parent_document = current_navigable->container_document();
+        if (!container || !parent_document ||
             !iframe_permissions_policy_allows(*container,
                                               parent_document->origin(),
                                               document.origin(), feature_name))
