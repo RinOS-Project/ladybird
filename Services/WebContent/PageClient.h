@@ -97,6 +97,7 @@ public:
                                           String permission);
     void complete_microphone_permission(u32 navigation_generation, u64 request_id,
                                         bool allowed);
+    bool revoke_microphone_capture(String domain, u64 sequence);
 
     Vector<Web::CSS::StyleSheetIdentifier> list_style_sheets() const;
 
@@ -152,7 +153,6 @@ private:
         JS::PromiseCapability&, Web::DOM::Document const&) override;
     virtual bool page_did_create_microphone_track(
         Web::MediaCapture::MediaStreamTrack&, URL::Origin const&) override;
-    bool revoke_microphone_capture(String domain, u64 sequence);
     virtual void page_did_start_loading(URL::URL const&, bool) override;
     virtual void page_did_create_new_document(Web::DOM::Document&) override;
     virtual void page_did_change_active_document_in_top_level_browsing_context(Web::DOM::Document&) override;

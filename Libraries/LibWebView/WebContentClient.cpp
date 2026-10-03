@@ -142,7 +142,7 @@ bool WebContentClient::storage_owner_is_authorized(u64 page_id,
         return false;
 
     auto response = view->on_service_worker_owner_request(
-        4u, {}, storage_key.to_byte_string(), {}, {}, 0u);
+        4u, {}, storage_key.to_byte_string(), {}, {}, 0u, 0u, 0u);
     return response.accepted && response.found &&
         response.generation == owner_generation &&
         response.origin == storage_key.to_byte_string();
@@ -851,7 +851,7 @@ Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_
 
         auto batch_response = view->on_service_worker_owner_request(
             RIN_WEBCONTENT_SERVICE_WORKER_OWNER_BEGIN_CACHE_BATCH,
-            {}, origin, {}, {}, 0u);
+            {}, origin, {}, {}, 0u, 0u, 0u);
         const auto batch_matches_owner = [&](auto const& response) {
             return response.accepted && response.found &&
                 response.generation == owner_generation &&
@@ -883,13 +883,13 @@ Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_
         if (migrated) {
             auto commit_response = view->on_service_worker_owner_request(
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_CACHE_BATCH,
-                {}, origin, {}, {}, 0u);
+                {}, origin, {}, {}, 0u, 0u, 0u);
             migrated = batch_matches_owner(commit_response);
         }
         if (!migrated) {
             (void)view->on_service_worker_owner_request(
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_ABORT_CACHE_BATCH,
-                {}, origin, {}, {}, 0u);
+                {}, origin, {}, {}, 0u, 0u, 0u);
             return { Vector<String> {} };
         }
 
@@ -975,7 +975,7 @@ void WebContentClient::did_clear_storage(u64 page_id, Web::StorageAPI::StorageEn
 
         auto batch_response = view->on_service_worker_owner_request(
             RIN_WEBCONTENT_SERVICE_WORKER_OWNER_BEGIN_CACHE_BATCH,
-            {}, origin, {}, {}, 0u);
+            {}, origin, {}, {}, 0u, 0u, 0u);
         const auto batch_matches_owner = [&](auto const& response) {
             return response.accepted && response.found &&
                 response.generation == owner_generation &&
@@ -1004,13 +1004,13 @@ void WebContentClient::did_clear_storage(u64 page_id, Web::StorageAPI::StorageEn
         if (cleared) {
             auto commit_response = view->on_service_worker_owner_request(
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_CACHE_BATCH,
-                {}, origin, {}, {}, 0u);
+                {}, origin, {}, {}, 0u, 0u, 0u);
             cleared = batch_matches_owner(commit_response);
         }
         if (!cleared) {
             (void)view->on_service_worker_owner_request(
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_ABORT_CACHE_BATCH,
-                {}, origin, {}, {}, 0u);
+                {}, origin, {}, {}, 0u, 0u, 0u);
             return;
         }
         view->cache_storage_synchronized_origin = storage_key;
@@ -1388,7 +1388,7 @@ String WebContentClient::retrieve_http_cookie_header(
             RIN_WEBCONTENT_SERVICE_WORKER_OWNER_GET_HTTP_COOKIE_HEADER,
             url.to_byte_string(), serialized_origin.to_byte_string(), cookie_context,
             RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COOKIE_CREDENTIALS_INCLUDE);
-        if (!response.accepted || !response.found || response.generation == 0u)
+        if (!response.accepted() || !response.found() || response.generation() == 0u)
             return {};
 
         StringBuilder builder;

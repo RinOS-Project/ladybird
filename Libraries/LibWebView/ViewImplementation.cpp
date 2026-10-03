@@ -125,10 +125,13 @@ bool ViewImplementation::revoke_microphone_capture(ByteString domain, u64 sequen
 {
     if (sequence == 0u || domain.is_empty())
         return false;
+    auto string_domain = String::from_utf8(domain.view());
+    if (string_domain.is_error())
+        return false;
     auto response = client().send_sync_but_allow_failure<
         Messages::WebContentServer::RevokeMicrophoneCapture>(
-            page_id(), move(domain), sequence);
-    return response.has_value() && response->stopped();
+            page_id(), string_domain.release_value(), sequence);
+    return response && response->stopped();
 }
 
 u64 ViewImplementation::page_id() const

@@ -43,6 +43,13 @@ static bool s_stop_requested;
 static ProxySnapshot s_snapshot;
 static u64 s_applied_revision;
 
+static Core::ProxyData blocked_proxy_data()
+{
+    Core::ProxyData proxy;
+    proxy.type = Core::ProxyData::Type::Blocked;
+    return proxy;
+}
+
 static u64 monotonic_time_ms()
 {
     timespec now { };
@@ -306,24 +313,25 @@ bool start_network_proxy_consumer()
 static Core::ProxyData proxy_from_snapshot(ProxySnapshot const& snapshot)
 {
     if (!snapshot.available || !rin_network_proxy_config_valid(&snapshot.config)) {
-        return { .type = Core::ProxyData::Type::Blocked };
+        return blocked_proxy_data();
     }
     if (snapshot.config.enabled == 0u)
         return { };
 
-    StringView host { snapshot.config.host };
+    StringView host { snapshot.config.host, strlen(snapshot.config.host) };
     StringBuilder url_builder;
     auto is_bracketed_ipv6 = host.length() >= 2 && host[0] == '[' && host[host.length() - 1] == ']';
     if (host.contains(':') && !is_bracketed_ipv6)
         url_builder.appendff("http://[{}]:{}", host, snapshot.config.port);
     else
         url_builder.appendff("http://{}:{}", host, snapshot.config.port);
-    auto parsed_url = URL::Parser::basic_parse(url_builder.to_byte_string());
+    auto url_bytes = url_builder.to_byte_string();
+    auto parsed_url = URL::Parser::basic_parse(url_bytes);
     if (!parsed_url.has_value())
-        return { .type = Core::ProxyData::Type::Blocked };
+        return blocked_proxy_data();
     auto proxy = Core::ProxyData::parse_url(parsed_url.value());
     if (proxy.is_error())
-        return { .type = Core::ProxyData::Type::Blocked };
+        return blocked_proxy_data();
     return proxy.release_value();
 }
 
