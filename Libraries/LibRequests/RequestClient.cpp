@@ -338,6 +338,7 @@ RequestClient::request_client_certificate(
         !rin_requestserver_tls_signature_scheme_offered(
             signature_algorithms.data(), signature_algorithms.size(),
             signature_scheme)) {
+        clear_client_certificate_bytes(certificate_list);
         clear_client_certificate_bytes(signer_capability);
         return { 0u, 0u, {}, {}, false };
     }
@@ -346,6 +347,7 @@ RequestClient::request_client_certificate(
     for (auto byte : signer_capability.bytes())
         capability_nonzero |= byte != 0u;
     if (!capability_nonzero) {
+        clear_client_certificate_bytes(certificate_list);
         clear_client_certificate_bytes(signer_capability);
         return { 0u, 0u, {}, {}, false };
     }
@@ -362,6 +364,7 @@ RequestClient::request_client_certificate(
         static_cast<uint32_t>(signer_capability.size()),
     };
     if (!rinruntime_tls_client_certificate_request_valid(&request)) {
+        clear_client_certificate_bytes(certificate_list);
         clear_client_certificate_bytes(signer_capability);
         return { 0u, 0u, {}, {}, false };
     }
