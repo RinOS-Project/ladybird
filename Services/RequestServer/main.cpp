@@ -34,7 +34,6 @@ OwnPtr<ResourceSubstitutionMap> g_resource_substitution_map;
 
 #if defined(AK_OS_RINOS)
 extern "C" int rin_service_should_stop(void);
-extern "C" int rin_service_health(u32 status);
 #endif
 
 #ifndef AK_OS_WINDOWS
@@ -150,18 +149,12 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
         RequestServer::ConnectionFromClient::IsPrimaryConnection::Yes, connections, disk_cache));
 
 #if defined(AK_OS_RINOS)
-    // RequestServer is a service-manager-owned private process. Poll the
-    // kernel stop gate from the private event-loop owner so authenticated
-    // service-manager stop does not depend on a console signal.  The timer is
-    // deliberately kept out of the public EventLoop and transport adapters.
+    // RequestServer is a WebContent-owned helper. It inherits the parent's
+    // service slot for identity checks, but only WebContent may report health
+    // for that slot. Poll the stop gate without issuing a child health report.
     auto service_lifecycle_timer = Core::Timer::create_repeating(50, [&event_loop] {
-        // Health is a lease, not a one-time startup acknowledgement. Renew it
-        // from the same private lifecycle owner that observes stop requests so
-        // a long-lived helper cannot become stale while its IPC loop is idle.
-        (void)rin_service_health(0u);
-        // A WebContent-owned RequestServer helper has no service-manager
-        // slot.  Only the explicit true result is a stop request; a negative
-        // no-service/error result must not terminate the helper.
+        // The explicit true result is a stop request; a no-service/error
+        // result must not terminate this helper.
         if (rin_service_should_stop() == 1)
             event_loop.quit(0);
     });
