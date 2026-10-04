@@ -72,6 +72,10 @@ public:
     bool set_certificate(Badge<Request>, Request&, u64 connection_generation,
                          ByteBuffer certificate_list,
                          ByteBuffer signer_capability);
+    bool set_websocket_certificate(Badge<WebSocket>, WebSocket&,
+                                   u64 connection_generation,
+                                   ByteBuffer certificate_list,
+                                   ByteBuffer signer_capability);
 
     void set_client_certificate_provider(ClientCertificateProvider provider)
     {

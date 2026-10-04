@@ -114,8 +114,8 @@ void WebSocket::did_request_certificates(Badge<RequestClient>)
         clear_client_certificate_bytes(result.signer_capability);
         return;
     }
-    if (!m_client->websocket_set_certificate(
-            m_websocket_id, result.connection_generation,
+    if (!m_client->set_websocket_certificate(
+            {}, *this, result.connection_generation,
             move(result.certificate_list), move(result.signer_capability)))
         dbgln("WebSocket: set_certificate failed");
 }

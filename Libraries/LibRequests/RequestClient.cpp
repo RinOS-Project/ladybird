@@ -170,6 +170,21 @@ bool RequestClient::set_certificate(Badge<Request>, Request& request,
                                      move(signer_capability));
 }
 
+bool RequestClient::set_websocket_certificate(Badge<WebSocket>, WebSocket& websocket,
+                                              u64 connection_generation,
+                                              ByteBuffer certificate_list,
+                                              ByteBuffer signer_capability)
+{
+    if (!m_websockets.contains(websocket.id())) {
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
+        return false;
+    }
+    return IPCProxy::websocket_set_certificate(
+        websocket.id(), connection_generation, move(certificate_list),
+        move(signer_capability));
+}
+
 NonnullRefPtr<Core::Promise<CacheSizes>> RequestClient::estimate_cache_size_accessed_since(UnixDateTime since)
 {
     auto promise = Core::Promise<CacheSizes>::construct();

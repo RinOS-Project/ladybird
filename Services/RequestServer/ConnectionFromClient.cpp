@@ -774,6 +774,12 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
         dbgln("SetCertificate: invalid client-certificate capability (request {})", request_id);
         return false;
     }
+    if (!m_active_requests.contains(request_id)) {
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
+        dbgln("SetCertificate: request owner is unavailable (request {})", request_id);
+        return false;
+    }
     if (g_client_certificate_owner == nullptr ||
         g_client_certificate_owner_context == nullptr) {
         clear_client_certificate_bytes(certificate_list);
@@ -970,6 +976,13 @@ Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::w
         clear_client_certificate_bytes(certificate_list);
         clear_client_certificate_bytes(signer_capability);
         dbgln("WebSocketSetCertificate: invalid client-certificate capability (websocket {})", websocket_id);
+        return false;
+    }
+    if (!m_pending_websockets.contains(websocket_id) &&
+        !m_websockets.contains(websocket_id)) {
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
+        dbgln("WebSocketSetCertificate: websocket owner is unavailable (websocket {})", websocket_id);
         return false;
     }
     if (g_client_certificate_owner == nullptr ||
