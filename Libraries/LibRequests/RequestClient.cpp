@@ -336,6 +336,11 @@ RequestClient::request_client_certificate(
         return { 0u, 0u, {}, {}, false };
     }
 #endif
+    if (!m_requests.contains(request_id) && !m_websockets.contains(request_id)) {
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
+        return { 0u, 0u, {}, {}, false };
+    }
     if (!provided ||
         connection_generation == 0u || certificate_list.is_empty() ||
         certificate_list.size() > 16u * 1024u ||
@@ -421,8 +426,10 @@ RequestClient::sign_client_certificate(u64 request_id,
         return { {}, false };
     }
 #endif
+    const bool owner_still_live = m_requests.contains(request_id) ||
+        m_websockets.contains(request_id);
     clear_client_certificate_bytes(signer_capability);
-    if (!signed_ok || signature.is_empty() ||
+    if (!owner_still_live || !signed_ok || signature.is_empty() ||
         signature.size() > max_signature_size) {
         clear_client_certificate_bytes(signature);
         return { {}, false };
