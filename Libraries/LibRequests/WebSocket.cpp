@@ -9,6 +9,14 @@
 
 namespace Requests {
 
+static void clear_client_certificate_bytes(ByteBuffer& bytes)
+{
+    volatile u8* data = bytes.data();
+    for (size_t index = 0; index < bytes.size(); ++index)
+        data[index] = 0;
+    bytes.clear();
+}
+
 WebSocket::WebSocket(RequestClient& client, u64 websocket_id, URL::URL url)
     : m_client(client)
     , m_websocket_id(websocket_id)
@@ -85,12 +93,26 @@ void WebSocket::did_request_certificates(Badge<RequestClient>)
         return;
     CertificateAndSignerCapability result;
     if (on_certificate_requested) {
-        result = on_certificate_requested();
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+        try {
+#endif
+            result = on_certificate_requested();
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+        } catch (...) {
+            dbgln("WebSocket: certificate callback threw");
+            return;
+        }
+#endif
     } else {
         if (!m_client->provide_client_certificate(
                 m_url, result.connection_generation, result.certificate_list,
                 result.signer_capability))
             return;
+    }
+    if (!m_client) {
+        clear_client_certificate_bytes(result.certificate_list);
+        clear_client_certificate_bytes(result.signer_capability);
+        return;
     }
     if (!m_client->websocket_set_certificate(
             m_websocket_id, result.connection_generation,

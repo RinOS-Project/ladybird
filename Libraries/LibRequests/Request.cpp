@@ -10,6 +10,14 @@
 
 namespace Requests {
 
+static void clear_client_certificate_bytes(ByteBuffer& bytes)
+{
+    volatile u8* data = bytes.data();
+    for (size_t index = 0; index < bytes.size(); ++index)
+        data[index] = 0;
+    bytes.clear();
+}
+
 ErrorOr<NonnullOwnPtr<ReadStream>> ReadStream::create(int reader_fd)
 {
 #if defined(AK_OS_WINDOWS)
@@ -169,13 +177,31 @@ void Request::did_receive_headers(Badge<RequestClient>, NonnullRefPtr<HTTP::Head
 
 void Request::did_request_certificates(Badge<RequestClient>)
 {
-    if (on_certificate_requested) {
-        auto result = on_certificate_requested();
-        if (!m_client->set_certificate({}, *this, result.connection_generation,
-                                       move(result.certificate_list),
-                                       move(result.signer_capability))) {
-            dbgln("Request: set_certificate failed");
-        }
+    if (!on_certificate_requested)
+        return;
+
+    CertificateAndSignerCapability result;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    try {
+#endif
+        result = on_certificate_requested();
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    } catch (...) {
+        dbgln("Request: certificate callback threw");
+        return;
+    }
+#endif
+
+    if (!m_client) {
+        clear_client_certificate_bytes(result.certificate_list);
+        clear_client_certificate_bytes(result.signer_capability);
+        return;
+    }
+
+    if (!m_client->set_certificate({}, *this, result.connection_generation,
+                                   move(result.certificate_list),
+                                   move(result.signer_capability))) {
+        dbgln("Request: set_certificate failed");
     }
 }
 
