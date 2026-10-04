@@ -385,9 +385,19 @@ int RinHTTPFetch::client_certificate_provider(rintls_ctx* tls, void* opaque)
     u16 signature_scheme = 0u;
     ByteBuffer certificate_list;
     ByteBuffer signer_capability;
-    const bool provided = fetch->m_client_certificate_provider(
-        request, connection_generation, signature_scheme, certificate_list,
-        signer_capability);
+    bool provided = false;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    try {
+#endif
+        provided = fetch->m_client_certificate_provider(
+            request, connection_generation, signature_scheme, certificate_list,
+            signer_capability);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    } catch (...) {
+        clear_client_certificate_capability(signer_capability);
+        return RINTLS_ERR_CERTIFICATE;
+    }
+#endif
     if (!provided || !rin_requestserver_tls_client_certificate_ipc_valid(
             fetch->m_request_id, connection_generation, certificate_list.data(),
             certificate_list.size(), signer_capability.data(),
@@ -442,12 +452,24 @@ int RinHTTPFetch::client_certificate_session_sign(
         return -1;
 
     size_t written = 0u;
-    auto result = fetch->m_client_certificate_signer(
-        connection_generation,
-        ReadonlyBytes { capability,
-                        RINRUNTIME_TLS_CLIENT_CERTIFICATE_CAPABILITY_BYTES },
-        signature_scheme, ReadonlyBytes { message, message_size },
-        Bytes { signature, signature_capacity }, written);
+    int result = -1;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    try {
+#endif
+        result = fetch->m_client_certificate_signer(
+            connection_generation,
+            ReadonlyBytes { capability,
+                            RINRUNTIME_TLS_CLIENT_CERTIFICATE_CAPABILITY_BYTES },
+            signature_scheme, ReadonlyBytes { message, message_size },
+            Bytes { signature, signature_capacity }, written);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+    } catch (...) {
+        __builtin_memset(
+            signature, 0,
+            signature_capacity < 512u ? signature_capacity : 512u);
+        return -1;
+    }
+#endif
     if (result != 0 || written == 0u || written > signature_capacity) {
         __builtin_memset(
             signature, 0,
