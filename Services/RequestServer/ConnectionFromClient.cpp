@@ -186,7 +186,9 @@ bool ConnectionFromClient::request_client_certificate(
         move(signature_algorithms_cert_bytes),
         move(certificate_authorities));
     if (!response->provided()) {
+        auto rejected_certificate_list = response->take_certificate_list();
         auto rejected_capability = response->take_signer_capability();
+        clear_client_certificate_bytes(rejected_certificate_list);
         clear_client_certificate_bytes(rejected_capability);
         return false;
     }
@@ -202,7 +204,7 @@ bool ConnectionFromClient::request_client_certificate(
             request.signature_algorithms_size, signature_scheme)) {
         connection_generation = 0u;
         signature_scheme = 0u;
-        certificate_list = {};
+        clear_client_certificate_bytes(certificate_list);
         clear_client_certificate_bytes(signer_capability);
         return false;
     }
@@ -765,12 +767,14 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
             request_id, connection_generation, certificate_list.data(),
             certificate_list.size(), signer_capability.data(),
             signer_capability.size())) {
+        clear_client_certificate_bytes(certificate_list);
         clear_client_certificate_bytes(signer_capability);
         dbgln("SetCertificate: invalid client-certificate capability (request {})", request_id);
         return false;
     }
     if (g_client_certificate_owner == nullptr ||
         g_client_certificate_owner_context == nullptr) {
+        clear_client_certificate_bytes(certificate_list);
         clear_client_certificate_bytes(signer_capability);
         dbgln("SetCertificate: authenticated signer owner is unavailable (request {})", request_id);
         return false;
@@ -797,8 +801,8 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
     return admitted;
 #else
     (void)connection_generation;
-    (void)certificate_list;
-    (void)signer_capability;
+    clear_client_certificate_bytes(certificate_list);
+    clear_client_certificate_bytes(signer_capability);
 #endif
     dbgln("SetCertificate: authenticated signer transport is unavailable (request {})", request_id);
     return false;
@@ -961,11 +965,15 @@ Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::w
             websocket_id, connection_generation, certificate_list.data(),
             certificate_list.size(), signer_capability.data(),
             signer_capability.size())) {
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
         dbgln("WebSocketSetCertificate: invalid client-certificate capability (websocket {})", websocket_id);
         return false;
     }
     if (g_client_certificate_owner == nullptr ||
         g_client_certificate_owner_context == nullptr) {
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
         dbgln("WebSocketSetCertificate: authenticated signer owner is unavailable (websocket {})", websocket_id);
         return false;
     }
@@ -992,8 +1000,8 @@ Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::w
     return admitted;
 #else
     (void)connection_generation;
-    (void)certificate_list;
-    (void)signer_capability;
+    clear_client_certificate_bytes(certificate_list);
+    clear_client_certificate_bytes(signer_capability);
 #endif
     dbgln("WebSocketSetCertificate: authenticated signer transport is unavailable (websocket {})", websocket_id);
     return false;
