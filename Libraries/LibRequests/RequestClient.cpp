@@ -155,8 +155,11 @@ bool RequestClient::set_certificate(Badge<Request>, Request& request,
                                     ByteBuffer certificate_list,
                                     ByteBuffer signer_capability)
 {
-    if (!m_requests.contains(request.id()))
+    if (!m_requests.contains(request.id())) {
+        clear_client_certificate_bytes(certificate_list);
+        clear_client_certificate_bytes(signer_capability);
         return false;
+    }
     return IPCProxy::set_certificate(request.id(), connection_generation,
                                      move(certificate_list),
                                      move(signer_capability));
