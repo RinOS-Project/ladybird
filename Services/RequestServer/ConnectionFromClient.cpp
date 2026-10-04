@@ -254,6 +254,7 @@ int ConnectionFromClient::provide_websocket_client_certificate(rintls_ctx* tls_c
         return RINTLS_ERR_CERTIFICATE;
 
     if (m_websocket_certificate_requests.contains(connection_generation)) {
+        clear_client_certificate_bytes(certificate_list);
         clear_client_certificate_bytes(signer_capability);
         return RINTLS_ERR_CERTIFICATE;
     }
@@ -262,6 +263,7 @@ int ConnectionFromClient::provide_websocket_client_certificate(rintls_ctx* tls_c
             tls_context, certificate_list.data(), certificate_list.size(),
             &ConnectionFromClient::websocket_client_certificate_sign, this,
             signature_scheme) != RINTLS_OK) {
+        clear_client_certificate_bytes(certificate_list);
         clear_client_certificate_bytes(signer_capability);
         return RINTLS_ERR_CERTIFICATE;
     }
