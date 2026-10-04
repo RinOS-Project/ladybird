@@ -418,8 +418,10 @@ int RinHTTPFetch::client_certificate_provider(rintls_ctx* tls, void* opaque)
             signature_scheme) != RINTLS_OK) {
         rin_requestserver_tls_client_certificate_session_reset(
             &fetch->m_client_certificate_session);
+        clear_client_certificate_capability(signer_capability);
         return RINTLS_ERR_CERTIFICATE;
     }
+    clear_client_certificate_capability(signer_capability);
     return RINTLS_OK;
 }
 
