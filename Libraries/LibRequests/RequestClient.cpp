@@ -67,17 +67,19 @@ void RequestClient::die()
 {
     auto requests = move(m_requests);
     auto websockets = move(m_websockets);
+    auto pending_cache_size_estimations = move(m_pending_cache_size_estimations);
 
     /* Finish callbacks may synchronously start or stop another request. Keep
      * those reentrant operations out of the dying owner table. */
     m_requests.clear();
+    m_pending_cache_size_estimations.clear();
     for (auto& [id, request] : requests) {
         if (request)
             request->did_finish({}, {}, {}, NetworkError::RequestServerDied);
     }
 
     m_websockets.clear();
-    for (auto& [id, promise] : m_pending_cache_size_estimations)
+    for (auto& [id, promise] : pending_cache_size_estimations)
         promise->reject(Error::from_string_literal("RequestServer process died"));
 
     m_streaming_request_bodies.clear();
