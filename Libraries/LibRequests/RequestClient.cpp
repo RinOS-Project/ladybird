@@ -65,14 +65,17 @@ bool RequestClient::provide_client_certificate(
 
 void RequestClient::die()
 {
-    for (auto& [id, request] : m_requests) {
+    auto requests = move(m_requests);
+    auto websockets = move(m_websockets);
+
+    /* Finish callbacks may synchronously start or stop another request. Keep
+     * those reentrant operations out of the dying owner table. */
+    m_requests.clear();
+    for (auto& [id, request] : requests) {
         if (request)
             request->did_finish({}, {}, {}, NetworkError::RequestServerDied);
     }
 
-    auto websockets = move(m_websockets);
-
-    m_requests.clear();
     m_websockets.clear();
     for (auto& [id, promise] : m_pending_cache_size_estimations)
         promise->reject(Error::from_string_literal("RequestServer process died"));
