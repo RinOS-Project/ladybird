@@ -340,7 +340,7 @@ RequestClient::request_client_certificate(
         provided = request_live && constraints_valid &&
             m_client_certificate_request_provider &&
             m_client_certificate_request_provider(
-                url, signature_algorithms.bytes(),
+                request_id, url, signature_algorithms.bytes(),
                 signature_algorithms_cert.bytes(),
                 certificate_authorities.bytes(), connection_generation,
                 signature_scheme, certificate_list, signer_capability);

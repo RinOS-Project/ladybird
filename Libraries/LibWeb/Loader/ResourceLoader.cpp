@@ -82,7 +82,8 @@ void ResourceLoader::set_client(NonnullRefPtr<Requests::RequestClient> request_c
     }
     if (m_client_certificate_request_provider) {
         Requests::RequestClient::ClientCertificateRequestProvider provider(
-            [this](URL::URL const& url, ReadonlyBytes signature_algorithms,
+            [this](u64 request_id, URL::URL const& url,
+                   ReadonlyBytes signature_algorithms,
                    ReadonlyBytes signature_algorithms_cert,
                    ReadonlyBytes certificate_authorities,
                    u64& connection_generation, u16& signature_scheme,
@@ -91,7 +92,8 @@ void ResourceLoader::set_client(NonnullRefPtr<Requests::RequestClient> request_c
                 if (!m_client_certificate_request_provider)
                     return false;
                 return (*m_client_certificate_request_provider)(
-                    url, signature_algorithms, signature_algorithms_cert,
+                    request_id, url, signature_algorithms,
+                    signature_algorithms_cert,
                     certificate_authorities, connection_generation,
                     signature_scheme, certificate_list, signer_capability);
             });
@@ -154,7 +156,7 @@ void ResourceLoader::set_client_certificate_request_provider(
     if (m_request_client) {
         Requests::RequestClient::ClientCertificateRequestProvider
             forwarding_provider(
-                [this](URL::URL const& url,
+                [this](u64 request_id, URL::URL const& url,
                        ReadonlyBytes signature_algorithms,
                        ReadonlyBytes signature_algorithms_cert,
                        ReadonlyBytes certificate_authorities,
@@ -164,7 +166,7 @@ void ResourceLoader::set_client_certificate_request_provider(
                     if (!m_client_certificate_request_provider)
                         return false;
                     return (*m_client_certificate_request_provider)(
-                        url, signature_algorithms,
+                        request_id, url, signature_algorithms,
                         signature_algorithms_cert, certificate_authorities,
                         connection_generation, signature_scheme,
                         certificate_list, signer_capability);

@@ -47,10 +47,12 @@ public:
 
     /* Request-aware provider used by the RinOS TLS handshake. The vectors are
      * borrowed from the authenticated RequestServer message and retain their
-     * TLS wire encoding. The selected scheme must be one of the offered
-     * CertificateVerify schemes. */
+     * TLS wire encoding. The request ID is forwarded so a Browser/keyring
+     * owner can bind its one-shot capability to the exact RequestServer
+     * transfer rather than only to a connection generation. The selected
+     * scheme must be one of the offered CertificateVerify schemes. */
     using ClientCertificateRequestProvider = Function<bool(
-        URL::URL const&, ReadonlyBytes signature_algorithms,
+        u64 request_id, URL::URL const&, ReadonlyBytes signature_algorithms,
         ReadonlyBytes signature_algorithms_cert,
         ReadonlyBytes certificate_authorities, u64& connection_generation,
         u16& signature_scheme, ByteBuffer& certificate_list,
