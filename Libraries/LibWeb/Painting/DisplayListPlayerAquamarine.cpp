@@ -3,8 +3,6 @@
  */
 
 #include <AK/Math.h>
-#include <AK/RefPtr.h>
-#include <LibCore/Resource.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/PainterAquamarine.h>
@@ -55,26 +53,10 @@ static AqFont const* text_font()
 
 static AqFont const* text_fallback_font()
 {
-    ensure_aquamarine_allocator();
-    static AqFont const* s_font = nullptr;
-    static RefPtr<Core::Resource> s_font_resource;
-    static bool attempted_load = false;
-
-    if (attempted_load)
-        return s_font ? s_font : aq_font_builtin_8x16();
-
-    attempted_load = true;
-    auto resource_or_error = Core::Resource::load_from_uri("resource://fonts/browser-ui.psf"sv);
-    if (!resource_or_error.is_error()) {
-        auto loaded_resource = resource_or_error.release_value();
-        auto const data = loaded_resource->data();
-        if (auto* loaded_font = aq_font_load_psf(data.data(), data.size()); loaded_font) {
-            // aq_font_load_psf() borrows its source bytes.
-            s_font_resource = move(loaded_resource);
-            s_font = loaded_font;
-        }
-    }
-    return s_font ? s_font : aq_font_builtin_8x16();
+    /* The same public owner supplies the fallback font.  A missing glyph is
+     * therefore handled by the same bounded resource lifetime as native UI,
+     * without a renderer-local resource URI or borrowed-byte cache. */
+    return RinRuntime::systemUiFont();
 }
 
 static void draw_codepoint_scaled(AqSurface* surface, int x, int y, u32 codepoint, AqColor color, AqFont const* font, int target_width, int target_height)
