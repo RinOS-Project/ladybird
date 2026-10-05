@@ -16,6 +16,7 @@
 #include <LibCore/EventLoop.h>
 #include <LibCore/Notifier.h>
 #include <LibCore/Promise.h>
+#include <LibCore/Resource.h>
 #include <LibCore/Timer.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/SystemTheme.h>
@@ -37,6 +38,7 @@
 #include <LibWebView/HeadlessWebView.h>
 #include <LibWebView/Utilities.h>
 
+#include "../../../../public-base/libs/rinruntime/include/rinruntime/render_context.hpp"
 #include "webcontent_service_abi.h"
 #include "webcontent_bridge_recovery_policy.h"
 #include "webcontent_service_policy.h"
@@ -60,6 +62,10 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <vector>
+
+extern "C" {
+#include <aquamarine.h>
+}
 
 namespace {
 
@@ -89,6 +95,30 @@ static constexpr u32 s_load_start_retry_limit = 40;
 static bool s_logged_first_rpc_success = false;
 static bool s_logged_first_client_auth_failure = false;
 static bool s_logged_first_client_auth_success = false;
+static RefPtr<Core::Resource> s_system_ui_font_resource;
+
+/* WebContent owns the packaged font bytes, while the public runtime only
+ * retains a borrowed AqFont pointer.  Keeping the resource here makes the
+ * owner lifetime explicit and prevents the renderer from opening resource
+ * URIs on its own. */
+static const AqFont* load_system_ui_font(void*)
+{
+    auto resource_or_error =
+        Core::Resource::load_from_uri("resource://fonts/RIN-CJK-JP.PSF"sv);
+    if (resource_or_error.is_error())
+        resource_or_error =
+            Core::Resource::load_from_uri("resource://fonts/browser-ui.psf"sv);
+    if (resource_or_error.is_error())
+        return nullptr;
+
+    auto resource = resource_or_error.release_value();
+    auto const data = resource->data();
+    auto* font = aq_font_load_psf(data.data(), data.size());
+    if (font == nullptr)
+        return nullptr;
+    s_system_ui_font_resource = move(resource);
+    return font;
+}
 
 static u64 monotonic_time_ms()
 {
@@ -4105,6 +4135,9 @@ static ErrorOr<int> run_bridge()
     // RinOS does not provide /proc/self/exe, so pin helper/resource discovery
     // to the packaged bridge bundle directory.
     auto bundle_path = ByteString("/sys/apps/webcontent"sv);
+    if (RinRuntime::setSystemUiFontLoader(load_system_ui_font, nullptr) !=
+        RIN_SUCCESS)
+        rin_log("[webcontent] public UI font owner registration failed; builtin fallback remains active\n");
     auto app_or_error = BridgeApplication::create(arguments, Optional<ByteString> { bundle_path });
     if (app_or_error.is_error()) {
         auto message = ByteString::formatted("[webcontent] BridgeApplication::create failed (binary_path={}, resource_root={}): {}\n",

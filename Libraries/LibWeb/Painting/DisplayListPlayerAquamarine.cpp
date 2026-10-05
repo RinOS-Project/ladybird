@@ -11,6 +11,7 @@
 #include <LibGfx/Path.h>
 #include <LibGfx/PaintingSurface.h>
 #include <LibWeb/Painting/DisplayListPlayerAquamarine.h>
+#include "../../../../../public-base/libs/rinruntime/include/rinruntime/render_context.hpp"
 #include <stdlib.h>
 
 extern "C" {
@@ -43,39 +44,13 @@ static void ensure_aquamarine_allocator()
     initialized = true;
 }
 
-static AqFont const* load_bitmap_font(StringView uri, RefPtr<Core::Resource>& resource)
-{
-    ensure_aquamarine_allocator();
-
-    auto resource_or_error = Core::Resource::load_from_uri(uri);
-    if (!resource_or_error.is_error()) {
-        auto loaded_resource = resource_or_error.release_value();
-        auto const data = loaded_resource->data();
-        if (auto* loaded_font = aq_font_load_psf(data.data(), data.size()); loaded_font) {
-            // aq_font_load_psf() borrows its source bytes.
-            resource = move(loaded_resource);
-            return loaded_font;
-        }
-    }
-    return nullptr;
-}
-
 static AqFont const* text_font()
 {
-    static AqFont const* s_font = nullptr;
-    static RefPtr<Core::Resource> s_font_resource;
-    static bool attempted_load = false;
-
-    if (attempted_load)
-        return s_font ? s_font : aq_font_builtin_8x16();
-
-    attempted_load = true;
-    s_font = load_bitmap_font("resource://fonts/RIN-CJK-JP.PSF"sv,
-                              s_font_resource);
-    if (!s_font)
-        s_font = load_bitmap_font("resource://fonts/browser-ui.psf"sv,
-                                  s_font_resource);
-    return s_font ? s_font : aq_font_builtin_8x16();
+    /* The public runtime owns font selection for native UI.  The WebContent
+     * bridge registers its private resource owner before the first frame, so
+     * this renderer does not independently open a resource URI or invent a
+     * second font lifetime. */
+    return RinRuntime::systemUiFont();
 }
 
 static AqFont const* text_fallback_font()
@@ -88,8 +63,16 @@ static AqFont const* text_fallback_font()
         return s_font ? s_font : aq_font_builtin_8x16();
 
     attempted_load = true;
-    s_font = load_bitmap_font("resource://fonts/browser-ui.psf"sv,
-                              s_font_resource);
+    auto resource_or_error = Core::Resource::load_from_uri("resource://fonts/browser-ui.psf"sv);
+    if (!resource_or_error.is_error()) {
+        auto loaded_resource = resource_or_error.release_value();
+        auto const data = loaded_resource->data();
+        if (auto* loaded_font = aq_font_load_psf(data.data(), data.size()); loaded_font) {
+            // aq_font_load_psf() borrows its source bytes.
+            s_font_resource = move(loaded_resource);
+            s_font = loaded_font;
+        }
+    }
     return s_font ? s_font : aq_font_builtin_8x16();
 }
 
