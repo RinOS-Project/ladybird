@@ -55,6 +55,7 @@ static AqFont const* text_font()
 
 static AqFont const* text_fallback_font()
 {
+    ensure_aquamarine_allocator();
     static AqFont const* s_font = nullptr;
     static RefPtr<Core::Resource> s_font_resource;
     static bool attempted_load = false;
