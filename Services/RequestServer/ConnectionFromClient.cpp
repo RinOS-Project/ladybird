@@ -763,7 +763,8 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
 {
     /* Validate the authenticated, generation-bound envelope even while the
      * RinTLS signer transport is unavailable. Never accept a private key or
-     * turn an unbound challenge into a false success. */
+     * turn an unbound challenge into a false success. The owner receives
+     * borrowed bytes and RequestServer scrubs them after every callback. */
 #if defined(AK_OS_RINOS)
     if (!rin_requestserver_tls_client_certificate_ipc_valid(
             request_id, connection_generation, certificate_list.data(),
@@ -793,8 +794,7 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
 #endif
         admitted = g_client_certificate_owner(
             g_client_certificate_owner_context, request_id,
-            connection_generation, move(certificate_list),
-            move(signer_capability));
+            connection_generation, certificate_list, signer_capability);
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
     } catch (...) {
         clear_client_certificate_bytes(certificate_list);
@@ -804,6 +804,8 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
         return false;
     }
 #endif
+    clear_client_certificate_bytes(certificate_list);
+    clear_client_certificate_bytes(signer_capability);
     if (admitted)
         dbgln("SetCertificate: client-certificate owner admitted request {}", request_id);
     return admitted;
@@ -965,9 +967,9 @@ Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::w
     u64 websocket_id, u64 connection_generation, ByteBuffer certificate_list,
     ByteBuffer signer_capability)
 {
-    /* WebSocket has the same authenticated envelope as HTTP. The transport
-     * still has no signer hook, so a validated request is rejected rather
-     * than acknowledged. */
+    /* WebSocket has the same authenticated envelope and owner callback as
+     * HTTP. The owner receives borrowed bytes and this boundary scrubs them
+     * after every callback. */
 #if defined(AK_OS_RINOS)
     if (!rin_requestserver_tls_client_certificate_ipc_valid(
             websocket_id, connection_generation, certificate_list.data(),
@@ -998,8 +1000,7 @@ Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::w
 #endif
         admitted = g_client_certificate_owner(
             g_client_certificate_owner_context, websocket_id,
-            connection_generation, move(certificate_list),
-            move(signer_capability));
+            connection_generation, certificate_list, signer_capability);
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
     } catch (...) {
         clear_client_certificate_bytes(certificate_list);
@@ -1010,6 +1011,8 @@ Messages::RequestServer::WebsocketSetCertificateResponse ConnectionFromClient::w
         return false;
     }
 #endif
+    clear_client_certificate_bytes(certificate_list);
+    clear_client_certificate_bytes(signer_capability);
     if (admitted)
         dbgln("WebSocketSetCertificate: client-certificate owner admitted websocket {}", websocket_id);
     return admitted;

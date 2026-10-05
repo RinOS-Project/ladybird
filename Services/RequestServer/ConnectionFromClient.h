@@ -50,8 +50,8 @@ public:
      * admission; private-key bytes and certificate paths never cross here. */
     using ClientCertificateOwner = bool (*)(void*, u64 request_id,
                                             u64 connection_generation,
-                                            ByteBuffer certificate_list,
-                                            ByteBuffer signer_capability);
+                                            ByteBuffer const& certificate_list,
+                                            ByteBuffer const& signer_capability);
     static bool set_client_certificate_owner(ClientCertificateOwner owner,
                                               void* context);
 
