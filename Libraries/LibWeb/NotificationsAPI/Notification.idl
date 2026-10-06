@@ -11,10 +11,10 @@ interface Notification : EventTarget {
 
     static readonly attribute unsigned long maxActions;
 
-    [FIXME] attribute EventHandler onclick;
-    [FIXME] attribute EventHandler onshow;
-    [FIXME] attribute EventHandler onerror;
-    [FIXME] attribute EventHandler onclose;
+    attribute EventHandler onclick;
+    attribute EventHandler onshow;
+    attribute EventHandler onerror;
+    attribute EventHandler onclose;
 
     readonly attribute Utf16DOMString title;
     readonly attribute NotificationDirection dir;
