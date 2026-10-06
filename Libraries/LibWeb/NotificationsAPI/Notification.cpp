@@ -10,7 +10,10 @@
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/NotificationPrototype.h>
+#include <LibWeb/DOM/Event.h>
 #include <LibWeb/HTML/BrowsingContext.h>
+#include <LibWeb/HTML/EventLoop/EventLoop.h>
+#include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
@@ -241,12 +244,26 @@ WebIDL::ExceptionOr<GC::Ref<Notification>> Notification::construct_impl(
     // 4. Associate this with notification.
     this_notification->m_notification = notification;
 
-    // FIXME: 5. Run these steps in parallel:
+    // 5. Run these steps in parallel. The Browser rechecks the live page origin
+    // and its durable permission decision before handing the notification to
+    // the operating system.
+    HTML::queue_global_task(HTML::Task::Source::DOMManipulation,
+        relevant_global_object, GC::create_function(realm.heap(), [this_notification] {
+            bool displayed = false;
+            if (auto* window = as_if<HTML::Window>(
+                    HTML::relevant_global_object(*this_notification))) {
+                displayed = window->page().client().page_did_show_notification(
+                    this_notification->m_notification.origin,
+                    this_notification->m_notification.title,
+                    this_notification->m_notification.body);
+            }
 
-    // FIXME: 1. If the result of getting the notifications permission state is not "granted",
-    // then queue a task to fire an event named error on this, and abort these steps.
-
-    // FIXME: 2. Run the notification show steps for notification.
+            auto event_name = displayed
+                ? HTML::EventNames::show
+                : HTML::EventNames::error;
+            this_notification->dispatch_event(
+                DOM::Event::create(this_notification->realm(), event_name));
+        }));
 
     return this_notification;
 }

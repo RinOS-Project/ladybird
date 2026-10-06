@@ -437,6 +437,13 @@ public:
         DOM::Document const&);
     virtual bool page_did_create_microphone_track(MediaCapture::MediaStreamTrack&, URL::Origin const&) { return false; }
     virtual String page_get_notification_permission([[maybe_unused]] URL::Origin const&) { return {}; }
+    virtual bool page_did_show_notification(
+        [[maybe_unused]] URL::Origin const&,
+        [[maybe_unused]] String const&,
+        [[maybe_unused]] String const&)
+    {
+        return false;
+    }
     virtual void page_did_click_link(URL::URL const&, [[maybe_unused]] ByteString const& target, [[maybe_unused]] unsigned modifiers) { }
     virtual void page_did_middle_click_link(URL::URL const&, [[maybe_unused]] ByteString const& target, [[maybe_unused]] unsigned modifiers) { }
     virtual void page_did_request_tooltip_override(CSSPixelPoint, ByteString const&) { }

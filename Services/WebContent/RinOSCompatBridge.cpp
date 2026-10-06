@@ -1147,6 +1147,9 @@ struct PageSession {
             result.accepted =
                 response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_LIST_ITEM ||
                 response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_LIST_DONE;
+        } else if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_SHOW_NOTIFICATION) {
+            result.accepted = response.result ==
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_NOTIFICATION_POSTED;
         } else {
             result.accepted =
                 response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED ||
@@ -1156,7 +1159,8 @@ struct PageSession {
         result.found =
             response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED ||
             response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_PERMISSION ||
-            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_LIST_ITEM;
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_LIST_ITEM ||
+            response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_NOTIFICATION_POSTED;
         result.generation = response.generation;
         result.state = response.state;
         result.update_via_cache = response.update_via_cache;
