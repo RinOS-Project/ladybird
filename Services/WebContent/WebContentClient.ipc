@@ -142,4 +142,5 @@ endpoint WebContentClient
     request_http_cookie_owner(u64 page_id, u32 operation, ByteString request_url, ByteString origin, ByteString cookie_data, u32 policy) => (bool accepted, bool found, u64 generation, ByteString response_data)
     request_notification_permission(u64 page_id) => (u32 navigation_generation, u64 request_id)
     request_microphone_permission(u64 page_id, ByteString origin) => (u32 navigation_generation, u64 request_id)
+    request_geolocation_permission(u64 page_id, ByteString origin) => (u32 navigation_generation, u64 request_id)
 }

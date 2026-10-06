@@ -17,6 +17,7 @@
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/Platform/Timer.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 
 namespace Web::Geolocation {
@@ -43,6 +44,8 @@ void Geolocation::visit_edges(Visitor& visitor)
     Base::visit_edges(visitor);
     visitor.visit(m_cached_position);
     visitor.visit(m_timeout_timers);
+    for (auto& watch_timer : m_watch_timers)
+        visitor.visit(watch_timer.timer);
 }
 
 // https://w3c.github.io/geolocation/#dom-geolocation-getcurrentposition
@@ -77,8 +80,19 @@ WebIDL::Long Geolocation::watch_position(GC::Ref<WebIDL::CallbackType> success_c
         return 0;
     }
 
+    if (m_watch_ids.size() >= 16u)
+        return 0;
+
     // 2. Let watchId be an implementation-defined unsigned long that is greater than zero.
-    auto watch_id = ++s_next_watch_id;
+    WebIDL::UnsignedLong watch_id = 0;
+    for (size_t attempt = 0; attempt <= m_watch_ids.size(); ++attempt) {
+        watch_id = ++s_next_watch_id;
+        if (watch_id != 0u && !m_watch_ids.contains(watch_id))
+            break;
+        watch_id = 0;
+    }
+    if (watch_id == 0u)
+        return 0;
 
     // 3. Append watchId to this's [[watchIDs]].
     m_watch_ids.set(watch_id);
@@ -95,6 +109,34 @@ void Geolocation::clear_watch(WebIDL::Long watch_id)
 {
     // 1. Remove watchId from this's [[watchIDs]].
     m_watch_ids.remove(watch_id);
+    m_watch_timers.remove_first_matching([&](auto const& item) {
+        if (item.watch_id != static_cast<WebIDL::UnsignedLong>(watch_id))
+            return false;
+        item.timer->stop();
+        return true;
+    });
+}
+
+void Geolocation::schedule_watch_position(
+    GC::Ref<WebIDL::CallbackType> success_callback,
+    GC::Ptr<WebIDL::CallbackType> error_callback, PositionOptions options,
+    WebIDL::UnsignedLong watch_id)
+{
+    if (!m_watch_ids.contains(watch_id))
+        return;
+    auto timer = Platform::Timer::create_single_shot(
+        heap(), 1'000, {});
+    m_watch_timers.append({ watch_id, timer });
+    timer->on_timeout = GC::create_function(heap(),
+        [this, success_callback, error_callback, options, watch_id] {
+            m_watch_timers.remove_first_matching([&](auto const& item) {
+                return item.watch_id == watch_id;
+            });
+            if (m_watch_ids.contains(watch_id))
+                request_a_position(success_callback, error_callback, options,
+                                   watch_id);
+        });
+    timer->start();
 }
 
 // https://w3c.github.io/geolocation/#dfn-acquire-a-position
@@ -104,6 +146,8 @@ void Geolocation::acquire_a_position(GC::Ref<WebIDL::CallbackType> success_callb
     // 1. If watchId was passed and this's [[watchIDs]] does not contain watchId, terminate this algorithm.
     if (watch_id.has_value() && !m_watch_ids.contains(watch_id.value()))
         return;
+    auto& document = as<HTML::Window>(
+        HTML::relevant_global_object(*this)).associated_document();
 
     // 2. Let acquisitionTime be a new EpochTimeStamp that represents now.
     [[maybe_unused]] HighResolutionTime::EpochTimeStamp const acquisition_time = AK::UnixDateTime::now().milliseconds_since_epoch();
@@ -118,14 +162,105 @@ void Geolocation::acquire_a_position(GC::Ref<WebIDL::CallbackType> success_callb
     //    the device's position by running the following steps:
     {
 #if defined(AK_OS_RINOS)
-        /* RinOS has no authenticated geolocation permission/backend owner yet.
-         * Do not fall through to the historical synthetic-coordinate path:
-         * exposing an empty coordinate object would look like a successful
-         * location grant to WebContent.  Keep the request fail-closed until
-         * the permission producer and platform location owner are connected. */
-        (void)success_callback;
-        (void)options;
-        call_back_with_error(error_callback, GeolocationPositionError::ErrorCode::PermissionDenied);
+        if (is_non_secure_context(HTML::relevant_settings_object(*this)) ||
+            !document.is_allowed_to_use_feature(
+                DOM::PolicyControlledFeature::Geolocation)) {
+            if (watch_id.has_value())
+                m_watch_ids.remove(watch_id.value());
+            call_back_with_error(
+                error_callback,
+                GeolocationPositionError::ErrorCode::PermissionDenied);
+            return;
+        }
+
+        GC::Weak<DOM::Document> pending_document { document };
+        if (!pending_document || !pending_document->is_fully_active())
+            return;
+        pending_document->page().client().page_did_request_geolocation(
+            GC::create_function(heap(),
+                [this, pending_document, success_callback, error_callback,
+                 options, watch_id](Web::GeolocationPositionResult result) {
+                                if (!pending_document ||
+                                    !pending_document->is_fully_active() ||
+                                    !pending_document->is_allowed_to_use_feature(
+                                        DOM::PolicyControlledFeature::Geolocation))
+                                    return;
+                                if (watch_id.has_value() &&
+                                    !m_watch_ids.contains(watch_id.value()))
+                                    return;
+                                if (result.status ==
+                                    Web::GeolocationPositionResult::Status::PermissionDenied) {
+                                    if (watch_id.has_value())
+                                        m_watch_ids.remove(watch_id.value());
+                                    call_back_with_error(
+                                        error_callback,
+                                        GeolocationPositionError::ErrorCode::PermissionDenied);
+                                    return;
+                                }
+                                if (result.status !=
+                                    Web::GeolocationPositionResult::Status::Available) {
+                                    call_back_with_error(
+                                        error_callback,
+                                        GeolocationPositionError::ErrorCode::PositionUnavailable);
+                                    if (watch_id.has_value())
+                                        schedule_watch_position(
+                                            success_callback, error_callback,
+                                            options, watch_id.value());
+                                    return;
+                                }
+
+                                CoordinatesData coordinates;
+                                coordinates.latitude =
+                                    static_cast<double>(result.latitude_e7) /
+                                    10000000.0;
+                                coordinates.longitude =
+                                    static_cast<double>(result.longitude_e7) /
+                                    10000000.0;
+                                coordinates.accuracy =
+                                    static_cast<double>(result.horizontal_accuracy_mm) /
+                                    1000.0;
+                                if ((result.flags &
+                                     Web::GeolocationPositionResult::ValidAltitude) != 0u) {
+                                    coordinates.altitude = Optional<double> {
+                                        static_cast<double>(result.altitude_mm) /
+                                        1000.0 };
+                                    coordinates.altitude_accuracy = Optional<double> {
+                                        static_cast<double>(result.vertical_accuracy_mm) /
+                                        1000.0 };
+                                }
+                                if ((result.flags &
+                                     Web::GeolocationPositionResult::ValidSpeed) != 0u)
+                                    coordinates.speed = Optional<double> {
+                                        static_cast<double>(result.speed_mm_per_second) /
+                                        1000.0 };
+                                if ((result.flags &
+                                     Web::GeolocationPositionResult::ValidHeading) != 0u)
+                                    coordinates.heading = Optional<double> {
+                                        static_cast<double>(result.heading_millidegrees) /
+                                        1000.0 };
+
+                                auto position_data = realm().create<GeolocationCoordinates>(
+                                    realm(), move(coordinates));
+                                auto position = realm().create<GeolocationPosition>(
+                                    realm(), position_data,
+                                    AK::UnixDateTime::now().milliseconds_since_epoch(),
+                                    options.enable_high_accuracy);
+                                m_cached_position = *position;
+                                HTML::queue_a_task(
+                                    HTML::Task::Source::Geolocation, nullptr,
+                                    nullptr, GC::create_function(heap(),
+                                        [success_callback, position] {
+                                            (void)WebIDL::invoke_callback(
+                                                success_callback, {},
+                                                WebIDL::ExceptionBehavior::Report,
+                                                { { position } });
+                                        }));
+                                if (watch_id.has_value())
+                                    schedule_watch_position(
+                                        success_callback, error_callback,
+                                        options, watch_id.value());
+                }),
+            *pending_document);
         return;
 #else
         // FIXME: 1. Let permission be get the current permission state of "geolocation".
@@ -306,14 +441,26 @@ void Geolocation::request_a_position(GC::Ref<WebIDL::CallbackType> success_callb
 
     // FIXME: 3. If document is not allowed to use the "geolocation" feature:
 #if defined(AK_OS_RINOS)
-    /* The WebContent permission event producer and platform location owner
-     * are not connected yet.  Refuse before scheduling an acquisition so a
-     * renderer cannot observe a synthetic success while the broker is absent. */
-    (void)success_callback;
-    (void)options;
-    if (watch_id.has_value())
-        m_watch_ids.remove(watch_id.value());
-    call_back_with_error(error_callback, GeolocationPositionError::ErrorCode::PermissionDenied);
+    if (is_non_secure_context(HTML::relevant_settings_object(*this)) ||
+        !document.is_allowed_to_use_feature(
+            DOM::PolicyControlledFeature::Geolocation)) {
+        if (watch_id.has_value())
+            m_watch_ids.remove(watch_id.value());
+        call_back_with_error(
+            error_callback,
+            GeolocationPositionError::ErrorCode::PermissionDenied);
+        return;
+    }
+
+    run_in_parallel_when_document_is_visible(document,
+        GC::create_function(heap(),
+            [this, success_callback, error_callback, options, watch_id] {
+                if (watch_id.has_value() &&
+                    !m_watch_ids.contains(watch_id.value()))
+                    return;
+                acquire_a_position(success_callback, error_callback, options,
+                                   watch_id);
+            }));
     return;
 #else
     if (false) {

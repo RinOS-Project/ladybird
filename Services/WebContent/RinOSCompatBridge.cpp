@@ -1051,6 +1051,9 @@ struct PageSession {
         view->on_request_microphone_permission = [this](ByteString origin) {
             return request_microphone_permission(move(origin));
         };
+        view->on_request_geolocation_permission = [this](ByteString origin) {
+            return request_geolocation_permission(move(origin));
+        };
 
         view->initialize_bridge_client();
         kick_first_frame_if_needed("create-page"sv, true);
@@ -2216,6 +2219,30 @@ struct PageSession {
         return -ESTALE;
     }
 
+    int complete_location_permission(
+        RinWebContentLocationPermissionCompleteV1 const& completion)
+    {
+        auto const& permission = completion.permission;
+        if (permission.navigation_generation != permission_navigation_generation)
+            return -ESTALE;
+        if (permission_producer.bound != 1u)
+            return -ENOTSUP;
+        if (!rin_webcontent_permission_producer_complete_type(
+                &permission_producer, page_id, permission_renderer_generation,
+                &permission, "location"))
+            return -ESTALE;
+        view->complete_geolocation_permission(
+            permission.navigation_generation, permission.request_id,
+            permission.result == RIN_WEBCONTENT_PERMISSION_RESULT_ALLOW,
+            completion.fix_valid == 1u, completion.fix.latitude_e7,
+            completion.fix.longitude_e7, completion.fix.altitude_mm,
+            completion.fix.horizontal_accuracy_mm,
+            completion.fix.vertical_accuracy_mm,
+            completion.fix.speed_mm_per_second,
+            completion.fix.heading_millidegrees, completion.fix.flags);
+        return 0;
+    }
+
     int revoke_microphone(RinWebContentMicrophoneRevokeV1 const& revocation)
     {
         if (!rin_webcontent_client_microphone_revoke_valid(&revocation))
@@ -2263,6 +2290,26 @@ struct PageSession {
                 permission_renderer_generation, origin.characters(),
                 "microphone",
                 "Allow this site to use your microphone?", &request_id))
+            return result;
+
+        result.navigation_generation = permission_navigation_generation;
+        result.request_id = request_id;
+        return result;
+    }
+
+    WebView::ViewImplementation::PermissionRequest
+    request_geolocation_permission(ByteString origin)
+    {
+        WebView::ViewImplementation::PermissionRequest result {};
+        u64 request_id = 0u;
+        if (permission_producer.bound != 1u ||
+            permission_navigation_generation == 0u ||
+            !rin_webcontent_permission_producer_request_from_document(
+                &permission_producer, page_id,
+                permission_navigation_generation,
+                permission_renderer_generation, origin.characters(),
+                "location",
+                "Allow this site to access your location?", &request_id))
             return result;
 
         result.navigation_generation = permission_navigation_generation;
@@ -3304,6 +3351,32 @@ static int handle_complete_permission(PageSession& page, int client_fd,
         : -EIO;
 }
 
+static int handle_complete_location_permission(
+    PageSession& page, int client_fd, ReadonlyBytes payload, u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentLocationPermissionCompleteV1))
+        return send_message(client_fd,
+                            RIN_WEBCONTENT_CMD_COMPLETE_LOCATION_V1, -EINVAL,
+                            page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+
+    auto const& completion =
+        *reinterpret_cast<RinWebContentLocationPermissionCompleteV1 const*>(
+            payload.data());
+    if (!rin_webcontent_location_permission_complete_valid(&completion))
+        return send_message(client_fd,
+                            RIN_WEBCONTENT_CMD_COMPLETE_LOCATION_V1, -EINVAL,
+                            page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+    auto result = page.complete_location_permission(completion);
+    return send_message(client_fd, RIN_WEBCONTENT_CMD_COMPLETE_LOCATION_V1,
+                        result, page.page_id, nullptr, 0, deadline_ms)
+        ? 0
+        : -EIO;
+}
+
 static int handle_revoke_microphone(PageSession& page, int client_fd,
                                     ReadonlyBytes payload, u64 deadline_ms)
 {
@@ -3939,6 +4012,10 @@ static void handle_client(int client_fd)
     case RIN_WEBCONTENT_CMD_COMPLETE_PERMISSION_V1:
         (void)handle_complete_permission(*page, client_fd, payload_bytes,
                                          deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_COMPLETE_LOCATION_V1:
+        (void)handle_complete_location_permission(
+            *page, client_fd, payload_bytes, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_REVOKE_MICROPHONE_V1:
         (void)handle_revoke_microphone(*page, client_fd, payload_bytes,

@@ -309,11 +309,18 @@ public:
     };
     Function<PermissionRequest()> on_request_notification_permission;
     Function<PermissionRequest(ByteString)> on_request_microphone_permission;
+    Function<PermissionRequest(ByteString)> on_request_geolocation_permission;
 
     void complete_notification_permission(u32 navigation_generation, u64 request_id,
                                           String permission);
     void complete_microphone_permission(u32 navigation_generation, u64 request_id,
                                         bool allowed);
+    void complete_geolocation_permission(
+        u32 navigation_generation, u64 request_id, bool allowed,
+        bool fix_available, i64 latitude_e7, i64 longitude_e7,
+        i64 altitude_mm, u32 horizontal_accuracy_mm,
+        u32 vertical_accuracy_mm, u32 speed_mm_per_second,
+        u32 heading_millidegrees, u32 flags);
     bool revoke_microphone_capture(ByteString domain, u64 sequence);
 
     Menu& page_context_menu() { return *m_page_context_menu; }

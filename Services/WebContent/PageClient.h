@@ -97,6 +97,12 @@ public:
                                           String permission);
     void complete_microphone_permission(u32 navigation_generation, u64 request_id,
                                         bool allowed);
+    void complete_geolocation_permission(
+        u32 navigation_generation, u64 request_id, bool allowed,
+        bool fix_available, i64 latitude_e7, i64 longitude_e7,
+        i64 altitude_mm, u32 horizontal_accuracy_mm,
+        u32 vertical_accuracy_mm, u32 speed_mm_per_second,
+        u32 heading_millidegrees, u32 flags);
     bool revoke_microphone_capture(String domain, u64 sequence);
 
     Vector<Web::CSS::StyleSheetIdentifier> list_style_sheets() const;
@@ -151,6 +157,9 @@ private:
     virtual void page_did_request_notification_permission(JS::PromiseCapability&) override;
     virtual void page_did_request_microphone_permission(
         JS::PromiseCapability&, Web::DOM::Document const&) override;
+    virtual void page_did_request_geolocation(
+        GC::Ref<GC::Function<void(Web::GeolocationPositionResult)>>,
+        Web::DOM::Document const&) override;
     virtual bool page_did_create_microphone_track(
         Web::MediaCapture::MediaStreamTrack&, URL::Origin const&) override;
     virtual void page_did_start_loading(URL::URL const&, bool) override;
@@ -222,6 +231,7 @@ private:
     void setup_palette();
     void resolve_pending_notification_permissions();
     void resolve_pending_microphone_permissions();
+    void resolve_pending_geolocation_permissions();
     ConnectionFromClient& client() const;
 
     PageHost& m_owner;
@@ -264,6 +274,14 @@ private:
         URL::Origin origin { URL::Origin::create_opaque() };
     };
     Vector<PendingMicrophonePermission> m_pending_microphone_permissions;
+    struct PendingGeolocationPermission {
+        u32 navigation_generation { 0 };
+        u64 request_id { 0 };
+        GC::Ref<GC::Function<void(Web::GeolocationPositionResult)>> callback;
+        GC::Weak<Web::DOM::Document> document;
+        URL::Origin origin { URL::Origin::create_opaque() };
+    };
+    Vector<PendingGeolocationPermission> m_pending_geolocation_permissions;
     struct ActiveMicrophoneTrack {
         GC::Weak<Web::MediaCapture::MediaStreamTrack> track;
         String domain;

@@ -1476,6 +1476,17 @@ WebContentClient::request_microphone_permission(u64 page_id, ByteString origin)
     return { request.navigation_generation, request.request_id };
 }
 
+Messages::WebContentClient::RequestGeolocationPermissionResponse
+WebContentClient::request_geolocation_permission(u64 page_id, ByteString origin)
+{
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_request_geolocation_permission)
+        return { 0u, 0u };
+
+    auto request = view->on_request_geolocation_permission(move(origin));
+    return { request.navigation_generation, request.request_id };
+}
+
 Optional<ViewImplementation&> WebContentClient::view_for_page_id(u64 page_id, SourceLocation location)
 {
     // Don't bother logging anything for the spare WebContent process. It will only receive a load notification for about:blank.

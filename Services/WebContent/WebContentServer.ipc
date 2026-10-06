@@ -116,6 +116,7 @@ endpoint WebContentServer
     handle_file_return(u64 page_id, i32 error, Optional<IPC::File> file, i32 request_id) =|
     complete_notification_permission(u64 page_id, u32 navigation_generation, u64 request_id, String permission) =|
     complete_microphone_permission(u64 page_id, u32 navigation_generation, u64 request_id, bool allowed) =|
+    complete_geolocation_permission(u64 page_id, u32 navigation_generation, u64 request_id, bool allowed, bool fix_available, i64 latitude_e7, i64 longitude_e7, i64 altitude_mm, u32 horizontal_accuracy_mm, u32 vertical_accuracy_mm, u32 speed_mm_per_second, u32 heading_millidegrees, u32 flags) =|
     revoke_microphone_capture(u64 page_id, String domain, u64 sequence) => (bool stopped)
 
     set_system_visibility_state(u64 page_id, Web::HTML::VisibilityState visibility_state) =|

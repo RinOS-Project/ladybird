@@ -44,9 +44,17 @@ private:
     EmulatedPositionData get_emulated_position_data() const;
     void request_a_position(GC::Ref<WebIDL::CallbackType>, GC::Ptr<WebIDL::CallbackType>, PositionOptions, Optional<WebIDL::UnsignedLong> = {});
     void run_in_parallel_when_document_is_visible(DOM::Document&, GC::Ref<GC::Function<void()>>);
+    void schedule_watch_position(GC::Ref<WebIDL::CallbackType>,
+                                 GC::Ptr<WebIDL::CallbackType>,
+                                 PositionOptions, WebIDL::UnsignedLong);
 
     // https://w3c.github.io/geolocation/#dfn-watchids
     HashTable<WebIDL::UnsignedLong> m_watch_ids;
+    struct WatchTimer {
+        WebIDL::UnsignedLong watch_id { 0 };
+        GC::Ref<Platform::Timer> timer;
+    };
+    Vector<WatchTimer> m_watch_timers;
 
     // https://w3c.github.io/geolocation/#dfn-cachedposition
     GC::Ptr<GeolocationPosition> m_cached_position;

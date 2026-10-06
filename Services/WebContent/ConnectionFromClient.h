@@ -127,6 +127,12 @@ private:
                                                   u64 request_id, String permission) override;
     virtual void complete_microphone_permission(u64 page_id, u32 navigation_generation,
                                                 u64 request_id, bool allowed) override;
+    virtual void complete_geolocation_permission(
+        u64 page_id, u32 navigation_generation, u64 request_id, bool allowed,
+        bool fix_available, i64 latitude_e7, i64 longitude_e7,
+        i64 altitude_mm, u32 horizontal_accuracy_mm,
+        u32 vertical_accuracy_mm, u32 speed_mm_per_second,
+        u32 heading_millidegrees, u32 flags) override;
     virtual Messages::WebContentServer::RevokeMicrophoneCaptureResponse
     revoke_microphone_capture(u64 page_id, String domain, u64 sequence) override;
     virtual void set_system_visibility_state(u64 page_id, Web::HTML::VisibilityState) override;

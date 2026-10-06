@@ -116,6 +116,8 @@ void PageClient::visit_edges(JS::Cell::Visitor& visitor)
         visitor.visit(pending.promise);
     for (auto const& pending : m_pending_microphone_permissions)
         visitor.visit(pending.promise);
+    for (auto const& pending : m_pending_geolocation_permissions)
+        visitor.visit(pending.callback);
 
     if (m_webdriver)
         m_webdriver->visit_edges(visitor);
@@ -368,6 +370,7 @@ void PageClient::page_did_change_active_document_in_top_level_browsing_context(W
 {
     resolve_pending_notification_permissions();
     resolve_pending_microphone_permissions();
+    resolve_pending_geolocation_permissions();
 
     auto& realm = document.realm();
 
@@ -848,6 +851,47 @@ void PageClient::page_did_request_microphone_permission(
         GC::Weak { document }, origin });
 }
 
+void PageClient::page_did_request_geolocation(
+    GC::Ref<GC::Function<void(Web::GeolocationPositionResult)>> callback,
+    Web::DOM::Document const& document)
+{
+    auto fail = [&] {
+        Web::GeolocationPositionResult result;
+        result.status = Web::GeolocationPositionResult::Status::PositionUnavailable;
+        callback->function()(result);
+    };
+
+    auto const& origin = document.origin();
+    if (origin.is_opaque() || m_pending_geolocation_permissions.size() >= 4u) {
+        fail();
+        return;
+    }
+    auto serialized_origin = origin.serialize().to_byte_string();
+    if (serialized_origin.is_empty() ||
+        serialized_origin.length() >= RIN_WEBCONTENT_URL_MAX) {
+        fail();
+        return;
+    }
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentClient::RequestGeolocationPermission>(
+            m_id, move(serialized_origin));
+    if (!response || response->navigation_generation() == 0u ||
+        response->request_id() == 0u) {
+        fail();
+        return;
+    }
+    for (auto const& pending : m_pending_geolocation_permissions) {
+        if (pending.navigation_generation == response->navigation_generation() &&
+            pending.request_id == response->request_id()) {
+            fail();
+            return;
+        }
+    }
+    m_pending_geolocation_permissions.append({
+        response->navigation_generation(), response->request_id(), callback,
+        GC::Weak { document }, origin });
+}
+
 bool PageClient::page_did_create_microphone_track(
     Web::MediaCapture::MediaStreamTrack& track, URL::Origin const& origin)
 {
@@ -922,6 +966,16 @@ void PageClient::resolve_pending_microphone_permissions()
     m_pending_microphone_permissions.clear();
 }
 
+void PageClient::resolve_pending_geolocation_permissions()
+{
+    for (auto& pending : m_pending_geolocation_permissions) {
+        Web::GeolocationPositionResult result;
+        result.status = Web::GeolocationPositionResult::Status::PositionUnavailable;
+        pending.callback->function()(result);
+    }
+    m_pending_geolocation_permissions.clear();
+}
+
 void PageClient::complete_notification_permission(
     u32 navigation_generation, u64 request_id, String permission)
 {
@@ -969,10 +1023,73 @@ void PageClient::complete_microphone_permission(
     }
 }
 
+void PageClient::complete_geolocation_permission(
+    u32 navigation_generation, u64 request_id, bool allowed,
+    bool fix_available, i64 latitude_e7, i64 longitude_e7,
+    i64 altitude_mm, u32 horizontal_accuracy_mm,
+    u32 vertical_accuracy_mm, u32 speed_mm_per_second,
+    u32 heading_millidegrees, u32 flags)
+{
+    if (navigation_generation == 0u || request_id == 0u ||
+        (fix_available && !allowed))
+        return;
+
+    for (size_t index = 0; index < m_pending_geolocation_permissions.size(); ++index) {
+        auto const& pending = m_pending_geolocation_permissions[index];
+        if (pending.navigation_generation != navigation_generation ||
+            pending.request_id != request_id)
+            continue;
+
+        auto callback = pending.callback;
+        auto document = pending.document;
+        auto origin = pending.origin;
+        m_pending_geolocation_permissions.remove(index);
+        if (!document || !document->is_fully_active() ||
+            !document->origin().is_same_origin(origin) ||
+            !document->is_allowed_to_use_feature(
+                Web::DOM::PolicyControlledFeature::Geolocation))
+            return;
+
+        Web::GeolocationPositionResult result;
+        if (!allowed) {
+            result.status = Web::GeolocationPositionResult::Status::PermissionDenied;
+        } else if (!fix_available || latitude_e7 < -900000000LL ||
+                   latitude_e7 > 900000000LL ||
+                   longitude_e7 < -1800000000LL ||
+                   longitude_e7 > 1800000000LL || horizontal_accuracy_mm == 0u ||
+                   (flags & ~Web::GeolocationPositionResult::KnownFlags) != 0u ||
+                   ((flags & Web::GeolocationPositionResult::ValidAltitude) != 0u &&
+                    vertical_accuracy_mm == 0u) ||
+                   ((flags & Web::GeolocationPositionResult::ValidAltitude) == 0u &&
+                    (altitude_mm != 0 || vertical_accuracy_mm != 0u)) ||
+                   ((flags & Web::GeolocationPositionResult::ValidSpeed) == 0u &&
+                    speed_mm_per_second != 0u) ||
+                   ((flags & Web::GeolocationPositionResult::ValidHeading) == 0u &&
+                    heading_millidegrees != 0u) ||
+                   ((flags & Web::GeolocationPositionResult::ValidHeading) != 0u &&
+                    heading_millidegrees >= 360000u)) {
+            result.status = Web::GeolocationPositionResult::Status::PositionUnavailable;
+        } else {
+            result.status = Web::GeolocationPositionResult::Status::Available;
+            result.latitude_e7 = latitude_e7;
+            result.longitude_e7 = longitude_e7;
+            result.altitude_mm = altitude_mm;
+            result.horizontal_accuracy_mm = horizontal_accuracy_mm;
+            result.vertical_accuracy_mm = vertical_accuracy_mm;
+            result.speed_mm_per_second = speed_mm_per_second;
+            result.heading_millidegrees = heading_millidegrees;
+            result.flags = flags;
+        }
+        callback->function()(result);
+        return;
+    }
+}
+
 void PageClient::page_did_close_top_level_traversable()
 {
     resolve_pending_notification_permissions();
     resolve_pending_microphone_permissions();
+    resolve_pending_geolocation_permissions();
 
     // FIXME: Rename this IPC call
     client().async_did_close_browsing_context(m_id);

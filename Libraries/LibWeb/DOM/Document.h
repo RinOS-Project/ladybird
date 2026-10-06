@@ -175,6 +175,7 @@ struct ImportNodeOptions {
 enum class PolicyControlledFeature : u8 {
     Autoplay,
     Microphone,
+    Geolocation,
     WebSerial,
     EncryptedMedia,
     FocusWithoutUserActivation,

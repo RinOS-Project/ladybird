@@ -64,6 +64,15 @@ void PageClient::page_did_request_microphone_permission(
     WebIDL::resolve_promise(realm, promise, JS::Value(false));
 }
 
+void PageClient::page_did_request_geolocation(
+    GC::Ref<GC::Function<void(GeolocationPositionResult)>> callback,
+    DOM::Document const&)
+{
+    GeolocationPositionResult result;
+    result.status = GeolocationPositionResult::Status::PositionUnavailable;
+    callback->function()(result);
+}
+
 void Page::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);

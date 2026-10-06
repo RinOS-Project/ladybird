@@ -121,6 +121,22 @@ void ViewImplementation::complete_microphone_permission(
         page_id(), navigation_generation, request_id, allowed);
 }
 
+void ViewImplementation::complete_geolocation_permission(
+    u32 navigation_generation, u64 request_id, bool allowed,
+    bool fix_available, i64 latitude_e7, i64 longitude_e7,
+    i64 altitude_mm, u32 horizontal_accuracy_mm,
+    u32 vertical_accuracy_mm, u32 speed_mm_per_second,
+    u32 heading_millidegrees, u32 flags)
+{
+    if (navigation_generation == 0u || request_id == 0u ||
+        (fix_available && !allowed))
+        return;
+    client().async_complete_geolocation_permission(
+        page_id(), navigation_generation, request_id, allowed, fix_available,
+        latitude_e7, longitude_e7, altitude_mm, horizontal_accuracy_mm,
+        vertical_accuracy_mm, speed_mm_per_second, heading_millidegrees, flags);
+}
+
 bool ViewImplementation::revoke_microphone_capture(ByteString domain, u64 sequence)
 {
     if (sequence == 0u || domain.is_empty())

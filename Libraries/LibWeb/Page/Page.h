@@ -362,6 +362,30 @@ enum class DisplayListPlayerType {
     CPU,
 };
 
+struct GeolocationPositionResult {
+    static constexpr u32 ValidAltitude = 1u << 0;
+    static constexpr u32 ValidSpeed = 1u << 1;
+    static constexpr u32 ValidHeading = 1u << 2;
+    static constexpr u32 KnownFlags =
+        ValidAltitude | ValidSpeed | ValidHeading;
+
+    enum class Status : u32 {
+        PermissionDenied = 1,
+        PositionUnavailable = 2,
+        Available = 3,
+    };
+
+    Status status { Status::PositionUnavailable };
+    i64 latitude_e7 { 0 };
+    i64 longitude_e7 { 0 };
+    i64 altitude_mm { 0 };
+    u32 horizontal_accuracy_mm { 0 };
+    u32 vertical_accuracy_mm { 0 };
+    u32 speed_mm_per_second { 0 };
+    u32 heading_millidegrees { 0 };
+    u32 flags { 0 };
+};
+
 class PageClient : public JS::Cell {
     GC_CELL(PageClient, JS::Cell);
 
@@ -408,6 +432,9 @@ public:
     virtual void page_did_request_download(URL::URL const&, ByteString const&) { }
     virtual void page_did_request_notification_permission(JS::PromiseCapability&);
     virtual void page_did_request_microphone_permission(JS::PromiseCapability&, DOM::Document const&);
+    virtual void page_did_request_geolocation(
+        GC::Ref<GC::Function<void(GeolocationPositionResult)>>,
+        DOM::Document const&);
     virtual bool page_did_create_microphone_track(MediaCapture::MediaStreamTrack&, URL::Origin const&) { return false; }
     virtual String page_get_notification_permission([[maybe_unused]] URL::Origin const&) { return {}; }
     virtual void page_did_click_link(URL::URL const&, [[maybe_unused]] ByteString const& target, [[maybe_unused]] unsigned modifiers) { }
