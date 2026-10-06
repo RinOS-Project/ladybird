@@ -265,15 +265,19 @@ void Geolocation::acquire_a_position(GC::Ref<WebIDL::CallbackType> success_callb
 #else
         // FIXME: 1. Let permission be get the current permission state of "geolocation".
 
-        // FIXME: 2. If permission is "denied":
-        if (false) {
-            // FIXME: 1. Stop timeout.
-
-            // FIXME: 2. Do the user or system denied permission failure case step.
+        if (!document.is_allowed_to_use_feature(
+                DOM::PolicyControlledFeature::Geolocation)) {
+            if (watch_id.has_value())
+                m_watch_ids.remove(watch_id.value());
+            call_back_with_error(
+                error_callback,
+                GeolocationPositionError::ErrorCode::PermissionDenied);
+            return;
         }
 
-        // FIXME: 3. If permission is "granted":
-        if (true) {
+        // FIXME: Consult the non-RinOS site permission owner before using
+        // cached or emulated positions.
+        {
             // 1. Check if an emulated position should be used by running the following steps:
             {
                 // 1. Let emulatedPositionData be get emulated position data passing this.
@@ -310,9 +314,6 @@ void Geolocation::acquire_a_position(GC::Ref<WebIDL::CallbackType> success_callb
                 }
             }
 
-            // 2. Let position be null.
-            GC::Ptr<GeolocationPosition> position;
-
             // 3. If cachedPosition is not null, and options.maximumAge is greater than 0:
             if (cached_position && options.maximum_age > 0) {
                 // 1. Let cacheTime be acquisitionTime minus the value of the options.maximumAge member.
@@ -333,60 +334,11 @@ void Geolocation::acquire_a_position(GC::Ref<WebIDL::CallbackType> success_callb
                 }
             }
 
-            // FIXME: 4. Otherwise, if position is not cachedPosition, try to acquire position data from the underlying system,
-            //    optionally taking into consideration the value of options.enableHighAccuracy during acquisition.
-
-            // FIXME: 5. If the timeout elapses during acquisition, or acquiring the device's position results in failure:
-            if (false) {
-                // FIXME: 1. Stop the timeout.
-
-                // FIXME: 2. Go to dealing with failures.
-
-                // 3. Terminate this algorithm.
-                return;
-            }
-
-            // FIXME: 6. If acquiring the position data from the system succeeds:
-            if (true) {
-                // FIXME: 1. Let positionData be a map with the following name/value pairs based on the acquired position data:
-                //    * longitude:
-                //        A double that represents the longitude coordinates on the Earth's surface in degrees, using
-                //        the [WGS84] coordinate system. Longitude measures how far east or west a point is from the
-                //        Prime Meridian.
-                //    * altitude:
-                //        A double? that represents the altitude in meters above the [WGS84] ellipsoid, or null if not
-                //        available. Altitude measures the height above sea level.
-                //    * accuracy:
-                //        A non-negative double that represents the accuracy value indicating the 95% confidence level
-                //        in meters. Accuracy measures how close the measured coordinates are to the true position.
-                //    * altitudeAccuracy:
-                //        A non-negative double? that represents the altitude accuracy, or null if not available,
-                //        indicating the 95% confidence level in meters. Altitude accuracy measures how close the
-                //        measured altitude is to the true altitude.
-                //    * speed:
-                //        A non-negative double? that represents the speed in meters per second, or null if not
-                //        available. Speed measures how fast the device is moving.
-                //    * heading:
-                //        A double? that represents the heading in degrees, or null if not available or the device is
-                //        stationary. Heading measures the direction in which the device is moving relative to true
-                //        north.
-                GC::Ref<GeolocationCoordinates> position_data = realm().create<GeolocationCoordinates>(realm());
-
-                // 2. Set position to a new GeolocationPosition passing positionData, acquisitionTime and
-                //    options.enableHighAccuracy.
-                position = realm().create<GeolocationPosition>(realm(), position_data, acquisition_time, options.enable_high_accuracy);
-
-                // 3. Set this's [[cachedPosition]] to position.
-                m_cached_position = *position;
-            }
-
-            // FIXME: 7. Stop the timeout.
-
-            // 8. Queue a task on the geolocation task source with a step that invokes successCallback with « position »
-            //    and "report".
-            HTML::queue_a_task(HTML::Task::Source::Geolocation, nullptr, nullptr, GC::create_function(heap(), [success_callback, position] {
-                (void)WebIDL::invoke_callback(success_callback, {}, WebIDL::ExceptionBehavior::Report, { { position } });
-            }));
+            // This embedding has no platform position owner yet. Do not turn
+            // the default-initialized coordinates into a successful fix.
+            call_back_with_error(
+                error_callback,
+                GeolocationPositionError::ErrorCode::PositionUnavailable);
         }
 #endif
     }
@@ -463,7 +415,8 @@ void Geolocation::request_a_position(GC::Ref<WebIDL::CallbackType> success_callb
             }));
     return;
 #else
-    if (false) {
+    if (!document.is_allowed_to_use_feature(
+            DOM::PolicyControlledFeature::Geolocation)) {
         // 1. If watchId was passed, remove watchId from watchIDs.
         if (watch_id.has_value())
             m_watch_ids.remove(watch_id.value());
