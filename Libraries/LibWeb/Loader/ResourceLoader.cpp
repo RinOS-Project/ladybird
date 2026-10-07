@@ -638,6 +638,11 @@ RefPtr<Requests::Request> ResourceLoader::start_network_request(LoadRequest cons
         return nullptr;
     }
 
+#if !defined(AK_OS_RINOS)
+    /* This legacy callback has no CertificateRequest constraints or transfer
+     * identity. RinOS must use RequestClient's request-aware authenticated
+     * provider so the Browser owner can bind an explicit identity to the
+     * exact request and offered signature schemes. */
     protocol_request->on_certificate_requested = [this, url = request.url().value()] {
         Requests::Request::CertificateAndSignerCapability result;
         if (!m_request_client->provide_client_certificate(
@@ -646,6 +651,7 @@ RefPtr<Requests::Request> ResourceLoader::start_network_request(LoadRequest cons
             return Requests::Request::CertificateAndSignerCapability {};
         return result;
     };
+#endif
 
     if (auto page = request.page()) {
         Optional<String> initiator_type_string;

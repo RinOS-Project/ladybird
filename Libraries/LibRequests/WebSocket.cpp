@@ -89,6 +89,12 @@ void WebSocket::did_close(Badge<RequestClient>, u16 code, ByteString reason, boo
 
 void WebSocket::did_request_certificates(Badge<RequestClient>)
 {
+#if defined(AK_OS_RINOS)
+    /* RinOS CertificateRequest handling runs synchronously through the
+     * request-aware RequestClient IPC. This legacy notification carries no
+     * TLS constraints, so never install an identity from it. */
+    return;
+#else
     if (!m_client)
         return;
     CertificateAndSignerCapability result;
@@ -118,6 +124,7 @@ void WebSocket::did_request_certificates(Badge<RequestClient>)
             {}, *this, result.connection_generation,
             move(result.certificate_list), move(result.signer_capability)))
         dbgln("WebSocket: set_certificate failed");
+#endif
 }
 
 void WebSocket::detach_from_client(Badge<RequestClient>)
