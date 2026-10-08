@@ -169,8 +169,10 @@ WebIDL::ExceptionOr<ConceptNotification> Notification::create_a_notification(
     notification.actions = {};
 
     // 21. For each entry in options["actions"], up to the maximum number of actions supported (skip any excess entries):
+    auto const supported_action_count = max_actions(realm.vm());
     for (auto const& entry : options.actions) {
-        // FIXME: stop the loop at the max number of actions supported
+        if (notification.actions.size() >= supported_action_count)
+            break;
 
         // 1. Let action be a new notification action.
         ConceptNotification::Action action;
