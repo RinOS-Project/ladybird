@@ -871,10 +871,10 @@ void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, Byt
     auto host = url.serialized_host().to_byte_string();
 
 #if defined(AK_OS_RINOS)
-    /* Client identity selection must follow TLS CertificateRequest so the
-     * owner can inspect signature schemes and CA names. This WebSocket
-     * transport has no request-aware certificate provider yet; do not prefetch
-     * and install an unfiltered identity before its handshake. */
+    /* The request-aware provider is attached below only after RequestClient
+     * advertises both its authenticated certificate owner and signer. It
+     * waits for TLS CertificateRequest, then forwards those constraints for
+     * this WebSocket before installing a generation-bound one-shot signer. */
 #endif
 
     m_resolver->dns.lookup(host, DNS::Messages::Class::IN, { DNS::Messages::ResourceType::A, DNS::Messages::ResourceType::AAAA })

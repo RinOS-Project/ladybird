@@ -58,6 +58,7 @@
 #endif
 
 #if defined(AK_OS_RINOS)
+#    include "RinOSCompatBridge.h"
 #    include <string.h>
 #    include <unistd.h>
 #endif
@@ -348,6 +349,29 @@ ErrorOr<void> connect_to_resource_loader(GC::Heap& heap, IPC::TransportHandle co
 {
     auto transport = TRY(handle.create_transport());
     auto request_client = TRY(try_make_ref_counted<Requests::RequestClient>(move(transport)));
+#if defined(AK_OS_RINOS)
+    request_client->set_client_certificate_request_provider(
+        [](u64 request_id, URL::URL const& url,
+           ReadonlyBytes signature_algorithms,
+           ReadonlyBytes signature_algorithms_cert,
+           ReadonlyBytes certificate_authorities,
+           u64& connection_generation, u16& signature_scheme,
+           ByteBuffer& certificate_list, ByteBuffer& signer_capability) {
+            return RinWebContentBridge::request_tls_client_certificate(
+                request_id, url, signature_algorithms,
+                signature_algorithms_cert, certificate_authorities,
+                connection_generation, signature_scheme, certificate_list,
+                signer_capability);
+        });
+    request_client->set_client_certificate_signer(
+        [](u64 request_id, u64 connection_generation,
+           ReadonlyBytes signer_capability, u16 signature_scheme,
+           ReadonlyBytes message, ByteBuffer& signature) {
+            return RinWebContentBridge::sign_tls_client_certificate(
+                request_id, connection_generation, signer_capability,
+                signature_scheme, message, signature);
+        });
+#endif
 #ifdef AK_OS_WINDOWS
     auto response = request_client->send_sync<Messages::RequestServer::InitTransport>(Core::System::getpid());
     request_client->transport().set_peer_pid(response->peer_pid());

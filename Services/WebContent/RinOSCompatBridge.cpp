@@ -40,6 +40,7 @@
 
 #include "../../../../public-base/libs/rinruntime/include/rinruntime/render_context.hpp"
 #include "webcontent_service_abi.h"
+#include "RinOSCompatBridge.h"
 #include "webcontent_bridge_recovery_policy.h"
 #include "webcontent_service_policy.h"
 #include "rin_socket_abi.h"
@@ -127,7 +128,8 @@ static u64 monotonic_time_ms()
 
 static bool is_browser_builtin_url(StringView url)
 {
-    return url == "about:start"sv || url == "about:settings"sv;
+    return url == "about:start"sv || url == "about:settings"sv ||
+           url == "about:tls-identities"sv;
 }
 
 static bool is_internal_markup_document_url(StringView url)
@@ -421,6 +423,100 @@ static bool owner_channel_request(u32 command, u32 page_id,
     }
     if (response_header->status != 0) {
         errno = rin_webcontent_client_status_errno(response_header->status);
+        return false;
+    }
+    return true;
+}
+
+static void tls_owner_clear(void* memory, size_t size)
+{
+    volatile u8* bytes = static_cast<volatile u8*>(memory);
+    if (bytes == nullptr) return;
+    while (size-- != 0u) *bytes++ = 0u;
+}
+
+static bool tls_identity_owner_exchange(
+    const RinWebContentTlsIdentityOwnerRequestV1& request,
+    std::vector<u8>& payload,
+    RinWebContentTlsIdentityOwnerResponseV1& response,
+    std::vector<u8>& response_data)
+{
+    response_data.clear();
+    if (s_service_worker_owner_fd < 0 ||
+        s_owner_channel_session.session_id == 0u ||
+        s_owner_channel_session.session_generation == 0u ||
+        payload.size() > UINT32_MAX ||
+        !rin_webcontent_tls_identity_owner_request_valid(
+            &request, payload.data(), payload.size())) {
+        errno = EINVAL;
+        return false;
+    }
+    const u64 now = monotonic_time_ms();
+    if (now > UINT64_MAX - UINT64_C(6000)) {
+        errno = ETIMEDOUT;
+        return false;
+    }
+    const u64 deadline = now + UINT64_C(6000);
+    RinWebContentMsgHeader request_header {};
+    request_header.magic = RIN_WEBCONTENT_MAGIC;
+    request_header.version = RIN_WEBCONTENT_VERSION;
+    request_header.command = RIN_WEBCONTENT_CMD_TLS_IDENTITY_OWNER_V1;
+    request_header.page_id = 0u;
+    request_header.payload_len = static_cast<u32>(payload.size());
+    if (!send_all(s_service_worker_owner_fd, &request_header,
+                  sizeof(request_header), deadline) ||
+        !send_all(s_service_worker_owner_fd, payload.data(), payload.size(),
+                  deadline) ||
+        !recv_all(s_service_worker_owner_fd, &request_header,
+                  sizeof(request_header), deadline)) {
+        close_owner_channel();
+        return false;
+    }
+    const size_t maximum_body = request.operation ==
+            RIN_WEBCONTENT_TLS_IDENTITY_OWNER_PROVIDE
+        ? RINRUNTIME_TLS_CLIENT_CERTIFICATE_CHAIN_MAX +
+              RINRUNTIME_TLS_CLIENT_CERTIFICATE_CAPABILITY_BYTES
+        : RIN_REQUESTSERVER_TLS_CLIENT_CERTIFICATE_MAX_SIGNATURE_BYTES;
+    if (request_header.magic != RIN_WEBCONTENT_MAGIC ||
+        request_header.version != RIN_WEBCONTENT_VERSION ||
+        request_header.command != RIN_WEBCONTENT_CMD_TLS_IDENTITY_OWNER_V1 ||
+        request_header.page_id != 0u || request_header.reserved0 != 0u ||
+        request_header.reserved1 != 0u || request_header.status > 0 ||
+        (request_header.status == 0 &&
+         (request_header.payload_len < sizeof(response) ||
+          request_header.payload_len > sizeof(response) + maximum_body)) ||
+        (request_header.status < 0 && request_header.payload_len != 0u)) {
+        close_owner_channel();
+        errno = EPROTO;
+        return false;
+    }
+    if (request_header.status != 0) {
+        errno = rin_webcontent_client_status_errno(request_header.status);
+        return false;
+    }
+    if (!recv_all(s_service_worker_owner_fd, &response, sizeof(response),
+                  deadline)) {
+        close_owner_channel();
+        return false;
+    }
+    const size_t trailing_size = request_header.payload_len - sizeof(response);
+    try {
+        response_data.resize(trailing_size);
+    } catch (...) {
+        close_owner_channel();
+        errno = ENOMEM;
+        return false;
+    }
+    if ((trailing_size != 0u &&
+         !recv_all(s_service_worker_owner_fd, response_data.data(),
+                   trailing_size, deadline)) ||
+        !rin_webcontent_tls_identity_owner_response_valid(
+            &response, response_data.data(), response_data.size(),
+            request.operation, request.request_id)) {
+        tls_owner_clear(response_data.data(), response_data.size());
+        response_data.clear();
+        close_owner_channel();
+        errno = EPROTO;
         return false;
     }
     return true;
@@ -4333,6 +4429,183 @@ static ErrorOr<int> run_bridge()
 }
 
 } // namespace
+
+namespace RinWebContentBridge {
+
+static void clear_buffer(AK::ByteBuffer& buffer)
+{
+    tls_owner_clear(buffer.data(), buffer.size());
+    buffer.clear();
+}
+
+static bool copy_buffer(AK::ByteBuffer& output, const u8* bytes, size_t size)
+{
+    auto copied = AK::ByteBuffer::copy(bytes, size);
+    if (copied.is_error()) return false;
+    output = copied.release_value();
+    return true;
+}
+
+bool request_tls_client_certificate(
+    u64 request_id, URL::URL const& url,
+    ReadonlyBytes signature_algorithms,
+    ReadonlyBytes signature_algorithms_cert,
+    ReadonlyBytes certificate_authorities,
+    u64& connection_generation, u16& signature_scheme,
+    AK::ByteBuffer& certificate_list, AK::ByteBuffer& signer_capability)
+{
+    connection_generation = 0u;
+    signature_scheme = 0u;
+    clear_buffer(certificate_list);
+    clear_buffer(signer_capability);
+    auto serialized_url = url.serialize().to_byte_string();
+    if (serialized_url.is_empty() || request_id == 0u ||
+        request_id == UINT64_MAX ||
+        serialized_url.length() >= RIN_WEBCONTENT_TLS_IDENTITY_OWNER_MAX_URL ||
+        signature_algorithms.size() >
+            RIN_WEBCONTENT_TLS_IDENTITY_OWNER_MAX_SCHEMES ||
+        signature_algorithms_cert.size() >
+            RIN_WEBCONTENT_TLS_IDENTITY_OWNER_MAX_SCHEMES ||
+        certificate_authorities.size() >
+            RIN_WEBCONTENT_TLS_IDENTITY_OWNER_MAX_AUTHORITIES)
+        return false;
+
+    RinWebContentTlsIdentityOwnerRequestV1 request {};
+    request.struct_size = sizeof(request);
+    request.version = RIN_WEBCONTENT_TLS_IDENTITY_OWNER_VERSION;
+    request.operation = RIN_WEBCONTENT_TLS_IDENTITY_OWNER_PROVIDE;
+    request.request_id = request_id;
+    request.url_size = static_cast<u32>(serialized_url.length());
+    request.signature_algorithms_size =
+        static_cast<u32>(signature_algorithms.size());
+    request.signature_algorithms_cert_size =
+        static_cast<u32>(signature_algorithms_cert.size());
+    request.certificate_authorities_size =
+        static_cast<u32>(certificate_authorities.size());
+    size_t trailing_size = request.url_size;
+    if (request.signature_algorithms_size > SIZE_MAX - trailing_size ||
+        request.signature_algorithms_cert_size > SIZE_MAX - trailing_size -
+            request.signature_algorithms_size ||
+        request.certificate_authorities_size > SIZE_MAX - trailing_size -
+            request.signature_algorithms_size -
+            request.signature_algorithms_cert_size) {
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+    trailing_size += request.signature_algorithms_size +
+        request.signature_algorithms_cert_size +
+        request.certificate_authorities_size;
+    std::vector<u8> payload;
+    try {
+        payload.resize(trailing_size);
+    } catch (...) {
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+    size_t offset = 0u;
+    __builtin_memcpy(payload.data() + offset, serialized_url.characters(),
+                     request.url_size);
+    offset += request.url_size;
+    if (request.signature_algorithms_size != 0u) {
+        __builtin_memcpy(payload.data() + offset,
+                         signature_algorithms.data(),
+                         request.signature_algorithms_size);
+        offset += request.signature_algorithms_size;
+    }
+    if (request.signature_algorithms_cert_size != 0u) {
+        __builtin_memcpy(payload.data() + offset,
+                         signature_algorithms_cert.data(),
+                         request.signature_algorithms_cert_size);
+        offset += request.signature_algorithms_cert_size;
+    }
+    if (request.certificate_authorities_size != 0u)
+        __builtin_memcpy(payload.data() + offset,
+                         certificate_authorities.data(),
+                         request.certificate_authorities_size);
+
+    RinWebContentTlsIdentityOwnerResponseV1 response {};
+    std::vector<u8> response_data;
+    const bool exchanged = tls_identity_owner_exchange(
+        request, payload, response, response_data);
+    tls_owner_clear(payload.data(), payload.size());
+    payload.clear();
+    if (!exchanged || response.result !=
+            RIN_WEBCONTENT_TLS_IDENTITY_OWNER_ACCEPTED) {
+        tls_owner_clear(response_data.data(), response_data.size());
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+    const bool copied = copy_buffer(
+            certificate_list, response_data.data(),
+            response.certificate_list_size) &&
+        copy_buffer(signer_capability,
+            response_data.data() + response.certificate_list_size,
+            response.capability_size);
+    if (!copied) {
+        clear_buffer(certificate_list);
+        clear_buffer(signer_capability);
+        tls_owner_clear(response_data.data(), response_data.size());
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+    connection_generation = response.connection_generation;
+    signature_scheme = response.signature_scheme;
+    tls_owner_clear(response_data.data(), response_data.size());
+    tls_owner_clear(&request, sizeof(request));
+    return true;
+}
+
+bool sign_tls_client_certificate(
+    u64 request_id, u64 connection_generation,
+    ReadonlyBytes signer_capability, u16 signature_scheme,
+    ReadonlyBytes message, AK::ByteBuffer& signature)
+{
+    clear_buffer(signature);
+    if (request_id == 0u || request_id == UINT64_MAX ||
+        connection_generation == 0u || connection_generation == UINT64_MAX ||
+        signer_capability.size() !=
+            RINRUNTIME_TLS_CLIENT_CERTIFICATE_CAPABILITY_BYTES ||
+        message.is_empty() || message.size() >
+            RIN_REQUESTSERVER_TLS_CLIENT_CERTIFICATE_MAX_TRANSCRIPT_BYTES)
+        return false;
+    RinWebContentTlsIdentityOwnerRequestV1 request {};
+    request.struct_size = sizeof(request);
+    request.version = RIN_WEBCONTENT_TLS_IDENTITY_OWNER_VERSION;
+    request.operation = RIN_WEBCONTENT_TLS_IDENTITY_OWNER_SIGN;
+    request.request_id = request_id;
+    request.connection_generation = connection_generation;
+    request.signature_scheme = signature_scheme;
+    request.message_size = static_cast<u32>(message.size());
+    __builtin_memcpy(request.capability, signer_capability.data(),
+                     sizeof(request.capability));
+    std::vector<u8> payload;
+    try {
+        payload.assign(message.data(), message.data() + message.size());
+    } catch (...) {
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+    RinWebContentTlsIdentityOwnerResponseV1 response {};
+    std::vector<u8> response_data;
+    const bool exchanged = tls_identity_owner_exchange(
+        request, payload, response, response_data);
+    tls_owner_clear(payload.data(), payload.size());
+    payload.clear();
+    if (!exchanged || response.result !=
+            RIN_WEBCONTENT_TLS_IDENTITY_OWNER_ACCEPTED ||
+        !copy_buffer(signature, response_data.data(),
+                     response.signature_size)) {
+        clear_buffer(signature);
+        tls_owner_clear(response_data.data(), response_data.size());
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+    tls_owner_clear(response_data.data(), response_data.size());
+    tls_owner_clear(&request, sizeof(request));
+    return true;
+}
+
+} // namespace RinWebContentBridge
 
 extern "C" int webcontent_run(void)
 {
