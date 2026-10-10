@@ -57,6 +57,25 @@ namespace WebContent {
 static PageClient::PainterBackendPreference s_painter_backend_preference = PageClient::PainterBackendPreference::GPUBackendIfAvailable;
 static bool s_is_headless { false };
 
+/* Core::Timer accepts an integer millisecond interval. Round upward so the
+ * timer never schedules rendering faster than the embedding view's limit. */
+static int refresh_interval_for_maximum_frames_per_second(double frames_per_second)
+{
+    constexpr double minimum_supported_fps = 1.0;
+    constexpr double maximum_supported_fps = 1000.0;
+    if (!__builtin_isfinite(frames_per_second) ||
+        frames_per_second < minimum_supported_fps)
+        frames_per_second = 60.0;
+    if (frames_per_second > maximum_supported_fps)
+        frames_per_second = maximum_supported_fps;
+
+    const double interval_ms = 1000.0 / frames_per_second;
+    int rounded_interval_ms = static_cast<int>(interval_ms);
+    if (static_cast<double>(rounded_interval_ms) < interval_ms)
+        ++rounded_interval_ms;
+    return rounded_interval_ms < 1 ? 1 : rounded_interval_ms;
+}
+
 GC_DEFINE_ALLOCATOR(PageClient);
 
 void PageClient::set_painter_backend_preference(PainterBackendPreference painter_backend_preference)
@@ -86,10 +105,8 @@ PageClient::PageClient(PageHost& owner, u64 id)
 {
     setup_palette();
 
-    // FIXME: This removes the decimal part, so the refresh interval will actually be higher than the maximum FPS.
-    //        For example, 60 FPS = 1000ms / 60 = 16.6666...ms, but it will become 16ms, making the interval equivalent
-    //        to 62.5 FPS.
-    int refresh_interval = static_cast<int>(1000.0 / m_maximum_frames_per_second);
+    int refresh_interval = refresh_interval_for_maximum_frames_per_second(
+        m_maximum_frames_per_second);
 
     m_paint_refresh_timer = Core::Timer::create_repeating(refresh_interval, [] {
 #ifdef AK_OS_RINOS
@@ -247,14 +264,17 @@ void PageClient::set_zoom_level(double zoom_level)
     page().top_level_traversable()->set_viewport_size(page().device_to_css_size(m_viewport_size), Web::InvalidateDisplayList::Yes);
 }
 
-void PageClient::set_maximum_frames_per_second(u64 maximum_frames_per_second)
+void PageClient::set_maximum_frames_per_second(double maximum_frames_per_second)
 {
+    if (!__builtin_isfinite(maximum_frames_per_second) ||
+        maximum_frames_per_second < 1.0)
+        return;
+    if (maximum_frames_per_second > 1000.0)
+        maximum_frames_per_second = 1000.0;
     m_maximum_frames_per_second = maximum_frames_per_second;
 
-    // FIXME: This removes the decimal part, so the refresh interval will actually be higher than the maximum FPS.
-    //        For example, 60 FPS = 1000ms / 60 = 16.6666...ms, but it will become 16ms, making the interval equivalent
-    //        to 62.5 FPS.
-    int refresh_interval = static_cast<int>(1000.0 / m_maximum_frames_per_second);
+    int refresh_interval = refresh_interval_for_maximum_frames_per_second(
+        m_maximum_frames_per_second);
 
     VERIFY(m_paint_refresh_timer);
     m_paint_refresh_timer->set_interval(refresh_interval);

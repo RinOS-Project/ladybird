@@ -60,7 +60,7 @@ public:
         m_main_screen_index = main_screen_index;
     }
     void set_zoom_level(double zoom_level);
-    void set_maximum_frames_per_second(u64 maximum_frames_per_second);
+    void set_maximum_frames_per_second(double maximum_frames_per_second);
     void set_preferred_color_scheme(Web::CSS::PreferredColorScheme);
     void set_preferred_contrast(Web::CSS::PreferredContrast);
     void set_preferred_motion(Web::CSS::PreferredMotion);
