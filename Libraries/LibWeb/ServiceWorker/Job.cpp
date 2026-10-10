@@ -299,6 +299,13 @@ static void update(JS::VM& vm, GC::Ref<Job> job)
         return;
     }
 
+    if (job->job_type == Job::Type::Update && !begin_browser_registration_transaction(job)) {
+        reject_job_promise<WebIDL::InvalidStateError>(
+            job, "The Browser profile owner rejected the ServiceWorker update transaction"_utf16);
+        finish_job(vm, job);
+        return;
+    }
+
     // 5. Let hasUpdatedResources be false.
     // 6. Let updatedResourceMap be an ordered map where the keys are URLs and the values are responses.
     auto state = UpdateAlgorithmState::create(vm);
@@ -514,9 +521,19 @@ static void update(JS::VM& vm, GC::Ref<Job> job)
 
         // 9. If hasUpdatedResources is false, then:
         if (!state->has_updated_resources()) {
-            // An Update job does not stage a new Browser registration candidate.
-            // Register jobs commit their staged candidate even when resources match.
-            if (job->browser_registration_transaction_id != 0u
+            // A no-op Update must not publish a new registration generation.
+            // Abort its Browser candidate; Register commits its candidate even
+            // when resources match.
+            if (job->job_type == Job::Type::Update
+                && !finish_browser_registration_transaction(
+                    job, RIN_WEBCONTENT_SERVICE_WORKER_OWNER_ABORT_REGISTER)) {
+                reject_job_promise<WebIDL::InvalidStateError>(
+                    job, "The Browser profile owner could not abort the unchanged ServiceWorker update"_utf16);
+                finish_job(vm, job);
+                return;
+            }
+            if (job->job_type == Job::Type::Register
+                && job->browser_registration_transaction_id != 0u
                 && !finish_browser_registration_transaction(
                     job, RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_REGISTER)) {
                 reject_job_promise<WebIDL::InvalidStateError>(
