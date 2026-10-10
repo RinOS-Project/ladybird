@@ -1476,6 +1476,48 @@ WebContentClient::request_microphone_permission(u64 page_id, ByteString origin)
     return { request.navigation_generation, request.request_id };
 }
 
+Messages::WebContentClient::RequestCameraPermissionResponse
+WebContentClient::request_camera_permission(u64 page_id, ByteString origin)
+{
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_request_camera_permission)
+        return { 0u, 0u };
+
+    auto request = view->on_request_camera_permission(move(origin));
+    return { request.navigation_generation, request.request_id };
+}
+
+Messages::WebContentClient::RequestCameraCaptureOpenResponse
+WebContentClient::request_camera_capture_open(u64 page_id, ByteString origin)
+{
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_camera_capture_open)
+        return { false, 0u, {} };
+
+    auto response = view->on_camera_capture_open(move(origin));
+    return { response.accepted, response.session_id, move(response.profile) };
+}
+
+Messages::WebContentClient::RequestCameraCaptureReadResponse
+WebContentClient::request_camera_capture_read(u64 page_id, u64 session_id)
+{
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_camera_capture_read)
+        return { false, {} };
+
+    auto response = view->on_camera_capture_read(session_id);
+    return { response.accepted, move(response.chunk) };
+}
+
+Messages::WebContentClient::RequestCameraCaptureCloseResponse
+WebContentClient::request_camera_capture_close(u64 page_id, u64 session_id)
+{
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_camera_capture_close)
+        return { false };
+    return { view->on_camera_capture_close(session_id) };
+}
+
 Messages::WebContentClient::RequestGeolocationPermissionResponse
 WebContentClient::request_geolocation_permission(u64 page_id, ByteString origin)
 {

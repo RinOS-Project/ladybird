@@ -122,7 +122,13 @@ PageClient::PageClient(PageHost& owner, u64 id)
 #endif
 }
 
-PageClient::~PageClient() = default;
+PageClient::~PageClient()
+{
+    for (auto& active : m_active_camera_tracks) {
+        if (active.track)
+            (void)active.track->revoke_capture();
+    }
+}
 
 void PageClient::visit_edges(JS::Cell::Visitor& visitor)
 {
@@ -132,6 +138,8 @@ void PageClient::visit_edges(JS::Cell::Visitor& visitor)
     for (auto const& pending : m_pending_notification_permissions)
         visitor.visit(pending.promise);
     for (auto const& pending : m_pending_microphone_permissions)
+        visitor.visit(pending.promise);
+    for (auto const& pending : m_pending_camera_permissions)
         visitor.visit(pending.promise);
     for (auto const& pending : m_pending_geolocation_permissions)
         visitor.visit(pending.callback);
@@ -383,6 +391,12 @@ void PageClient::page_did_start_loading(URL::URL const& url, bool is_redirect)
 
 void PageClient::page_did_create_new_document(Web::DOM::Document& document)
 {
+    resolve_pending_camera_permissions();
+    for (auto& active : m_active_camera_tracks) {
+        if (active.track)
+            (void)active.track->revoke_capture();
+    }
+    m_active_camera_tracks.clear();
     initialize_js_console(document);
 }
 
@@ -390,6 +404,12 @@ void PageClient::page_did_change_active_document_in_top_level_browsing_context(W
 {
     resolve_pending_notification_permissions();
     resolve_pending_microphone_permissions();
+    resolve_pending_camera_permissions();
+    for (auto& active : m_active_camera_tracks) {
+        if (active.track)
+            (void)active.track->revoke_capture();
+    }
+    m_active_camera_tracks.clear();
     resolve_pending_geolocation_permissions();
 
     auto& realm = document.realm();
@@ -871,6 +891,45 @@ void PageClient::page_did_request_microphone_permission(
         GC::Weak { document }, origin });
 }
 
+void PageClient::page_did_request_camera_permission(
+    JS::PromiseCapability& promise, Web::DOM::Document const& document)
+{
+    auto resolve_denied = [&] {
+        auto& realm = promise.promise()->shape().realm();
+        Web::WebIDL::resolve_promise(realm, promise, JS::Value(false));
+    };
+
+    auto const& origin = document.origin();
+    if (origin.is_opaque() || m_pending_camera_permissions.size() >= 4u) {
+        resolve_denied();
+        return;
+    }
+    auto serialized_origin = origin.serialize().to_byte_string();
+    if (serialized_origin.is_empty() ||
+        serialized_origin.length() >= RIN_WEBCONTENT_URL_MAX) {
+        resolve_denied();
+        return;
+    }
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentClient::RequestCameraPermission>(
+            m_id, move(serialized_origin));
+    if (!response || response->navigation_generation() == 0u ||
+        response->request_id() == 0u) {
+        resolve_denied();
+        return;
+    }
+    for (auto const& pending : m_pending_camera_permissions) {
+        if (pending.navigation_generation == response->navigation_generation() &&
+            pending.request_id == response->request_id()) {
+            resolve_denied();
+            return;
+        }
+    }
+    m_pending_camera_permissions.append({
+        response->navigation_generation(), response->request_id(), promise,
+        GC::Weak { document }, origin });
+}
+
 void PageClient::page_did_request_geolocation(
     GC::Ref<GC::Function<void(Web::GeolocationPositionResult)>> callback,
     Web::DOM::Document const& document)
@@ -937,6 +996,131 @@ bool PageClient::page_did_create_microphone_track(
     return true;
 }
 
+bool PageClient::page_did_open_camera_capture(
+    URL::Origin const& origin, u64& session_id,
+    Web::CameraCaptureProfile& profile)
+{
+    session_id = 0u;
+    profile = {};
+    if (origin.is_opaque())
+        return false;
+    auto serialized_origin = origin.serialize().to_byte_string();
+    if (serialized_origin.is_empty() ||
+        serialized_origin.length() >= RIN_WEBCONTENT_URL_MAX)
+        return false;
+
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentClient::RequestCameraCaptureOpen>(
+            m_id, move(serialized_origin));
+    if (!response || !response->accepted() || response->session_id() == 0u)
+        return false;
+    session_id = response->session_id();
+    if (response->profile().size() != sizeof(RinWebContentCameraCaptureProfileV1)) {
+        (void)page_did_close_camera_capture(session_id);
+        session_id = 0u;
+        return false;
+    }
+
+    RinWebContentCameraCaptureProfileV1 wire_profile {};
+    memcpy(&wire_profile, response->profile().data(), sizeof(wire_profile));
+    if (!rin_webcontent_client_camera_capture_profile_valid(&wire_profile)) {
+        (void)page_did_close_camera_capture(session_id);
+        session_id = 0u;
+        return false;
+    }
+
+    profile.stream_id = wire_profile.stream_id;
+    profile.format = wire_profile.format;
+    profile.max_frame_size = wire_profile.max_frame_size;
+    profile.width = wire_profile.width;
+    profile.height = wire_profile.height;
+    return true;
+}
+
+i32 PageClient::page_did_read_camera_capture(u64 session_id, Vector<u8>& output)
+{
+    output.clear();
+    if (session_id == 0u)
+        return -1;
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentClient::RequestCameraCaptureRead>(m_id, session_id);
+    if (!response || !response->accepted())
+        return -1;
+    auto const& chunk = response->chunk();
+    if (chunk.is_empty())
+        return 1;
+    if (chunk.size() > RIN_WEBCONTENT_CAMERA_CAPTURE_MAX_CHUNK_BYTES ||
+        chunk.size() < sizeof(RinWebContentCameraCaptureChunkV1) ||
+        !rin_webcontent_client_camera_capture_chunk_valid(
+            reinterpret_cast<RinWebContentCameraCaptureChunkV1 const*>(
+                chunk.data()),
+            chunk.bytes().data() + sizeof(RinWebContentCameraCaptureChunkV1),
+            static_cast<u32>(chunk.size())) ||
+        output.try_append(chunk.bytes()).is_error())
+        return -1;
+    return 0;
+}
+
+bool PageClient::page_did_close_camera_capture(u64 session_id)
+{
+    if (session_id == 0u)
+        return false;
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentClient::RequestCameraCaptureClose>(m_id, session_id);
+    return response && response->accepted();
+}
+
+bool PageClient::page_did_create_camera_track(
+    Web::MediaCapture::MediaStreamTrack& track, URL::Origin const& origin)
+{
+    if (origin.is_opaque() || !track.is_live())
+        return false;
+    auto domain = origin.host().serialize();
+    if (domain.is_empty())
+        return false;
+    for (size_t index = 0; index < m_active_camera_tracks.size();) {
+        auto const& active = m_active_camera_tracks[index];
+        if (!active.track || !active.track->is_live()) {
+            m_active_camera_tracks.remove(index);
+            continue;
+        }
+        ++index;
+    }
+    if (m_active_camera_tracks.size() >= 64u)
+        return false;
+    m_active_camera_tracks.append({ GC::Weak { track }, move(domain) });
+    return true;
+}
+
+bool PageClient::revoke_camera_capture(String domain, u64 sequence)
+{
+    if (sequence == 0u || sequence <= m_last_camera_revocation_sequence)
+        return sequence == m_last_camera_revocation_sequence;
+
+    bool const revoke_all = domain == "*"_string;
+    bool stopped = true;
+    for (size_t index = 0; index < m_active_camera_tracks.size();) {
+        auto& active = m_active_camera_tracks[index];
+        if (!active.track) {
+            m_active_camera_tracks.remove(index);
+            continue;
+        }
+        if (revoke_all || active.domain == domain) {
+            if (active.track->revoke_capture())
+                m_active_camera_tracks.remove(index);
+            else {
+                stopped = false;
+                ++index;
+            }
+            continue;
+        }
+        ++index;
+    }
+    if (stopped)
+        m_last_camera_revocation_sequence = sequence;
+    return stopped;
+}
+
 bool PageClient::revoke_microphone_capture(String domain, u64 sequence)
 {
     if (sequence == 0u || sequence <= m_last_microphone_revocation_sequence)
@@ -984,6 +1168,16 @@ void PageClient::resolve_pending_microphone_permissions()
             JS::Value(false));
     }
     m_pending_microphone_permissions.clear();
+}
+
+void PageClient::resolve_pending_camera_permissions()
+{
+    for (auto& pending : m_pending_camera_permissions) {
+        auto& pending_realm = pending.promise->promise()->shape().realm();
+        Web::WebIDL::resolve_promise(pending_realm, *pending.promise,
+                                    JS::Value(false));
+    }
+    m_pending_camera_permissions.clear();
 }
 
 void PageClient::resolve_pending_geolocation_permissions()
@@ -1037,6 +1231,32 @@ void PageClient::complete_microphone_permission(
         bool const still_authorized = pending.document &&
             pending.document->is_fully_active() &&
             pending.document->origin().is_same_origin(pending.origin);
+        Web::WebIDL::resolve_promise(
+            realm, *promise, JS::Value(allowed && still_authorized));
+        return;
+    }
+}
+
+void PageClient::complete_camera_permission(
+    u32 navigation_generation, u64 request_id, bool allowed)
+{
+    if (navigation_generation == 0u || request_id == 0u)
+        return;
+    for (size_t index = 0; index < m_pending_camera_permissions.size(); ++index) {
+        auto const& pending = m_pending_camera_permissions[index];
+        if (pending.navigation_generation != navigation_generation ||
+            pending.request_id != request_id)
+            continue;
+        auto promise = pending.promise;
+        auto document = pending.document;
+        auto origin = pending.origin;
+        m_pending_camera_permissions.remove(index);
+        auto& realm = promise->promise()->shape().realm();
+        bool const still_authorized = document &&
+            document->is_fully_active() &&
+            document->is_allowed_to_use_feature(
+                Web::DOM::PolicyControlledFeature::Camera) &&
+            document->origin().is_same_origin(origin);
         Web::WebIDL::resolve_promise(
             realm, *promise, JS::Value(allowed && still_authorized));
         return;
@@ -1109,6 +1329,12 @@ void PageClient::page_did_close_top_level_traversable()
 {
     resolve_pending_notification_permissions();
     resolve_pending_microphone_permissions();
+    resolve_pending_camera_permissions();
+    for (auto& active : m_active_camera_tracks) {
+        if (active.track)
+            (void)active.track->revoke_capture();
+    }
+    m_active_camera_tracks.clear();
     resolve_pending_geolocation_permissions();
 
     // FIXME: Rename this IPC call

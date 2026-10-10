@@ -20,6 +20,7 @@
 #include <LibWeb/HTML/EventLoop/Task.h>
 #include <LibWeb/HTML/HTMLElement.h>
 #include <LibWeb/HTML/MediaControls.h>
+#include <LibWeb/MediaCapture/MediaStream.h>
 #include <LibWeb/Painting/ExternalContentSource.h>
 #include <LibWeb/PixelUnits.h>
 #include <LibWeb/WebIDL/DOMException.h>
@@ -54,6 +55,8 @@ public:
     void set_decoder_error(String error_message);
 
     String const& current_src() const { return m_current_src; }
+    GC::Ptr<MediaCapture::MediaStream> src_object() const { return m_src_object; }
+    void set_src_object(GC::Ptr<MediaCapture::MediaStream>);
     void select_resource();
 
     enum class NetworkState : u8 {
@@ -176,6 +179,13 @@ protected:
     virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
     virtual void removed_from(DOM::Node* old_parent, DOM::Node& old_root) override;
     virtual void children_changed(ChildrenChangedMetadata const& metadata) override;
+
+    virtual void update_media_stream_video_frame() { }
+    void set_media_stream_ready_state(ReadyState state)
+    {
+        m_network_state = NetworkState::Idle;
+        set_ready_state(state);
+    }
 
 private:
     friend SourceElementSelector;
@@ -329,6 +339,7 @@ private:
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-media-videotracks
     GC::Ptr<VideoTrackList> m_video_tracks;
+    GC::Ptr<MediaCapture::MediaStream> m_src_object;
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-media-texttracks
     GC::Ptr<TextTrackList> m_text_tracks;

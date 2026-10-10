@@ -121,6 +121,15 @@ void ViewImplementation::complete_microphone_permission(
         page_id(), navigation_generation, request_id, allowed);
 }
 
+void ViewImplementation::complete_camera_permission(
+    u32 navigation_generation, u64 request_id, bool allowed)
+{
+    if (navigation_generation == 0u || request_id == 0u)
+        return;
+    client().async_complete_camera_permission(
+        page_id(), navigation_generation, request_id, allowed);
+}
+
 void ViewImplementation::complete_geolocation_permission(
     u32 navigation_generation, u64 request_id, bool allowed,
     bool fix_available, i64 latitude_e7, i64 longitude_e7,
@@ -146,6 +155,19 @@ bool ViewImplementation::revoke_microphone_capture(ByteString domain, u64 sequen
         return false;
     auto response = client().send_sync_but_allow_failure<
         Messages::WebContentServer::RevokeMicrophoneCapture>(
+            page_id(), string_domain.release_value(), sequence);
+    return response && response->stopped();
+}
+
+bool ViewImplementation::revoke_camera_capture(ByteString domain, u64 sequence)
+{
+    if (sequence == 0u || domain.is_empty())
+        return false;
+    auto string_domain = String::from_utf8(domain.view());
+    if (string_domain.is_error())
+        return false;
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentServer::RevokeCameraCapture>(
             page_id(), string_domain.release_value(), sequence);
     return response && response->stopped();
 }

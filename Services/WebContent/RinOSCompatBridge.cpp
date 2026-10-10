@@ -435,6 +435,91 @@ static void tls_owner_clear(void* memory, size_t size)
     while (size-- != 0u) *bytes++ = 0u;
 }
 
+static bool camera_capture_owner_exchange(
+    u32 page_id, RinWebContentCameraCaptureOwnerRequestV1 const& request,
+    RinWebContentCameraCaptureOwnerResponseV1& response,
+    std::vector<u8>& response_data)
+{
+    response_data.clear();
+    if (s_service_worker_owner_fd < 0 ||
+        s_owner_channel_session.session_id == 0u ||
+        s_owner_channel_session.session_generation == 0u ||
+        !rin_webcontent_client_camera_capture_owner_request_valid(&request)) {
+        errno = EINVAL;
+        return false;
+    }
+    u8 response_marker = 0u;
+    if (!rin_webcontent_client_call_valid(
+            RIN_WEBCONTENT_CMD_CAMERA_CAPTURE_OWNER_V1, page_id, &request,
+            sizeof(request), &response_marker, sizeof(response))) {
+        errno = EINVAL;
+        return false;
+    }
+    u64 deadline_ms = 0u;
+    if (!client_rpc_deadline_create(&deadline_ms))
+        return false;
+
+    RinWebContentMsgHeader request_header {};
+    request_header.magic = RIN_WEBCONTENT_MAGIC;
+    request_header.version = RIN_WEBCONTENT_VERSION;
+    request_header.command = RIN_WEBCONTENT_CMD_CAMERA_CAPTURE_OWNER_V1;
+    request_header.page_id = page_id;
+    request_header.payload_len = sizeof(request);
+    RinWebContentMsgHeader response_header {};
+    if (!send_all(s_service_worker_owner_fd, &request_header,
+                  sizeof(request_header), deadline_ms) ||
+        !send_all(s_service_worker_owner_fd, &request, sizeof(request),
+                  deadline_ms) ||
+        !recv_all(s_service_worker_owner_fd, &response_header,
+                  sizeof(response_header), deadline_ms)) {
+        close_owner_channel();
+        return false;
+    }
+    const size_t maximum_response_size =
+        sizeof(response) + RIN_WEBCONTENT_CAMERA_CAPTURE_MAX_CHUNK_BYTES;
+    if (response_header.magic != RIN_WEBCONTENT_MAGIC ||
+        response_header.version != RIN_WEBCONTENT_VERSION ||
+        response_header.command != request_header.command ||
+        response_header.page_id != page_id ||
+        response_header.reserved0 != 0u || response_header.reserved1 != 0u ||
+        response_header.status > 0 ||
+        (response_header.status == 0 &&
+         (response_header.payload_len < sizeof(response) ||
+          response_header.payload_len > maximum_response_size)) ||
+        (response_header.status < 0 && response_header.payload_len != 0u)) {
+        errno = EPROTO;
+        close_owner_channel();
+        return false;
+    }
+    if (response_header.status != 0) {
+        errno = rin_webcontent_client_status_errno(response_header.status);
+        return false;
+    }
+    const size_t trailing_size = response_header.payload_len - sizeof(response);
+    try {
+        response_data.resize(trailing_size);
+    } catch (...) {
+        errno = ENOMEM;
+        close_owner_channel();
+        return false;
+    }
+    if (!recv_all(s_service_worker_owner_fd, &response, sizeof(response),
+                  deadline_ms) ||
+        (trailing_size != 0u &&
+         !recv_all(s_service_worker_owner_fd, response_data.data(),
+                   trailing_size, deadline_ms)) ||
+        !rin_webcontent_client_camera_capture_owner_response_valid(
+            &response, response_data.data(), response_data.size(),
+            request.operation, request.session_id)) {
+        tls_owner_clear(response_data.data(), response_data.size());
+        response_data.clear();
+        errno = EPROTO;
+        close_owner_channel();
+        return false;
+    }
+    return true;
+}
+
 static bool tls_identity_owner_exchange(
     const RinWebContentTlsIdentityOwnerRequestV1& request,
     std::vector<u8>& payload,
@@ -1146,6 +1231,18 @@ struct PageSession {
         };
         view->on_request_microphone_permission = [this](ByteString origin) {
             return request_microphone_permission(move(origin));
+        };
+        view->on_request_camera_permission = [this](ByteString origin) {
+            return request_camera_permission(move(origin));
+        };
+        view->on_camera_capture_open = [this](ByteString origin) {
+            return open_camera_capture(move(origin));
+        };
+        view->on_camera_capture_read = [this](u64 session_id) {
+            return read_camera_capture(session_id);
+        };
+        view->on_camera_capture_close = [this](u64 session_id) {
+            return close_camera_capture(session_id);
         };
         view->on_request_geolocation_permission = [this](ByteString origin) {
             return request_geolocation_permission(move(origin));
@@ -2316,6 +2413,14 @@ struct PageSession {
                 completion.result == RIN_WEBCONTENT_PERMISSION_RESULT_ALLOW);
             return 0;
         }
+        if (rin_webcontent_permission_producer_complete_type(
+                &permission_producer, page_id, permission_renderer_generation,
+                &completion, "camera")) {
+            view->complete_camera_permission(
+                completion.navigation_generation, completion.request_id,
+                completion.result == RIN_WEBCONTENT_PERMISSION_RESULT_ALLOW);
+            return 0;
+        }
         return -ESTALE;
     }
 
@@ -2358,6 +2463,21 @@ struct PageSession {
         return 0;
     }
 
+    int revoke_camera(RinWebContentCameraRevokeV1 const& revocation)
+    {
+        if (!rin_webcontent_client_camera_revoke_valid(&revocation))
+            return -EINVAL;
+        if (revocation.sequence == last_camera_revocation_sequence)
+            return 0;
+        if (revocation.sequence < last_camera_revocation_sequence)
+            return -ESTALE;
+        if (!view->revoke_camera_capture(
+                ByteString { revocation.domain }, revocation.sequence))
+            return -EIO;
+        last_camera_revocation_sequence = revocation.sequence;
+        return 0;
+    }
+
     WebView::ViewImplementation::PermissionRequest
     request_notification_permission()
     {
@@ -2395,6 +2515,105 @@ struct PageSession {
         result.navigation_generation = permission_navigation_generation;
         result.request_id = request_id;
         return result;
+    }
+
+    WebView::ViewImplementation::PermissionRequest
+    request_camera_permission(ByteString origin)
+    {
+        WebView::ViewImplementation::PermissionRequest result {};
+        u64 request_id = 0u;
+        if (permission_producer.bound != 1u ||
+            permission_navigation_generation == 0u ||
+            !rin_webcontent_permission_producer_request_from_document(
+                &permission_producer, page_id,
+                permission_navigation_generation,
+                permission_renderer_generation, origin.characters(),
+                "camera", "Allow this site to use your camera?", &request_id))
+            return result;
+        result.navigation_generation = permission_navigation_generation;
+        result.request_id = request_id;
+        return result;
+    }
+
+    WebView::ViewImplementation::CameraCaptureOpenResponse
+    open_camera_capture(ByteString origin)
+    {
+        WebView::ViewImplementation::CameraCaptureOpenResponse result;
+        if (origin.is_empty() || origin.length() >= RIN_WEBCONTENT_URL_MAX)
+            return result;
+        RinWebContentCameraCaptureOwnerRequestV1 request {};
+        request.struct_size = sizeof(request);
+        request.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        request.operation = RIN_WEBCONTENT_CAMERA_CAPTURE_OPEN;
+        memcpy(request.origin, origin.characters(), origin.length());
+        RinWebContentCameraCaptureOwnerResponseV1 response {};
+        std::vector<u8> response_data;
+        if (!camera_capture_owner_exchange(page_id, request, response,
+                                           response_data))
+            return result;
+        auto profile = ByteBuffer::copy(&response.profile,
+                                        sizeof(response.profile));
+        if (profile.is_error()) {
+            RinWebContentCameraCaptureOwnerRequestV1 close_request {};
+            close_request.struct_size = sizeof(close_request);
+            close_request.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+            close_request.operation = RIN_WEBCONTENT_CAMERA_CAPTURE_CLOSE;
+            close_request.session_id = response.session_id;
+            RinWebContentCameraCaptureOwnerResponseV1 close_response {};
+            std::vector<u8> close_data;
+            (void)camera_capture_owner_exchange(page_id, close_request,
+                                               close_response, close_data);
+            return result;
+        }
+        result.accepted = true;
+        result.session_id = response.session_id;
+        result.profile = profile.release_value();
+        return result;
+    }
+
+    WebView::ViewImplementation::CameraCaptureReadResponse
+    read_camera_capture(u64 session_id)
+    {
+        WebView::ViewImplementation::CameraCaptureReadResponse result;
+        if (session_id == 0u)
+            return result;
+        RinWebContentCameraCaptureOwnerRequestV1 request {};
+        request.struct_size = sizeof(request);
+        request.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        request.operation = RIN_WEBCONTENT_CAMERA_CAPTURE_READ_CHUNK;
+        request.session_id = session_id;
+        RinWebContentCameraCaptureOwnerResponseV1 response {};
+        std::vector<u8> response_data;
+        if (!camera_capture_owner_exchange(page_id, request, response,
+                                           response_data))
+            return result;
+        if (!response_data.empty()) {
+            auto chunk = ByteBuffer::copy(response_data.data(),
+                                          response_data.size());
+            if (chunk.is_error()) {
+                tls_owner_clear(response_data.data(), response_data.size());
+                return result;
+            }
+            result.chunk = chunk.release_value();
+        }
+        tls_owner_clear(response_data.data(), response_data.size());
+        result.accepted = true;
+        return result;
+    }
+
+    bool close_camera_capture(u64 session_id)
+    {
+        if (session_id == 0u)
+            return false;
+        RinWebContentCameraCaptureOwnerRequestV1 request {};
+        request.struct_size = sizeof(request);
+        request.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        request.operation = RIN_WEBCONTENT_CAMERA_CAPTURE_CLOSE;
+        request.session_id = session_id;
+        RinWebContentCameraCaptureOwnerResponseV1 response {};
+        std::vector<u8> response_data;
+        return camera_capture_owner_exchange(page_id, request, response,
+                                             response_data);
     }
 
     WebView::ViewImplementation::PermissionRequest
@@ -3167,6 +3386,7 @@ struct PageSession {
     uint64_t permission_renderer_generation { 1 };
     ByteString permission_authenticated_origin;
     uint64_t last_microphone_revocation_sequence { 0 };
+    uint64_t last_camera_revocation_sequence { 0 };
 
     int paint_shm_handle { -1 };
     void* paint_shm_addr { nullptr };
@@ -3493,6 +3713,23 @@ static int handle_revoke_microphone(PageSession& page, int client_fd,
     return send_message(client_fd,
                         RIN_WEBCONTENT_CMD_REVOKE_MICROPHONE_V1, result,
                         page.page_id, nullptr, 0, deadline_ms)
+        ? 0
+        : -EIO;
+}
+
+static int handle_revoke_camera(PageSession& page, int client_fd,
+                                ReadonlyBytes payload, u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentCameraRevokeV1))
+        return send_message(client_fd, RIN_WEBCONTENT_CMD_REVOKE_CAMERA_V1,
+                            -EINVAL, page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+    auto const& revocation =
+        *reinterpret_cast<RinWebContentCameraRevokeV1 const*>(payload.data());
+    auto result = page.revoke_camera(revocation);
+    return send_message(client_fd, RIN_WEBCONTENT_CMD_REVOKE_CAMERA_V1,
+                        result, page.page_id, nullptr, 0, deadline_ms)
         ? 0
         : -EIO;
 }
@@ -4120,6 +4357,10 @@ static void handle_client(int client_fd)
     case RIN_WEBCONTENT_CMD_REVOKE_MICROPHONE_V1:
         (void)handle_revoke_microphone(*page, client_fd, payload_bytes,
                                        deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_REVOKE_CAMERA_V1:
+        (void)handle_revoke_camera(*page, client_fd, payload_bytes,
+                                   deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_GET_PAGE_STATE_V1:
         (void)handle_get_state(*page, client_fd, header.command, deadline_ms);

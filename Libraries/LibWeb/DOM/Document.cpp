@@ -5256,6 +5256,8 @@ bool Document::is_allowed_to_use_feature(PolicyControlledFeature feature) const
     case PolicyControlledFeature::Microphone:
         return document_allows_permissions_policy_feature(*this,
                                                          "microphone"sv);
+    case PolicyControlledFeature::Camera:
+        return document_allows_permissions_policy_feature(*this, "camera"sv);
     case PolicyControlledFeature::Geolocation:
         return document_allows_permissions_policy_feature(*this,
                                                          "geolocation"sv);

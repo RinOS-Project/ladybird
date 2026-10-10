@@ -67,6 +67,16 @@ public:
         u64 generation { 0 };
         ByteString data;
     };
+    struct CameraCaptureOpenResponse {
+        bool accepted { false };
+        u64 session_id { 0 };
+        ByteBuffer profile;
+    };
+    struct CameraCaptureReadResponse {
+        bool accepted { false };
+        // An accepted empty chunk means no frame is ready yet.
+        ByteBuffer chunk;
+    };
 
     virtual ~ViewImplementation();
 
@@ -309,12 +319,18 @@ public:
     };
     Function<PermissionRequest()> on_request_notification_permission;
     Function<PermissionRequest(ByteString)> on_request_microphone_permission;
+    Function<PermissionRequest(ByteString)> on_request_camera_permission;
     Function<PermissionRequest(ByteString)> on_request_geolocation_permission;
+    Function<CameraCaptureOpenResponse(ByteString)> on_camera_capture_open;
+    Function<CameraCaptureReadResponse(u64)> on_camera_capture_read;
+    Function<bool(u64)> on_camera_capture_close;
 
     void complete_notification_permission(u32 navigation_generation, u64 request_id,
                                           String permission);
     void complete_microphone_permission(u32 navigation_generation, u64 request_id,
                                         bool allowed);
+    void complete_camera_permission(u32 navigation_generation, u64 request_id,
+                                   bool allowed);
     void complete_geolocation_permission(
         u32 navigation_generation, u64 request_id, bool allowed,
         bool fix_available, i64 latitude_e7, i64 longitude_e7,
@@ -322,6 +338,7 @@ public:
         u32 vertical_accuracy_mm, u32 speed_mm_per_second,
         u32 heading_millidegrees, u32 flags);
     bool revoke_microphone_capture(ByteString domain, u64 sequence);
+    bool revoke_camera_capture(ByteString domain, u64 sequence);
 
     Menu& page_context_menu() { return *m_page_context_menu; }
     Menu& link_context_menu() { return *m_link_context_menu; }

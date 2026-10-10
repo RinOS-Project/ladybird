@@ -64,6 +64,13 @@ void PageClient::page_did_request_microphone_permission(
     WebIDL::resolve_promise(realm, promise, JS::Value(false));
 }
 
+void PageClient::page_did_request_camera_permission(
+    JS::PromiseCapability& promise, DOM::Document const&)
+{
+    auto& realm = promise.promise()->shape().realm();
+    WebIDL::resolve_promise(realm, promise, JS::Value(false));
+}
+
 void PageClient::page_did_request_geolocation(
     GC::Ref<GC::Function<void(GeolocationPositionResult)>> callback,
     DOM::Document const&)

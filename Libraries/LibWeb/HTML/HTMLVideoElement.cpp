@@ -21,6 +21,7 @@
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/HTML/AudioTrackList.h>
 #include <LibWeb/HTML/HTMLVideoElement.h>
+#include <LibWeb/MediaCapture/MediaStreamTrack.h>
 #include <LibWeb/HTML/VideoTrack.h>
 #include <LibWeb/HTML/VideoTrackList.h>
 #include <LibWeb/Layout/VideoBox.h>
@@ -186,6 +187,12 @@ WebIDL::ExceptionOr<void> HTMLVideoElement::determine_element_poster_frame(Optio
 
 HTMLVideoElement::Representation HTMLVideoElement::current_representation() const
 {
+    if (src_object()) {
+        if (m_media_stream_frame)
+            return Representation::VideoFrame;
+        return poster_frame() ? Representation::PosterFrame
+                              : Representation::TransparentBlack;
+    }
     // https://html.spec.whatwg.org/multipage/media.html#the-video-element:the-video-element-7
     // A video element represents what is given for the first matching condition in the list below:
 
@@ -235,10 +242,62 @@ HTMLVideoElement::Representation HTMLVideoElement::current_representation() cons
 
 RefPtr<Gfx::ImmutableBitmap> HTMLVideoElement::bitmap() const
 {
+    if (src_object())
+        return m_media_stream_frame;
     auto const& sink = selected_video_track_sink();
     if (sink == nullptr)
         return nullptr;
     return sink->current_frame();
+}
+
+void HTMLVideoElement::update_media_stream_video_frame()
+{
+    auto stream = src_object();
+    if (!stream || !document().is_fully_active())
+        return;
+
+    GC::Ptr<MediaCapture::MediaStreamTrack> selected_track;
+    for (auto const& track : stream->get_video_tracks()) {
+        if (track->is_live()) {
+            selected_track = track;
+            break;
+        }
+    }
+    if (!selected_track) {
+        if (m_media_stream_frame) {
+            m_media_stream_frame = nullptr;
+            if (m_external_content_source)
+                m_external_content_source->clear();
+            set_needs_repaint();
+        }
+        return;
+    }
+
+    auto frame = selected_track->read_video_frame();
+    if (!selected_track->is_live()) {
+        m_media_stream_frame = nullptr;
+        if (m_external_content_source)
+            m_external_content_source->clear();
+        set_needs_repaint();
+        return;
+    }
+    if (!selected_track->enabled()) {
+        m_media_stream_frame = nullptr;
+        ensure_external_content_source().clear();
+        if (frame || ready_state() < ReadyState::HaveCurrentData)
+            set_media_stream_ready_state(ReadyState::HaveCurrentData);
+        set_needs_repaint();
+        return;
+    }
+    if (!frame)
+        return;
+
+    m_media_stream_frame = frame;
+    set_video_width(frame->size().width());
+    set_video_height(frame->size().height());
+    ensure_external_content_source().update(frame);
+    set_media_stream_ready_state(ReadyState::HaveCurrentData);
+    set_needs_repaint();
 }
 
 }

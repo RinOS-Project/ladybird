@@ -1255,6 +1255,14 @@ void ConnectionFromClient::complete_microphone_permission(
                                             allowed);
 }
 
+void ConnectionFromClient::complete_camera_permission(
+    u64 page_id, u32 navigation_generation, u64 request_id, bool allowed)
+{
+    if (auto page = this->page(page_id); page.has_value())
+        page->complete_camera_permission(navigation_generation, request_id,
+                                         allowed);
+}
+
 void ConnectionFromClient::complete_geolocation_permission(
     u64 page_id, u32 navigation_generation, u64 request_id, bool allowed,
     bool fix_available, i64 latitude_e7, i64 longitude_e7,
@@ -1276,6 +1284,15 @@ ConnectionFromClient::revoke_microphone_capture(
 {
     if (auto page = this->page(page_id); page.has_value())
         return page->revoke_microphone_capture(move(domain), sequence);
+    return false;
+}
+
+Messages::WebContentServer::RevokeCameraCaptureResponse
+ConnectionFromClient::revoke_camera_capture(
+    u64 page_id, String domain, u64 sequence)
+{
+    if (auto page = this->page(page_id); page.has_value())
+        return page->revoke_camera_capture(move(domain), sequence);
     return false;
 }
 

@@ -78,6 +78,51 @@ static WebIDL::ExceptionOr<GC::Ref<MediaStream>> start_audio_capture(
     return MediaStream::create(realm, track);
 }
 
+static WebIDL::ExceptionOr<GC::Ref<MediaStream>> start_camera_capture(
+    JS::Realm& realm, Web::PageClient& page_client, URL::Origin const& origin)
+{
+    u64 session_id = 0u;
+    CameraCaptureProfile profile {};
+    if (!page_client.page_did_open_camera_capture(origin, session_id, profile) ||
+        session_id == 0u)
+        return WebIDL::NotAllowedError::create(
+            realm, "Camera capture was rejected by Browser policy"_utf16);
+
+    auto track_id = Crypto::generate_random_uuid();
+    auto track = MediaStreamTrack::create_video(
+        realm, page_client, session_id, profile, move(track_id),
+        "RinOS Camera Input"_string);
+    if (!page_client.page_did_create_camera_track(*track, origin)) {
+        track->stop();
+        return WebIDL::NotAllowedError::create(
+            realm, "Camera capture could not be registered for revocation"_utf16);
+    }
+    return MediaStream::create(realm, track);
+}
+
+static WebIDL::ExceptionOr<GC::Ref<MediaStream>> start_requested_capture(
+    JS::Realm& realm, Web::PageClient& page_client,
+    URL::Origin const& origin, bool audio, bool video)
+{
+    Vector<GC::Ref<MediaStreamTrack>> tracks;
+    if (audio) {
+        auto audio_stream = start_audio_capture(realm, page_client, origin);
+        if (audio_stream.is_error())
+            return audio_stream.release_error();
+        tracks.extend(audio_stream.release_value()->get_tracks());
+    }
+    if (video) {
+        auto video_stream = start_camera_capture(realm, page_client, origin);
+        if (video_stream.is_error()) {
+            for (auto& track : tracks)
+                track->stop();
+            return video_stream.release_error();
+        }
+        tracks.extend(video_stream.release_value()->get_tracks());
+    }
+    return MediaStream::create(realm, move(tracks));
+}
+
 GC::Ref<WebIDL::Promise> MediaDevices::get_user_media(MediaStreamConstraints const& constraints)
 {
     auto& realm = this->realm();
@@ -90,44 +135,88 @@ GC::Ref<WebIDL::Promise> MediaDevices::get_user_media(MediaStreamConstraints con
         return WebIDL::create_rejected_promise_from_exception(realm,
             JS::throw_completion(JS::TypeError::create(realm, "At least one media constraint must be requested"sv)));
 
-    if (constraints.video)
-        return WebIDL::create_rejected_promise_from_exception(realm,
-            WebIDL::NotSupportedError::create(realm, "RinOS camera capture is not implemented"_utf16));
-
     auto* window = as_if<HTML::Window>(realm.global_object());
     if (window == nullptr || window->browsing_context() == nullptr)
         return WebIDL::create_rejected_promise_from_exception(realm,
-            WebIDL::NotAllowedError::create(realm, "Microphone permission requires an active browsing context"_utf16));
+            WebIDL::NotAllowedError::create(realm, "Media permission requires an active browsing context"_utf16));
     auto& document = window->associated_document();
     if (!document.is_fully_active())
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::InvalidStateError::create(realm, "Document is not fully active"_utf16));
-    if (!document.is_allowed_to_use_feature(DOM::PolicyControlledFeature::Microphone))
+    if ((constraints.audio && !document.is_allowed_to_use_feature(
+             DOM::PolicyControlledFeature::Microphone)) ||
+        (constraints.video && !document.is_allowed_to_use_feature(
+             DOM::PolicyControlledFeature::Camera)))
         return WebIDL::create_rejected_promise_from_exception(realm,
-            WebIDL::NotAllowedError::create(realm, "Permissions Policy blocks microphone capture"_utf16));
+            WebIDL::NotAllowedError::create(realm, "Permissions Policy blocks requested media capture"_utf16));
 
     GC::Ptr<HTML::Window> request_window = window;
     auto request_origin = document.origin();
     auto permission_promise = WebIDL::create_promise(realm);
-    window->page().client().page_did_request_microphone_permission(
-        *permission_promise, document);
+    if (constraints.video)
+        window->page().client().page_did_request_camera_permission(
+            *permission_promise, document);
+    else
+        window->page().client().page_did_request_microphone_permission(
+            *permission_promise, document);
     return WebIDL::upon_fulfillment(*permission_promise,
-        GC::create_function(realm.heap(), [this, request_window, request_origin](JS::Value allowed) -> WebIDL::ExceptionOr<JS::Value> {
+        GC::create_function(realm.heap(), [this, request_window, request_origin,
+                                           wants_audio = constraints.audio,
+                                           wants_video = constraints.video](JS::Value allowed) -> WebIDL::ExceptionOr<JS::Value> {
             auto& permission_realm = this->realm();
             if (!allowed.is_boolean() || !allowed.as_bool())
                 return JS::throw_completion(WebIDL::NotAllowedError::create(
-                    permission_realm, "Microphone permission was denied"_utf16));
+                    permission_realm, wants_video ? "Camera permission was denied"_utf16 : "Microphone permission was denied"_utf16));
 
             if (!request_window ||
                 !request_window->associated_document().is_fully_active() ||
-                !request_window->associated_document().is_allowed_to_use_feature(
-                    DOM::PolicyControlledFeature::Microphone) ||
+                (wants_audio && !request_window->associated_document().is_allowed_to_use_feature(
+                    DOM::PolicyControlledFeature::Microphone)) ||
+                (wants_video && !request_window->associated_document().is_allowed_to_use_feature(
+                    DOM::PolicyControlledFeature::Camera)) ||
                 !request_window->associated_document().origin().is_same_origin(request_origin))
                 return JS::throw_completion(WebIDL::NotAllowedError::create(
-                    permission_realm, "Microphone request document is no longer authorized"_utf16));
+                    permission_realm, "Media request document is no longer authorized"_utf16));
 
-            auto stream_or_error = start_audio_capture(
-                permission_realm, request_window->page().client(), request_origin);
+            if (wants_audio && wants_video) {
+                auto& document = request_window->associated_document();
+                auto microphone_permission = WebIDL::create_promise(permission_realm);
+                request_window->page().client().page_did_request_microphone_permission(
+                    *microphone_permission, document);
+                return JS::Value(WebIDL::upon_fulfillment(
+                    *microphone_permission,
+                    GC::create_function(permission_realm.heap(),
+                        [this, request_window, request_origin](JS::Value microphone_allowed) -> WebIDL::ExceptionOr<JS::Value> {
+                            auto& capture_realm = this->realm();
+                            if (!microphone_allowed.is_boolean() ||
+                                !microphone_allowed.as_bool())
+                                return JS::throw_completion(
+                                    WebIDL::NotAllowedError::create(
+                                        capture_realm,
+                                        "Microphone permission was denied"_utf16));
+                            if (!request_window ||
+                                !request_window->associated_document().is_fully_active() ||
+                                !request_window->associated_document().is_allowed_to_use_feature(
+                                    DOM::PolicyControlledFeature::Camera) ||
+                                !request_window->associated_document().is_allowed_to_use_feature(
+                                    DOM::PolicyControlledFeature::Microphone) ||
+                                !request_window->associated_document().origin().is_same_origin(request_origin))
+                                return JS::throw_completion(
+                                    WebIDL::NotAllowedError::create(
+                                        capture_realm,
+                                        "Media request document is no longer authorized"_utf16));
+                            auto stream_or_error = start_requested_capture(
+                                capture_realm, request_window->page().client(),
+                                request_origin, true, true);
+                            if (stream_or_error.is_error())
+                                return stream_or_error.release_error();
+                            return JS::Value(stream_or_error.release_value().ptr());
+                        })).ptr());
+            }
+
+            auto stream_or_error = start_requested_capture(
+                permission_realm, request_window->page().client(), request_origin,
+                wants_audio, wants_video);
             if (stream_or_error.is_error())
                 return stream_or_error.release_error();
             return JS::Value(stream_or_error.release_value().ptr());

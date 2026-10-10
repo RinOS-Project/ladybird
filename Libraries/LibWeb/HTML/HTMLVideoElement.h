@@ -65,6 +65,7 @@ private:
     virtual void initialize(JS::Realm&) override;
     virtual void finalize() override;
     virtual void visit_edges(Cell::Visitor&) override;
+    virtual void update_media_stream_video_frame() override;
 
     virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
 
@@ -78,6 +79,7 @@ private:
     GC::Ptr<HTML::VideoTrack> m_video_track;
     VideoFrame m_current_frame;
     RefPtr<Gfx::Bitmap> m_poster_frame;
+    RefPtr<Gfx::ImmutableBitmap> m_media_stream_frame;
 
     u32 m_video_width { 0 };
     u32 m_video_height { 0 };

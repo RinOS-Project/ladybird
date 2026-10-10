@@ -157,6 +157,7 @@ void HTMLMediaElement::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_error);
     visitor.visit(m_audio_tracks);
     visitor.visit(m_video_tracks);
+    visitor.visit(m_src_object);
     visitor.visit(m_text_tracks);
     visitor.visit(m_document_observer);
     visitor.visit(m_source_element_selector);
@@ -169,7 +170,8 @@ void HTMLMediaElement::attribute_changed(FlyString const& name, Optional<String>
     Base::attribute_changed(name, old_value, value, namespace_);
 
     if (name == HTML::AttributeNames::src) {
-        load_element().release_value_but_fixme_should_propagate_errors();
+        if (!m_src_object)
+            load_element().release_value_but_fixme_should_propagate_errors();
     } else if (name == HTML::AttributeNames::crossorigin) {
         m_crossorigin = cors_setting_attribute_from_keyword(value);
     } else if (name == HTML::AttributeNames::controls) {
@@ -1375,6 +1377,10 @@ void HTMLMediaElement::set_selected_video_track(Badge<VideoTrack>, GC::Ptr<HTML:
 
 void HTMLMediaElement::update_video_frame_and_timeline()
 {
+    if (m_src_object) {
+        update_media_stream_video_frame();
+        return;
+    }
     if (!m_playback_manager)
         return;
 
@@ -1394,6 +1400,32 @@ void HTMLMediaElement::update_video_frame_and_timeline()
     auto new_position = m_playback_manager->current_time().to_seconds_f64();
     if (new_position != m_current_playback_position)
         set_current_playback_position(new_position);
+}
+
+void HTMLMediaElement::set_src_object(
+    GC::Ptr<MediaCapture::MediaStream> source_object)
+{
+    if (m_src_object == source_object)
+        return;
+
+    cancel_the_fetching_process();
+    forget_media_resource_specific_tracks();
+    m_src_object = source_object;
+    m_current_src = {};
+    m_error = nullptr;
+    if (m_external_content_source)
+        m_external_content_source->clear();
+
+    if (m_src_object) {
+        m_network_state = NetworkState::Idle;
+        set_duration(INFINITY);
+        set_ready_state(ReadyState::HaveMetadata);
+    } else {
+        m_network_state = NetworkState::Empty;
+        set_ready_state(ReadyState::HaveNothing);
+        load_element().release_value_but_fixme_should_propagate_errors();
+    }
+    set_needs_repaint();
 }
 
 void HTMLMediaElement::on_audio_track_added(Media::Track const& track)

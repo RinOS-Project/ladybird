@@ -13,6 +13,7 @@
 #include <AK/ByteString.h>
 #include <AK/Queue.h>
 #include <AK/Variant.h>
+#include <AK/Vector.h>
 #include <LibGC/Root.h>
 #include <LibGC/Weak.h>
 #include <LibGfx/Cursor.h>
@@ -58,6 +59,14 @@
 namespace Web {
 
 class PageClient;
+
+struct CameraCaptureProfile {
+    u64 stream_id { 0u };
+    u32 format { 0u };
+    u32 max_frame_size { 0u };
+    u32 width { 0u };
+    u32 height { 0u };
+};
 
 class WEB_API Page final : public JS::Cell {
     GC_CELL(Page, JS::Cell);
@@ -432,10 +441,27 @@ public:
     virtual void page_did_request_download(URL::URL const&, ByteString const&) { }
     virtual void page_did_request_notification_permission(JS::PromiseCapability&);
     virtual void page_did_request_microphone_permission(JS::PromiseCapability&, DOM::Document const&);
+    virtual void page_did_request_camera_permission(JS::PromiseCapability&, DOM::Document const&);
     virtual void page_did_request_geolocation(
         GC::Ref<GC::Function<void(GeolocationPositionResult)>>,
         DOM::Document const&);
     virtual bool page_did_create_microphone_track(MediaCapture::MediaStreamTrack&, URL::Origin const&) { return false; }
+    virtual bool page_did_open_camera_capture(URL::Origin const&,
+                                              u64& session_id,
+                                              CameraCaptureProfile& profile)
+    {
+        session_id = 0u;
+        profile = {};
+        return false;
+    }
+    virtual i32 page_did_read_camera_capture(u64, Vector<u8>& output)
+    {
+        output.clear();
+        return -1;
+    }
+    virtual bool page_did_close_camera_capture(u64) { return false; }
+    virtual bool page_did_create_camera_track(
+        MediaCapture::MediaStreamTrack&, URL::Origin const&) { return false; }
     virtual String page_get_notification_permission([[maybe_unused]] URL::Origin const&) { return {}; }
     virtual bool page_did_show_notification(
         [[maybe_unused]] URL::Origin const&,

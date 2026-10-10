@@ -6,5 +6,6 @@
 interface MediaStream : EventTarget {
     readonly attribute boolean active;
     sequence<MediaStreamTrack> getAudioTracks();
+    sequence<MediaStreamTrack> getVideoTracks();
     sequence<MediaStreamTrack> getTracks();
 };

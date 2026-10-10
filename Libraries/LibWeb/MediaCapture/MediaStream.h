@@ -18,9 +18,12 @@ class MediaStream final : public DOM::EventTarget {
 
 public:
     static GC::Ref<MediaStream> create(JS::Realm&, GC::Ref<MediaStreamTrack>);
+    static GC::Ref<MediaStream> create(JS::Realm&,
+                                       Vector<GC::Ref<MediaStreamTrack>>);
 
     bool active() const;
     Vector<GC::Ref<MediaStreamTrack>> get_audio_tracks() const;
+    Vector<GC::Ref<MediaStreamTrack>> get_video_tracks() const;
     Vector<GC::Ref<MediaStreamTrack>> get_tracks() const;
 
 private:
@@ -30,6 +33,7 @@ private:
     virtual void visit_edges(Cell::Visitor&) override;
 
     Vector<GC::Ref<MediaStreamTrack>> m_audio_tracks;
+    Vector<GC::Ref<MediaStreamTrack>> m_video_tracks;
 };
 
 }
