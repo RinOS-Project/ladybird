@@ -10,6 +10,8 @@
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/Painter.h>
 #include <LibWeb/Crypto/Crypto.h>
+#include <LibWeb/Page/Page.h>
+#include <LibURL/Parser.h>
 #include <LibWebView/ViewImplementation.h>
 #include <LibWebView/WebContentClient.h>
 #include <android/bitmap.h>
@@ -39,10 +41,39 @@ WebViewImplementationNative::WebViewImplementationNative(jobject thiz)
     };
 
     on_load_start = [this](URL::URL const& url, bool is_redirect) {
+        ++m_geolocation_navigation_generation;
+        if (m_geolocation_navigation_generation == 0)
+            ++m_geolocation_navigation_generation;
         JavaEnvironment env(global_vm);
         auto url_string = env.jstring_from_ak_string(url.to_string());
-        env.get()->CallVoidMethod(m_java_instance, on_load_start_method, url_string, is_redirect);
+        env.get()->CallVoidMethod(m_java_instance, on_load_start_method, url_string, is_redirect,
+            static_cast<jint>(m_geolocation_navigation_generation));
         env.get()->DeleteLocalRef(url_string);
+    };
+
+    on_request_geolocation_permission = [this](ByteString origin, u32 timeout_ms) {
+        auto request_id = ++m_next_geolocation_request_id;
+        if (request_id == 0)
+            return PermissionRequest {};
+
+        auto navigation_generation = m_geolocation_navigation_generation;
+        auto parsed_origin = URL::Parser::basic_parse(origin.view());
+        if (!parsed_origin.has_value() ||
+            (parsed_origin->scheme() != "http"sv && parsed_origin->scheme() != "https"sv) ||
+            parsed_origin->includes_credentials() ||
+            parsed_origin->origin().serialize().to_byte_string() != origin) {
+            complete_geolocation_permission(navigation_generation, request_id,
+                false, false, 0, 0, 0, 0, 0, 0, 0, 0);
+            return PermissionRequest { navigation_generation, request_id };
+        }
+
+        JavaEnvironment env(global_vm);
+        auto origin_string = env.jstring_from_ak_string(origin);
+        env.get()->CallVoidMethod(m_java_instance, request_geolocation_permission_method,
+            origin_string, static_cast<jint>(timeout_ms),
+            static_cast<jint>(navigation_generation), static_cast<jlong>(request_id));
+        env.get()->DeleteLocalRef(origin_string);
+        return PermissionRequest { navigation_generation, request_id };
     };
 }
 

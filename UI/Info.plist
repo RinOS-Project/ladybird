@@ -20,6 +20,10 @@
         <string>NSApplication</string>
         <key>NSHighResolutionCapable</key>
         <string>True</string>
+        <key>NSLocationWhenInUseUsageDescription</key>
+        <string>Ladybird uses your location only after you allow a website to request it.</string>
+        <key>NSLocationUsageDescription</key>
+        <string>Ladybird uses your location only after you allow a website to request it.</string>
         <key>CFBundleDocumentTypes</key>
         <array>
             <dict>

@@ -13,6 +13,7 @@
 
 #import <Application/ApplicationDelegate.h>
 #import <Interface/BookmarksBar.h>
+#import <Interface/GeolocationRequest.h>
 #import <Interface/LadybirdWebView.h>
 #import <Interface/SearchPanel.h>
 #import <Interface/Tab.h>
@@ -33,6 +34,8 @@ static constexpr CGFloat const WINDOW_HEIGHT = 800;
 
 @property (nonatomic, strong) NSTitlebarAccessoryViewController* bookmarks_bar_controller;
 @property (nonatomic, strong) SearchPanel* search_panel;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber*, GeolocationRequest*>* geolocation_requests;
+@property (nonatomic) uint32_t geolocation_navigation_generation;
 
 @end
 
@@ -76,6 +79,8 @@ static constexpr CGFloat const WINDOW_HEIGHT = 800;
     auto window_rect = NSMakeRect(position_x, position_y, WINDOW_WIDTH, WINDOW_HEIGHT);
 
     if (self = [super initWithWebView:web_view windowRect:window_rect]) {
+        self.geolocation_navigation_generation = 1;
+        self.geolocation_requests = [NSMutableDictionary dictionary];
         // Remember last window position
         self.frameAutosaveName = @"window";
 
@@ -132,6 +137,14 @@ static constexpr CGFloat const WINDOW_HEIGHT = 800;
 - (void)useSelectionForFind:(id)sender
 {
     [self.search_panel useSelectionForFind:sender];
+}
+
+- (void)close
+{
+    for (GeolocationRequest* request in self.geolocation_requests.allValues)
+        [request cancel];
+    [self.geolocation_requests removeAllObjects];
+    [super close];
 }
 
 #pragma mark - Private methods
@@ -264,6 +277,59 @@ static constexpr CGFloat const WINDOW_HEIGHT = 800;
     [self updateTabTitleAndFavicon];
 
     [[self tabController] onLoadStart:url isRedirect:is_redirect];
+}
+
+- (void)onGeolocationNavigationChanged:(uint32_t)navigation_generation
+{
+    if (navigation_generation == 0 || navigation_generation == self.geolocation_navigation_generation)
+        return;
+    self.geolocation_navigation_generation = navigation_generation;
+    for (GeolocationRequest* request in self.geolocation_requests.allValues)
+        [request cancel];
+    [self.geolocation_requests removeAllObjects];
+}
+
+- (void)onGeolocationPermissionRequest:(ByteString const&)origin
+                            timeoutMs:(uint32_t)timeout_ms
+                navigationGeneration:(uint32_t)navigation_generation
+                            requestId:(uint64_t)request_id
+{
+    auto fail_request = [&] {
+        auto& view = [self.web_view view];
+        view.complete_geolocation_permission(navigation_generation,
+            request_id, false, false, 0, 0, 0, 0, 0, 0, 0, 0);
+    };
+    if (navigation_generation == 0 || request_id == 0 ||
+        navigation_generation != self.geolocation_navigation_generation) {
+        fail_request();
+        return;
+    }
+
+    auto decoded_origin = String::from_utf8(origin.view());
+    if (decoded_origin.is_error()) {
+        fail_request();
+        return;
+    }
+    auto* origin_string = Ladybird::string_to_ns_string(decoded_origin.release_value());
+    __weak Tab* weak_self = self;
+    auto* request = [[GeolocationRequest alloc] initWithOrigin:origin_string
+        navigationGeneration:navigation_generation requestId:request_id timeoutMs:timeout_ms
+        completion:^(BOOL allowed, BOOL fix_available, int64_t latitude_e7,
+            int64_t longitude_e7, int64_t altitude_mm, uint32_t horizontal_accuracy_mm,
+            uint32_t vertical_accuracy_mm, uint32_t speed_mm_per_second,
+            uint32_t heading_millidegrees, uint32_t flags) {
+            Tab* strong_self = weak_self;
+            if (strong_self == nil)
+                return;
+            auto& view = [strong_self.web_view view];
+            view.complete_geolocation_permission(navigation_generation,
+                request_id, allowed, fix_available, latitude_e7, longitude_e7, altitude_mm,
+                horizontal_accuracy_mm, vertical_accuracy_mm, speed_mm_per_second,
+                heading_millidegrees, flags);
+            [strong_self.geolocation_requests removeObjectForKey:@(request_id)];
+        }];
+    self.geolocation_requests[@(request_id)] = request;
+    [request startForWindow:self];
 }
 
 - (void)onLoadFinish:(URL::URL const&)url

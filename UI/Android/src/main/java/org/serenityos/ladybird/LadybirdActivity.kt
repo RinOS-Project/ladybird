@@ -7,6 +7,10 @@
 package org.serenityos.ladybird
 
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
@@ -31,6 +35,34 @@ class LadybirdActivity : AppCompatActivity() {
     private lateinit var view: WebView
     private lateinit var urlEditText: EditText
     private var timerService = TimerExecutorService()
+    private val pendingLocationPermissionCallbacks = mutableListOf<(Boolean) -> Unit>()
+    private var locationPermissionRequestInFlight = false
+    private val locationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        locationPermissionRequestInFlight = false
+        val granted = results[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            results[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        pendingLocationPermissionCallbacks.toList().forEach { callback -> callback(granted) }
+        pendingLocationPermissionCallbacks.clear()
+    }
+
+    fun requestLocationPermission(callback: (Boolean) -> Unit) {
+        val fineGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (fineGranted || coarseGranted) {
+            callback(true)
+            return
+        }
+        pendingLocationPermissionCallbacks.add(callback)
+        if (!locationPermissionRequestInFlight) {
+            locationPermissionRequestInFlight = true
+            locationPermissionLauncher.launch(arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+            ))
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,6 +128,8 @@ class LadybirdActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        pendingLocationPermissionCallbacks.toList().forEach { callback -> callback(false) }
+        pendingLocationPermissionCallbacks.clear()
         view.dispose()
         disposeNativeCode()
         super.onDestroy()

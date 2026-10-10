@@ -13,6 +13,7 @@ jclass WebViewImplementationNative::global_class_reference;
 jmethodID WebViewImplementationNative::bind_webcontent_method;
 jmethodID WebViewImplementationNative::invalidate_layout_method;
 jmethodID WebViewImplementationNative::on_load_start_method;
+jmethodID WebViewImplementationNative::request_geolocation_permission_method;
 
 extern "C" JNIEXPORT void JNICALL
 Java_org_serenityos_ladybird_WebViewImplementation_00024Companion_nativeClassInit(JNIEnv*, jobject /* thiz */);
@@ -36,10 +37,16 @@ Java_org_serenityos_ladybird_WebViewImplementation_00024Companion_nativeClassIni
         TODO();
     WebViewImplementationNative::invalidate_layout_method = method;
 
-    method = env->GetMethodID(WebViewImplementationNative::global_class_reference, "onLoadStart", "(Ljava/lang/String;Z)V");
+    method = env->GetMethodID(WebViewImplementationNative::global_class_reference, "onLoadStart", "(Ljava/lang/String;ZI)V");
     if (!method)
         TODO();
     WebViewImplementationNative::on_load_start_method = method;
+
+    method = env->GetMethodID(WebViewImplementationNative::global_class_reference,
+        "requestGeolocationPermission", "(Ljava/lang/String;IIJ)V");
+    if (!method)
+        TODO();
+    WebViewImplementationNative::request_geolocation_permission_method = method;
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -142,4 +149,29 @@ Java_org_serenityos_ladybird_WebViewImplementation_nativeMouseEvent(JNIEnv*, job
     }
 
     impl->mouse_event(web_event_type, x, y, raw_x, raw_y);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_serenityos_ladybird_WebViewImplementation_nativeCompleteGeolocationPermission(
+    JNIEnv*, jobject /* thiz */, jlong instance, jint navigation_generation,
+    jlong request_id, jboolean allowed, jboolean fix_available, jlong latitude_e7,
+    jlong longitude_e7, jlong altitude_mm, jint horizontal_accuracy_mm,
+    jint vertical_accuracy_mm, jint speed_mm_per_second, jint heading_millidegrees,
+    jint flags);
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_serenityos_ladybird_WebViewImplementation_nativeCompleteGeolocationPermission(
+    JNIEnv*, jobject /* thiz */, jlong instance, jint navigation_generation,
+    jlong request_id, jboolean allowed, jboolean fix_available, jlong latitude_e7,
+    jlong longitude_e7, jlong altitude_mm, jint horizontal_accuracy_mm,
+    jint vertical_accuracy_mm, jint speed_mm_per_second, jint heading_millidegrees,
+    jint flags)
+{
+    auto* impl = reinterpret_cast<WebViewImplementationNative*>(instance);
+    impl->complete_geolocation_permission(static_cast<u32>(navigation_generation),
+        static_cast<u64>(request_id), allowed == JNI_TRUE, fix_available == JNI_TRUE,
+        static_cast<i64>(latitude_e7), static_cast<i64>(longitude_e7),
+        static_cast<i64>(altitude_mm), static_cast<u32>(horizontal_accuracy_mm),
+        static_cast<u32>(vertical_accuracy_mm), static_cast<u32>(speed_mm_per_second),
+        static_cast<u32>(heading_millidegrees), static_cast<u32>(flags));
 }

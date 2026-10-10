@@ -5,6 +5,7 @@ add_library(ladybird_impl STATIC
     Interface/Autocomplete.mm
     Interface/BookmarksBar.mm
     Interface/Event.mm
+    Interface/GeolocationRequest.mm
     Interface/InfoBar.mm
     Interface/LadybirdWebView.mm
     Interface/LadybirdWebViewBridge.cpp
@@ -27,7 +28,7 @@ target_compile_features(ladybird_impl PUBLIC cxx_std_23)
 add_executable(ladybird MACOSX_BUNDLE
    main.mm
 )
-target_link_libraries(ladybird_impl PUBLIC "-framework Cocoa -framework Metal -framework QuartzCore -framework UniformTypeIdentifiers" LibUnicode)
+target_link_libraries(ladybird_impl PUBLIC "-framework Cocoa -framework CoreLocation -framework Metal -framework QuartzCore -framework UniformTypeIdentifiers" LibUnicode)
 target_link_libraries(ladybird PRIVATE ladybird_impl)
 
 create_ladybird_bundle(ladybird)

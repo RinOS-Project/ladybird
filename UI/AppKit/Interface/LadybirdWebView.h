@@ -33,6 +33,12 @@
 - (void)onFaviconChange:(Gfx::Bitmap const&)bitmap;
 - (void)onAudioPlayStateChange:(Web::HTML::AudioPlayState)play_state;
 
+- (void)onGeolocationNavigationChanged:(uint32_t)navigation_generation;
+- (void)onGeolocationPermissionRequest:(ByteString const&)origin
+                            timeoutMs:(uint32_t)timeout_ms
+                navigationGeneration:(uint32_t)navigation_generation
+                            requestId:(uint64_t)request_id;
+
 - (void)onEnterFullscreenWindow;
 - (void)onExitFullscreenWindow;
 

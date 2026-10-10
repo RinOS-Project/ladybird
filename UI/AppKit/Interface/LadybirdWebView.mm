@@ -5,6 +5,7 @@
  */
 
 #include <AK/Optional.h>
+#include <LibURL/Parser.h>
 #include <Interface/LadybirdWebViewBridge.h>
 #include <LibURL/URL.h>
 #include <LibWeb/HTML/SelectedFile.h>
@@ -72,6 +73,8 @@ struct HideCursor {
 @property (nonatomic, strong) NSTextField* status_label;
 @property (nonatomic, strong) NSAlert* dialog;
 @property (nonatomic, strong) NSMagnificationGestureRecognizer* pinch_recognizer;
+@property (nonatomic) uint32_t geolocationNavigationGeneration;
+@property (nonatomic) uint64_t nextGeolocationRequestId;
 
 // NSEvent does not provide a way to mark whether it has been handled, nor can we attach user data to the event. So
 // when we dispatch the event for a second time after WebContent has had a chance to handle it, we must track that
@@ -111,6 +114,7 @@ struct HideCursor {
 {
     if (self = [super init]) {
         self.observer = observer;
+        self.geolocationNavigationGeneration = 1;
 
         if (WebView::Application::web_content_options().force_cpu_painting != WebView::ForceCPUPainting::Yes) {
             m_metal_device = MTLCreateSystemDefaultDevice();
@@ -323,11 +327,46 @@ struct HideCursor {
         if (self == nil) {
             return;
         }
+        ++self.geolocationNavigationGeneration;
+        if (self.geolocationNavigationGeneration == 0)
+            ++self.geolocationNavigationGeneration;
+        [self.observer onGeolocationNavigationChanged:self.geolocationNavigationGeneration];
         [self.observer onLoadStart:url isRedirect:is_redirect];
 
         if (_status_label != nil) {
             [self.status_label setHidden:YES];
         }
+    };
+
+    m_web_view_bridge->on_request_geolocation_permission = [weak_self](ByteString origin, u32 timeout_ms) {
+        LadybirdWebView* self = weak_self;
+        if (self == nil)
+            return WebView::ViewImplementation::PermissionRequest {};
+
+        auto request_id = ++self.nextGeolocationRequestId;
+        if (request_id == 0)
+            return WebView::ViewImplementation::PermissionRequest {};
+        auto navigation_generation = self.geolocationNavigationGeneration;
+        auto parsed_origin = URL::Parser::basic_parse(origin.view());
+        if (!parsed_origin.has_value() ||
+            (parsed_origin->scheme() != "http"sv && parsed_origin->scheme() != "https"sv) ||
+            parsed_origin->includes_credentials() ||
+            parsed_origin->origin().serialize().to_byte_string() != origin) {
+            [self view].complete_geolocation_permission(navigation_generation, request_id,
+                false, false, 0, 0, 0, 0, 0, 0, 0, 0);
+            return WebView::ViewImplementation::PermissionRequest {
+                navigation_generation, request_id };
+        }
+        if (self.observer == nil) {
+            [self view].complete_geolocation_permission(navigation_generation, request_id,
+                false, false, 0, 0, 0, 0, 0, 0, 0, 0);
+            return WebView::ViewImplementation::PermissionRequest {
+                navigation_generation, request_id };
+        }
+        [self.observer onGeolocationPermissionRequest:origin timeoutMs:timeout_ms
+            navigationGeneration:navigation_generation requestId:request_id];
+        return WebView::ViewImplementation::PermissionRequest {
+            navigation_generation, request_id };
     };
 
     m_web_view_bridge->on_load_finish = [weak_self](auto const& url) {
