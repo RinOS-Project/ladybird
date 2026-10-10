@@ -146,5 +146,5 @@ endpoint WebContentClient
     request_camera_capture_open(u64 page_id, ByteString origin) => (bool accepted, u64 session_id, ByteBuffer profile)
     request_camera_capture_read(u64 page_id, u64 session_id) => (bool accepted, ByteBuffer chunk)
     request_camera_capture_close(u64 page_id, u64 session_id) => (bool accepted)
-    request_geolocation_permission(u64 page_id, ByteString origin) => (u32 navigation_generation, u64 request_id)
+    request_geolocation_permission(u64 page_id, ByteString origin, u32 timeout_ms) => (u32 navigation_generation, u64 request_id)
 }

@@ -166,7 +166,7 @@ private:
     virtual Messages::WebContentClient::RequestMicrophonePermissionResponse request_microphone_permission(
         u64 page_id, ByteString origin) override;
     virtual Messages::WebContentClient::RequestGeolocationPermissionResponse request_geolocation_permission(
-        u64 page_id, ByteString origin) override;
+        u64 page_id, ByteString origin, u32 timeout_ms) override;
 
     bool storage_owner_is_authorized(u64 page_id, Web::StorageAPI::StorageEndpointType endpoint,
                                      String const& storage_key, u64 owner_generation);

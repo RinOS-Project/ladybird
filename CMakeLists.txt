@@ -283,7 +283,7 @@ if (ENABLE_QT AND ENABLE_GUI_TARGETS)
     set(CMAKE_AUTOMOC ON)
     set(CMAKE_AUTORCC ON)
     set(CMAKE_AUTOUIC ON)
-    find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+    find_package(Qt6 REQUIRED COMPONENTS Core Positioning Widgets)
 endif()
 
 if (RINOS_LEGACY_OPENSSL)

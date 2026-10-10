@@ -932,7 +932,7 @@ void PageClient::page_did_request_camera_permission(
 
 void PageClient::page_did_request_geolocation(
     GC::Ref<GC::Function<void(Web::GeolocationPositionResult)>> callback,
-    Web::DOM::Document const& document)
+    Web::DOM::Document const& document, u32 timeout_ms)
 {
     auto fail = [&] {
         Web::GeolocationPositionResult result;
@@ -953,7 +953,7 @@ void PageClient::page_did_request_geolocation(
     }
     auto response = client().send_sync_but_allow_failure<
         Messages::WebContentClient::RequestGeolocationPermission>(
-            m_id, move(serialized_origin));
+            m_id, move(serialized_origin), timeout_ms);
     if (!response || response->navigation_generation() == 0u ||
         response->request_id() == 0u) {
         fail();
@@ -1293,7 +1293,9 @@ void PageClient::complete_geolocation_permission(
         Web::GeolocationPositionResult result;
         if (!allowed) {
             result.status = Web::GeolocationPositionResult::Status::PermissionDenied;
-        } else if (!fix_available || latitude_e7 < -900000000LL ||
+        } else if (!fix_available) {
+            result.status = Web::GeolocationPositionResult::Status::PermissionGrantedPositionUnavailable;
+        } else if (latitude_e7 < -900000000LL ||
                    latitude_e7 > 900000000LL ||
                    longitude_e7 < -1800000000LL ||
                    longitude_e7 > 1800000000LL || horizontal_accuracy_mm == 0u ||

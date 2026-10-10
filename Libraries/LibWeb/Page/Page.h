@@ -382,6 +382,7 @@ struct GeolocationPositionResult {
         PermissionDenied = 1,
         PositionUnavailable = 2,
         Available = 3,
+        PermissionGrantedPositionUnavailable = 4,
     };
 
     Status status { Status::PositionUnavailable };
@@ -444,7 +445,7 @@ public:
     virtual void page_did_request_camera_permission(JS::PromiseCapability&, DOM::Document const&);
     virtual void page_did_request_geolocation(
         GC::Ref<GC::Function<void(GeolocationPositionResult)>>,
-        DOM::Document const&);
+        DOM::Document const&, u32 timeout_ms);
     virtual bool page_did_create_microphone_track(MediaCapture::MediaStreamTrack&, URL::Origin const&) { return false; }
     virtual bool page_did_open_camera_capture(URL::Origin const&,
                                               u64& session_id,

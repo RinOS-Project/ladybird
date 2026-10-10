@@ -1244,7 +1244,7 @@ struct PageSession {
         view->on_camera_capture_close = [this](u64 session_id) {
             return close_camera_capture(session_id);
         };
-        view->on_request_geolocation_permission = [this](ByteString origin) {
+        view->on_request_geolocation_permission = [this](ByteString origin, u32) {
             return request_geolocation_permission(move(origin));
         };
 

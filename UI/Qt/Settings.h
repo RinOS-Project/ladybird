@@ -44,6 +44,9 @@ public:
     bool show_menubar();
     void set_show_menubar(bool show_menubar);
 
+    Optional<bool> geolocation_permission(QString const& origin) const;
+    bool set_geolocation_permission(QString const& origin, bool allowed);
+
 signals:
     void show_menubar_changed(bool show_menubar);
 

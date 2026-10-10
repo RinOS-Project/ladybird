@@ -73,7 +73,7 @@ void PageClient::page_did_request_camera_permission(
 
 void PageClient::page_did_request_geolocation(
     GC::Ref<GC::Function<void(GeolocationPositionResult)>> callback,
-    DOM::Document const&)
+    DOM::Document const&, u32)
 {
     GeolocationPositionResult result;
     result.status = GeolocationPositionResult::Status::PositionUnavailable;

@@ -164,7 +164,7 @@ private:
         JS::PromiseCapability&, Web::DOM::Document const&) override;
     virtual void page_did_request_geolocation(
         GC::Ref<GC::Function<void(Web::GeolocationPositionResult)>>,
-        Web::DOM::Document const&) override;
+        Web::DOM::Document const&, u32 timeout_ms) override;
     virtual bool page_did_create_microphone_track(
         Web::MediaCapture::MediaStreamTrack&, URL::Origin const&) override;
     virtual bool page_did_open_camera_capture(

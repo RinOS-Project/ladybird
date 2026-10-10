@@ -16,16 +16,27 @@
 #include <UI/Qt/StringUtils.h>
 
 #include <QColorDialog>
+#include <QByteArray>
 #include <QFileDialog>
 #include <QFont>
 #include <QFontMetrics>
+#include <QGeoCoordinate>
+#include <QGeoPositionInfo>
+#include <QGeoPositionInfoSource>
 #include <QImage>
 #include <QInputDialog>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMimeDatabase>
+#include <QPointer>
 #include <QResizeEvent>
+#include <QTimer>
+#include <QUrl>
+
+#include <cmath>
+#include <limits>
+#include <memory>
 
 namespace Ladybird {
 
@@ -67,6 +78,33 @@ static QIcon default_favicon()
 {
     static QIcon icon = load_icon_from_uri("resource://icons/48x48/app-browser.png"sv);
     return icon;
+}
+
+static Optional<QString> canonical_geolocation_origin(ByteString const& origin)
+{
+    auto encoded_origin = QByteArray(origin.characters(), static_cast<qsizetype>(origin.length()));
+    auto url = QUrl::fromEncoded(encoded_origin, QUrl::ParsingMode::StrictMode);
+    if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty() ||
+        !url.path().isEmpty() || !url.query().isEmpty() || !url.fragment().isEmpty())
+        return {};
+
+    auto scheme = url.scheme().toLower();
+    if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https"))
+        return {};
+    auto port = url.port(-1);
+    if ((scheme == QStringLiteral("http") && port == 80) ||
+        (scheme == QStringLiteral("https") && port == 443))
+        port = -1;
+
+    auto host = url.host().toLower();
+    if (host.contains(QLatin1Char(':')) && !host.startsWith(QLatin1Char('[')))
+        host = QLatin1Char('[') + host + QLatin1Char(']');
+    auto canonical = scheme + QStringLiteral("://") + host;
+    if (port != -1)
+        canonical += QStringLiteral(":") + QString::number(port);
+    if (canonical.toUtf8() != encoded_origin)
+        return {};
+    return canonical;
 }
 
 Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client, size_t page_index)
@@ -173,6 +211,11 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
     };
 
     view().on_load_start = [this](URL::URL const& url, bool) {
+        ++m_geolocation_navigation_generation;
+        if (m_geolocation_navigation_generation == 0u)
+            ++m_geolocation_navigation_generation;
+        if (m_geolocation_dialog)
+            m_geolocation_dialog->close();
         auto url_serialized = qstring_from_ak_string(url.serialize());
 
         m_title = url_serialized;
@@ -183,6 +226,20 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
 
         m_location_edit->set_url(url);
         m_location_edit->setCursorPosition(0);
+    };
+
+    view().on_request_geolocation_permission = [this](ByteString origin, u32 timeout_ms) {
+        auto request_id = ++m_next_geolocation_request_id;
+        if (request_id == 0u)
+            return WebView::ViewImplementation::PermissionRequest {};
+        auto navigation_generation = m_geolocation_navigation_generation;
+        QTimer::singleShot(0, this, [this, origin = move(origin), timeout_ms,
+                                    navigation_generation, request_id] {
+            request_geolocation_permission(move(origin), timeout_ms,
+                                           navigation_generation, request_id);
+        });
+        return WebView::ViewImplementation::PermissionRequest {
+            navigation_generation, request_id };
     };
 
     view().on_url_change = [this](auto const& url) {
@@ -575,6 +632,183 @@ void Tab::request_close()
     // If the user has already requested a close, then respect the user's request and just close the tab.
     // For example, the WebContent process may not be responding.
     m_window->definitely_close_tab(tab_index());
+}
+
+void Tab::request_geolocation_permission(ByteString origin, u32 timeout_ms,
+    u32 navigation_generation, u64 request_id)
+{
+    if (navigation_generation != m_geolocation_navigation_generation)
+        return;
+    auto canonical_origin = canonical_geolocation_origin(origin);
+    if (!canonical_origin.has_value()) {
+        view().complete_geolocation_permission(
+            navigation_generation, request_id, false, false, 0, 0, 0, 0, 0,
+            0, 0, 0);
+        return;
+    }
+
+    if (auto decision = Settings::the()->geolocation_permission(*canonical_origin); decision.has_value()) {
+        if (!decision.value()) {
+            view().complete_geolocation_permission(
+                navigation_generation, request_id, false, false, 0, 0, 0, 0,
+                0, 0, 0, 0);
+            return;
+        }
+        request_geolocation_position(timeout_ms, navigation_generation, request_id);
+        return;
+    }
+
+    auto* dialog = new QMessageBox(
+        QMessageBox::Icon::Question, "Location access",
+        QStringLiteral("%1 wants to access your location.").arg(*canonical_origin),
+        QMessageBox::StandardButton::NoButton, this);
+    auto* allow_button = dialog->addButton("Allow", QMessageBox::ButtonRole::AcceptRole);
+    auto* block_button = dialog->addButton("Block", QMessageBox::ButtonRole::RejectRole);
+    dialog->setDefaultButton(block_button);
+    dialog->setEscapeButton(block_button);
+    dialog->setAttribute(Qt::WidgetAttribute::WA_DeleteOnClose);
+    m_geolocation_dialog = dialog;
+    QObject::connect(dialog, &QMessageBox::finished, this,
+        [this, dialog, allow_button, canonical_origin = *canonical_origin,
+         timeout_ms, navigation_generation, request_id] {
+            if (navigation_generation != m_geolocation_navigation_generation)
+                return;
+            m_geolocation_dialog = nullptr;
+            auto allowed = dialog->clickedButton() == allow_button;
+            if (!Settings::the()->set_geolocation_permission(canonical_origin, allowed))
+                allowed = false;
+            if (!allowed) {
+                view().complete_geolocation_permission(
+                    navigation_generation, request_id, false, false, 0, 0, 0,
+                    0, 0, 0, 0, 0);
+                return;
+            }
+            request_geolocation_position(timeout_ms, navigation_generation, request_id);
+        });
+    dialog->open();
+}
+
+void Tab::request_geolocation_position(u32 timeout_ms,
+    u32 navigation_generation, u64 request_id)
+{
+    if (navigation_generation != m_geolocation_navigation_generation)
+        return;
+    auto* source = QGeoPositionInfoSource::createDefaultSource(this);
+    if (!source) {
+        view().complete_geolocation_permission(
+            navigation_generation, request_id, true, false, 0, 0, 0, 0, 0,
+            0, 0, 0);
+        return;
+    }
+
+    auto source_guard = QPointer<QGeoPositionInfoSource>(source);
+    auto completed = std::make_shared<bool>(false);
+    auto finish = [this, source_guard, completed, navigation_generation,
+                   request_id](bool has_fix, i64 latitude_e7, i64 longitude_e7,
+                   i64 altitude_mm, u32 horizontal_accuracy_mm,
+                   u32 vertical_accuracy_mm, u32 speed_mm_per_second,
+                   u32 heading_millidegrees, u32 flags) {
+        if (*completed)
+            return;
+        *completed = true;
+        if (source_guard) {
+            source_guard->stopUpdates();
+            source_guard->deleteLater();
+        }
+        view().complete_geolocation_permission(
+            navigation_generation, request_id, true, has_fix, latitude_e7,
+            longitude_e7, altitude_mm, horizontal_accuracy_mm,
+            vertical_accuracy_mm, speed_mm_per_second,
+            heading_millidegrees, flags);
+    };
+
+    QObject::connect(source, &QGeoPositionInfoSource::positionUpdated, this,
+        [finish](QGeoPositionInfo const& info) {
+            auto coordinate = info.coordinate();
+            auto latitude = coordinate.latitude();
+            auto longitude = coordinate.longitude();
+            if (!coordinate.isValid() || !std::isfinite(latitude) ||
+                !std::isfinite(longitude) || latitude < -90.0 || latitude > 90.0 ||
+                longitude < -180.0 || longitude > 180.0 ||
+                !info.hasAttribute(QGeoPositionInfo::HorizontalAccuracy))
+                return;
+
+            auto horizontal_accuracy = info.attribute(
+                QGeoPositionInfo::HorizontalAccuracy);
+            auto max_accuracy_m = static_cast<double>(std::numeric_limits<u32>::max()) / 1000.0;
+            if (!std::isfinite(horizontal_accuracy) || horizontal_accuracy <= 0.0 ||
+                horizontal_accuracy > max_accuracy_m)
+                return;
+
+            auto horizontal_accuracy_mm = static_cast<u32>(
+                std::ceil(horizontal_accuracy * 1000.0));
+            if (horizontal_accuracy_mm == 0u)
+                return;
+
+            i64 altitude_mm = 0;
+            u32 vertical_accuracy_mm = 0;
+            u32 speed_mm_per_second = 0;
+            u32 heading_millidegrees = 0;
+            u32 flags = 0;
+
+            auto altitude = coordinate.altitude();
+            if (std::isfinite(altitude) &&
+                info.hasAttribute(QGeoPositionInfo::VerticalAccuracy)) {
+                auto vertical_accuracy = info.attribute(
+                    QGeoPositionInfo::VerticalAccuracy);
+                if (std::isfinite(vertical_accuracy) && vertical_accuracy > 0.0 &&
+                    vertical_accuracy <= max_accuracy_m &&
+                    std::abs(altitude) <= static_cast<double>(std::numeric_limits<i64>::max()) / 1000.0) {
+                    altitude_mm = static_cast<i64>(std::llround(altitude * 1000.0));
+                    vertical_accuracy_mm = static_cast<u32>(
+                        std::ceil(vertical_accuracy * 1000.0));
+                    if (vertical_accuracy_mm != 0u)
+                        flags |= 1u;
+                    else
+                        altitude_mm = 0;
+                }
+            }
+
+            if (info.hasAttribute(QGeoPositionInfo::GroundSpeed)) {
+                auto speed = info.attribute(QGeoPositionInfo::GroundSpeed);
+                if (std::isfinite(speed) && speed >= 0.0 && speed <= max_accuracy_m) {
+                    speed_mm_per_second = static_cast<u32>(std::llround(speed * 1000.0));
+                    flags |= 2u;
+                }
+            }
+
+            if (info.hasAttribute(QGeoPositionInfo::Direction)) {
+                auto heading = info.attribute(QGeoPositionInfo::Direction);
+                if (std::isfinite(heading) && heading >= 0.0 && heading <= 360.0) {
+                    auto normalized_heading = std::fmod(heading, 360.0);
+                    heading_millidegrees = static_cast<u32>(
+                        std::llround(normalized_heading * 1000.0));
+                    if (heading_millidegrees >= 360000u)
+                        heading_millidegrees = 0u;
+                    flags |= 4u;
+                }
+            }
+
+            finish(true,
+                static_cast<i64>(std::llround(latitude * 10000000.0)),
+                static_cast<i64>(std::llround(longitude * 10000000.0)),
+                altitude_mm, horizontal_accuracy_mm, vertical_accuracy_mm,
+                speed_mm_per_second, heading_millidegrees, flags);
+        });
+    QObject::connect(source, &QGeoPositionInfoSource::errorOccurred, this,
+        [finish](QGeoPositionInfoSource::Error) {
+            finish(false, 0, 0, 0, 0, 0, 0, 0, 0);
+        });
+
+    constexpr u32 provider_grace_ms = 1'000u;
+    constexpr u32 maximum_provider_wait_ms = 120'000u;
+    auto requested_provider_timeout = timeout_ms == 0xFFFFFFFFu
+        ? maximum_provider_wait_ms
+        : (timeout_ms > maximum_provider_wait_ms - provider_grace_ms
+            ? maximum_provider_wait_ms
+            : timeout_ms + provider_grace_ms);
+    auto provider_timeout_ms = static_cast<int>(requested_provider_timeout);
+    source->requestUpdate(provider_timeout_ms);
 }
 
 }

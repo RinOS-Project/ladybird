@@ -93,6 +93,10 @@ private:
 
     void recreate_toolbar_icons();
     int tab_index();
+    void request_geolocation_permission(ByteString origin, u32 timeout_ms,
+                                        u32 navigation_generation, u64 request_id);
+    void request_geolocation_position(u32 timeout_ms, u32 navigation_generation,
+                                      u64 request_id);
 
     QBoxLayout* m_layout { nullptr };
     QToolBar* m_toolbar { nullptr };
@@ -119,8 +123,11 @@ private:
     QAction* m_reload_action { nullptr };
 
     QPointer<QDialog> m_dialog;
+    QPointer<QWidget> m_geolocation_dialog;
 
     bool m_already_requested_close { false };
+    u32 m_geolocation_navigation_generation { 1u };
+    u64 m_next_geolocation_request_id { 0u };
 };
 
 }

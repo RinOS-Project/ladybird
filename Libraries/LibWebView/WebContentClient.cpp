@@ -1519,13 +1519,13 @@ WebContentClient::request_camera_capture_close(u64 page_id, u64 session_id)
 }
 
 Messages::WebContentClient::RequestGeolocationPermissionResponse
-WebContentClient::request_geolocation_permission(u64 page_id, ByteString origin)
+WebContentClient::request_geolocation_permission(u64 page_id, ByteString origin, u32 timeout_ms)
 {
     auto view = view_for_page_id(page_id);
     if (!view.has_value() || !view->on_request_geolocation_permission)
         return { 0u, 0u };
 
-    auto request = view->on_request_geolocation_permission(move(origin));
+    auto request = view->on_request_geolocation_permission(move(origin), timeout_ms);
     return { request.navigation_generation, request.request_id };
 }
 

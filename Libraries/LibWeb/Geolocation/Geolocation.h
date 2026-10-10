@@ -56,6 +56,16 @@ private:
     };
     Vector<WatchTimer> m_watch_timers;
 
+    struct PendingPositionRequest {
+        u64 id { 0 };
+        Optional<WebIDL::UnsignedLong> watch_id;
+        GC::Ptr<Platform::Timer> timeout_timer;
+    };
+    Vector<PendingPositionRequest> m_pending_position_requests;
+    u64 m_next_position_request_id { 0 };
+
+    bool finish_position_request(u64 request_id);
+
     // https://w3c.github.io/geolocation/#dfn-cachedposition
     GC::Ptr<GeolocationPosition> m_cached_position;
 

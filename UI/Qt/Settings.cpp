@@ -10,6 +10,8 @@
 #include <UI/Qt/Settings.h>
 #include <UI/Qt/StringUtils.h>
 
+#include <QCryptographicHash>
+
 namespace Ladybird {
 
 Settings::Settings()
@@ -63,6 +65,30 @@ void Settings::set_show_menubar(bool show_menubar)
 {
     m_qsettings->setValue("show_menubar", show_menubar);
     emit show_menubar_changed(show_menubar);
+}
+
+Optional<bool> Settings::geolocation_permission(QString const& origin) const
+{
+    auto key_hash = QCryptographicHash::hash(origin.toUtf8(), QCryptographicHash::Sha256).toHex();
+    auto key = QStringLiteral("site_permissions/geolocation/") + QString::fromLatin1(key_hash);
+    auto value = m_qsettings->value(key);
+    if (!value.isValid())
+        return {};
+    if (value == QStringLiteral("allow"))
+        return true;
+    if (value == QStringLiteral("deny"))
+        return false;
+    return {};
+}
+
+bool Settings::set_geolocation_permission(QString const& origin, bool allowed)
+{
+    auto key_hash = QCryptographicHash::hash(origin.toUtf8(), QCryptographicHash::Sha256).toHex();
+    auto key = QStringLiteral("site_permissions/geolocation/") + QString::fromLatin1(key_hash);
+    auto value = allowed ? QStringLiteral("allow") : QStringLiteral("deny");
+    m_qsettings->setValue(key, value);
+    m_qsettings->sync();
+    return m_qsettings->status() == QSettings::NoError && m_qsettings->value(key).toString() == value;
 }
 
 }
