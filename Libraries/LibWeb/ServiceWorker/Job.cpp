@@ -29,6 +29,7 @@
 #include <LibWeb/SecureContexts/AbstractOperations.h>
 #include <LibWeb/ServiceWorker/Job.h>
 #include <LibWeb/ServiceWorker/Registration.h>
+#include <LibWeb/ServiceWorker/ServiceWorkerRegistration.h>
 #include <LibWeb/WebIDL/Promise.h>
 #include <rin/web/webcontent_protocol.h>
 
@@ -669,20 +670,22 @@ static void finish_job(JS::VM& vm, GC::Ref<Job> job)
 }
 
 // https://w3c.github.io/ServiceWorker/#resolve-job-promise-algorithm
-static void resolve_job_promise(GC::Ref<Job> job, Optional<Registration const&>, JS::Value value)
+static void resolve_job_promise(GC::Ref<Job> job, Optional<Registration const&> registration, JS::Value value)
 {
     // 1. If job’s client is not null, queue a task, on job’s client's responsible event loop using the DOM manipulation task source, to run the following substeps:
     if (job->client) {
         auto& realm = job->client->realm();
-        HTML::queue_a_task(HTML::Task::Source::DOMManipulation, job->client->responsible_event_loop(), nullptr, GC::create_function(realm.heap(), [&realm, job, value] {
+        GC::Ptr<ServiceWorkerRegistration> registration_object;
+        if (job->job_type == Job::Type::Register || job->job_type == Job::Type::Update) {
+            VERIFY(registration.has_value());
+            registration_object = job->client->get_service_worker_registration_object(registration.value());
+        }
+        HTML::queue_a_task(HTML::Task::Source::DOMManipulation, job->client->responsible_event_loop(), nullptr, GC::create_function(realm.heap(), [&realm, job, value, registration_object] {
             HTML::TemporaryExecutionContext const context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
-            // FIXME: Resolve to a ServiceWorkerRegistration platform object
-            // 1. Let convertedValue be null.
-            // 2. If job’s job type is either register or update, set convertedValue to the result of
-            //    getting the service worker registration object that represents value in job’s client.
-            // 3. Else, set convertedValue to value, in job’s client's Realm.
-            // 4. Resolve job’s job promise with convertedValue.
-            WebIDL::resolve_promise(realm, *job->job_promise, value);
+            if (registration_object)
+                WebIDL::resolve_promise(realm, *job->job_promise, *registration_object);
+            else
+                WebIDL::resolve_promise(realm, *job->job_promise, value);
         }));
     }
 
@@ -695,15 +698,17 @@ static void resolve_job_promise(GC::Ref<Job> job, Optional<Registration const&>,
         // 2. Queue a task, on equivalentJob’s client's responsible event loop using the DOM manipulation task source,
         //    to run the following substeps:
         auto& realm = equivalent_job->client->realm();
-        HTML::queue_a_task(HTML::Task::Source::DOMManipulation, equivalent_job->client->responsible_event_loop(), nullptr, GC::create_function(realm.heap(), [&realm, equivalent_job, value] {
+        GC::Ptr<ServiceWorkerRegistration> registration_object;
+        if (equivalent_job->job_type == Job::Type::Register || equivalent_job->job_type == Job::Type::Update) {
+            VERIFY(registration.has_value());
+            registration_object = equivalent_job->client->get_service_worker_registration_object(registration.value());
+        }
+        HTML::queue_a_task(HTML::Task::Source::DOMManipulation, equivalent_job->client->responsible_event_loop(), nullptr, GC::create_function(realm.heap(), [&realm, equivalent_job, value, registration_object] {
             HTML::TemporaryExecutionContext const context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
-            // FIXME: Resolve to a ServiceWorkerRegistration platform object
-            // 1. Let convertedValue be null.
-            // 2. If equivalentJob’s job type is either register or update, set convertedValue to the result of
-            //    getting the service worker registration object that represents value in equivalentJob’s client.
-            // 3. Else, set convertedValue to value, in equivalentJob’s client's Realm.
-            // 4. Resolve equivalentJob’s job promise with convertedValue.
-            WebIDL::resolve_promise(realm, *equivalent_job->job_promise, value);
+            if (registration_object)
+                WebIDL::resolve_promise(realm, *equivalent_job->job_promise, *registration_object);
+            else
+                WebIDL::resolve_promise(realm, *equivalent_job->job_promise, value);
         }));
     }
 }
