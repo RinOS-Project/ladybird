@@ -56,6 +56,13 @@ public:
     // https://w3c.github.io/ServiceWorker/#dfn-job-equivalent
     friend bool operator==(Job const& a, Job const& b)
     {
+        // Browser owner authorization is page/profile-bound, but the Browser
+        // profile identity is not part of StorageKey. Keep distinct clients'
+        // jobs separate so an equivalent job cannot reuse another client's
+        // owner transaction and promise-resolution context.
+        if (a.client != b.client)
+            return false;
+
         if (a.job_type != b.job_type || !(a.storage_key == b.storage_key))
             return false;
         switch (a.job_type) {
