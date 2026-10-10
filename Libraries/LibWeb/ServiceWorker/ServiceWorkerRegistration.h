@@ -36,6 +36,7 @@ public:
     Bindings::ServiceWorkerUpdateViaCache update_via_cache() const { return m_update_via_cache; }
     void set_update_via_cache(Bindings::ServiceWorkerUpdateViaCache value) { m_update_via_cache = value; }
 
+    GC::Ref<WebIDL::Promise> update();
     GC::Ref<WebIDL::Promise> unregister();
 
     explicit ServiceWorkerRegistration(JS::Realm&, Registration const&);

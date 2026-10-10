@@ -514,7 +514,10 @@ static void update(JS::VM& vm, GC::Ref<Job> job)
 
         // 9. If hasUpdatedResources is false, then:
         if (!state->has_updated_resources()) {
-            if (!finish_browser_registration_transaction(
+            // An Update job does not stage a new Browser registration candidate.
+            // Register jobs commit their staged candidate even when resources match.
+            if (job->browser_registration_transaction_id != 0u
+                && !finish_browser_registration_transaction(
                     job, RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_REGISTER)) {
                 reject_job_promise<WebIDL::InvalidStateError>(
                     job, "The Browser profile owner could not commit the ServiceWorker registration"_utf16);
