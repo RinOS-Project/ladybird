@@ -56,7 +56,7 @@ public:
     // https://w3c.github.io/ServiceWorker/#dfn-job-equivalent
     friend bool operator==(Job const& a, Job const& b)
     {
-        if (a.job_type != b.job_type)
+        if (a.job_type != b.job_type || !(a.storage_key == b.storage_key))
             return false;
         switch (a.job_type) {
         case Type::Register:

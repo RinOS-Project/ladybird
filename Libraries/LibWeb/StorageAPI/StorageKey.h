@@ -9,6 +9,7 @@
 #include <AK/Optional.h>
 #include <AK/Traits.h>
 #include <LibURL/Origin.h>
+#include <LibURL/Site.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::StorageAPI {
@@ -16,21 +17,37 @@ namespace Web::StorageAPI {
 // https://storage.spec.whatwg.org/#storage-keys
 struct StorageKey {
 
-    // A storage key is a tuple consisting of an origin (an origin). [HTML]
-    // NOTE: This is expected to change; see Client-Side Storage Partitioning https://privacycg.github.io/storage-partitioning/.
+    // ServiceWorker storage keys also retain the schemeful top-level site so
+    // the registration map can distinguish the same origin across partitions.
     URL::Origin origin;
+    URL::Site top_level_site;
+
+    explicit StorageKey(URL::Origin origin)
+        : origin(move(origin))
+        , top_level_site(URL::Site::obtain(this->origin))
+    {
+    }
+
+    StorageKey(URL::Origin origin, URL::Site top_level_site)
+        : origin(move(origin))
+        , top_level_site(move(top_level_site))
+    {
+    }
 
     String to_string() const
     {
+        // StorageEndpoint owner IPC currently serializes the origin alone.
+        // The Browser ServiceWorker owner derives its site from the
+        // authenticated page owner instead of accepting it through this
+        // renderer-facing serialization.
         return origin.serialize();
     }
 
     friend bool operator==(StorageKey const& a, StorageKey const& b)
     {
-        // To determine whether a storage key A equals storage key B, run these steps:
-        // 1. If A’s origin is not same origin with B’s origin, then return false.
-        // 2. Return true.
-        return a.origin.is_same_origin(b.origin);
+        // The top-level site is a partition key for ServiceWorker registrations.
+        return a.origin.is_same_origin(b.origin)
+            && a.top_level_site.is_same_site(b.top_level_site);
     }
 };
 
@@ -46,7 +63,9 @@ template<>
 struct Traits<Web::StorageAPI::StorageKey> : public DefaultTraits<Web::StorageAPI::StorageKey> {
     static unsigned hash(Web::StorageAPI::StorageKey const& key)
     {
-        return Traits<URL::Origin>::hash(key.origin);
+        auto const origin_hash = Traits<URL::Origin>::hash(key.origin);
+        auto const top_level_site_hash = key.top_level_site.serialize().hash();
+        return pair_int_hash(origin_hash, top_level_site_hash);
     }
 };
 

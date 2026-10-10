@@ -29,7 +29,7 @@ Optional<StorageKey> obtain_a_storage_key(HTML::Environment const& environment)
 StorageKey obtain_a_storage_key_for_non_storage_purposes(URL::Origin const& origin)
 {
     // NOTE: This function exists as there are cases where we don't have the full environment object, but we still need to obtain a storage key.
-    return { origin };
+    return { origin, URL::Site::obtain(origin) };
 }
 
 // https://storage.spec.whatwg.org/#obtain-a-storage-key-for-non-storage-purposes
@@ -38,9 +38,16 @@ StorageKey obtain_a_storage_key_for_non_storage_purposes(HTML::Environment const
     // 1. Let origin be environment’s origin if environment is an environment settings object; otherwise environment’s creation URL’s origin.
     if (is<HTML::EnvironmentSettingsObject>(environment)) {
         auto const& settings = static_cast<HTML::EnvironmentSettingsObject const&>(environment);
-        return { settings.origin() };
+        auto const& top_level_origin = settings.top_level_origin.has_value()
+            ? settings.top_level_origin.value()
+            : settings.origin();
+        return { settings.origin(), URL::Site::obtain(top_level_origin) };
     }
-    return { environment.creation_url.origin() };
+    auto const& origin = environment.creation_url.origin();
+    auto const& top_level_origin = environment.top_level_origin.has_value()
+        ? environment.top_level_origin.value()
+        : origin;
+    return { origin, URL::Site::obtain(top_level_origin) };
 }
 
 }
