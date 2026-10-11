@@ -9,6 +9,7 @@
 #include <LibWeb/Bindings/CacheStoragePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/HTML/DedicatedWorkerGlobalScope.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
@@ -96,12 +97,18 @@ CacheStorage::CacheStorage(JS::Realm& realm)
 {
     auto storage_key = StorageAPI::obtain_a_storage_key(
         HTML::relevant_settings_object(realm.global_object()));
+    auto& global_object = realm.global_object();
     auto page = page_for_cache_storage(realm);
+    const bool is_window = is<HTML::Window>(global_object);
+    const bool is_dedicated_worker =
+        is<HTML::DedicatedWorkerGlobalScope>(global_object);
     u64 frame_identity = 0;
-    if (is<HTML::Window>(realm.global_object()))
-        frame_identity = static_cast<u64>(as<HTML::Window>(realm.global_object())
+    if (is_window)
+        frame_identity = static_cast<u64>(as<HTML::Window>(global_object)
             .associated_document().unique_id().value());
-    if (!storage_key.has_value() || !page || frame_identity == 0u)
+    if (!storage_key.has_value() || !page ||
+        (!is_window && !is_dedicated_worker) ||
+        (is_window && frame_identity == 0u))
         return;
     m_page = page;
     m_owner_origin = storage_key.value().to_string().to_byte_string();

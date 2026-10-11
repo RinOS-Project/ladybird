@@ -38,6 +38,25 @@ public:
     virtual size_t screen_count() const override { return 1; }
     virtual HTTP::Cookie::VersionedCookie page_did_request_cookie(URL::URL const&, HTTP::Cookie::Source) override;
     virtual void page_did_set_cookie(URL::URL const&, HTTP::Cookie::ParsedCookie const&, HTTP::Cookie::Source) override;
+    virtual Optional<String> page_did_request_storage_item(
+        Web::StorageAPI::StorageEndpointType, String const&, String const&,
+        u64 owner_generation = 0, [[maybe_unused]] u64 owner_frame_identity = 0) override;
+    virtual WebView::StorageSetResult page_did_set_storage_item(
+        Web::StorageAPI::StorageEndpointType, String const&, String const&,
+        String const&, u64 owner_generation = 0,
+        [[maybe_unused]] u64 owner_frame_identity = 0) override;
+    virtual void page_did_remove_storage_item(
+        Web::StorageAPI::StorageEndpointType, String const&, String const&,
+        u64 owner_generation = 0,
+        [[maybe_unused]] u64 owner_frame_identity = 0) override;
+    virtual Vector<String> page_did_request_storage_keys(
+        Web::StorageAPI::StorageEndpointType, String const&,
+        u64 owner_generation = 0,
+        [[maybe_unused]] u64 owner_frame_identity = 0) override;
+    virtual void page_did_clear_storage(
+        Web::StorageAPI::StorageEndpointType, String const&,
+        u64 owner_generation = 0,
+        [[maybe_unused]] u64 owner_frame_identity = 0) override;
     virtual HttpCookieOwnerResponse request_http_cookie_owner(
         u32 operation, ByteString request_url, ByteString origin,
         ByteString cookie_data, u32 policy) override;

@@ -62,6 +62,54 @@ Messages::WebWorkerClient::DidRequestCookieResponse WebWorkerClient::did_request
     return HTTP::Cookie::VersionedCookie {};
 }
 
+Messages::WebWorkerClient::DidRequestStorageItemResponse WebWorkerClient::did_request_storage_item(
+    Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key,
+    String bottle_key, u64 owner_generation)
+{
+    if (on_request_storage_item)
+        return { on_request_storage_item(storage_endpoint, move(storage_key),
+                                         move(bottle_key), owner_generation) };
+    return { Optional<String> {} };
+}
+
+Messages::WebWorkerClient::DidSetStorageItemResponse WebWorkerClient::did_set_storage_item(
+    Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key,
+    String bottle_key, String value, u64 owner_generation)
+{
+    if (on_set_storage_item)
+        return { on_set_storage_item(storage_endpoint, move(storage_key),
+                                     move(bottle_key), move(value),
+                                     owner_generation) };
+    return { WebView::StorageOperationError::QuotaExceededError };
+}
+
+void WebWorkerClient::did_remove_storage_item(
+    Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key,
+    String bottle_key, u64 owner_generation)
+{
+    if (on_remove_storage_item)
+        on_remove_storage_item(storage_endpoint, move(storage_key),
+                               move(bottle_key), owner_generation);
+}
+
+Messages::WebWorkerClient::DidRequestStorageKeysResponse WebWorkerClient::did_request_storage_keys(
+    Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key,
+    u64 owner_generation)
+{
+    if (on_request_storage_keys)
+        return { on_request_storage_keys(storage_endpoint, move(storage_key),
+                                         owner_generation) };
+    return { Vector<String> {} };
+}
+
+void WebWorkerClient::did_clear_storage(
+    Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key,
+    u64 owner_generation)
+{
+    if (on_clear_storage)
+        on_clear_storage(storage_endpoint, move(storage_key), owner_generation);
+}
+
 Messages::WebWorkerClient::RequestHttpCookieOwnerResponse WebWorkerClient::request_http_cookie_owner(
     u32 operation, ByteString request_url, ByteString origin,
     ByteString cookie_data, u32 policy)

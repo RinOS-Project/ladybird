@@ -162,7 +162,7 @@ bool Cache::owner_is_current() const
     if (!m_storage_bottle && m_owner_generation == 0)
         return true;
     if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty() ||
-        m_owner_top_level_site.is_empty() || m_owner_frame_identity == 0u)
+        m_owner_top_level_site.is_empty())
         return false;
     auto response = m_page->client().request_service_worker_owner(
         4u, {}, m_owner_origin, {}, m_owner_top_level_site, 0u, 0u, 0u,

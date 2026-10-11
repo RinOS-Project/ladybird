@@ -204,6 +204,67 @@ void WorkerAgentParent::setup_worker_ipc_callbacks(JS::Realm& realm)
     const auto frame_identity = outside_document
         ? static_cast<u64>(outside_document->unique_id().value())
         : 0u;
+    m_worker_ipc->on_request_storage_item = [
+        realm = GC::RawRef<JS::Realm> { realm }, frame_identity](
+            Web::StorageAPI::StorageEndpointType storage_endpoint,
+            String storage_key, String bottle_key, u64 owner_generation) {
+        const auto owner_frame_identity =
+            storage_endpoint == Web::StorageAPI::StorageEndpointType::Caches
+            ? frame_identity : 0u;
+        auto& client = Bindings::principal_host_defined_page(realm).client();
+        return client.page_did_request_storage_item(
+            storage_endpoint, storage_key, bottle_key, owner_generation,
+            owner_frame_identity);
+    };
+    m_worker_ipc->on_set_storage_item = [
+        realm = GC::RawRef<JS::Realm> { realm }, frame_identity](
+            Web::StorageAPI::StorageEndpointType storage_endpoint,
+            String storage_key, String bottle_key, String value,
+            u64 owner_generation) {
+        const auto owner_frame_identity =
+            storage_endpoint == Web::StorageAPI::StorageEndpointType::Caches
+            ? frame_identity : 0u;
+        auto& client = Bindings::principal_host_defined_page(realm).client();
+        return client.page_did_set_storage_item(
+            storage_endpoint, storage_key, bottle_key, value, owner_generation,
+            owner_frame_identity);
+    };
+    m_worker_ipc->on_remove_storage_item = [
+        realm = GC::RawRef<JS::Realm> { realm }, frame_identity](
+            Web::StorageAPI::StorageEndpointType storage_endpoint,
+            String storage_key, String bottle_key, u64 owner_generation) {
+        const auto owner_frame_identity =
+            storage_endpoint == Web::StorageAPI::StorageEndpointType::Caches
+            ? frame_identity : 0u;
+        auto& client = Bindings::principal_host_defined_page(realm).client();
+        client.page_did_remove_storage_item(
+            storage_endpoint, storage_key, bottle_key, owner_generation,
+            owner_frame_identity);
+    };
+    m_worker_ipc->on_request_storage_keys = [
+        realm = GC::RawRef<JS::Realm> { realm }, frame_identity](
+            Web::StorageAPI::StorageEndpointType storage_endpoint,
+            String storage_key, u64 owner_generation) {
+        const auto owner_frame_identity =
+            storage_endpoint == Web::StorageAPI::StorageEndpointType::Caches
+            ? frame_identity : 0u;
+        auto& client = Bindings::principal_host_defined_page(realm).client();
+        return client.page_did_request_storage_keys(
+            storage_endpoint, storage_key, owner_generation,
+            owner_frame_identity);
+    };
+    m_worker_ipc->on_clear_storage = [
+        realm = GC::RawRef<JS::Realm> { realm }, frame_identity](
+            Web::StorageAPI::StorageEndpointType storage_endpoint,
+            String storage_key, u64 owner_generation) {
+        const auto owner_frame_identity =
+            storage_endpoint == Web::StorageAPI::StorageEndpointType::Caches
+            ? frame_identity : 0u;
+        auto& client = Bindings::principal_host_defined_page(realm).client();
+        client.page_did_clear_storage(
+            storage_endpoint, storage_key, owner_generation,
+            owner_frame_identity);
+    };
     m_worker_ipc->on_request_service_worker_owner = [
         realm = GC::RawRef<JS::Realm> { realm }, frame_identity](
         u32 operation, ByteString client_url, ByteString origin,

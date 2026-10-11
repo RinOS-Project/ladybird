@@ -98,6 +98,55 @@ void PageHost::page_did_set_cookie(
     m_client.async_did_set_cookie(url, cookie, source);
 }
 
+Optional<String> PageHost::page_did_request_storage_item(
+    Web::StorageAPI::StorageEndpointType storage_endpoint,
+    String const& storage_key, String const& bottle_key,
+    u64 owner_generation, [[maybe_unused]] u64 owner_frame_identity)
+{
+    /* The parent rebinds CacheStorage requests to this worker's creating
+     * Document before forwarding them to the authenticated PageClient. */
+    auto response = m_client.did_request_storage_item(
+        storage_endpoint, storage_key, bottle_key, owner_generation);
+    return response.take_value();
+}
+
+WebView::StorageSetResult PageHost::page_did_set_storage_item(
+    Web::StorageAPI::StorageEndpointType storage_endpoint,
+    String const& storage_key, String const& bottle_key, String const& value,
+    u64 owner_generation, [[maybe_unused]] u64 owner_frame_identity)
+{
+    auto response = m_client.did_set_storage_item(
+        storage_endpoint, storage_key, bottle_key, value, owner_generation);
+    return response.result();
+}
+
+void PageHost::page_did_remove_storage_item(
+    Web::StorageAPI::StorageEndpointType storage_endpoint,
+    String const& storage_key, String const& bottle_key,
+    u64 owner_generation, [[maybe_unused]] u64 owner_frame_identity)
+{
+    m_client.did_remove_storage_item(
+        storage_endpoint, storage_key, bottle_key, owner_generation);
+}
+
+Vector<String> PageHost::page_did_request_storage_keys(
+    Web::StorageAPI::StorageEndpointType storage_endpoint,
+    String const& storage_key, u64 owner_generation,
+    [[maybe_unused]] u64 owner_frame_identity)
+{
+    auto response = m_client.did_request_storage_keys(
+        storage_endpoint, storage_key, owner_generation);
+    return response.take_keys();
+}
+
+void PageHost::page_did_clear_storage(
+    Web::StorageAPI::StorageEndpointType storage_endpoint,
+    String const& storage_key, u64 owner_generation,
+    [[maybe_unused]] u64 owner_frame_identity)
+{
+    m_client.did_clear_storage(storage_endpoint, storage_key, owner_generation);
+}
+
 Web::PageClient::HttpCookieOwnerResponse PageHost::request_http_cookie_owner(
     u32 operation, ByteString request_url, ByteString origin,
     ByteString cookie_data, u32 policy)
