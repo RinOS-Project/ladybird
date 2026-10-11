@@ -1373,7 +1373,9 @@ if (AK_OS_RINOS)
     # OpenGLContext and the RinGL dispatcher include the private OS-Core
     # bridge headers directly; RinGL's private implementation include path
     # must not be relied upon by LibWeb consumers.
-    target_include_directories(LibWeb PRIVATE "${RINOS_SOURCE_ROOT}/src/webengine")
+    target_include_directories(LibWeb PRIVATE
+        "${RINOS_SOURCE_ROOT}/src/webengine"
+        "${RINOS_SOURCE_ROOT}/public-base/libs/rinresource/include")
 endif()
 
 if (HAS_FONTCONFIG)
