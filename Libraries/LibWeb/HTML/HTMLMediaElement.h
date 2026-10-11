@@ -168,6 +168,7 @@ public:
     RefPtr<Media::DisplayingVideoSink> const& selected_video_track_sink() const { return m_selected_video_track_sink; }
 
     Painting::ExternalContentSource& ensure_external_content_source();
+    void clear_external_content_source();
 
 protected:
     HTMLMediaElement(DOM::Document&, DOM::QualifiedName);

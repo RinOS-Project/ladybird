@@ -1360,6 +1360,12 @@ Painting::ExternalContentSource& HTMLMediaElement::ensure_external_content_sourc
     return *m_external_content_source;
 }
 
+void HTMLMediaElement::clear_external_content_source()
+{
+    if (m_external_content_source)
+        m_external_content_source->clear();
+}
+
 void HTMLMediaElement::set_selected_video_track(Badge<VideoTrack>, GC::Ptr<HTML::VideoTrack> video_track)
 {
     if (m_selected_video_track) {

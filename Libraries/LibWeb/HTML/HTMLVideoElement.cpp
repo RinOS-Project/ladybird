@@ -266,8 +266,7 @@ void HTMLVideoElement::update_media_stream_video_frame()
     if (!selected_track) {
         if (m_media_stream_frame) {
             m_media_stream_frame = nullptr;
-            if (m_external_content_source)
-                m_external_content_source->clear();
+            clear_external_content_source();
             set_needs_repaint();
         }
         return;
@@ -276,8 +275,7 @@ void HTMLVideoElement::update_media_stream_video_frame()
     auto frame = selected_track->read_video_frame();
     if (!selected_track->is_live()) {
         m_media_stream_frame = nullptr;
-        if (m_external_content_source)
-            m_external_content_source->clear();
+        clear_external_content_source();
         set_needs_repaint();
         return;
     }
