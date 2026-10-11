@@ -36,7 +36,7 @@ Bindings::NotificationPermission Notification::permission(JS::VM& vm)
     auto& settings = HTML::relevant_settings_object(*window);
     if (HTML::is_non_secure_context(settings))
         return Bindings::NotificationPermission::Default;
-    auto* responsible_document = settings.responsible_document();
+    auto responsible_document = settings.responsible_document();
     if (!responsible_document)
         return Bindings::NotificationPermission::Default;
 
@@ -249,7 +249,7 @@ WebIDL::ExceptionOr<GC::Ref<Notification>> Notification::construct_impl(
 
     // 4. Associate this with notification.
     this_notification->m_notification = notification;
-    auto* responsible_document = relevant_settings_object->responsible_document();
+    auto responsible_document = relevant_settings_object.responsible_document();
     auto const frame_identity = responsible_document
         ? static_cast<u64>(responsible_document->unique_id().value())
         : 0u;
@@ -271,7 +271,7 @@ WebIDL::ExceptionOr<GC::Ref<Notification>> Notification::construct_impl(
             }
 
             auto event_name = displayed
-                ? HTML::EventNames::show
+                ? "show"_fly_string
                 : HTML::EventNames::error;
             this_notification->dispatch_event(
                 DOM::Event::create(this_notification->realm(), event_name));
