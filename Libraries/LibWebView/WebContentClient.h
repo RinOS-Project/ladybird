@@ -167,6 +167,8 @@ private:
         u64 page_id, ByteString origin) override;
     virtual Messages::WebContentClient::RequestGeolocationPermissionResponse request_geolocation_permission(
         u64 page_id, ByteString origin, u32 timeout_ms) override;
+    virtual void cancel_geolocation_permission(
+        u64 page_id, u32 navigation_generation, u64 request_id) override;
 
     bool storage_owner_is_authorized(u64 page_id, Web::StorageAPI::StorageEndpointType endpoint,
                                      String const& storage_key, u64 owner_generation);

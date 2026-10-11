@@ -72,6 +72,7 @@ void PageClient::page_did_request_camera_permission(
 }
 
 void PageClient::page_did_request_geolocation(
+    u64,
     GC::Ref<GC::Function<void(GeolocationPositionResult)>> callback,
     DOM::Document const&, u32)
 {

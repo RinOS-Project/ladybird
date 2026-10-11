@@ -14,6 +14,7 @@ jmethodID WebViewImplementationNative::bind_webcontent_method;
 jmethodID WebViewImplementationNative::invalidate_layout_method;
 jmethodID WebViewImplementationNative::on_load_start_method;
 jmethodID WebViewImplementationNative::request_geolocation_permission_method;
+jmethodID WebViewImplementationNative::cancel_geolocation_permission_method;
 
 extern "C" JNIEXPORT void JNICALL
 Java_org_serenityos_ladybird_WebViewImplementation_00024Companion_nativeClassInit(JNIEnv*, jobject /* thiz */);
@@ -47,6 +48,12 @@ Java_org_serenityos_ladybird_WebViewImplementation_00024Companion_nativeClassIni
     if (!method)
         TODO();
     WebViewImplementationNative::request_geolocation_permission_method = method;
+
+    method = env->GetMethodID(WebViewImplementationNative::global_class_reference,
+        "cancelGeolocationPermission", "(IJ)V");
+    if (!method)
+        TODO();
+    WebViewImplementationNative::cancel_geolocation_permission_method = method;
 }
 
 extern "C" JNIEXPORT jlong JNICALL

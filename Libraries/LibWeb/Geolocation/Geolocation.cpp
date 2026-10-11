@@ -124,6 +124,10 @@ void Geolocation::clear_watch(WebIDL::Long watch_id)
             return false;
         if (request.timeout_timer)
             request.timeout_timer->stop();
+        auto& document = as<HTML::Window>(
+            HTML::relevant_global_object(*this)).associated_document();
+        document.page().client().page_did_cancel_geolocation_request(
+            request.id);
         return true;
     });
 }
@@ -133,6 +137,11 @@ bool Geolocation::finish_position_request(u64 request_id)
     return m_pending_position_requests.remove_first_matching([&](auto const& request) {
         if (request.id != request_id)
             return false;
+        auto& document = as<HTML::Window>(
+            HTML::relevant_global_object(*this)).associated_document();
+        /* A normal result has already retired its embedder request. Timeout
+         * and other local terminal paths still need to stop a live provider. */
+        document.page().client().page_did_cancel_geolocation_request(request.id);
         if (request.timeout_timer)
             request.timeout_timer->stop();
         return true;
@@ -223,6 +232,7 @@ void Geolocation::acquire_a_position(GC::Ref<WebIDL::CallbackType> success_callb
     auto acquisition_time = AK::UnixDateTime::now().milliseconds_since_epoch();
     auto cached_position = m_cached_position;
     pending_document->page().client().page_did_request_geolocation(
+        request_id,
         GC::create_function(heap(),
             [this, pending_document, success_callback, error_callback, options,
              watch_id, request_id, acquisition_time,

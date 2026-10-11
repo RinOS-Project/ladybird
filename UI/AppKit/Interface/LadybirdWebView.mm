@@ -368,6 +368,14 @@ struct HideCursor {
         return WebView::ViewImplementation::PermissionRequest {
             navigation_generation, request_id };
     };
+    m_web_view_bridge->on_cancel_geolocation_permission =
+        [weak_self](u32 navigation_generation, u64 request_id) {
+            LadybirdWebView* self = weak_self;
+            if (self == nil || self.observer == nil)
+                return;
+            [self.observer onGeolocationRequestCancelled:navigation_generation
+                requestId:request_id];
+        };
 
     m_web_view_bridge->on_load_finish = [weak_self](auto const& url) {
         LadybirdWebView* self = weak_self;

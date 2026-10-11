@@ -214,8 +214,11 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
         ++m_geolocation_navigation_generation;
         if (m_geolocation_navigation_generation == 0u)
             ++m_geolocation_navigation_generation;
-        if (m_geolocation_dialog)
-            m_geolocation_dialog->close();
+        auto request_ids = m_geolocation_requests.keys();
+        for (auto request_id : request_ids) {
+            auto request = m_geolocation_requests.value(request_id);
+            cancel_geolocation_request(request.navigation_generation, request_id);
+        }
         auto url_serialized = qstring_from_ak_string(url.serialize());
 
         m_title = url_serialized;
@@ -230,17 +233,27 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
 
     view().on_request_geolocation_permission = [this](ByteString origin, u32 timeout_ms) {
         auto request_id = ++m_next_geolocation_request_id;
-        if (request_id == 0u)
+        if (request_id == 0u || m_geolocation_requests.size() >= 64 ||
+            m_geolocation_requests.contains(request_id))
             return WebView::ViewImplementation::PermissionRequest {};
         auto navigation_generation = m_geolocation_navigation_generation;
+        m_geolocation_requests.insert(request_id,
+            GeolocationRequestState { navigation_generation, {}, {} });
         QTimer::singleShot(0, this, [this, origin = move(origin), timeout_ms,
                                     navigation_generation, request_id] {
+            if (!geolocation_request_is_current(navigation_generation, request_id))
+                return;
             request_geolocation_permission(move(origin), timeout_ms,
                                            navigation_generation, request_id);
         });
         return WebView::ViewImplementation::PermissionRequest {
             navigation_generation, request_id };
     };
+
+    view().on_cancel_geolocation_permission =
+        [this](u32 navigation_generation, u64 request_id) {
+            cancel_geolocation_request(navigation_generation, request_id);
+        };
 
     view().on_url_change = [this](auto const& url) {
         m_location_edit->set_url(url);
@@ -522,7 +535,14 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
     close_multiple_tabs_menu->addAction(close_other_tabs_action);
 }
 
-Tab::~Tab() = default;
+Tab::~Tab()
+{
+    auto request_ids = m_geolocation_requests.keys();
+    for (auto request_id : request_ids) {
+        auto request = m_geolocation_requests.value(request_id);
+        cancel_geolocation_request(request.navigation_generation, request_id);
+    }
+}
 
 void Tab::focus_location_editor()
 {
@@ -637,10 +657,11 @@ void Tab::request_close()
 void Tab::request_geolocation_permission(ByteString origin, u32 timeout_ms,
     u32 navigation_generation, u64 request_id)
 {
-    if (navigation_generation != m_geolocation_navigation_generation)
+    if (!geolocation_request_is_current(navigation_generation, request_id))
         return;
     auto canonical_origin = canonical_geolocation_origin(origin);
     if (!canonical_origin.has_value()) {
+        m_geolocation_requests.remove(request_id);
         view().complete_geolocation_permission(
             navigation_generation, request_id, false, false, 0, 0, 0, 0, 0,
             0, 0, 0);
@@ -649,6 +670,7 @@ void Tab::request_geolocation_permission(ByteString origin, u32 timeout_ms,
 
     if (auto decision = Settings::the()->geolocation_permission(*canonical_origin); decision.has_value()) {
         if (!decision.value()) {
+            m_geolocation_requests.remove(request_id);
             view().complete_geolocation_permission(
                 navigation_generation, request_id, false, false, 0, 0, 0, 0,
                 0, 0, 0, 0);
@@ -668,16 +690,24 @@ void Tab::request_geolocation_permission(ByteString origin, u32 timeout_ms,
     dialog->setEscapeButton(block_button);
     dialog->setAttribute(Qt::WidgetAttribute::WA_DeleteOnClose);
     m_geolocation_dialog = dialog;
+    auto request_state = m_geolocation_requests.value(request_id);
+    request_state.dialog = dialog;
+    m_geolocation_requests.insert(request_id, request_state);
     QObject::connect(dialog, &QMessageBox::finished, this,
         [this, dialog, allow_button, canonical_origin = *canonical_origin,
          timeout_ms, navigation_generation, request_id] {
-            if (navigation_generation != m_geolocation_navigation_generation)
+            if (!geolocation_request_is_current(navigation_generation, request_id))
                 return;
-            m_geolocation_dialog = nullptr;
+            auto request_state = m_geolocation_requests.value(request_id);
+            request_state.dialog.clear();
+            m_geolocation_requests.insert(request_id, request_state);
+            if (m_geolocation_dialog == dialog)
+                m_geolocation_dialog = nullptr;
             auto allowed = dialog->clickedButton() == allow_button;
             if (!Settings::the()->set_geolocation_permission(canonical_origin, allowed))
                 allowed = false;
             if (!allowed) {
+                m_geolocation_requests.remove(request_id);
                 view().complete_geolocation_permission(
                     navigation_generation, request_id, false, false, 0, 0, 0,
                     0, 0, 0, 0, 0);
@@ -691,10 +721,11 @@ void Tab::request_geolocation_permission(ByteString origin, u32 timeout_ms,
 void Tab::request_geolocation_position(u32 timeout_ms,
     u32 navigation_generation, u64 request_id)
 {
-    if (navigation_generation != m_geolocation_navigation_generation)
+    if (!geolocation_request_is_current(navigation_generation, request_id))
         return;
     auto* source = QGeoPositionInfoSource::createDefaultSource(this);
     if (!source) {
+        m_geolocation_requests.remove(request_id);
         view().complete_geolocation_permission(
             navigation_generation, request_id, true, false, 0, 0, 0, 0, 0,
             0, 0, 0);
@@ -702,15 +733,17 @@ void Tab::request_geolocation_position(u32 timeout_ms,
     }
 
     auto source_guard = QPointer<QGeoPositionInfoSource>(source);
-    auto completed = std::make_shared<bool>(false);
-    auto finish = [this, source_guard, completed, navigation_generation,
+    auto request_state = m_geolocation_requests.value(request_id);
+    request_state.provider = source;
+    m_geolocation_requests.insert(request_id, request_state);
+    auto finish = [this, source_guard, navigation_generation,
                    request_id](bool has_fix, i64 latitude_e7, i64 longitude_e7,
                    i64 altitude_mm, u32 horizontal_accuracy_mm,
                    u32 vertical_accuracy_mm, u32 speed_mm_per_second,
                    u32 heading_millidegrees, u32 flags) {
-        if (*completed)
+        if (!geolocation_request_is_current(navigation_generation, request_id))
             return;
-        *completed = true;
+        m_geolocation_requests.remove(request_id);
         if (source_guard) {
             source_guard->stopUpdates();
             source_guard->deleteLater();
@@ -809,6 +842,36 @@ void Tab::request_geolocation_position(u32 timeout_ms,
             : timeout_ms + provider_grace_ms);
     auto provider_timeout_ms = static_cast<int>(requested_provider_timeout);
     source->requestUpdate(provider_timeout_ms);
+}
+
+bool Tab::geolocation_request_is_current(u32 navigation_generation,
+                                         u64 request_id) const
+{
+    auto request = m_geolocation_requests.constFind(request_id);
+    return request_id != 0u && request != m_geolocation_requests.cend() &&
+        request->navigation_generation == navigation_generation &&
+        navigation_generation == m_geolocation_navigation_generation;
+}
+
+void Tab::cancel_geolocation_request(u32 navigation_generation,
+                                     u64 request_id)
+{
+    auto request = m_geolocation_requests.find(request_id);
+    if (request == m_geolocation_requests.end() ||
+        request->navigation_generation != navigation_generation)
+        return;
+    auto state = request.value();
+    m_geolocation_requests.erase(request);
+    if (state.dialog) {
+        if (m_geolocation_dialog == state.dialog)
+            m_geolocation_dialog = nullptr;
+        state.dialog->close();
+    }
+    auto* source = qobject_cast<QGeoPositionInfoSource*>(state.provider.data());
+    if (source != nullptr) {
+        source->stopUpdates();
+        source->deleteLater();
+    }
 }
 
 }

@@ -49,6 +49,7 @@ public:
     static jmethodID invalidate_layout_method;
     static jmethodID on_load_start_method;
     static jmethodID request_geolocation_permission_method;
+    static jmethodID cancel_geolocation_permission_method;
 
     jobject java_instance() const { return m_java_instance; }
 

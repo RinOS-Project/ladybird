@@ -163,8 +163,10 @@ private:
     virtual void page_did_request_camera_permission(
         JS::PromiseCapability&, Web::DOM::Document const&) override;
     virtual void page_did_request_geolocation(
+        u64 request_id,
         GC::Ref<GC::Function<void(Web::GeolocationPositionResult)>>,
         Web::DOM::Document const&, u32 timeout_ms) override;
+    virtual void page_did_cancel_geolocation_request(u64 request_id) override;
     virtual bool page_did_create_microphone_track(
         Web::MediaCapture::MediaStreamTrack&, URL::Origin const&) override;
     virtual bool page_did_open_camera_capture(
@@ -297,6 +299,7 @@ private:
     };
     Vector<PendingCameraPermission> m_pending_camera_permissions;
     struct PendingGeolocationPermission {
+        u64 client_request_id { 0 };
         u32 navigation_generation { 0 };
         u64 request_id { 0 };
         GC::Ref<GC::Function<void(Web::GeolocationPositionResult)>> callback;

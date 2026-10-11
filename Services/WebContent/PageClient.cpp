@@ -931,6 +931,7 @@ void PageClient::page_did_request_camera_permission(
 }
 
 void PageClient::page_did_request_geolocation(
+    u64 client_request_id,
     GC::Ref<GC::Function<void(Web::GeolocationPositionResult)>> callback,
     Web::DOM::Document const& document, u32 timeout_ms)
 {
@@ -941,9 +942,16 @@ void PageClient::page_did_request_geolocation(
     };
 
     auto const& origin = document.origin();
-    if (origin.is_opaque() || m_pending_geolocation_permissions.size() >= 4u) {
+    if (client_request_id == 0u || origin.is_opaque() ||
+        m_pending_geolocation_permissions.size() >= 4u) {
         fail();
         return;
+    }
+    for (auto const& pending : m_pending_geolocation_permissions) {
+        if (pending.client_request_id == client_request_id) {
+            fail();
+            return;
+        }
     }
     auto serialized_origin = origin.serialize().to_byte_string();
     if (serialized_origin.is_empty() ||
@@ -967,8 +975,25 @@ void PageClient::page_did_request_geolocation(
         }
     }
     m_pending_geolocation_permissions.append({
-        response->navigation_generation(), response->request_id(), callback,
-        GC::Weak { document }, origin });
+        client_request_id, response->navigation_generation(),
+        response->request_id(), callback, GC::Weak { document }, origin });
+}
+
+void PageClient::page_did_cancel_geolocation_request(u64 client_request_id)
+{
+    if (client_request_id == 0u)
+        return;
+    for (size_t index = 0; index < m_pending_geolocation_permissions.size(); ++index) {
+        auto const& pending = m_pending_geolocation_permissions[index];
+        if (pending.client_request_id != client_request_id)
+            continue;
+        auto navigation_generation = pending.navigation_generation;
+        auto request_id = pending.request_id;
+        m_pending_geolocation_permissions.remove(index);
+        client().async_cancel_geolocation_permission(
+            m_id, navigation_generation, request_id);
+        return;
+    }
 }
 
 bool PageClient::page_did_create_microphone_track(
@@ -1182,12 +1207,15 @@ void PageClient::resolve_pending_camera_permissions()
 
 void PageClient::resolve_pending_geolocation_permissions()
 {
-    for (auto& pending : m_pending_geolocation_permissions) {
+    auto pending_permissions = move(m_pending_geolocation_permissions);
+    m_pending_geolocation_permissions.clear();
+    for (auto& pending : pending_permissions) {
+        client().async_cancel_geolocation_permission(
+            m_id, pending.navigation_generation, pending.request_id);
         Web::GeolocationPositionResult result;
         result.status = Web::GeolocationPositionResult::Status::PositionUnavailable;
         pending.callback->function()(result);
     }
-    m_pending_geolocation_permissions.clear();
 }
 
 void PageClient::complete_notification_permission(

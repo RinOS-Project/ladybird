@@ -75,6 +75,18 @@ WebViewImplementationNative::WebViewImplementationNative(jobject thiz)
         env.get()->DeleteLocalRef(origin_string);
         return PermissionRequest { navigation_generation, request_id };
     };
+
+    on_cancel_geolocation_permission = [this](u32 navigation_generation,
+                                                u64 request_id) {
+        if (request_id == 0u ||
+            navigation_generation != m_geolocation_navigation_generation)
+            return;
+        JavaEnvironment env(global_vm);
+        env.get()->CallVoidMethod(m_java_instance,
+            cancel_geolocation_permission_method,
+            static_cast<jint>(navigation_generation),
+            static_cast<jlong>(request_id));
+    };
 }
 
 void WebViewImplementationNative::initialize_client(WebView::ViewImplementation::CreateNewClient)

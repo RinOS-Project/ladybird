@@ -332,6 +332,19 @@ static constexpr CGFloat const WINDOW_HEIGHT = 800;
     [request startForWindow:self];
 }
 
+- (void)onGeolocationRequestCancelled:(uint32_t)navigation_generation
+                            requestId:(uint64_t)request_id
+{
+    if (navigation_generation == 0 || request_id == 0 ||
+        navigation_generation != self.geolocation_navigation_generation)
+        return;
+    GeolocationRequest* request = self.geolocation_requests[@(request_id)];
+    if (request == nil)
+        return;
+    [request cancel];
+    [self.geolocation_requests removeObjectForKey:@(request_id)];
+}
+
 - (void)onLoadFinish:(URL::URL const&)url
 {
 }

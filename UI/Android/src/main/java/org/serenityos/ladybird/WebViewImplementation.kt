@@ -151,6 +151,17 @@ class WebViewImplementation(private val view: WebView) {
         }
     }
 
+    fun cancelGeolocationPermission(navigationGeneration: Int, requestId: Long) {
+        if (navigationGeneration == 0 || requestId == 0L)
+            return
+        view.post {
+            val request = geolocationRequests[requestId] ?: return@post
+            if (request.navigationGeneration != navigationGeneration)
+                return@post
+            cancelGeolocationRequest(request)
+        }
+    }
+
     private fun decideGeolocationPermission(request: PendingGeolocationRequest, key: String, allowed: Boolean) {
         if (!isCurrentGeolocationRequest(request))
             return

@@ -14,6 +14,7 @@
 #include <UI/Qt/WebContentView.h>
 
 #include <QBoxLayout>
+#include <QHash>
 #include <QLabel>
 #include <QMenu>
 #include <QPointer>
@@ -97,6 +98,16 @@ private:
                                         u32 navigation_generation, u64 request_id);
     void request_geolocation_position(u32 timeout_ms, u32 navigation_generation,
                                       u64 request_id);
+    bool geolocation_request_is_current(u32 navigation_generation,
+                                        u64 request_id) const;
+    void cancel_geolocation_request(u32 navigation_generation,
+                                    u64 request_id);
+
+    struct GeolocationRequestState {
+        u32 navigation_generation { 0u };
+        QPointer<QWidget> dialog;
+        QPointer<QObject> provider;
+    };
 
     QBoxLayout* m_layout { nullptr };
     QToolBar* m_toolbar { nullptr };
@@ -124,6 +135,7 @@ private:
 
     QPointer<QDialog> m_dialog;
     QPointer<QWidget> m_geolocation_dialog;
+    QHash<u64, GeolocationRequestState> m_geolocation_requests;
 
     bool m_already_requested_close { false };
     u32 m_geolocation_navigation_generation { 1u };
