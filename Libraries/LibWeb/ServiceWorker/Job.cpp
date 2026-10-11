@@ -717,7 +717,7 @@ static void resolve_job_promise(GC::Ref<Job> job, Optional<Registration const&> 
         HTML::queue_a_task(HTML::Task::Source::DOMManipulation, job->client->responsible_event_loop(), nullptr, GC::create_function(realm.heap(), [&realm, job, value, registration_object] {
             HTML::TemporaryExecutionContext const context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
             if (registration_object)
-                WebIDL::resolve_promise(realm, *job->job_promise, *registration_object);
+                WebIDL::resolve_promise(realm, *job->job_promise, registration_object);
             else
                 WebIDL::resolve_promise(realm, *job->job_promise, value);
         }));
@@ -740,7 +740,7 @@ static void resolve_job_promise(GC::Ref<Job> job, Optional<Registration const&> 
         HTML::queue_a_task(HTML::Task::Source::DOMManipulation, equivalent_job->client->responsible_event_loop(), nullptr, GC::create_function(realm.heap(), [&realm, equivalent_job, value, registration_object] {
             HTML::TemporaryExecutionContext const context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
             if (registration_object)
-                WebIDL::resolve_promise(realm, *equivalent_job->job_promise, *registration_object);
+                WebIDL::resolve_promise(realm, *equivalent_job->job_promise, registration_object);
             else
                 WebIDL::resolve_promise(realm, *equivalent_job->job_promise, value);
         }));
