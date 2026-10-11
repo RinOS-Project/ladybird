@@ -10,6 +10,7 @@
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/NotificationPrototype.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
@@ -35,9 +36,12 @@ Bindings::NotificationPermission Notification::permission(JS::VM& vm)
     auto& settings = HTML::relevant_settings_object(*window);
     if (HTML::is_non_secure_context(settings))
         return Bindings::NotificationPermission::Default;
+    auto* responsible_document = settings.responsible_document();
+    if (!responsible_document)
+        return Bindings::NotificationPermission::Default;
 
     auto permission = window->page().client().page_get_notification_permission(
-        settings.origin());
+        settings.origin(), static_cast<u64>(responsible_document->unique_id().value()));
     if (permission == "granted"_string)
         return Bindings::NotificationPermission::Granted;
     if (permission == "denied"_string)
@@ -245,19 +249,25 @@ WebIDL::ExceptionOr<GC::Ref<Notification>> Notification::construct_impl(
 
     // 4. Associate this with notification.
     this_notification->m_notification = notification;
+    auto* responsible_document = relevant_settings_object->responsible_document();
+    auto const frame_identity = responsible_document
+        ? static_cast<u64>(responsible_document->unique_id().value())
+        : 0u;
 
     // 5. Run these steps in parallel. The Browser rechecks the live page origin
     // and its durable permission decision before handing the notification to
     // the operating system.
     HTML::queue_global_task(HTML::Task::Source::DOMManipulation,
-        relevant_global_object, GC::create_function(realm.heap(), [this_notification] {
+        relevant_global_object,
+        GC::create_function(realm.heap(), [this_notification, frame_identity] {
             bool displayed = false;
             if (auto* window = as_if<HTML::Window>(
                     HTML::relevant_global_object(*this_notification))) {
                 displayed = window->page().client().page_did_show_notification(
                     this_notification->m_notification.origin,
                     this_notification->m_notification.title,
-                    this_notification->m_notification.body);
+                    this_notification->m_notification.body,
+                    frame_identity);
             }
 
             auto event_name = displayed

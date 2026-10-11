@@ -1490,12 +1490,14 @@ Web::PageClient::HttpCookieOwnerResponse PageClient::request_http_cookie_owner(
              response->take_response_data() };
 }
 
-String PageClient::page_get_notification_permission(URL::Origin const& origin)
+String PageClient::page_get_notification_permission(
+    URL::Origin const& origin, u64 frame_identity)
 {
     const auto origin_string = origin.serialize();
     auto response = request_service_worker_owner(
         RIN_WEBCONTENT_SERVICE_WORKER_OWNER_QUERY_NOTIFICATION_PERMISSION,
-        origin_string.to_byte_string(), {}, {}, {}, 0u);
+        origin_string.to_byte_string(), {}, {}, {}, 0u, 0u, 0u,
+        frame_identity);
     const auto expected_origin = origin_string.to_byte_string();
     if (!response.accepted || !response.found || response.generation == 0u ||
         response.state > 2u || response.origin != expected_origin ||
@@ -1512,13 +1514,14 @@ String PageClient::page_get_notification_permission(URL::Origin const& origin)
 }
 
 bool PageClient::page_did_show_notification(
-    URL::Origin const& origin, String const& title, String const& body)
+    URL::Origin const& origin, String const& title, String const& body,
+    u64 frame_identity)
 {
     const auto origin_string = origin.serialize();
     auto response = request_service_worker_owner(
         RIN_WEBCONTENT_SERVICE_WORKER_OWNER_SHOW_NOTIFICATION,
         origin_string.to_byte_string(), {}, title.to_byte_string(),
-        body.to_byte_string(), 0u);
+        body.to_byte_string(), 0u, 0u, 0u, frame_identity);
     const auto expected_origin = origin_string.to_byte_string();
     return response.accepted && response.found && response.generation != 0u &&
         response.state == 0u && response.update_via_cache == 0u &&

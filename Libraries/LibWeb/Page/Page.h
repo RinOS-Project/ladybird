@@ -465,11 +465,17 @@ public:
     virtual bool page_did_close_camera_capture(u64) { return false; }
     virtual bool page_did_create_camera_track(
         MediaCapture::MediaStreamTrack&, URL::Origin const&) { return false; }
-    virtual String page_get_notification_permission([[maybe_unused]] URL::Origin const&) { return {}; }
+    virtual String page_get_notification_permission(
+        [[maybe_unused]] URL::Origin const&,
+        [[maybe_unused]] u64 frame_identity)
+    {
+        return {};
+    }
     virtual bool page_did_show_notification(
         [[maybe_unused]] URL::Origin const&,
         [[maybe_unused]] String const&,
-        [[maybe_unused]] String const&)
+        [[maybe_unused]] String const&,
+        [[maybe_unused]] u64 frame_identity)
     {
         return false;
     }

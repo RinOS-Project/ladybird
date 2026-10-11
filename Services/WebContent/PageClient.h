@@ -231,9 +231,10 @@ private:
     virtual HttpCookieOwnerResponse request_http_cookie_owner(
         u32 operation, ByteString request_url, ByteString origin,
         ByteString cookie_data, u32 policy) override;
-    virtual String page_get_notification_permission(URL::Origin const&) override;
+    virtual String page_get_notification_permission(
+        URL::Origin const&, u64 frame_identity) override;
     virtual bool page_did_show_notification(
-        URL::Origin const&, String const&, String const&) override;
+        URL::Origin const&, String const&, String const&, u64 frame_identity) override;
     virtual void page_did_mutate_dom(FlyString const& type, Web::DOM::Node const& target, Web::DOM::NodeList& added_nodes, Web::DOM::NodeList& removed_nodes, GC::Ptr<Web::DOM::Node> previous_sibling, GC::Ptr<Web::DOM::Node> next_sibling, Optional<String> const& attribute_name) override;
     virtual void page_did_paint(Gfx::IntRect const& content_rect, i32 bitmap_id) override;
     virtual void page_did_take_screenshot(Gfx::ShareableBitmap const& screenshot) override;
