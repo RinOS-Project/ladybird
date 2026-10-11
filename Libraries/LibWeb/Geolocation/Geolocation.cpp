@@ -359,11 +359,12 @@ void Geolocation::acquire_a_position(GC::Ref<WebIDL::CallbackType> success_callb
                 }
 
                 if (cached_position && options.maximum_age > 0) {
-                    auto cache_time = acquisition_time - options.maximum_age;
-                    if (cached_position->timestamp() > cache_time &&
+                    auto cache_time = acquisition_time - static_cast<i64>(options.maximum_age);
+                    auto cached_timestamp = cached_position->timestamp();
+                    if ((cache_time < 0 || cached_timestamp > static_cast<u64>(cache_time)) &&
                         cached_position->is_high_accuracy() ==
                             options.enable_high_accuracy) {
-                        queue_success(cached_position);
+                        queue_success(GC::Ref<GeolocationPosition> { *cached_position });
                         return;
                     }
                 }
@@ -376,8 +377,8 @@ void Geolocation::acquire_a_position(GC::Ref<WebIDL::CallbackType> success_callb
                         success_callback, error_callback, options,
                         watch_id.value());
             }),
-        options.timeout,
-        *pending_document);
+        *pending_document,
+        options.timeout);
 }
 EmulatedPositionData Geolocation::get_emulated_position_data() const
 {
