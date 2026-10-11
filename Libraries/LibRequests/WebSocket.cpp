@@ -9,6 +9,7 @@
 
 namespace Requests {
 
+#if !defined(AK_OS_RINOS)
 static void clear_client_certificate_bytes(ByteBuffer& bytes)
 {
     volatile u8* data = bytes.data();
@@ -16,6 +17,7 @@ static void clear_client_certificate_bytes(ByteBuffer& bytes)
         data[index] = 0;
     bytes.clear();
 }
+#endif
 
 WebSocket::WebSocket(RequestClient& client, u64 websocket_id, URL::URL url)
     : m_client(client)
