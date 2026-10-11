@@ -113,6 +113,8 @@ static bool is_platform_object(Type const& type)
         "KeyframeEffect"sv,
         "MediaKeySystemAccess"sv,
         "MediaList"sv,
+        "MediaStream"sv,
+        "MediaStreamTrack"sv,
         "Memory"sv,
         "MessagePort"sv,
         "Module"sv,
@@ -230,6 +232,9 @@ static bool is_javascript_builtin(Type const& type)
 
 static ByteString cpp_type_name(Type const& type)
 {
+    if (type.name().is_one_of("MediaStream"sv, "MediaStreamTrack"sv))
+        return ByteString::formatted("MediaCapture::{}", type.name());
+
     if (libweb_interface_namespaces.span().contains_slow(type.name())) {
         // e.g. Document.getSelection which returns Selection, which is in the Selection namespace.
         return ByteString::formatted("{}::{}", type.name(), type.name());
@@ -297,7 +302,7 @@ static ByteString union_type_to_variant(UnionType const& union_type, Interface c
 CppType idl_type_name_to_cpp_type(Type const& type, Interface const& interface)
 {
     if (is_platform_object(type))
-        return { .name = ByteString::formatted("GC::Root<{}>", type.name()), .sequence_storage_type = SequenceStorageType::RootVector };
+        return { .name = ByteString::formatted("GC::Root<{}>", cpp_type_name(type)), .sequence_storage_type = SequenceStorageType::RootVector };
 
     if (is_javascript_builtin(type))
         return { .name = ByteString::formatted("GC::Root<JS::{}>", type.name()), .sequence_storage_type = SequenceStorageType::RootVector };
