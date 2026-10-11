@@ -83,7 +83,7 @@ ErrorOr<Utf16String> add_entry_to_blob_url_store(BlobURLEntry::Object object)
 bool check_for_same_partition_blob_url_usage(URL::BlobURLEntry const& blob_url_entry, GC::Ref<HTML::Environment> environment)
 {
     // 1. Let blobStorageKey be the result of obtaining a storage key for non-storage purposes with blobUrlEntry’s environment.
-    auto blob_storage_key = StorageAPI::obtain_a_storage_key_for_non_storage_purposes(*blob_url_entry.environment);
+    auto blob_storage_key = StorageAPI::obtain_a_storage_key_for_non_storage_purposes(blob_url_entry.environment.origin);
 
     // 2. Let environmentStorageKey be the result of obtaining a storage key for non-storage purposes with environment.
     auto environment_storage_key = StorageAPI::obtain_a_storage_key_for_non_storage_purposes(environment);
