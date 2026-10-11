@@ -4536,6 +4536,8 @@ void Document::destroy()
 {
     // FIXME: 1. Assert: this is running as part of a task queued on document's relevant agent's event loop.
 
+    notify_page_client_of_document_retirement();
+
     // 2. Abort document.
     abort();
 
@@ -4795,6 +4797,10 @@ void Document::unload(GC::Ptr<Document>)
 {
     // FIXME: 1. Assert: this is running as part of a task queued on oldDocument's event loop.
 
+    // Revoke Browser-owned frame capabilities before pagehide/unload script can
+    // issue another owner request using this Document identity.
+    notify_page_client_of_document_retirement();
+
     // FIXME: 2. Let unloadTimingInfo be a new document unload timing info.
 
     // FIXME: 3. If newDocument is not given, then set unloadTimingInfo to null.
@@ -4874,6 +4880,16 @@ void Document::unload(GC::Ptr<Document>)
     //     unloadTimingInfo.
 
     did_stop_being_active_document_in_navigable();
+}
+
+void Document::notify_page_client_of_document_retirement()
+{
+    if (m_has_notified_page_client_of_retirement)
+        return;
+    m_has_notified_page_client_of_retirement = true;
+
+    if (browsing_context())
+        page().client().page_did_retire_document(*this);
 }
 
 // https://html.spec.whatwg.org/multipage/document-lifecycle.html#unload-a-document-and-its-descendants

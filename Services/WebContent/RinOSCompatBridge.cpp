@@ -1350,6 +1350,9 @@ struct PageSession {
         } else if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_SHOW_NOTIFICATION) {
             result.accepted = response.result ==
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_NOTIFICATION_POSTED;
+        } else if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RETIRE_DOCUMENT) {
+            result.accepted = response.result ==
+                RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_CONTEXT_UPDATED;
         } else {
             result.accepted =
                 response.result == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_COMMITTED ||

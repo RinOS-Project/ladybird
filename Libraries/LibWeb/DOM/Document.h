@@ -1058,6 +1058,7 @@ protected:
     Document(JS::Realm&, URL::URL const&, TemporaryDocumentForFragmentParsing = TemporaryDocumentForFragmentParsing::No);
 
 private:
+    void notify_page_client_of_document_retirement();
     void set_needs_repaint(InvalidateDisplayList = InvalidateDisplayList::Yes);
 
     // ^JS::Object
@@ -1149,6 +1150,7 @@ private:
 
     bool m_has_been_destroyed { false };
     bool m_has_fired_document_became_inactive { false };
+    bool m_has_notified_page_client_of_retirement { false };
 
     String m_source;
 
