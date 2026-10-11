@@ -111,7 +111,8 @@ Web::PageClient::HttpCookieOwnerResponse PageHost::request_http_cookie_owner(
 Web::PageClient::ServiceWorkerOwnerResponse PageHost::request_service_worker_owner(
     u32 operation, ByteString client_url, ByteString origin,
     ByteString script_url, ByteString scope, u32 update_via_cache,
-    u64 list_snapshot_id, u32 list_index)
+    u64 list_snapshot_id, u32 list_index,
+    [[maybe_unused]] u64 frame_identity)
 {
     auto response = m_client.request_service_worker_owner(
         operation, move(client_url), move(origin), move(script_url),

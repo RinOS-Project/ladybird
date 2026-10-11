@@ -60,9 +60,12 @@ public:
     static GC::Ref<LocalStorageBottle> create(GC::Heap& heap, GC::Ref<Page> page, StorageKey key,
                                                Optional<u64> quota,
                                                StorageEndpointType endpoint = StorageEndpointType::LocalStorage,
-                                               u64 owner_generation = 0)
+                                               u64 owner_generation = 0,
+                                               u64 owner_frame_identity = 0)
     {
-        return heap.allocate<LocalStorageBottle>(page, key, quota, endpoint, owner_generation);
+        return heap.allocate<LocalStorageBottle>(page, key, quota, endpoint,
+                                                  owner_generation,
+                                                  owner_frame_identity);
     }
 
     virtual size_t size() const override;
@@ -76,19 +79,29 @@ public:
 
 private:
     explicit LocalStorageBottle(GC::Ref<Page> page, StorageKey key, Optional<u64> quota,
-                                 StorageEndpointType endpoint, u64 owner_generation)
+                                 StorageEndpointType endpoint, u64 owner_generation,
+                                 u64 owner_frame_identity)
         : StorageBottle(quota)
         , m_page(move(page))
         , m_storage_key(move(key))
         , m_endpoint(endpoint)
         , m_owner_generation(owner_generation)
+        , m_owner_frame_identity(owner_frame_identity)
     {
+    }
+
+    String storage_key_string() const
+    {
+        return m_endpoint == StorageEndpointType::Caches
+            ? m_storage_key.to_cache_storage_string()
+            : m_storage_key.to_string();
     }
 
     GC::Ref<Page> m_page;
     StorageKey m_storage_key;
     StorageEndpointType m_endpoint;
     u64 m_owner_generation { 0 };
+    u64 m_owner_frame_identity { 0 };
 };
 
 class SessionStorageBottle final : public StorageBottle {

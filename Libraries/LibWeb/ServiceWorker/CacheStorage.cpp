@@ -8,6 +8,7 @@
 #include <LibJS/Runtime/PrimitiveString.h>
 #include <LibWeb/Bindings/CacheStoragePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
@@ -96,10 +97,16 @@ CacheStorage::CacheStorage(JS::Realm& realm)
     auto storage_key = StorageAPI::obtain_a_storage_key(
         HTML::relevant_settings_object(realm.global_object()));
     auto page = page_for_cache_storage(realm);
-    if (!storage_key.has_value() || !page)
+    u64 frame_identity = 0;
+    if (is<HTML::Window>(realm.global_object()))
+        frame_identity = static_cast<u64>(as<HTML::Window>(realm.global_object())
+            .associated_document().unique_id().value());
+    if (!storage_key.has_value() || !page || frame_identity == 0u)
         return;
     m_page = page;
     m_owner_origin = storage_key.value().to_string().to_byte_string();
+    m_owner_top_level_site = storage_key.value().top_level_site.serialize().to_byte_string();
+    m_owner_frame_identity = frame_identity;
 
     /* The durable Caches bottle is owned by Browser.  Do not restore names or
      * create a writable bottle until the current WebContent page has been
@@ -107,7 +114,8 @@ CacheStorage::CacheStorage(JS::Realm& realm)
      * from ServiceWorker registration: a renderer that can register a worker
      * must still prove its profile before touching CacheStorage. */
     auto owner_response = page->client().request_service_worker_owner(
-        4u, {}, m_owner_origin, {}, {}, 0u);
+        4u, {}, m_owner_origin, {}, m_owner_top_level_site, 0u, 0u, 0u,
+        m_owner_frame_identity);
     if (!owner_response.accepted || !owner_response.found ||
         owner_response.generation == 0u)
         return;
@@ -115,7 +123,8 @@ CacheStorage::CacheStorage(JS::Realm& realm)
     m_owner_generation = owner_response.generation;
 
     m_storage_bottle = StorageAPI::LocalStorageBottle::create(
-        heap(), *page, storage_key.value(), {}, StorageAPI::StorageEndpointType::Caches, m_owner_generation);
+        heap(), *page, storage_key.value(), {}, StorageAPI::StorageEndpointType::Caches,
+        m_owner_generation, m_owner_frame_identity);
     for (auto const& marker_key : m_storage_bottle->keys()) {
         auto marker = m_storage_bottle->get(marker_key);
         if (!marker.has_value() || marker.value() != cache_storage_marker)
@@ -123,7 +132,9 @@ CacheStorage::CacheStorage(JS::Realm& realm)
         auto cache_name = cache_storage_name_from_marker_key(marker_key);
         if (!cache_name.has_value())
             continue;
-        m_caches.set(cache_name.value(), Cache::create(realm, cache_name.value(), m_storage_bottle, page, m_owner_origin, m_owner_generation));
+        m_caches.set(cache_name.value(), Cache::create(
+            realm, cache_name.value(), m_storage_bottle, page, m_owner_origin,
+            m_owner_top_level_site, m_owner_frame_identity, m_owner_generation));
     }
 }
 
@@ -146,7 +157,8 @@ bool CacheStorage::owner_is_current() const
     if (!m_owner_authorized || !m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
         return false;
     auto response = m_page->client().request_service_worker_owner(
-        4u, {}, m_owner_origin, {}, {}, 0u);
+        4u, {}, m_owner_origin, {}, m_owner_top_level_site, 0u, 0u, 0u,
+        m_owner_frame_identity);
     return response.accepted && response.found &&
         response.generation == m_owner_generation &&
         response.origin == m_owner_origin;
@@ -157,7 +169,8 @@ bool CacheStorage::begin_owner_mutation_batch() const
     if (!owner_is_current())
         return false;
     auto response = m_page->client().request_service_worker_owner(
-        7u, {}, m_owner_origin, {}, {}, 0u);
+        7u, {}, m_owner_origin, {}, m_owner_top_level_site, 0u, 0u, 0u,
+        m_owner_frame_identity);
     return response.accepted && response.found &&
         response.generation == m_owner_generation &&
         response.origin == m_owner_origin &&
@@ -169,7 +182,8 @@ bool CacheStorage::commit_owner_mutation_batch() const
     if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
         return false;
     auto response = m_page->client().request_service_worker_owner(
-        8u, {}, m_owner_origin, {}, {}, 0u);
+        8u, {}, m_owner_origin, {}, m_owner_top_level_site, 0u, 0u, 0u,
+        m_owner_frame_identity);
     return response.accepted && response.found &&
         response.generation == m_owner_generation &&
         response.origin == m_owner_origin &&
@@ -181,7 +195,8 @@ void CacheStorage::abort_owner_mutation_batch() const
     if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
         return;
     (void)m_page->client().request_service_worker_owner(
-        9u, {}, m_owner_origin, {}, {}, 0u);
+        9u, {}, m_owner_origin, {}, m_owner_top_level_site, 0u, 0u, 0u,
+        m_owner_frame_identity);
 }
 
 GC::Ref<WebIDL::Promise> CacheStorage::owner_rejected_promise() const
@@ -208,7 +223,9 @@ GC::Ref<WebIDL::Promise> CacheStorage::open(String const& cache_name)
     }
 
     auto cache = m_caches.ensure(cache_name, [this, &cache_name] {
-        return Cache::create(realm(), cache_name, m_storage_bottle, m_page, m_owner_origin, m_owner_generation);
+        return Cache::create(realm(), cache_name, m_storage_bottle, m_page,
+            m_owner_origin, m_owner_top_level_site, m_owner_frame_identity,
+            m_owner_generation);
     });
     return WebIDL::create_resolved_promise(realm(), cache);
 }

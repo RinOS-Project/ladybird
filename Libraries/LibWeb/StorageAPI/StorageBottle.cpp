@@ -110,32 +110,32 @@ void LocalStorageBottle::visit_edges(GC::Cell::Visitor& visitor)
 
 size_t LocalStorageBottle::size() const
 {
-    return m_page->client().page_did_request_storage_keys(m_endpoint, m_storage_key.to_string(), m_owner_generation).size();
+    return m_page->client().page_did_request_storage_keys(m_endpoint, storage_key_string(), m_owner_generation, m_owner_frame_identity).size();
 }
 
 Vector<String> LocalStorageBottle::keys() const
 {
-    return m_page->client().page_did_request_storage_keys(m_endpoint, m_storage_key.to_string(), m_owner_generation);
+    return m_page->client().page_did_request_storage_keys(m_endpoint, storage_key_string(), m_owner_generation, m_owner_frame_identity);
 }
 
 Optional<String> LocalStorageBottle::get(String const& key) const
 {
-    return m_page->client().page_did_request_storage_item(m_endpoint, m_storage_key.to_string(), key, m_owner_generation);
+    return m_page->client().page_did_request_storage_item(m_endpoint, storage_key_string(), key, m_owner_generation, m_owner_frame_identity);
 }
 
 WebView::StorageSetResult LocalStorageBottle::set(String const& key, String const& value)
 {
-    return m_page->client().page_did_set_storage_item(m_endpoint, m_storage_key.to_string(), key, value, m_owner_generation);
+    return m_page->client().page_did_set_storage_item(m_endpoint, storage_key_string(), key, value, m_owner_generation, m_owner_frame_identity);
 }
 
 void LocalStorageBottle::clear()
 {
-    m_page->client().page_did_clear_storage(m_endpoint, m_storage_key.to_string(), m_owner_generation);
+    m_page->client().page_did_clear_storage(m_endpoint, storage_key_string(), m_owner_generation, m_owner_frame_identity);
 }
 
 void LocalStorageBottle::remove(String const& key)
 {
-    m_page->client().page_did_remove_storage_item(m_endpoint, m_storage_key.to_string(), key, m_owner_generation);
+    m_page->client().page_did_remove_storage_item(m_endpoint, storage_key_string(), key, m_owner_generation, m_owner_frame_identity);
 }
 
 size_t SessionStorageBottle::size() const

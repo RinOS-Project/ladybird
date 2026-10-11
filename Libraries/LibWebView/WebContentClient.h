@@ -119,11 +119,11 @@ private:
     virtual void did_set_cookie(URL::URL, HTTP::Cookie::ParsedCookie, HTTP::Cookie::Source) override;
     virtual void did_update_cookie(HTTP::Cookie::Cookie) override;
     virtual void did_expire_cookies_with_time_offset(AK::Duration) override;
-    virtual Messages::WebContentClient::DidRequestStorageItemResponse did_request_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation) override;
-    virtual Messages::WebContentClient::DidSetStorageItemResponse did_set_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, String value, u64 owner_generation) override;
-    virtual void did_remove_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation) override;
-    virtual Messages::WebContentClient::DidRequestStorageKeysResponse did_request_storage_keys(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation) override;
-    virtual void did_clear_storage(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation) override;
+    virtual Messages::WebContentClient::DidRequestStorageItemResponse did_request_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation, u64 owner_frame_identity) override;
+    virtual Messages::WebContentClient::DidSetStorageItemResponse did_set_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, String value, u64 owner_generation, u64 owner_frame_identity) override;
+    virtual void did_remove_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation, u64 owner_frame_identity) override;
+    virtual Messages::WebContentClient::DidRequestStorageKeysResponse did_request_storage_keys(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation, u64 owner_frame_identity) override;
+    virtual void did_clear_storage(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation, u64 owner_frame_identity) override;
     virtual Messages::WebContentClient::DidRequestNewWebViewResponse did_request_new_web_view(u64 page_id, Web::HTML::ActivateTab, Web::HTML::WebViewHints, Optional<u64> page_index) override;
     virtual void did_request_activate_tab(u64 page_id) override;
     virtual void did_close_browsing_context(u64 page_id) override;
@@ -158,7 +158,7 @@ private:
         u64 page_id, u32 operation, ByteString client_url, ByteString origin,
         ByteString script_url, ByteString scope,
         u32 update_via_cache, u64 list_snapshot_id,
-        u32 list_index) override;
+        u32 list_index, u64 frame_identity) override;
     virtual Messages::WebContentClient::RequestHttpCookieOwnerResponse request_http_cookie_owner(
         u64 page_id, u32 operation, ByteString request_url, ByteString origin,
         ByteString cookie_data, u32 policy) override;
@@ -171,7 +171,8 @@ private:
         u64 page_id, u32 navigation_generation, u64 request_id) override;
 
     bool storage_owner_is_authorized(u64 page_id, Web::StorageAPI::StorageEndpointType endpoint,
-                                     String const& storage_key, u64 owner_generation);
+                                     String const& storage_key, u64 owner_generation,
+                                     u64 owner_frame_identity);
     Optional<ViewImplementation&> view_for_page_id(u64, SourceLocation = SourceLocation::current());
 
     HashMap<u64, NonnullRawPtr<ViewImplementation>> m_views;

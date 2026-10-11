@@ -68,6 +68,21 @@ static ByteString cache_storage_name_owner_key(String const& cache_name)
     return builder.to_byte_string();
 }
 
+static bool parse_cache_storage_partition_key(
+    String const& key, ByteString& origin, ByteString& top_level_site)
+{
+    auto bytes = key.bytes_as_string_view();
+    auto separator = bytes.find('\n');
+    if (!separator.has_value() || separator.value() == 0u ||
+        separator.value() + 1u >= bytes.length() ||
+        bytes.substring_view(separator.value() + 1u).find('\n').has_value())
+        return false;
+    origin = bytes.substring_view(0u, separator.value()).to_byte_string();
+    top_level_site = bytes.substring_view(separator.value() + 1u).to_byte_string();
+    return origin.length() < RIN_WEBCONTENT_URL_MAX &&
+        top_level_site.length() < RIN_WEBCONTENT_URL_MAX;
+}
+
 static bool parse_cache_storage_owner_snapshot(
     ByteString const& snapshot, Vector<CacheStorageOwnerRecord>& records,
     bool& owner_initialized)
@@ -131,21 +146,27 @@ static bool parse_cache_storage_owner_snapshot(
 
 bool WebContentClient::storage_owner_is_authorized(u64 page_id,
                                                     Web::StorageAPI::StorageEndpointType endpoint,
-                                                    String const& storage_key, u64 owner_generation)
+                                                    String const& storage_key, u64 owner_generation,
+                                                    u64 owner_frame_identity)
 {
     auto view = view_for_page_id(page_id);
     if (!view.has_value())
         return false;
     if (endpoint != Web::StorageAPI::StorageEndpointType::Caches)
-        return true;
-    if (owner_generation == 0 || !view->on_service_worker_owner_request)
+        return owner_frame_identity == 0u;
+    ByteString origin;
+    ByteString top_level_site;
+    if (owner_generation == 0 || owner_frame_identity == 0u ||
+        !parse_cache_storage_partition_key(storage_key, origin, top_level_site) ||
+        !view->on_service_worker_owner_request)
         return false;
 
     auto response = view->on_service_worker_owner_request(
-        4u, {}, storage_key.to_byte_string(), {}, {}, 0u, 0u, 0u);
+        4u, {}, origin, {}, top_level_site, 0u, 0u, 0u,
+        owner_frame_identity);
     return response.accepted && response.found &&
         response.generation == owner_generation &&
-        response.origin == storage_key.to_byte_string();
+        response.origin == origin;
 }
 
 HashTable<WebContentClient*> WebContentClient::s_clients;
@@ -717,16 +738,16 @@ void WebContentClient::did_expire_cookies_with_time_offset(AK::Duration offset)
     Application::cookie_jar().expire_cookies_with_time_offset(offset);
 }
 
-Messages::WebContentClient::DidRequestStorageItemResponse WebContentClient::did_request_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation)
+Messages::WebContentClient::DidRequestStorageItemResponse WebContentClient::did_request_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation, u64 owner_frame_identity)
 {
-    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
+    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation, owner_frame_identity))
         return { Optional<String> {} };
     return Application::storage_jar().get_item(storage_endpoint, storage_key, bottle_key);
 }
 
-Messages::WebContentClient::DidSetStorageItemResponse WebContentClient::did_set_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, String value, u64 owner_generation)
+Messages::WebContentClient::DidSetStorageItemResponse WebContentClient::did_set_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, String value, u64 owner_generation, u64 owner_frame_identity)
 {
-    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
+    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation, owner_frame_identity))
         return WebView::StorageOperationError::QuotaExceededError;
     auto result = Application::storage_jar().set_item(
         storage_endpoint, storage_key, bottle_key, value);
@@ -734,6 +755,10 @@ Messages::WebContentClient::DidSetStorageItemResponse WebContentClient::did_set_
         result.has<WebView::StorageOperationError>())
         return result;
 
+    ByteString origin;
+    ByteString top_level_site;
+    if (!parse_cache_storage_partition_key(storage_key, origin, top_level_site))
+        return WebView::StorageOperationError::QuotaExceededError;
     auto previous_value = result.get<Optional<String>>();
     auto view = view_for_page_id(page_id);
     const bool batch_active = view.has_value() &&
@@ -743,8 +768,8 @@ Messages::WebContentClient::DidSetStorageItemResponse WebContentClient::did_set_
         view->on_cache_storage_owner_mutation &&
         view->on_cache_storage_owner_mutation(
             value == "RIN-CACHE-NAME-V1"_string ? 3u : 1u,
-            storage_key.to_byte_string(), bottle_key.to_byte_string(),
-            value.to_byte_string(), owner_generation);
+            origin, top_level_site, bottle_key.to_byte_string(),
+            value.to_byte_string(), owner_generation, owner_frame_identity);
     if (owner_committed)
         return result;
     if (batch_active)
@@ -761,9 +786,9 @@ Messages::WebContentClient::DidSetStorageItemResponse WebContentClient::did_set_
     return WebView::StorageOperationError::QuotaExceededError;
 }
 
-void WebContentClient::did_remove_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation)
+void WebContentClient::did_remove_storage_item(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, u64 owner_generation, u64 owner_frame_identity)
 {
-    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
+    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation, owner_frame_identity))
         return;
     auto previous_value = Application::storage_jar().get_item(
         storage_endpoint, storage_key, bottle_key);
@@ -780,20 +805,24 @@ void WebContentClient::did_remove_storage_item(u64 page_id, Web::StorageAPI::Sto
     const bool cache_name_marker = cache_name_key ||
         (previous_value.has_value() &&
          previous_value.value() == "RIN-CACHE-NAME-V1"_string);
-    const bool owner_committed = view.has_value() &&
+    ByteString origin;
+    ByteString top_level_site;
+    const bool partition_valid = parse_cache_storage_partition_key(
+        storage_key, origin, top_level_site);
+    const bool owner_committed = partition_valid && view.has_value() &&
         view->on_cache_storage_owner_mutation &&
         view->on_cache_storage_owner_mutation(
             cache_name_marker ? 4u : 2u,
-            storage_key.to_byte_string(), bottle_key.to_byte_string(), {},
-            owner_generation);
+            origin, top_level_site, bottle_key.to_byte_string(), {},
+            owner_generation, owner_frame_identity);
     if (!owner_committed && !batch_active && previous_value.has_value())
         (void)Application::storage_jar().set_item(
             storage_endpoint, storage_key, bottle_key, previous_value.value());
 }
 
-Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_request_storage_keys(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation)
+Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_request_storage_keys(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation, u64 owner_frame_identity)
 {
-    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
+    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation, owner_frame_identity))
         return { Vector<String> {} };
 
     if (storage_endpoint != Web::StorageAPI::StorageEndpointType::Caches)
@@ -808,11 +837,15 @@ Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_
         view->cache_storage_synchronized_generation == owner_generation)
         return Application::storage_jar().get_all_keys(storage_endpoint, storage_key);
 
-    const auto origin = storage_key.to_byte_string();
+    ByteString origin;
+    ByteString top_level_site;
+    if (!parse_cache_storage_partition_key(storage_key, origin, top_level_site))
+        return { Vector<String> {} };
     ByteString snapshot;
     Vector<CacheStorageOwnerRecord> owner_records;
     bool owner_initialized = false;
-    if (!view->on_cache_storage_owner_snapshot(origin, owner_generation, snapshot) ||
+    if (!view->on_cache_storage_owner_snapshot(
+            origin, top_level_site, owner_generation, owner_frame_identity, snapshot) ||
         !parse_cache_storage_owner_snapshot(snapshot, owner_records, owner_initialized))
         return { Vector<String> {} };
 
@@ -851,7 +884,8 @@ Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_
 
         auto batch_response = view->on_service_worker_owner_request(
             RIN_WEBCONTENT_SERVICE_WORKER_OWNER_BEGIN_CACHE_BATCH,
-            {}, origin, {}, {}, 0u, 0u, 0u);
+            {}, origin, {}, top_level_site, 0u, 0u, 0u,
+            owner_frame_identity);
         const auto batch_matches_owner = [&](auto const& response) {
             return response.accepted && response.found &&
                 response.generation == owner_generation &&
@@ -871,7 +905,9 @@ Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_
                     is_name
                         ? RIN_WEBCONTENT_CACHE_STORAGE_OWNER_SET_CACHE_NAME
                         : RIN_WEBCONTENT_CACHE_STORAGE_OWNER_SET,
-                    origin, owner_key, record.value.to_byte_string(), owner_generation)) {
+                    origin, top_level_site, owner_key,
+                    record.value.to_byte_string(), owner_generation,
+                    owner_frame_identity)) {
                 migrated = false;
                 break;
             }
@@ -879,24 +915,29 @@ Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_
         if (migrated)
             migrated = view->on_cache_storage_owner_mutation(
                 RIN_WEBCONTENT_CACHE_STORAGE_OWNER_INITIALIZE,
-                origin, {}, {}, owner_generation);
+                origin, top_level_site, {}, {}, owner_generation,
+                owner_frame_identity);
         if (migrated) {
             auto commit_response = view->on_service_worker_owner_request(
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_CACHE_BATCH,
-                {}, origin, {}, {}, 0u, 0u, 0u);
+                {}, origin, {}, top_level_site, 0u, 0u, 0u,
+                owner_frame_identity);
             migrated = batch_matches_owner(commit_response);
         }
         if (!migrated) {
             (void)view->on_service_worker_owner_request(
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_ABORT_CACHE_BATCH,
-                {}, origin, {}, {}, 0u, 0u, 0u);
+                {}, origin, {}, top_level_site, 0u, 0u, 0u,
+                owner_frame_identity);
             return { Vector<String> {} };
         }
 
         snapshot = {};
         owner_records.clear();
         owner_initialized = false;
-        if (!view->on_cache_storage_owner_snapshot(origin, owner_generation, snapshot) ||
+        if (!view->on_cache_storage_owner_snapshot(
+                origin, top_level_site, owner_generation, owner_frame_identity,
+                snapshot) ||
             !parse_cache_storage_owner_snapshot(snapshot, owner_records, owner_initialized) ||
             !owner_initialized)
             return { Vector<String> {} };
@@ -954,28 +995,33 @@ Messages::WebContentClient::DidRequestStorageKeysResponse WebContentClient::did_
     return Application::storage_jar().get_all_keys(storage_endpoint, storage_key);
 }
 
-void WebContentClient::did_clear_storage(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation)
+void WebContentClient::did_clear_storage(u64 page_id, Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, u64 owner_generation, u64 owner_frame_identity)
 {
-    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation))
+    if (!storage_owner_is_authorized(page_id, storage_endpoint, storage_key, owner_generation, owner_frame_identity))
         return;
 
     if (storage_endpoint == Web::StorageAPI::StorageEndpointType::Caches) {
         auto view = view_for_page_id(page_id);
-        if (!view.has_value() || !view->on_cache_storage_owner_snapshot ||
+        ByteString origin;
+        ByteString top_level_site;
+        if (!parse_cache_storage_partition_key(storage_key, origin, top_level_site) ||
+            !view.has_value() || !view->on_cache_storage_owner_snapshot ||
             !view->on_service_worker_owner_request ||
             !view->on_cache_storage_owner_mutation)
             return;
-        const auto origin = storage_key.to_byte_string();
         ByteString snapshot;
         Vector<CacheStorageOwnerRecord> owner_records;
         bool owner_initialized = false;
-        if (!view->on_cache_storage_owner_snapshot(origin, owner_generation, snapshot) ||
+        if (!view->on_cache_storage_owner_snapshot(
+                origin, top_level_site, owner_generation, owner_frame_identity,
+                snapshot) ||
             !parse_cache_storage_owner_snapshot(snapshot, owner_records, owner_initialized))
             return;
 
         auto batch_response = view->on_service_worker_owner_request(
             RIN_WEBCONTENT_SERVICE_WORKER_OWNER_BEGIN_CACHE_BATCH,
-            {}, origin, {}, {}, 0u, 0u, 0u);
+            {}, origin, {}, top_level_site, 0u, 0u, 0u,
+            owner_frame_identity);
         const auto batch_matches_owner = [&](auto const& response) {
             return response.accepted && response.found &&
                 response.generation == owner_generation &&
@@ -992,7 +1038,8 @@ void WebContentClient::did_clear_storage(u64 page_id, Web::StorageAPI::StorageEn
                     is_name
                         ? RIN_WEBCONTENT_CACHE_STORAGE_OWNER_REMOVE_CACHE_NAME
                         : RIN_WEBCONTENT_CACHE_STORAGE_OWNER_REMOVE,
-                    origin, record.key.to_byte_string(), {}, owner_generation)) {
+                    origin, top_level_site, record.key.to_byte_string(), {},
+                    owner_generation, owner_frame_identity)) {
                 cleared = false;
                 break;
             }
@@ -1000,17 +1047,20 @@ void WebContentClient::did_clear_storage(u64 page_id, Web::StorageAPI::StorageEn
         if (cleared)
             cleared = view->on_cache_storage_owner_mutation(
                 RIN_WEBCONTENT_CACHE_STORAGE_OWNER_INITIALIZE,
-                origin, {}, {}, owner_generation);
+                origin, top_level_site, {}, {}, owner_generation,
+                owner_frame_identity);
         if (cleared) {
             auto commit_response = view->on_service_worker_owner_request(
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_COMMIT_CACHE_BATCH,
-                {}, origin, {}, {}, 0u, 0u, 0u);
+                {}, origin, {}, top_level_site, 0u, 0u, 0u,
+                owner_frame_identity);
             cleared = batch_matches_owner(commit_response);
         }
         if (!cleared) {
             (void)view->on_service_worker_owner_request(
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_ABORT_CACHE_BATCH,
-                {}, origin, {}, {}, 0u, 0u, 0u);
+                {}, origin, {}, top_level_site, 0u, 0u, 0u,
+                owner_frame_identity);
             return;
         }
         view->cache_storage_synchronized_origin = storage_key;
@@ -1262,7 +1312,7 @@ Messages::WebContentClient::RequestWorkerAgentResponse WebContentClient::request
 Messages::WebContentClient::RequestServiceWorkerOwnerResponse WebContentClient::request_service_worker_owner(
     u64 page_id, u32 operation, ByteString client_url, ByteString origin,
     ByteString script_url, ByteString scope, u32 update_via_cache,
-    u64 list_snapshot_id, u32 list_index)
+    u64 list_snapshot_id, u32 list_index, u64 frame_identity)
 {
     auto view = view_for_page_id(page_id);
     if (!view.has_value() || !view->on_service_worker_owner_request)
@@ -1270,7 +1320,8 @@ Messages::WebContentClient::RequestServiceWorkerOwnerResponse WebContentClient::
 
     auto result = view->on_service_worker_owner_request(
         operation, move(client_url), move(origin), move(script_url),
-        move(scope), update_via_cache, list_snapshot_id, list_index);
+        move(scope), update_via_cache, list_snapshot_id, list_index,
+        frame_identity);
     return { result.accepted, result.found, result.generation, result.state,
              result.update_via_cache,
              result.list_snapshot_id, result.list_next_index,

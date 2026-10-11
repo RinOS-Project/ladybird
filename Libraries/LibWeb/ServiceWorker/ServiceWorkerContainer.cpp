@@ -11,6 +11,7 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
 #include <LibWeb/Bindings/ServiceWorkerContainerPrototype.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/EventNames.h>
@@ -30,6 +31,15 @@
 
 namespace Web::ServiceWorker {
 
+static u64 service_worker_frame_identity(
+    HTML::EnvironmentSettingsObject& client)
+{
+    auto document = client.responsible_document();
+    if (!document)
+        return 0u;
+    return static_cast<u64>(document->unique_id().value());
+}
+
 GC_DEFINE_ALLOCATOR(ServiceWorkerContainer);
 
 class RegistrationListRequest final : public JS::Cell {
@@ -39,10 +49,11 @@ class RegistrationListRequest final : public JS::Cell {
 public:
     static GC::Ref<RegistrationListRequest> create(
         JS::Realm& realm, GC::Ref<WebIDL::Promise> promise,
-        StorageAPI::StorageKey storage_key, ByteString client_url)
+        StorageAPI::StorageKey storage_key, ByteString client_url,
+        u64 frame_identity)
     {
         return realm.create<RegistrationListRequest>(
-            realm, promise, move(storage_key), move(client_url));
+            realm, promise, move(storage_key), move(client_url), frame_identity);
     }
 
     void start()
@@ -54,10 +65,11 @@ private:
     RegistrationListRequest(JS::Realm& realm,
                             GC::Ref<WebIDL::Promise> promise,
                             StorageAPI::StorageKey storage_key,
-                            ByteString client_url)
+                            ByteString client_url, u64 frame_identity)
         : m_promise(promise)
         , m_storage_key(move(storage_key))
         , m_client_url(move(client_url))
+        , m_frame_identity(frame_identity)
         , m_results(MUST(JS::Array::create(realm, 0)))
     {
     }
@@ -100,7 +112,7 @@ private:
             .request_service_worker_owner(
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_LIST,
                 m_client_url, {}, {}, {}, 0u,
-                m_snapshot_id, m_next_index);
+                m_snapshot_id, m_next_index, m_frame_identity);
         if (!response.accepted) {
             reject(realm,
                 "The Browser profile owner could not enumerate ServiceWorker registrations"sv);
@@ -176,6 +188,7 @@ private:
     GC::Ref<WebIDL::Promise> m_promise;
     StorageAPI::StorageKey m_storage_key;
     ByteString m_client_url;
+    u64 m_frame_identity { 0 };
     GC::Ref<JS::Array> m_results;
     AK::HashTable<ByteString> m_seen_scopes;
     u64 m_snapshot_id { 0 };
@@ -285,9 +298,13 @@ GC::Ref<WebIDL::Promise> ServiceWorkerContainer::get_registration(String const& 
 
     // 7. Let promise be a new promise.
     auto promise = WebIDL::create_promise(realm);
+    const auto frame_identity = service_worker_frame_identity(*client);
+    if (frame_identity == 0u)
+        return WebIDL::create_rejected_promise(realm,
+            JS::TypeError::create(realm, "Failed to identify the ServiceWorker client frame"sv));
 
     // 8. Run the following substeps in parallel:
-    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [promise, storage_key, parsed_client_url = *parsed_client_url]() {
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [promise, storage_key, parsed_client_url = *parsed_client_url, frame_identity]() {
         auto& realm = HTML::relevant_realm(promise->promise());
         HTML::TemporaryExecutionContext const execution_context { realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
 
@@ -295,7 +312,7 @@ GC::Ref<WebIDL::Promise> ServiceWorkerContainer::get_registration(String const& 
         auto owner_response = Bindings::principal_host_defined_page(realm).client()
             .request_service_worker_owner(
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_MATCH,
-                client_url, {}, {}, {}, 0u);
+                client_url, {}, {}, {}, 0u, 0u, 0u, frame_identity);
         if (!owner_response.accepted) {
             WebIDL::reject_promise(realm, promise,
                 JS::TypeError::create(realm,
@@ -376,8 +393,13 @@ GC::Ref<WebIDL::Promise> ServiceWorkerContainer::get_registrations()
     auto promise = WebIDL::create_promise(realm);
     auto const client_url = client->creation_url
         .serialize(URL::ExcludeFragment::Yes).to_byte_string();
+    const auto frame_identity = service_worker_frame_identity(*client);
+    if (frame_identity == 0u)
+        return WebIDL::create_rejected_promise(realm,
+            JS::TypeError::create(realm, "Failed to identify the ServiceWorker client frame"sv));
     RegistrationListRequest::create(
-        realm, promise, storage_key.release_value(), client_url)->start();
+        realm, promise, storage_key.release_value(), client_url,
+        frame_identity)->start();
     return promise;
 }
 

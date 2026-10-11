@@ -122,12 +122,16 @@ static Optional<String> decode_string(StringView encoded)
 }
 
 Cache::Cache(JS::Realm& realm, String name, GC::Ptr<StorageAPI::StorageBottle> storage_bottle,
-             GC::Ptr<Page> page, ByteString owner_origin, u64 owner_generation)
+             GC::Ptr<Page> page, ByteString owner_origin,
+             ByteString owner_top_level_site, u64 owner_frame_identity,
+             u64 owner_generation)
     : Bindings::PlatformObject(realm)
     , m_name(move(name))
     , m_storage_bottle(storage_bottle)
     , m_page(page)
     , m_owner_origin(move(owner_origin))
+    , m_owner_top_level_site(move(owner_top_level_site))
+    , m_owner_frame_identity(owner_frame_identity)
     , m_owner_generation(owner_generation)
 {
     restore_entries();
@@ -157,10 +161,12 @@ bool Cache::owner_is_current() const
     // storage bottle and a non-zero generation, so they cannot take this path.
     if (!m_storage_bottle && m_owner_generation == 0)
         return true;
-    if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty())
+    if (!m_page || m_owner_generation == 0 || m_owner_origin.is_empty() ||
+        m_owner_top_level_site.is_empty() || m_owner_frame_identity == 0u)
         return false;
     auto response = m_page->client().request_service_worker_owner(
-        4u, {}, m_owner_origin, {}, {}, 0u);
+        4u, {}, m_owner_origin, {}, m_owner_top_level_site, 0u, 0u, 0u,
+        m_owner_frame_identity);
     return response.accepted && response.found &&
         response.generation == m_owner_generation &&
         response.origin == m_owner_origin;
@@ -195,7 +201,8 @@ bool Cache::owner_fetch_is_current(Fetch::Request const& request) const
         return false;
     }
     auto response = m_page->client().request_service_worker_owner(
-        5u, request_url, m_owner_origin, {}, {}, fetch_policy);
+        5u, request_url, m_owner_origin, {}, {}, fetch_policy, 0u, 0u,
+        m_owner_frame_identity);
     return response.accepted && response.found &&
         response.generation == m_owner_generation &&
         response.origin == m_owner_origin &&
@@ -210,7 +217,8 @@ bool Cache::begin_owner_mutation_batch() const
         return false;
     auto response = m_page->client().request_service_worker_owner(
         7u,
-        {}, m_owner_origin, {}, {}, 0u);
+        {}, m_owner_origin, {}, m_owner_top_level_site, 0u, 0u, 0u,
+        m_owner_frame_identity);
     return response.accepted && response.found &&
         response.generation == m_owner_generation &&
         response.origin == m_owner_origin &&
@@ -225,7 +233,8 @@ bool Cache::commit_owner_mutation_batch() const
         return false;
     auto response = m_page->client().request_service_worker_owner(
         8u,
-        {}, m_owner_origin, {}, {}, 0u);
+        {}, m_owner_origin, {}, m_owner_top_level_site, 0u, 0u, 0u,
+        m_owner_frame_identity);
     return response.accepted && response.found &&
         response.generation == m_owner_generation &&
         response.origin == m_owner_origin &&
@@ -240,7 +249,8 @@ void Cache::abort_owner_mutation_batch() const
         return;
     (void)m_page->client().request_service_worker_owner(
         9u,
-        {}, m_owner_origin, {}, {}, 0u);
+        {}, m_owner_origin, {}, m_owner_top_level_site, 0u, 0u, 0u,
+        m_owner_frame_identity);
 }
 
 GC::Ref<WebIDL::Promise> Cache::owner_rejected_promise() const
@@ -1016,9 +1026,13 @@ GC::Ref<WebIDL::Promise> Cache::keys(Optional<Fetch::RequestInfo> const& input, 
 }
 
 GC::Ref<Cache> Cache::create(JS::Realm& realm, String name, GC::Ptr<StorageAPI::StorageBottle> storage_bottle,
-                             GC::Ptr<Page> page, ByteString owner_origin, u64 owner_generation)
+                             GC::Ptr<Page> page, ByteString owner_origin,
+                             ByteString owner_top_level_site,
+                             u64 owner_frame_identity, u64 owner_generation)
 {
-    return realm.create<Cache>(realm, move(name), storage_bottle, page, move(owner_origin), owner_generation);
+    return realm.create<Cache>(realm, move(name), storage_bottle, page,
+        move(owner_origin), move(owner_top_level_site), owner_frame_identity,
+        owner_generation);
 }
 
 }

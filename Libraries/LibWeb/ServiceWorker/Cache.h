@@ -36,7 +36,7 @@ class Cache final : public Bindings::PlatformObject {
     GC_DECLARE_ALLOCATOR(Cache);
 
 public:
-    static GC::Ref<Cache> create(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle> = {}, GC::Ptr<Page> = {}, ByteString owner_origin = {}, u64 owner_generation = 0);
+    static GC::Ref<Cache> create(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle> = {}, GC::Ptr<Page> = {}, ByteString owner_origin = {}, ByteString owner_top_level_site = {}, u64 owner_frame_identity = 0, u64 owner_generation = 0);
 
     String const& name() const { return m_name; }
     bool remove_persisted_entries();
@@ -57,7 +57,7 @@ private:
         GC::Ref<Fetch::Response> response;
     };
 
-    Cache(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle>, GC::Ptr<Page>, ByteString owner_origin, u64 owner_generation);
+    Cache(JS::Realm&, String name, GC::Ptr<StorageAPI::StorageBottle>, GC::Ptr<Page>, ByteString owner_origin, ByteString owner_top_level_site, u64 owner_frame_identity, u64 owner_generation);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
@@ -86,6 +86,8 @@ private:
     GC::Ptr<StorageAPI::StorageBottle> m_storage_bottle;
     GC::Ptr<Page> m_page;
     ByteString m_owner_origin;
+    ByteString m_owner_top_level_site;
+    u64 m_owner_frame_identity { 0 };
     u64 m_owner_generation { 0 };
     u64 m_next_sequence { 1 };
     Vector<Entry> m_entries;

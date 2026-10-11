@@ -298,16 +298,19 @@ public:
     Function<ServiceWorkerOwnerResponse(u32 operation, ByteString client_url,
                                         ByteString origin, ByteString script_url,
                                         ByteString scope, u32 update_via_cache,
-                                        u64 list_snapshot_id, u32 list_index)>
+                                        u64 list_snapshot_id, u32 list_index,
+                                        u64 frame_identity)>
         on_service_worker_owner_request;
     Function<HttpCookieOwnerResponse(u32 operation, ByteString request_url,
                                      ByteString origin, ByteString cookie_data,
                                      u32 policy)>
         on_http_cookie_owner_request;
-    Function<bool(u16 operation, ByteString origin, ByteString key,
-                  ByteString value, u64 owner_generation)>
+    Function<bool(u16 operation, ByteString origin, ByteString top_level_site,
+                  ByteString key, ByteString value, u64 owner_generation,
+                  u64 frame_identity)>
         on_cache_storage_owner_mutation;
-    Function<bool(ByteString origin, u64 owner_generation,
+    Function<bool(ByteString origin, ByteString top_level_site,
+                  u64 owner_generation, u64 frame_identity,
                   ByteString& snapshot)>
         on_cache_storage_owner_snapshot;
     Function<bool()> on_cache_storage_owner_batch_active;

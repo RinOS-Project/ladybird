@@ -197,11 +197,11 @@ private:
     virtual void page_did_set_cookie(URL::URL const&, HTTP::Cookie::ParsedCookie const&, HTTP::Cookie::Source) override;
     virtual void page_did_update_cookie(HTTP::Cookie::Cookie const&) override;
     virtual void page_did_expire_cookies_with_time_offset(AK::Duration) override;
-    virtual Optional<String> page_did_request_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, u64 owner_generation = 0) override;
-    virtual WebView::StorageSetResult page_did_set_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, String const& value, u64 owner_generation = 0) override;
-    virtual void page_did_remove_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, u64 owner_generation = 0) override;
-    virtual Vector<String> page_did_request_storage_keys(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, u64 owner_generation = 0) override;
-    virtual void page_did_clear_storage(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, u64 owner_generation = 0) override;
+    virtual Optional<String> page_did_request_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, u64 owner_generation = 0, u64 owner_frame_identity = 0) override;
+    virtual WebView::StorageSetResult page_did_set_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, String const& value, u64 owner_generation = 0, u64 owner_frame_identity = 0) override;
+    virtual void page_did_remove_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, u64 owner_generation = 0, u64 owner_frame_identity = 0) override;
+    virtual Vector<String> page_did_request_storage_keys(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, u64 owner_generation = 0, u64 owner_frame_identity = 0) override;
+    virtual void page_did_clear_storage(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, u64 owner_generation = 0, u64 owner_frame_identity = 0) override;
     virtual void page_did_update_resource_count(i32) override;
     virtual NewWebViewResult page_did_request_new_web_view(Web::HTML::ActivateTab, Web::HTML::WebViewHints, Web::HTML::TokenizedFeature::NoOpener) override;
     virtual void page_did_request_activate_tab() override;
@@ -227,7 +227,7 @@ private:
         u32 operation, ByteString client_url, ByteString origin,
         ByteString script_url, ByteString scope,
         u32 update_via_cache, u64 list_snapshot_id = 0,
-        u32 list_index = 0) override;
+        u32 list_index = 0, u64 frame_identity = 0) override;
     virtual HttpCookieOwnerResponse request_http_cookie_owner(
         u32 operation, ByteString request_url, ByteString origin,
         ByteString cookie_data, u32 policy) override;

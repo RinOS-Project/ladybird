@@ -1196,11 +1196,11 @@ struct PageSession {
             [this](u32 operation, ByteString client_url, ByteString origin,
                    ByteString script_url, ByteString scope,
                    u32 update_via_cache, u64 list_snapshot_id,
-                   u32 list_index) {
+                   u32 list_index, u64 frame_identity) {
                 return service_worker_owner_request(
                     operation, move(client_url), move(origin),
                     move(script_url), move(scope), update_via_cache,
-                    list_snapshot_id, list_index);
+                    list_snapshot_id, list_index, frame_identity);
             };
         view->on_http_cookie_owner_request =
             [this](u32 operation, ByteString request_url, ByteString origin,
@@ -1211,16 +1211,21 @@ struct PageSession {
             };
 
         view->on_cache_storage_owner_mutation =
-            [this](u16 operation, ByteString origin, ByteString key,
-                   ByteString value, u64 owner_generation) {
+            [this](u16 operation, ByteString origin,
+                   ByteString top_level_site, ByteString key,
+                   ByteString value, u64 owner_generation,
+                   u64 frame_identity) {
                 return cache_storage_owner_mutation(
-                    operation, origin, key, value, owner_generation);
+                    operation, origin, top_level_site, key, value,
+                    owner_generation, frame_identity);
             };
         view->on_cache_storage_owner_snapshot =
-            [this](ByteString origin, u64 owner_generation,
+            [this](ByteString origin, ByteString top_level_site,
+                   u64 owner_generation, u64 frame_identity,
                    ByteString& snapshot) {
                 return cache_storage_owner_snapshot(
-                    origin, owner_generation, snapshot);
+                    origin, top_level_site, owner_generation,
+                    frame_identity, snapshot);
             };
         view->on_cache_storage_owner_batch_active = [this] {
             return cache_storage_batch_active;
@@ -1262,7 +1267,8 @@ struct PageSession {
     service_worker_owner_request(u32 operation, ByteString client_url,
                                  ByteString origin, ByteString script_url,
                                  ByteString scope, u32 update_via_cache,
-                                 u64 list_snapshot_id, u32 list_index)
+                                 u64 list_snapshot_id, u32 list_index,
+                                 u64 frame_identity)
     {
         WebView::ViewImplementation::ServiceWorkerOwnerResponse result;
         if (s_service_worker_owner_fd < 0 ||
@@ -1282,6 +1288,7 @@ struct PageSession {
             : update_via_cache;
         if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_LIST)
             request.reserved[0] = list_snapshot_id;
+        request.reserved[1] = frame_identity;
         copy_c_string(request.client_url, sizeof(request.client_url), client_url);
         copy_c_string(request.origin, sizeof(request.origin), origin);
         copy_c_string(request.script_url, sizeof(request.script_url), script_url);
@@ -1373,14 +1380,18 @@ struct PageSession {
     }
 
     bool cache_storage_owner_mutation(u16 operation, ByteString origin,
+                                      ByteString top_level_site,
                                       ByteString key, ByteString value,
-                                      u64 owner_generation)
+                                      u64 owner_generation,
+                                      u64 frame_identity)
     {
         const bool initialize = operation ==
             RIN_WEBCONTENT_CACHE_STORAGE_OWNER_INITIALIZE;
         if (s_service_worker_owner_fd < 0 || origin.is_empty() ||
+            top_level_site.is_empty() || frame_identity == 0u ||
             owner_generation == 0u ||
             origin.length() >= RIN_WEBCONTENT_URL_MAX ||
+            top_level_site.length() >= RIN_WEBCONTENT_URL_MAX ||
             (key.is_empty() && !initialize) ||
             (!key.is_empty() && initialize) ||
             key.length() > RIN_WEBCONTENT_CACHE_STORAGE_OWNER_MAX_KEY_BYTES ||
@@ -1393,9 +1404,12 @@ struct PageSession {
         request.operation = operation;
         request.owner_generation = owner_generation;
         request.origin_size = static_cast<u32>(origin.length());
+        request.reserved[0] = frame_identity;
+        request.reserved[1] = top_level_site.length();
         request.key_size = static_cast<u32>(key.length());
         request.value_size = static_cast<u32>(value.length());
         const size_t payload_size = sizeof(request) + origin.length() +
+                                    top_level_site.length() +
                                     key.length() + value.length();
         std::vector<u8> payload(payload_size);
         size_t offset = 0u;
@@ -1404,6 +1418,9 @@ struct PageSession {
         __builtin_memcpy(payload.data() + offset, origin.characters(),
                          origin.length());
         offset += origin.length();
+        __builtin_memcpy(payload.data() + offset,
+                         top_level_site.characters(), top_level_site.length());
+        offset += top_level_site.length();
         if (!key.is_empty()) {
             __builtin_memcpy(payload.data() + offset, key.characters(),
                              key.length());
@@ -1539,11 +1556,15 @@ struct PageSession {
     }
 
     bool cache_storage_owner_snapshot(ByteString origin,
+                                      ByteString top_level_site,
                                       u64 owner_generation,
+                                      u64 frame_identity,
                                       ByteString& snapshot)
     {
         if (s_service_worker_owner_fd < 0 || origin.is_empty() ||
+            top_level_site.is_empty() || frame_identity == 0u ||
             origin.length() >= RIN_WEBCONTENT_URL_MAX ||
+            top_level_site.length() >= RIN_WEBCONTENT_URL_MAX ||
             owner_generation == 0u)
             return false;
 
@@ -1553,10 +1574,15 @@ struct PageSession {
         request.operation = RIN_WEBCONTENT_CACHE_STORAGE_OWNER_READ_SNAPSHOT;
         request.owner_generation = owner_generation;
         request.origin_size = static_cast<u32>(origin.length());
-        std::vector<u8> payload(sizeof(request) + origin.length());
+        request.reserved[0] = frame_identity;
+        request.reserved[1] = top_level_site.length();
+        std::vector<u8> payload(sizeof(request) + origin.length() +
+                                 top_level_site.length());
         __builtin_memcpy(payload.data(), &request, sizeof(request));
         __builtin_memcpy(payload.data() + sizeof(request), origin.characters(),
                          origin.length());
+        __builtin_memcpy(payload.data() + sizeof(request) + origin.length(),
+                         top_level_site.characters(), top_level_site.length());
 
         RinWebContentMsgHeader response_header {};
         u64 deadline_ms = 0u;

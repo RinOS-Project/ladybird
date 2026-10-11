@@ -13,6 +13,7 @@
 #include <LibJS/SourceTextModule.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
@@ -44,6 +45,16 @@ static void register_(JS::VM&, GC::Ref<Job>);
 static void update(JS::VM&, GC::Ref<Job>);
 static void unregister(JS::VM&, GC::Ref<Job>);
 
+static u64 service_worker_frame_identity(Job const& job)
+{
+    if (!job.client)
+        return 0u;
+    auto document = job.client->responsible_document();
+    if (!document)
+        return 0u;
+    return static_cast<u64>(document->unique_id().value());
+}
+
 static bool begin_browser_registration_transaction(GC::Ref<Job> job)
 {
     if (!job->client)
@@ -56,7 +67,8 @@ static bool begin_browser_registration_transaction(GC::Ref<Job> job)
         .request_service_worker_owner(
             RIN_WEBCONTENT_SERVICE_WORKER_OWNER_REGISTER,
             client_url, {}, expected_script, expected_scope,
-            static_cast<u32>(job->update_via_cache));
+            static_cast<u32>(job->update_via_cache), 0u, 0u,
+            service_worker_frame_identity(*job));
     if (response.generation != 0u && response.generation <= 0xffffffffu)
         job->browser_registration_transaction_id = static_cast<u32>(response.generation);
     if (!response.accepted || job->browser_registration_transaction_id == 0u ||
@@ -76,7 +88,8 @@ static bool finish_browser_registration_transaction(GC::Ref<Job> job, u32 operat
     const u32 transaction_id = job->browser_registration_transaction_id;
     auto response = Bindings::principal_host_defined_page(job->client->realm()).client()
         .request_service_worker_owner(operation, {}, expected_origin, {},
-            expected_scope, transaction_id);
+            expected_scope, transaction_id, 0u, 0u,
+            service_worker_frame_identity(*job));
     if (!response.accepted || response.generation == 0u ||
         response.origin != expected_origin || response.script_url != expected_script ||
         response.scope != expected_scope ||
@@ -606,7 +619,8 @@ static void unregister(JS::VM& vm, GC::Ref<Job> job)
         // page before reaching the Browser-owned profile store.
         auto owner_response = Bindings::principal_host_defined_page(realm).client()
             .request_service_worker_owner(
-            RIN_WEBCONTENT_SERVICE_WORKER_OWNER_UNREGISTER, {}, origin, {}, scope, 0u);
+            RIN_WEBCONTENT_SERVICE_WORKER_OWNER_UNREGISTER, {}, origin, {},
+            scope, 0u, 0u, 0u, service_worker_frame_identity(*job));
         if (!owner_response.accepted ||
             (owner_response.found &&
              (owner_response.generation == 0u ||

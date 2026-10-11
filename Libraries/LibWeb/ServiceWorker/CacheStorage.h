@@ -50,6 +50,8 @@ private:
     GC::Ptr<StorageAPI::StorageBottle> m_storage_bottle;
     GC::Ptr<Page> m_page;
     ByteString m_owner_origin;
+    ByteString m_owner_top_level_site;
+    u64 m_owner_frame_identity { 0 };
     bool m_owner_authorized { false };
     u64 m_owner_generation { 0 };
 };

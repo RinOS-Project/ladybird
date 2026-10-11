@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Optional.h>
+#include <AK/StringBuilder.h>
 #include <AK/Traits.h>
 #include <LibURL/Origin.h>
 #include <LibURL/Site.h>
@@ -41,6 +42,15 @@ struct StorageKey {
         // authenticated page owner instead of accepting it through this
         // renderer-facing serialization.
         return origin.serialize();
+    }
+
+    String to_cache_storage_string() const
+    {
+        StringBuilder key;
+        key.append(origin.serialize());
+        key.append('\n');
+        key.append(top_level_site.serialize());
+        return key.to_string_without_validation();
     }
 
     friend bool operator==(StorageKey const& a, StorageKey const& b)

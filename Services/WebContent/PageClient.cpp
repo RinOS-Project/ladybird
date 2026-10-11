@@ -730,9 +730,9 @@ void PageClient::page_did_expire_cookies_with_time_offset(AK::Duration offset)
         document->reset_cookie_version();
 }
 
-Optional<String> PageClient::page_did_request_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, u64 owner_generation)
+Optional<String> PageClient::page_did_request_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, u64 owner_generation, u64 owner_frame_identity)
 {
-    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::DidRequestStorageItem>(m_id, storage_endpoint, storage_key, bottle_key, owner_generation);
+    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::DidRequestStorageItem>(m_id, storage_endpoint, storage_key, bottle_key, owner_generation, owner_frame_identity);
     if (!response) {
         dbgln("WebContent client disconnected during DidRequestStorageItem. Exiting peacefully.");
         exit(0);
@@ -740,9 +740,9 @@ Optional<String> PageClient::page_did_request_storage_item(Web::StorageAPI::Stor
     return response->take_value();
 }
 
-WebView::StorageSetResult PageClient::page_did_set_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, String const& value, u64 owner_generation)
+WebView::StorageSetResult PageClient::page_did_set_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, String const& value, u64 owner_generation, u64 owner_frame_identity)
 {
-    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::DidSetStorageItem>(m_id, storage_endpoint, storage_key, bottle_key, value, owner_generation);
+    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::DidSetStorageItem>(m_id, storage_endpoint, storage_key, bottle_key, value, owner_generation, owner_frame_identity);
     if (!response) {
         dbgln("WebContent client disconnected during DidSetStorageItem. Exiting peacefully.");
         exit(0);
@@ -750,18 +750,18 @@ WebView::StorageSetResult PageClient::page_did_set_storage_item(Web::StorageAPI:
     return response->result();
 }
 
-void PageClient::page_did_remove_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, u64 owner_generation)
+void PageClient::page_did_remove_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, u64 owner_generation, u64 owner_frame_identity)
 {
-    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::DidRemoveStorageItem>(m_id, storage_endpoint, storage_key, bottle_key, owner_generation);
+    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::DidRemoveStorageItem>(m_id, storage_endpoint, storage_key, bottle_key, owner_generation, owner_frame_identity);
     if (!response) {
         dbgln("WebContent client disconnected during DidRemoveStorageItem. Exiting peacefully.");
         exit(0);
     }
 }
 
-Vector<String> PageClient::page_did_request_storage_keys(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, u64 owner_generation)
+Vector<String> PageClient::page_did_request_storage_keys(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, u64 owner_generation, u64 owner_frame_identity)
 {
-    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::DidRequestStorageKeys>(m_id, storage_endpoint, storage_key, owner_generation);
+    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::DidRequestStorageKeys>(m_id, storage_endpoint, storage_key, owner_generation, owner_frame_identity);
     if (!response) {
         dbgln("WebContent client disconnected during DidRequestStorageKeys. Exiting peacefully.");
         exit(0);
@@ -769,9 +769,9 @@ Vector<String> PageClient::page_did_request_storage_keys(Web::StorageAPI::Storag
     return response->take_keys();
 }
 
-void PageClient::page_did_clear_storage(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, u64 owner_generation)
+void PageClient::page_did_clear_storage(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, u64 owner_generation, u64 owner_frame_identity)
 {
-    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::DidClearStorage>(m_id, storage_endpoint, storage_key, owner_generation);
+    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::DidClearStorage>(m_id, storage_endpoint, storage_key, owner_generation, owner_frame_identity);
     if (!response) {
         dbgln("WebContent client disconnected during DidClearStorage. Exiting peacefully.");
         exit(0);
@@ -1442,11 +1442,12 @@ Web::PageClient::WorkerAgentResponse PageClient::request_worker_agent(Web::Bindi
 Web::PageClient::ServiceWorkerOwnerResponse PageClient::request_service_worker_owner(
     u32 operation, ByteString client_url, ByteString origin,
     ByteString script_url, ByteString scope, u32 update_via_cache,
-    u64 list_snapshot_id, u32 list_index)
+    u64 list_snapshot_id, u32 list_index, u64 frame_identity)
 {
     auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::RequestServiceWorkerOwner>(
         m_id, operation, move(client_url), move(origin), move(script_url),
-        move(scope), update_via_cache, list_snapshot_id, list_index);
+        move(scope), update_via_cache, list_snapshot_id, list_index,
+        frame_identity);
     if (!response) {
         dbgln("WebContent client disconnected during RequestServiceWorkerOwner.");
         return {};
