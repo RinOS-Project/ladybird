@@ -10,6 +10,7 @@
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/ImageFormats/ImageDecoder.h>
 #include <rin/web/webcontent_protocol.h>
+#include "webcontent_client_policy.h"
 #include <string.h>
 
 namespace Web::MediaCapture {
@@ -262,8 +263,7 @@ RefPtr<Gfx::ImmutableBitmap> MediaStreamTrack::read_video_frame()
         chunk.format != m_pending_camera_format ||
         chunk.width != m_pending_camera_width ||
         chunk.height != m_pending_camera_height ||
-        m_pending_camera_frame.try_append(
-            ReadonlyBytes { payload, payload_size }).is_error()) {
+        m_pending_camera_frame.try_append(payload, payload_size).is_error()) {
         stop();
         return nullptr;
     }
@@ -275,10 +275,11 @@ RefPtr<Gfx::ImmutableBitmap> MediaStreamTrack::read_video_frame()
         return nullptr;
     }
 
-    auto bitmap = decode_camera_frame(m_pending_camera_frame.bytes(),
-                                      m_pending_camera_format,
-                                      m_pending_camera_width,
-                                      m_pending_camera_height);
+    ReadonlyBytes frame_bytes {
+        m_pending_camera_frame.data(), m_pending_camera_frame.size()
+    };
+    auto bitmap = decode_camera_frame(frame_bytes, m_pending_camera_format,
+                                      m_pending_camera_width, m_pending_camera_height);
     m_last_camera_sequence = m_pending_camera_sequence;
     m_pending_camera_sequence = 0u;
     scrub_camera_bytes(m_pending_camera_frame);
