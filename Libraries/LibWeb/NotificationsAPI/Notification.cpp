@@ -87,6 +87,46 @@ Notification::Notification(JS::Realm& realm)
 {
 }
 
+WebIDL::CallbackType* Notification::onclick()
+{
+    return event_handler_attribute(HTML::EventNames::click);
+}
+
+void Notification::set_onclick(WebIDL::CallbackType* event_handler)
+{
+    set_event_handler_attribute(HTML::EventNames::click, event_handler);
+}
+
+WebIDL::CallbackType* Notification::onshow()
+{
+    return event_handler_attribute("show"_fly_string);
+}
+
+void Notification::set_onshow(WebIDL::CallbackType* event_handler)
+{
+    set_event_handler_attribute("show"_fly_string, event_handler);
+}
+
+WebIDL::CallbackType* Notification::onerror()
+{
+    return event_handler_attribute(HTML::EventNames::error);
+}
+
+void Notification::set_onerror(WebIDL::CallbackType* event_handler)
+{
+    set_event_handler_attribute(HTML::EventNames::error, event_handler);
+}
+
+WebIDL::CallbackType* Notification::onclose()
+{
+    return event_handler_attribute(HTML::EventNames::close);
+}
+
+void Notification::set_onclose(WebIDL::CallbackType* event_handler)
+{
+    set_event_handler_attribute(HTML::EventNames::close, event_handler);
+}
+
 // https://notifications.spec.whatwg.org/#create-a-notification
 WebIDL::ExceptionOr<ConceptNotification> Notification::create_a_notification(
     JS::Realm& realm,

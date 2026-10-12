@@ -133,6 +133,15 @@ public:
     Vector<NotificationAction> actions() const;
     JS::Value data() const;
 
+    WebIDL::CallbackType* onclick();
+    void set_onclick(WebIDL::CallbackType*);
+    WebIDL::CallbackType* onshow();
+    void set_onshow(WebIDL::CallbackType*);
+    WebIDL::CallbackType* onerror();
+    void set_onerror(WebIDL::CallbackType*);
+    WebIDL::CallbackType* onclose();
+    void set_onclose(WebIDL::CallbackType*);
+
 private:
     Notification(JS::Realm&);
 
