@@ -165,6 +165,14 @@ private:
     virtual Messages::WebContentClient::RequestNotificationPermissionResponse request_notification_permission(u64 page_id) override;
     virtual Messages::WebContentClient::RequestMicrophonePermissionResponse request_microphone_permission(
         u64 page_id, ByteString origin) override;
+    virtual Messages::WebContentClient::RequestCameraPermissionResponse request_camera_permission(
+        u64 page_id, ByteString origin) override;
+    virtual Messages::WebContentClient::RequestCameraCaptureOpenResponse request_camera_capture_open(
+        u64 page_id, ByteString origin) override;
+    virtual Messages::WebContentClient::RequestCameraCaptureReadResponse request_camera_capture_read(
+        u64 page_id, u64 session_id) override;
+    virtual Messages::WebContentClient::RequestCameraCaptureCloseResponse request_camera_capture_close(
+        u64 page_id, u64 session_id) override;
     virtual Messages::WebContentClient::RequestGeolocationPermissionResponse request_geolocation_permission(
         u64 page_id, ByteString origin, u32 timeout_ms) override;
     virtual void cancel_geolocation_permission(
