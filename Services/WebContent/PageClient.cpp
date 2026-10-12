@@ -39,6 +39,7 @@
 #include <LibWebView/SiteIsolation.h>
 #include <LibWebView/ViewImplementation.h>
 #include <rin/web/webcontent_protocol.h>
+#include <webcontent_client_policy.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/DevToolsConsoleClient.h>
 #include <WebContent/PageClient.h>
@@ -1092,7 +1093,7 @@ i32 PageClient::page_did_read_camera_capture(u64 session_id, Vector<u8>& output)
                 chunk.data()),
             chunk.bytes().data() + sizeof(RinWebContentCameraCaptureChunkV1),
             static_cast<u32>(chunk.size())) ||
-        output.try_append(chunk.bytes()).is_error())
+        output.try_append(chunk.bytes().data(), chunk.bytes().size()).is_error())
         return -1;
     return 0;
 }

@@ -3,7 +3,7 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
-#include <AK/ReadonlyBytes.h>
+#include <AK/Span.h>
 #include <LibURL/URL.h>
 
 namespace RinWebContentBridge {

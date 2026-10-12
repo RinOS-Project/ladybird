@@ -107,7 +107,7 @@ Optional<String> PageHost::page_did_request_storage_item(
      * Document before forwarding them to the authenticated PageClient. */
     auto response = m_client.did_request_storage_item(
         storage_endpoint, storage_key, bottle_key, owner_generation);
-    return response.take_value();
+    return response;
 }
 
 WebView::StorageSetResult PageHost::page_did_set_storage_item(
@@ -117,7 +117,7 @@ WebView::StorageSetResult PageHost::page_did_set_storage_item(
 {
     auto response = m_client.did_set_storage_item(
         storage_endpoint, storage_key, bottle_key, value, owner_generation);
-    return response.result();
+    return response;
 }
 
 void PageHost::page_did_remove_storage_item(
@@ -136,7 +136,7 @@ Vector<String> PageHost::page_did_request_storage_keys(
 {
     auto response = m_client.did_request_storage_keys(
         storage_endpoint, storage_key, owner_generation);
-    return response.take_keys();
+    return response;
 }
 
 void PageHost::page_did_clear_storage(
