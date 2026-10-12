@@ -5,7 +5,9 @@
  */
 
 #include <AK/HashTable.h>
+#include <AK/ByteBuffer.h>
 #include <AK/TypeCasts.h>
+#include <string.h>
 #include <LibGC/Heap.h>
 #include <LibJS/CyclicModule.h>
 #include <LibJS/Runtime/ModuleRequest.h>
@@ -228,8 +230,22 @@ public:
     }
 
     OrderedHashMap<URL::URL, GC::Ref<Fetch::Infrastructure::Response>>& updated_resource_map() { return m_map; }
+    OrderedHashMap<URL::URL, ByteBuffer>& updated_script_resource_map() { return m_script_resource_map; }
     bool has_updated_resources() const { return m_has_updated_resources; }
     void set_has_updated_resources(bool b) { m_has_updated_resources = b; }
+    bool resource_capture_failed() const { return m_resource_capture_failed; }
+    void set_resource_capture_failed() { m_resource_capture_failed = true; }
+
+    bool remember_script_resource(URL::URL const& url, ReadonlyBytes bytes)
+    {
+        auto copy = ByteBuffer::copy(bytes);
+        if (copy.is_error()) {
+            set_resource_capture_failed();
+            return false;
+        }
+        (void)m_script_resource_map.set(url, copy.release_value());
+        return true;
+    }
 
 private:
     UpdateAlgorithmState() = default;
@@ -241,10 +257,97 @@ private:
     }
 
     OrderedHashMap<URL::URL, GC::Ref<Fetch::Infrastructure::Response>> m_map;
+    OrderedHashMap<URL::URL, ByteBuffer> m_script_resource_map;
     bool m_has_updated_resources { false };
+    bool m_resource_capture_failed { false };
 };
 
 GC_DEFINE_ALLOCATOR(UpdateAlgorithmState);
+
+static bool script_bytes_equal(ReadonlyBytes left, ReadonlyBytes right)
+{
+    return left.size() == right.size()
+        && (left.is_empty() || memcmp(left.data(), right.data(), left.size()) == 0);
+}
+
+static bool is_good_classic_import_response(
+    GC::Ref<Fetch::Infrastructure::Response> response,
+    Fetch::Infrastructure::FetchAlgorithms::BodyBytes const& body_bytes)
+{
+    if (!body_bytes.has<ByteBuffer>())
+        return false;
+
+    auto internal_response = response->unsafe_response();
+    if (!Fetch::Infrastructure::is_ok_status(internal_response->status()))
+        return false;
+
+    auto response_url = internal_response->url();
+    if (!response_url.has_value() || !Fetch::Infrastructure::is_http_or_https_scheme(response_url->scheme()))
+        return true;
+
+    auto mime_type = Fetch::Infrastructure::extract_mime_type(internal_response->header_list());
+    return mime_type.has_value() && mime_type->is_javascript();
+}
+
+static void compare_classic_imported_script_resources(
+    JS::VM& vm,
+    GC::Ref<Job> job,
+    Registration& registration,
+    ServiceWorkerRecord& newest_worker,
+    GC::Ref<UpdateAlgorithmState> state,
+    URL::URL const& current_url)
+{
+    auto& realm = job->client->realm();
+    auto& event_loop = job->client->responsible_event_loop();
+
+    for (auto const& [import_url, stored_bytes] : newest_worker.script_resource_map) {
+        if (import_url == current_url)
+            continue;
+        auto stored_bytes_view = stored_bytes.bytes();
+
+        auto request = Fetch::Infrastructure::Request::create(vm);
+        request->set_url(import_url);
+        request->set_client(&*job->client);
+        request->set_destination(Fetch::Infrastructure::Request::Destination::Script);
+        request->set_initiator_type(Fetch::Infrastructure::Request::InitiatorType::Other);
+        request->set_parser_metadata(Fetch::Infrastructure::Request::ParserMetadata::NotParserInserted);
+        request->set_use_url_credentials(true);
+        request->header_list()->append(HTTP::Header::isomorphic_encode("Service-Worker"sv, "script"sv));
+        request->set_service_workers_mode(Fetch::Infrastructure::Request::ServiceWorkersMode::None);
+
+        if (registration.update_via_cache() == Bindings::ServiceWorkerUpdateViaCache::None
+            || job->force_cache_bypass
+            || registration.is_stale()) {
+            request->set_cache_mode(HTTP::CacheMode::NoCache);
+        }
+
+        Optional<Fetch::Infrastructure::FetchAlgorithms::BodyBytes> fetched_body_bytes;
+        Fetch::Infrastructure::FetchAlgorithms::Input fetch_input {};
+        fetch_input.process_response = [request, state, &registration](GC::Ref<Fetch::Infrastructure::Response> response) {
+            state->updated_resource_map().set(request->url(), response);
+            if (response->cache_state() != Fetch::Infrastructure::Response::CacheState::Local)
+                registration.set_last_update_check_time(MonotonicTime::now());
+        };
+        fetch_input.process_response_consume_body = [request, state, stored_bytes_view, &fetched_body_bytes](GC::Ref<Fetch::Infrastructure::Response> response, Fetch::Infrastructure::FetchAlgorithms::BodyBytes body_bytes) {
+            if (is_good_classic_import_response(response, body_bytes)) {
+                auto const& new_bytes = body_bytes.get<ByteBuffer>();
+                if (!script_bytes_equal(stored_bytes_view, new_bytes.bytes()))
+                    state->set_has_updated_resources(true);
+                (void)state->remember_script_resource(request->url(), new_bytes.bytes());
+            }
+            fetched_body_bytes = move(body_bytes);
+        };
+
+        auto fetch_controller = Fetch::Fetching::fetch(
+            realm, request,
+            Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_input)));
+        event_loop.spin_until(GC::create_function(realm.heap(), [fetch_controller, &fetched_body_bytes]() {
+            return fetched_body_bytes.has_value()
+                || fetch_controller->state() == Fetch::Infrastructure::FetchController::State::Terminated
+                || fetch_controller->state() == Fetch::Infrastructure::FetchController::State::Aborted;
+        }));
+    }
+}
 
 // https://w3c.github.io/ServiceWorker/#is-async-module
 static bool is_async_module(JS::Module const& record, HashTable<JS::CyclicModule const*>& seen)
@@ -350,8 +453,45 @@ static void update(JS::VM& vm, GC::Ref<Job> job)
         // 3. Set request’s service-workers mode to "none".
         request->set_service_workers_mode(Fetch::Infrastructure::Request::ServiceWorkersMode::None);
 
+        auto process_response_consume_body = [request, job, newest_worker, state, &registration, &vm, process_custom_fetch_response = move(process_custom_fetch_response)](GC::Ref<Fetch::Infrastructure::Response> response, Fetch::Infrastructure::FetchAlgorithms::BodyBytes body_bytes) mutable {
+            if (body_bytes.has<ByteBuffer>()) {
+                auto const& url = request->url();
+                auto const& bytes = body_bytes.get<ByteBuffer>();
+
+                // The main script is always compared, including for module
+                // workers. Missing incumbent bytes are treated as changed so
+                // an incomplete legacy record cannot suppress an update.
+                if (newest_worker != nullptr
+                    && newest_worker->worker_type == job->worker_type
+                    && newest_worker->script_url == url) {
+                    auto stored_bytes = newest_worker->script_resource_map.get(url);
+                    if (!newest_worker->script_resource_map_complete
+                        || !stored_bytes.has_value()
+                        || !script_bytes_equal(stored_bytes->bytes(), bytes.bytes()))
+                        state->set_has_updated_resources(true);
+                }
+
+                (void)state->remember_script_resource(url, bytes.bytes());
+
+                // The incumbent's classic imports are checked only after the
+                // main script has been compared. Continue through every stored
+                // import even when an earlier one differs, so the replacement
+                // resource set is complete for the eventual worker install.
+                if (!state->has_updated_resources()
+                    && !state->resource_capture_failed()
+                    && newest_worker != nullptr
+                    && newest_worker->classic_scripts_imported
+                    && job->worker_type == Bindings::WorkerType::Classic) {
+                    compare_classic_imported_script_resources(
+                        vm, job, registration, *newest_worker, state, url);
+                }
+            }
+
+            process_custom_fetch_response(response, move(body_bytes));
+        };
+
         Web::Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
-        fetch_algorithms_input.process_response_consume_body = move(process_custom_fetch_response);
+        fetch_algorithms_input.process_response_consume_body = move(process_response_consume_body);
 
         // 4. If the isTopLevel flag is unset, then return the result of fetching request.
         // FIXME: Needs spec issue, this wording is confusing and contradicts the way perform the fetch hook is used in `run a worker`
@@ -458,7 +598,7 @@ static void update(JS::VM& vm, GC::Ref<Job> job)
             // 20. Set hasUpdatedResources to true if any of the following are true:
             // - newestWorker is null.
             // - newestWorker’s script url is not url or newestWorker’s type is not job’s worker type.
-            // - FIXME: newestWorker’s script resource map[url]'s body is not byte-for-byte identical with response’s body.
+            // - The incumbent's retained script bytes differ from the fetched main script (compared after body consumption).
             if (newest_worker == nullptr
                 || newest_worker->script_url != url
                 || newest_worker->worker_type != job->worker_type) {
@@ -466,31 +606,6 @@ static void update(JS::VM& vm, GC::Ref<Job> job)
             }
 
             // 21. If hasUpdatedResources is false and newestWorker’s classic scripts imported flag is set, then:
-            if (!state->has_updated_resources()) {
-                VERIFY(newest_worker);
-                if (newest_worker->classic_scripts_imported) {
-                    // 1. For each importUrl → storedResponse of newestWorker’s script resource map:
-                    if (false) {
-                        // FIXME: 1. If importUrl is url, then continue.
-                        // FIXME: 2. Let importRequest be a new request whose url is importUrl, client is job’s client, destination is "script", parser metadata
-                        //    is "not parser-inserted", and whose use-URL-credentials flag is set.
-                        // FIXME: 3. Set importRequest’s cache mode to "no-cache" if any of the following are true:
-                        //     * registration’s update via cache mode is "none".
-                        //     * job’s force bypass cache flag is set.
-                        //     * registration is stale.
-                        // FIXME: 4. Let fetchedResponse be the result of fetching importRequest.
-                        // FIXME: 5. Set updatedResourceMap[importRequest’s url] to fetchedResponse.
-                        // FIXME: 6. Set fetchedResponse to fetchedResponse’s unsafe response.
-                        // FIXME: 7. If fetchedResponse’s cache state is not "local", set registration’s last update check time to the current time.
-                        // FIXME: 8. If fetchedResponse is a bad import script response, continue.
-                        // NOTE: Bad responses for importScripts() are ignored for the purpose of the byte-to-byte check. Only good responses for the incumbent worker
-                        //       and good responses for the potential update worker are considered. See issue #1374 for some rationale
-                        // FIXME: 9. If fetchedResponse’s body is not byte-for-byte identical with storedResponse’s unsafe response’s body, set hasUpdatedResources to true.
-                        // NOTE: The control does not break the loop in this step to continue with all the imported scripts to populate the cache.
-                    }
-                }
-            }
-
             // 22. Asynchronously complete these steps with response.
             process_response_completion_result = WebIDL::ExceptionOr<void> {};
         };
@@ -528,6 +643,12 @@ static void update(JS::VM& vm, GC::Ref<Job> job)
                 Registration::remove(registration.storage_key(), registration.scope_url());
 
             // 3. Invoke Finish Job with job and abort these steps.
+            finish_job(vm, job);
+            return;
+        }
+
+        if (state->resource_capture_failed()) {
+            reject_job_promise<JS::InternalError>(job, "Unable to retain the fetched ServiceWorker script resources"_utf16);
             finish_job(vm, job);
             return;
         }

@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <AK/ByteBuffer.h>
+#include <AK/OrderedHashMap.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Bindings/ServiceWorkerPrototype.h>
 #include <LibWeb/Bindings/WorkerPrototype.h>
@@ -32,6 +34,14 @@ struct ServiceWorkerRecord {
     // https://w3c.github.io/ServiceWorker/#dfn-classic-scripts-imported-flag
     // A service worker has an associated classic scripts imported flag. It is initially unset.
     bool classic_scripts_imported { false };
+
+    // Exact fetched bytes are retained for the ServiceWorker update algorithm's
+    // byte-for-byte comparison. Response streams are consumed while scripts are
+    // parsed, so retaining Response objects alone is not sufficient here.
+    OrderedHashMap<URL::URL, ByteBuffer> script_resource_map;
+    // Set only when the map contains the complete installed script set. Until
+    // then, an update must not treat a missing resource as an unchanged script.
+    bool script_resource_map_complete { false };
 
     // FIXME: A lot more fields after this...
 };
