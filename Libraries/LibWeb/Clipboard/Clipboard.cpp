@@ -124,46 +124,35 @@ static void write_blobs_and_option_to_clipboard(JS::Realm& realm, ReadonlySpan<G
     // FIXME: 3. Write web custom formats given webCustomFormats.
 }
 
-// https://w3c.github.io/clipboard-apis/#h-clipboard-read-permission
-static bool check_clipboard_read_permission(JS::Realm& realm)
+static bool clipboard_document_is_authorized(
+    GC::Weak<Web::DOM::Document> const& document, URL::Origin const& origin)
 {
-    // NOTE: The clipboard permission is undergoing a refactor because the clipboard-read permission was removed from
-    //       the Permissions spec. So this partially implements the proposed update:
-    //       https://pr-preview.s3.amazonaws.com/w3c/clipboard-apis/pull/164.html#read-permission
-
-    // 1. Let hasGesture be true if the relevant global object of this has transient activation, false otherwise.
-    auto has_gesture = as<HTML::Window>(realm.global_object()).has_transient_activation();
-
-    // 2. If hasGesture then,
-    if (has_gesture) {
-        // FIXME: 1. Return true if the current script is running as a result of user interaction with a "Paste" element
-        //           created by the user agent or operating system.
-        return true;
-    }
-
-    // 3. Otherwise, return false.
-    return false;
+    return document && document->is_fully_active() &&
+        document->origin().is_same_origin(origin);
 }
 
-// https://w3c.github.io/clipboard-apis/#check-clipboard-write-permission
-static bool check_clipboard_write_permission(JS::Realm& realm)
+static GC::Ref<WebIDL::Promise> request_clipboard_permission(
+    JS::Realm& realm, HTML::Window& window, Web::DOM::Document& document,
+    bool has_transient_activation, bool write)
 {
-    // NOTE: The clipboard permission is undergoing a refactor because the clipboard-write permission was removed from
-    //       the Permissions spec. So this partially implements the proposed update:
-    //       https://pr-preview.s3.amazonaws.com/w3c/clipboard-apis/pull/164.html#write-permission
-
-    // 1. Let hasGesture be true if the relevant global object of this has transient activation, false otherwise.
-    auto has_gesture = as<HTML::Window>(realm.global_object()).has_transient_activation();
-
-    // 2. If hasGesture then,
-    if (has_gesture) {
-        // FIXME: 1. Return true if the current script is running as a result of user interaction with a "cut" or "copy"
-        //           element created by the user agent or operating system.
-        return true;
+    auto bound_document = GC::Weak { document };
+    auto const origin = document.origin();
+    auto permission = WebIDL::create_promise(realm);
+    if (!has_transient_activation || !document.is_fully_active()) {
+        WebIDL::resolve_promise(realm, *permission, JS::Value(false));
+    } else if (!window.page().client().page_did_request_clipboard_permission(
+                   *permission, document, write)) {
+        // Browser-owned clipboard policy is the only RinOS path that may
+        // admit clipboard bytes. Other embedders keep user activation alone.
+        WebIDL::resolve_promise(realm, *permission, JS::Value(true));
     }
-
-    // 3. Otherwise, return false.
-    return false;
+    return WebIDL::upon_fulfillment(*permission,
+        GC::create_function(realm.heap(), [bound_document, origin](JS::Value allowed) -> WebIDL::ExceptionOr<JS::Value> {
+            if (!allowed.is_boolean() || !allowed.as_bool() ||
+                !clipboard_document_is_authorized(bound_document, origin))
+                return JS::Value(false);
+            return JS::Value(true);
+        }));
 }
 
 // https://w3c.github.io/clipboard-apis/#dom-clipboard-readtext
@@ -174,6 +163,12 @@ GC::Ref<WebIDL::Promise> Clipboard::read(ClipboardUnsanitizedFormats formats)
 
     // 2. Let p be a new promise in realm.
     auto promise = WebIDL::create_promise(realm);
+    auto& window = as<HTML::Window>(realm.global_object());
+    auto bound_document = GC::Weak { window.associated_document() };
+    auto origin = window.associated_document().origin();
+    auto permission = request_clipboard_permission(
+        realm, window, window.associated_document(),
+        window.has_transient_activation(), false);
 
     // 3. If formats is not empty, then:
     if (formats.unsanitized.has_value()) {
@@ -186,123 +181,129 @@ GC::Ref<WebIDL::Promise> Clipboard::read(ClipboardUnsanitizedFormats formats)
     }
 
     // 4. Run the following steps in parallel:
-    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, formats = move(formats)]() mutable {
-        // 1. Let r be the result of running check clipboard read permission.
-        auto result = check_clipboard_read_permission(realm);
-
-        // 2. If r is false, then:
-        if (!result) {
-            // 1. Queue a global task on the permission task source, given realm’s global object, to reject p with
-            //    "NotAllowedError" DOMException in realm.
-            queue_global_task(HTML::Task::Source::Permissions, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise]() mutable {
-                HTML::TemporaryExecutionContext execution_context { realm };
-                WebIDL::reject_promise(realm, promise, WebIDL::NotAllowedError::create(realm, "Clipboard reading is only allowed through user activation"_utf16));
-            }));
-
-            // 2. Abort these steps.
-            return;
-        }
-
-        // 3. Let data be a copy of the system clipboard data.
-        as<HTML::Window>(realm.global_object()).page().request_clipboard_entries(GC::create_function(realm.heap(), [&realm, promise, formats = move(formats)](Vector<SystemClipboardItem> data) mutable {
-            HTML::TemporaryExecutionContext execution_context { realm };
-
-            // 4. Let items be a sequence<clipboard item>.
-            GC::RootVector<JS::Value> items(realm.heap());
-
-            // 5. For each systemClipboardItem in data:
-            for (auto const& system_clipboard_item : data) {
-                // 1. Let item be a new clipboard item.
-                auto item = realm.create<ClipboardItem>(realm);
-
-                // 2. For each systemClipboardRepresentation in systemClipboardItem:
-                for (auto const& system_clipboard_representation : system_clipboard_item.system_clipboard_representations) {
-                    // 1. Let mimeType be the result of running the well-known mime type from os specific format
-                    //    algorithm given systemClipboardRepresentation’s name.
-                    auto mime_type = os_specific_well_known_format(system_clipboard_representation.mime_type);
-
-                    // 2. If mimeType is null, continue this loop.
-                    if (mime_type.is_empty())
-                        continue;
-
-                    auto decoder = TextCodec::decoder_for("UTF-8"sv);
-                    auto string = MUST(TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, system_clipboard_representation.data));
-
-                    // 3. Let representation be a new representation.
-                    ClipboardItem::Representation representation {
-                        // 4. Set representation’s MIME type to mimeType.
-                        .mime_type = move(mime_type),
-
-                        // 7. Resolve representation’s data with systemClipboardRepresentation’s data.
-                        .data = WebIDL::create_resolved_promise(realm, JS::PrimitiveString::create(realm.vm(), move(string))),
-                    };
-
-                    // 5. Let isUnsanitized be false.
-                    auto is_unsanitized = false;
-
-                    // 6. If formats is not empty, then:
-                    if (formats.unsanitized.has_value()) {
-                        // 1. For each format in formats["unsanitized"]:
-                        for (auto const& format : *formats.unsanitized) {
-                            // 1. If format is equal to MIME type, set isUnsanitized to true.
-                            if (format == representation.mime_type) {
-                                is_unsanitized = true;
-                                break;
-                            }
-                        }
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, permission, bound_document, origin, formats = move(formats)]() mutable {
+        (void)WebIDL::upon_fulfillment(*permission,
+            GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, formats = move(formats)](JS::Value allowed) mutable -> WebIDL::ExceptionOr<JS::Value> {
+                if (!allowed.is_boolean() || !allowed.as_bool()) {
+                    WebIDL::reject_promise(realm, promise,
+                        WebIDL::NotAllowedError::create(
+                            realm, "Clipboard reading permission was denied"_utf16));
+                    return JS::js_undefined();
+                }
+                if (!clipboard_document_is_authorized(bound_document, origin)) {
+                    WebIDL::reject_promise(realm, promise,
+                        WebIDL::NotAllowedError::create(
+                            realm, "Clipboard reading document is no longer active"_utf16));
+                    return JS::js_undefined();
+                }
+                // 3. Let data be a copy of the system clipboard data.
+                as<HTML::Window>(realm.global_object()).page().request_clipboard_entries(GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, formats = move(formats)](Vector<SystemClipboardItem> data) mutable {
+                    HTML::TemporaryExecutionContext execution_context { realm };
+                    if (!clipboard_document_is_authorized(bound_document, origin)) {
+                        WebIDL::reject_promise(realm, promise,
+                            WebIDL::NotAllowedError::create(
+                                realm, "Clipboard reading document is no longer active"_utf16));
+                        return;
                     }
 
-                    // 8. The user agent, MAY sanitize representation’s data, unless representation’s MIME type's essence
-                    //    is "image/png", which should remain unsanitized to preserve meta data, or if it satisfies the
-                    //    below conditions:
-                    //     1. representation’s MIME type is in optional unsanitized data types list.
-                    //     2. isUnsanitized is true.
-                    // FIXME: Sanitization is an underspecified spec feature. See:
-                    //        https://github.com/w3c/clipboard-apis/issues/73
-                    (void)is_unsanitized;
+                    // 4. Let items be a sequence<clipboard item>.
+                    GC::RootVector<JS::Value> items(realm.heap());
 
-                    // 9. Append representation to item’s list of representations.
-                    item->append_representation(move(representation));
+                    // 5. For each systemClipboardItem in data:
+                    for (auto const& system_clipboard_item : data) {
+                        // 1. Let item be a new clipboard item.
+                        auto item = realm.create<ClipboardItem>(realm);
 
-                    // 10. Set isUnsanitized to false.
-                    is_unsanitized = false;
-                }
+                        // 2. For each systemClipboardRepresentation in systemClipboardItem:
+                        for (auto const& system_clipboard_representation : system_clipboard_item.system_clipboard_representations) {
+                            // 1. Let mimeType be the result of running the well-known mime type from os specific format
+                            //    algorithm given systemClipboardRepresentation’s name.
+                            auto mime_type = os_specific_well_known_format(system_clipboard_representation.mime_type);
 
-                // 3. If item’s list of representations size is greater than 0, append item to items.
-                if (!item->representations().is_empty())
-                    items.append(item);
-            }
+                            // 2. If mimeType is null, continue this loop.
+                            if (mime_type.is_empty())
+                                continue;
 
-            // 6. If items has a size > 0, then:
-            if (!items.is_empty()) {
-                // FIXME: 1. Let firstItem be items[0]
-                // FIXME: 2. Run the read web custom format algorithm given firstItem.
-            }
-            // 7. Else:
-            else {
-                // FIXME: 1. Let customItem be a new clipboard item.
-                // FIXME: 2. Run the read web custom format algorithm given customItem.
-                // FIXME: 3. If customItem’s list of representations size is greater than 0, append customItem to items.
-            }
+                            auto decoder = TextCodec::decoder_for("UTF-8"sv);
+                            auto string = MUST(TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, system_clipboard_representation.data));
 
-            // 8. Queue a global task on the clipboard task source, given realm’s global object, to perform the below steps:
-            queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, items = move(items)]() mutable {
-                HTML::TemporaryExecutionContext execution_context { realm };
+                            // 3. Let representation be a new representation.
+                            ClipboardItem::Representation representation {
+                                // 4. Set representation’s MIME type to mimeType.
+                                .mime_type = move(mime_type),
 
-                // 1. Let clipboardItems be a sequence<ClipboardItem>.
-                // 2. For each clipboard item underlyingItem of items:
-                //     1. Let clipboardItem be the result of running the steps of create a ClipboardItem object given
-                //        underlyingItem and realm.
-                //     2. Append clipboardItem to clipboardItems.
+                                // 7. Resolve representation’s data with systemClipboardRepresentation’s data.
+                                .data = WebIDL::create_resolved_promise(realm, JS::PrimitiveString::create(realm.vm(), move(string))),
+                            };
 
-                // NOTE: We do not perform this song-and-dance of having ClipboardItem and "clipboard item" being
-                //       separate concepts. But we do still need to convert the RootVector to a JS array.
-                auto clipboard_items = JS::Array::create_from(realm, items);
+                            // 5. Let isUnsanitized be false.
+                            auto is_unsanitized = false;
 
-                // 2. Resolve p with clipboardItems.
-                WebIDL::resolve_promise(realm, promise, clipboard_items);
+                            // 6. If formats is not empty, then:
+                            if (formats.unsanitized.has_value()) {
+                                // 1. For each format in formats["unsanitized"]:
+                                for (auto const& format : *formats.unsanitized) {
+                                    // 1. If format is equal to MIME type, set isUnsanitized to true.
+                                    if (format == representation.mime_type) {
+                                        is_unsanitized = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // 8. The user agent, MAY sanitize representation’s data, unless representation’s MIME type's essence
+                            //    is "image/png", which should remain unsanitized to preserve meta data, or if it satisfies the
+                            //    below conditions:
+                            //     1. representation’s MIME type is in optional unsanitized data types list.
+                            //     2. isUnsanitized is true.
+                            // FIXME: Sanitization is an underspecified spec feature. See:
+                            //        https://github.com/w3c/clipboard-apis/issues/73
+                            (void)is_unsanitized;
+
+                            // 9. Append representation to item’s list of representations.
+                            item->append_representation(move(representation));
+
+                            // 10. Set isUnsanitized to false.
+                            is_unsanitized = false;
+                        }
+
+                        // 3. If item’s list of representations size is greater than 0, append item to items.
+                        if (!item->representations().is_empty())
+                            items.append(item);
+                    }
+
+                    // 6. If items has a size > 0, then:
+                    if (!items.is_empty()) {
+                        // FIXME: 1. Let firstItem be items[0]
+                        // FIXME: 2. Run the read web custom format algorithm given firstItem.
+                    }
+                    // 7. Else:
+                    else {
+                        // FIXME: 1. Let customItem be a new clipboard item.
+                        // FIXME: 2. Run the read web custom format algorithm given customItem.
+                        // FIXME: 3. If customItem’s list of representations size is greater than 0, append customItem to items.
+                    }
+
+                    // 8. Queue a global task on the clipboard task source, given realm’s global object, to perform the below steps:
+                    queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, items = move(items)]() mutable {
+                        HTML::TemporaryExecutionContext execution_context { realm };
+
+                        // 1. Let clipboardItems be a sequence<ClipboardItem>.
+                        // 2. For each clipboard item underlyingItem of items:
+                        //     1. Let clipboardItem be the result of running the steps of create a ClipboardItem object given
+                        //        underlyingItem and realm.
+                        //     2. Append clipboardItem to clipboardItems.
+
+                        // NOTE: We do not perform this song-and-dance of having ClipboardItem and "clipboard item" being
+                        //       separate concepts. But we do still need to convert the RootVector to a JS array.
+                        auto clipboard_items = JS::Array::create_from(realm, items);
+
+                        // 2. Resolve p with clipboardItems.
+                        WebIDL::resolve_promise(realm, promise, clipboard_items);
+                    }));
+                }));
+                return JS::js_undefined();
             }));
-        }));
     }));
 
     // 5. Return p.
@@ -317,80 +318,92 @@ GC::Ref<WebIDL::Promise> Clipboard::read_text()
 
     // 2. Let p be a new promise in realm.
     auto promise = WebIDL::create_promise(realm);
+    auto& window = as<HTML::Window>(realm.global_object());
+    auto bound_document = GC::Weak { window.associated_document() };
+    auto origin = window.associated_document().origin();
+    auto permission = request_clipboard_permission(
+        realm, window, window.associated_document(),
+        window.has_transient_activation(), false);
 
     // 3. Run the following steps in parallel:
-    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise]() mutable {
-        // 1. Let r be the result of running check clipboard read permission.
-        auto result = check_clipboard_read_permission(realm);
-
-        // 2. If r is false, then:
-        if (!result) {
-            // 1. Queue a global task on the permission task source, given realm’s global object, to reject p with
-            //    "NotAllowedError" DOMException in realm.
-            queue_global_task(HTML::Task::Source::Permissions, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise]() mutable {
-                HTML::TemporaryExecutionContext execution_context { realm };
-                WebIDL::reject_promise(realm, promise, WebIDL::NotAllowedError::create(realm, "Clipboard reading is only allowed through user activation"_utf16));
-            }));
-
-            // 2. Abort these steps.
-            return;
-        }
-
-        // 3. Let data be a copy of the system clipboard data.
-        as<HTML::Window>(realm.global_object()).page().request_clipboard_entries(GC::create_function(realm.heap(), [&realm, promise](Vector<SystemClipboardItem> data) mutable {
-            // 4. Queue a global task on the clipboard task source, given realm’s global object, to perform the below steps:
-            queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, data = move(data)]() mutable {
-                HTML::TemporaryExecutionContext execution_context { realm };
-
-                // 1. For each systemClipboardItem in data:
-                for (auto const& system_clipboard_item : data) {
-                    // 1. For each systemClipboardRepresentation in systemClipboardItem:
-                    for (auto const& system_clipboard_representation : system_clipboard_item.system_clipboard_representations) {
-                        // 1. Let mimeType be the result of running the well-known mime type from os specific format
-                        //    algorithm given systemClipboardRepresentation’s name.
-                        auto mime_type = os_specific_well_known_format(system_clipboard_representation.mime_type);
-
-                        // 2. If mimeType is null, continue this loop.
-                        if (mime_type.is_empty())
-                            continue;
-
-                        // 3. Let representation be a new representation.
-                        // FIXME: Spec issue: Creating a new representation here and reacting to its promise does not
-                        //        make sense. Nothing will ever fulfill or reject its promise. So we resolve the outer
-                        //        promise with the system clipboard data converted to UTF-8 instead. See:
-                        //        https://github.com/w3c/clipboard-apis/issues/236
-
-                        // 4. If representation’s MIME type essence is "text/plain", then:
-                        if (mime_type == "text/plain"sv) {
-                            // 1. Set representation’s MIME type to mimeType.
-                            // 2. Let representationDataPromise be the representation’s data.
-
-                            // 3. React to representationDataPromise:
-                            //     1. If representationDataPromise was fulfilled with value v, then:
-                            //         1. If v is a DOMString, then follow the below steps:
-                            //             1. Resolve p with v.
-                            //             2. Return p.
-                            //         2. If v is a Blob, then follow the below steps:
-                            //             1. Let string be the result of UTF-8 decoding v’s underlying byte sequence.
-                            //             2. Resolve p with string.
-                            //             3. Return p.
-                            //     2. If representationDataPromise was rejected, then:
-                            //         1. Reject p with "NotFoundError" DOMException in realm.
-                            //         2. Return p.
-
-                            auto decoder = TextCodec::decoder_for("UTF-8"sv);
-                            auto string = MUST(TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, system_clipboard_representation.data));
-
-                            WebIDL::resolve_promise(realm, promise, JS::PrimitiveString::create(realm.vm(), move(string)));
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, permission, bound_document, origin]() mutable {
+        (void)WebIDL::upon_fulfillment(*permission,
+            GC::create_function(realm.heap(), [&realm, promise, bound_document, origin](JS::Value allowed) -> WebIDL::ExceptionOr<JS::Value> {
+                if (!allowed.is_boolean() || !allowed.as_bool()) {
+                    WebIDL::reject_promise(realm, promise,
+                        WebIDL::NotAllowedError::create(
+                            realm, "Clipboard reading permission was denied"_utf16));
+                    return JS::js_undefined();
+                }
+                if (!clipboard_document_is_authorized(bound_document, origin)) {
+                    WebIDL::reject_promise(realm, promise,
+                        WebIDL::NotAllowedError::create(
+                            realm, "Clipboard reading document is no longer active"_utf16));
+                    return JS::js_undefined();
+                }
+                // 3. Let data be a copy of the system clipboard data.
+                as<HTML::Window>(realm.global_object()).page().request_clipboard_entries(GC::create_function(realm.heap(), [&realm, promise, bound_document, origin](Vector<SystemClipboardItem> data) mutable {
+                    // 4. Queue a global task on the clipboard task source, given realm’s global object, to perform the below steps:
+                    queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, data = move(data)]() mutable {
+                        HTML::TemporaryExecutionContext execution_context { realm };
+                        if (!clipboard_document_is_authorized(bound_document, origin)) {
+                            WebIDL::reject_promise(realm, promise,
+                                WebIDL::NotAllowedError::create(
+                                    realm, "Clipboard reading document is no longer active"_utf16));
                             return;
                         }
-                    }
-                }
 
-                // 2. Reject p with "NotFoundError" DOMException in realm.
-                WebIDL::reject_promise(realm, promise, WebIDL::NotFoundError::create(realm, "Did not find a text item in the system clipboard"_utf16));
+                        // 1. For each systemClipboardItem in data:
+                        for (auto const& system_clipboard_item : data) {
+                            // 1. For each systemClipboardRepresentation in systemClipboardItem:
+                            for (auto const& system_clipboard_representation : system_clipboard_item.system_clipboard_representations) {
+                                // 1. Let mimeType be the result of running the well-known mime type from os specific format
+                                //    algorithm given systemClipboardRepresentation’s name.
+                                auto mime_type = os_specific_well_known_format(system_clipboard_representation.mime_type);
+
+                                // 2. If mimeType is null, continue this loop.
+                                if (mime_type.is_empty())
+                                    continue;
+
+                                // 3. Let representation be a new representation.
+                                // FIXME: Spec issue: Creating a new representation here and reacting to its promise does not
+                                //        make sense. Nothing will ever fulfill or reject its promise. So we resolve the outer
+                                //        promise with the system clipboard data converted to UTF-8 instead. See:
+                                //        https://github.com/w3c/clipboard-apis/issues/236
+
+                                // 4. If representation’s MIME type essence is "text/plain", then:
+                                if (mime_type == "text/plain"sv) {
+                                    // 1. Set representation’s MIME type to mimeType.
+                                    // 2. Let representationDataPromise be the representation’s data.
+
+                                    // 3. React to representationDataPromise:
+                                    //     1. If representationDataPromise was fulfilled with value v, then:
+                                    //         1. If v is a DOMString, then follow the below steps:
+                                    //             1. Resolve p with v.
+                                    //             2. Return p.
+                                    //         2. If v is a Blob, then follow the below steps:
+                                    //             1. Let string be the result of UTF-8 decoding v’s underlying byte sequence.
+                                    //             2. Resolve p with string.
+                                    //             3. Return p.
+                                    //     2. If representationDataPromise was rejected, then:
+                                    //         1. Reject p with "NotFoundError" DOMException in realm.
+                                    //         2. Return p.
+
+                                    auto decoder = TextCodec::decoder_for("UTF-8"sv);
+                                    auto string = MUST(TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, system_clipboard_representation.data));
+
+                                    WebIDL::resolve_promise(realm, promise, JS::PrimitiveString::create(realm.vm(), move(string)));
+                                    return;
+                                }
+                            }
+                        }
+
+                        // 2. Reject p with "NotFoundError" DOMException in realm.
+                        WebIDL::reject_promise(realm, promise, WebIDL::NotFoundError::create(realm, "Did not find a text item in the system clipboard"_utf16));
+                    }));
+                }));
+                return JS::js_undefined();
             }));
-        }));
     }));
 
     // 5. Return p.
@@ -405,132 +418,150 @@ GC::Ref<WebIDL::Promise> Clipboard::write(GC::RootVector<GC::Root<ClipboardItem>
 
     // 2. Let p be a new promise in realm.
     auto promise = WebIDL::create_promise(realm);
+    auto& window = as<HTML::Window>(realm.global_object());
+    auto bound_document = GC::Weak { window.associated_document() };
+    auto origin = window.associated_document().origin();
+    auto permission = request_clipboard_permission(
+        realm, window, window.associated_document(),
+        window.has_transient_activation(), true);
 
     // 3. Run the following steps in parallel:
-    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, data = move(data)]() mutable {
-        // 1. Let r be the result of running check clipboard write permission.
-        auto result = check_clipboard_write_permission(realm);
-
-        // 2. If r is false, then:
-        if (!result) {
-            // 1. Queue a global task on the permission task source, given realm’s global object, to reject p with
-            //    "NotAllowedError" DOMException in realm.
-            queue_global_task(HTML::Task::Source::Permissions, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise]() mutable {
-                HTML::TemporaryExecutionContext execution_context { realm };
-                WebIDL::reject_promise(realm, promise, WebIDL::NotAllowedError::create(realm, "Clipboard writing is only allowed through user activation"_utf16));
-            }));
-
-            // 2. Abort these steps.
-            return;
-        }
-
-        // 3. Queue a global task on the clipboard task source, given realm’s global object, to perform the below steps:
-        queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, data = move(data)]() mutable {
-            HTML::TemporaryExecutionContext execution_context { realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
-
-            // 1. Let itemList and cleanItemList be an empty sequence<Blob>.
-            // FIXME: Spec issue: The spec does not clear itemList and cleanItemList in the outer `for` loop below. This
-            //        will cause us to re-write the same items after the first iteration. So we defer creating these
-            //        lists to prevent this. See:
-            //        https://github.com/w3c/clipboard-apis/issues/237
-
-            // 2. Let dataList be a sequence<ClipboardItem>.
-            // 3. If data’s size is greater than 1, and the current operating system does not support multiple native
-            //    clipboard items on the system clipboard, then add data[0] to dataList, else, set dataList to data.
-            auto data_list = move(data);
-
-            // 4. For each clipboardItem in dataList:
-            for (auto const& clipboard_item : data_list) {
-                IGNORE_USE_IN_ESCAPING_LAMBDA GC::RootVector<GC::Ref<FileAPI::Blob>> item_list(realm.heap());
-                GC::RootVector<GC::Ref<FileAPI::Blob>> clean_item_list(realm.heap());
-
-                // 1. For each representation in clipboardItem’s clipboard item's list of representations:
-                for (auto const& representation : clipboard_item->representations()) {
-                    // 1. Let representationDataPromise be the representation’s data.
-                    auto representation_data_promise = representation.data;
-
-                    // 2. React to representationDataPromise:
-                    auto reaction = WebIDL::react_to_promise(representation_data_promise,
-                        // 1. If representationDataPromise was fulfilled with value v, then:
-                        GC::create_function(realm.heap(), [&realm, &item_list, mime_type = representation.mime_type](JS::Value value) mutable -> WebIDL::ExceptionOr<JS::Value> {
-                            // 1. If v is a DOMString, then follow the below steps:
-                            if (value.is_string()) {
-                                // 1. Let dataAsBytes be the result of UTF-8 encoding v.
-                                auto const& data_as_bytes = value.as_string().utf8_string();
-
-                                // 2. Let blobData be a Blob created using dataAsBytes with its type set to representation’s MIME type.
-                                auto blob_data = FileAPI::Blob::create(realm, MUST(ByteBuffer::copy(data_as_bytes.bytes())), move(mime_type));
-
-                                // 3. Add blobData to itemList.
-                                item_list.append(blob_data);
-                            }
-                            // 2. If v is a Blob, then add v to itemList.
-                            else if (auto blob = value.as_if<FileAPI::Blob>()) {
-                                item_list.append(*blob);
-                            }
-
-                            return JS::js_undefined();
-                        }),
-
-                        // 2. If representationDataPromise was rejected, then:
-                        GC::create_function(realm.heap(), [&realm, promise](JS::Value reason) -> WebIDL::ExceptionOr<JS::Value> {
-                            HTML::TemporaryExecutionContext execution_context { realm };
-
-                            // 1. Reject p with "NotAllowedError" DOMException in realm.
-                            WebIDL::reject_promise(realm, promise, WebIDL::NotAllowedError::create(realm, Utf16String::formatted("Writing to the clipboard failed: {}", reason)));
-
-                            // 2. Abort these steps.
-                            // NOTE: This is handled below.
-
-                            return JS::js_undefined();
-                        }));
-
-                    // FIXME: Spec issue: The spec assumes the reaction steps above occur synchronously. This is never
-                    //        the case; even if the promise is already settled, the reaction jobs are queued as microtasks.
-                    //        https://github.com/w3c/clipboard-apis/issues/237
-                    auto& reaction_promise = as<JS::Promise>(*reaction->promise());
-
-                    HTML::main_thread_event_loop().spin_until(GC::create_function(realm.heap(), [&reaction_promise]() {
-                        return reaction_promise.state() != JS::Promise::State::Pending;
-                    }));
-
-                    if (reaction_promise.state() == JS::Promise::State::Rejected)
-                        return;
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, permission, bound_document, origin, data = move(data)]() mutable {
+        (void)WebIDL::upon_fulfillment(*permission,
+            GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, data = move(data)](JS::Value allowed) mutable -> WebIDL::ExceptionOr<JS::Value> {
+                if (!allowed.is_boolean() || !allowed.as_bool()) {
+                    WebIDL::reject_promise(realm, promise,
+                        WebIDL::NotAllowedError::create(
+                            realm, "Clipboard writing permission was denied"_utf16));
+                    return JS::js_undefined();
                 }
-
-                // 2. For each blob in itemList:
-                for (auto blob : item_list) {
-                    // 1. Let type be the blob’s type.
-                    auto const& type = blob->type();
-
-                    // 2. If type is not in the mandatory data types or optional data types list, then reject p with
-                    //    "NotAllowedError" DOMException in realm and abort these steps.
-                    if (!ClipboardItem::supports(realm.vm(), type)) {
-                        WebIDL::reject_promise(realm, promise, WebIDL::NotAllowedError::create(realm, Utf16String::formatted("Clipboard item type {} is not allowed", type)));
+                if (!clipboard_document_is_authorized(bound_document, origin)) {
+                    WebIDL::reject_promise(realm, promise,
+                        WebIDL::NotAllowedError::create(
+                            realm, "Clipboard writing document is no longer active"_utf16));
+                    return JS::js_undefined();
+                }
+                // 3. Queue a global task on the clipboard task source, given realm’s global object, to perform the below steps:
+                queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, data = move(data)]() mutable {
+                    HTML::TemporaryExecutionContext execution_context { realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes };
+                    if (!clipboard_document_is_authorized(bound_document, origin)) {
+                        WebIDL::reject_promise(realm, promise,
+                            WebIDL::NotAllowedError::create(
+                                realm, "Clipboard writing document is no longer active"_utf16));
                         return;
                     }
 
-                    // 3. Let cleanItem be an optionally sanitized copy of blob.
-                    auto clean_item = blob;
+                    // 1. Let itemList and cleanItemList be an empty sequence<Blob>.
+                    // FIXME: Spec issue: The spec does not clear itemList and cleanItemList in the outer `for` loop below. This
+                    //        will cause us to re-write the same items after the first iteration. So we defer creating these
+                    //        lists to prevent this. See:
+                    //        https://github.com/w3c/clipboard-apis/issues/237
 
-                    // FIXME: 4. If sanitization was attempted and was not successfully completed, then follow the below steps:
-                    //     1. Reject p with "NotAllowedError" DOMException in realm.
-                    //     2. Abort these steps.
+                    // 2. Let dataList be a sequence<ClipboardItem>.
+                    // 3. If data’s size is greater than 1, and the current operating system does not support multiple native
+                    //    clipboard items on the system clipboard, then add data[0] to dataList, else, set dataList to data.
+                    auto data_list = move(data);
 
-                    // 5. Append cleanItem to cleanItemList.
-                    clean_item_list.append(clean_item);
-                }
+                    // 4. For each clipboardItem in dataList:
+                    for (auto const& clipboard_item : data_list) {
+                        IGNORE_USE_IN_ESCAPING_LAMBDA GC::RootVector<GC::Ref<FileAPI::Blob>> item_list(realm.heap());
+                        GC::RootVector<GC::Ref<FileAPI::Blob>> clean_item_list(realm.heap());
 
-                // 3. Let option be clipboardItem’s clipboard item's presentation style.
-                auto option = Bindings::idl_enum_to_string(clipboard_item->presentation_style());
+                        // 1. For each representation in clipboardItem’s clipboard item's list of representations:
+                        for (auto const& representation : clipboard_item->representations()) {
+                            // 1. Let representationDataPromise be the representation’s data.
+                            auto representation_data_promise = representation.data;
 
-                // 4. Write blobs and option to the clipboard with cleanItemList and option.
-                write_blobs_and_option_to_clipboard(realm, clean_item_list, option);
-            }
+                            // 2. React to representationDataPromise:
+                            auto reaction = WebIDL::react_to_promise(representation_data_promise,
+                                // 1. If representationDataPromise was fulfilled with value v, then:
+                                GC::create_function(realm.heap(), [&realm, &item_list, mime_type = representation.mime_type](JS::Value value) mutable -> WebIDL::ExceptionOr<JS::Value> {
+                                    // 1. If v is a DOMString, then follow the below steps:
+                                    if (value.is_string()) {
+                                        // 1. Let dataAsBytes be the result of UTF-8 encoding v.
+                                        auto const& data_as_bytes = value.as_string().utf8_string();
 
-            // 5. Resolve p.
-            WebIDL::resolve_promise(realm, promise);
-        }));
+                                        // 2. Let blobData be a Blob created using dataAsBytes with its type set to representation’s MIME type.
+                                        auto blob_data = FileAPI::Blob::create(realm, MUST(ByteBuffer::copy(data_as_bytes.bytes())), move(mime_type));
+
+                                        // 3. Add blobData to itemList.
+                                        item_list.append(blob_data);
+                                    }
+                                    // 2. If v is a Blob, then add v to itemList.
+                                    else if (auto blob = value.as_if<FileAPI::Blob>()) {
+                                        item_list.append(*blob);
+                                    }
+
+                                    return JS::js_undefined();
+                                }),
+
+                                // 2. If representationDataPromise was rejected, then:
+                                GC::create_function(realm.heap(), [&realm, promise](JS::Value reason) -> WebIDL::ExceptionOr<JS::Value> {
+                                    HTML::TemporaryExecutionContext execution_context { realm };
+
+                                    // 1. Reject p with "NotAllowedError" DOMException in realm.
+                                    WebIDL::reject_promise(realm, promise, WebIDL::NotAllowedError::create(realm, Utf16String::formatted("Writing to the clipboard failed: {}", reason)));
+
+                                    // 2. Abort these steps.
+                                    // NOTE: This is handled below.
+
+                                    return JS::js_undefined();
+                                }));
+
+                            // FIXME: Spec issue: The spec assumes the reaction steps above occur synchronously. This is never
+                            //        the case; even if the promise is already settled, the reaction jobs are queued as microtasks.
+                            //        https://github.com/w3c/clipboard-apis/issues/237
+                            auto& reaction_promise = as<JS::Promise>(*reaction->promise());
+
+                            HTML::main_thread_event_loop().spin_until(GC::create_function(realm.heap(), [&reaction_promise]() {
+                                return reaction_promise.state() != JS::Promise::State::Pending;
+                            }));
+
+                            if (reaction_promise.state() == JS::Promise::State::Rejected)
+                                return;
+                        }
+
+                        // 2. For each blob in itemList:
+                        for (auto blob : item_list) {
+                            // 1. Let type be the blob’s type.
+                            auto const& type = blob->type();
+
+                            // 2. If type is not in the mandatory data types or optional data types list, then reject p with
+                            //    "NotAllowedError" DOMException in realm and abort these steps.
+                            if (!ClipboardItem::supports(realm.vm(), type)) {
+                                WebIDL::reject_promise(realm, promise, WebIDL::NotAllowedError::create(realm, Utf16String::formatted("Clipboard item type {} is not allowed", type)));
+                                return;
+                            }
+
+                            // 3. Let cleanItem be an optionally sanitized copy of blob.
+                            auto clean_item = blob;
+
+                            // FIXME: 4. If sanitization was attempted and was not successfully completed, then follow the below steps:
+                            //     1. Reject p with "NotAllowedError" DOMException in realm.
+                            //     2. Abort these steps.
+
+                            // 5. Append cleanItem to cleanItemList.
+                            clean_item_list.append(clean_item);
+                        }
+
+                        // 3. Let option be clipboardItem’s clipboard item's presentation style.
+                        auto option = Bindings::idl_enum_to_string(clipboard_item->presentation_style());
+
+                        // 4. Write blobs and option to the clipboard with cleanItemList and option.
+                        if (!clipboard_document_is_authorized(bound_document, origin)) {
+                            WebIDL::reject_promise(realm, promise,
+                                WebIDL::NotAllowedError::create(
+                                    realm, "Clipboard writing document is no longer active"_utf16));
+                            return;
+                        }
+                        write_blobs_and_option_to_clipboard(realm, clean_item_list, option);
+                    }
+
+                    // 5. Resolve p.
+                    WebIDL::resolve_promise(realm, promise);
+                }));
+                return JS::js_undefined();
+            }));
     }));
 
     // 4. Return p.
@@ -545,48 +576,68 @@ GC::Ref<WebIDL::Promise> Clipboard::write_text(String data)
 
     // 2. Let p be a new promise in realm.
     auto promise = WebIDL::create_promise(realm);
+    auto& window = as<HTML::Window>(realm.global_object());
+    auto bound_document = GC::Weak { window.associated_document() };
+    auto origin = window.associated_document().origin();
+    auto permission = request_clipboard_permission(
+        realm, window, window.associated_document(),
+        window.has_transient_activation(), true);
 
     // 3. Run the following steps in parallel:
-    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, data = move(data)]() mutable {
-        // 1. Let r be the result of running check clipboard write permission.
-        auto result = check_clipboard_write_permission(realm);
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, permission, bound_document, origin, data = move(data)]() mutable {
+        (void)WebIDL::upon_fulfillment(*permission,
+            GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, data = move(data)](JS::Value allowed) mutable -> WebIDL::ExceptionOr<JS::Value> {
+                if (!allowed.is_boolean() || !allowed.as_bool()) {
+                    WebIDL::reject_promise(realm, promise,
+                        WebIDL::NotAllowedError::create(
+                            realm, "Clipboard writing permission was denied"_utf16));
+                    return JS::js_undefined();
+                }
+                if (!clipboard_document_is_authorized(bound_document, origin)) {
+                    WebIDL::reject_promise(realm, promise,
+                        WebIDL::NotAllowedError::create(
+                            realm, "Clipboard writing document is no longer active"_utf16));
+                    return JS::js_undefined();
+                }
+                // 3. Queue a global task on the clipboard task source, given realm’s global object, to perform the below steps:
+                queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, data = move(data)]() mutable {
+                    if (!clipboard_document_is_authorized(bound_document, origin)) {
+                        HTML::TemporaryExecutionContext execution_context { realm };
+                        WebIDL::reject_promise(realm, promise,
+                            WebIDL::NotAllowedError::create(
+                                realm, "Clipboard writing document is no longer active"_utf16));
+                        return;
+                    }
+                    // 1. Let itemList be an empty sequence<Blob>.
+                    GC::RootVector<GC::Ref<FileAPI::Blob>> item_list(realm.heap());
 
-        // 2. If r is false, then:
-        if (!result) {
-            // 1. Queue a global task on the permission task source, given realm’s global object, to reject p with
-            //    "NotAllowedError" DOMException in realm.
-            queue_global_task(HTML::Task::Source::Permissions, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise]() mutable {
-                HTML::TemporaryExecutionContext execution_context { realm };
-                WebIDL::reject_promise(realm, promise, WebIDL::NotAllowedError::create(realm, "Clipboard writing is only allowed through user activation"_utf16));
+                    // 2. Let textBlob be a new Blob created with: type attribute set to "text/plain;charset=utf-8", and its
+                    //    underlying byte sequence set to the UTF-8 encoding of data.
+                    //    Note: On Windows replace `\n` characters with `\r\n` in data before creating textBlob.
+                    auto text_blob = FileAPI::Blob::create(realm, MUST(ByteBuffer::copy(data.bytes())), "text/plain;charset=utf-8"_string);
+
+                    // 3. Add textBlob to itemList.
+                    item_list.append(text_blob);
+
+                    // 4. Let option be set to "unspecified".
+                    static constexpr auto option = "unspecified"sv;
+
+                    // 5. Write blobs and option to the clipboard with itemList and option.
+                    if (!clipboard_document_is_authorized(bound_document, origin)) {
+                        HTML::TemporaryExecutionContext execution_context { realm };
+                        WebIDL::reject_promise(realm, promise,
+                            WebIDL::NotAllowedError::create(
+                                realm, "Clipboard writing document is no longer active"_utf16));
+                        return;
+                    }
+                    write_blobs_and_option_to_clipboard(realm, item_list, option);
+
+                    // 6. Resolve p.
+                    HTML::TemporaryExecutionContext execution_context { realm };
+                    WebIDL::resolve_promise(realm, promise, JS::js_undefined());
+                }));
+                return JS::js_undefined();
             }));
-
-            // 2. Abort these steps.
-            return;
-        }
-
-        // 3. Queue a global task on the clipboard task source, given realm’s global object, to perform the below steps:
-        queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, data = move(data)]() mutable {
-            // 1. Let itemList be an empty sequence<Blob>.
-            GC::RootVector<GC::Ref<FileAPI::Blob>> item_list(realm.heap());
-
-            // 2. Let textBlob be a new Blob created with: type attribute set to "text/plain;charset=utf-8", and its
-            //    underlying byte sequence set to the UTF-8 encoding of data.
-            //    Note: On Windows replace `\n` characters with `\r\n` in data before creating textBlob.
-            auto text_blob = FileAPI::Blob::create(realm, MUST(ByteBuffer::copy(data.bytes())), "text/plain;charset=utf-8"_string);
-
-            // 3. Add textBlob to itemList.
-            item_list.append(text_blob);
-
-            // 4. Let option be set to "unspecified".
-            static constexpr auto option = "unspecified"sv;
-
-            // 5. Write blobs and option to the clipboard with itemList and option.
-            write_blobs_and_option_to_clipboard(realm, item_list, option);
-
-            // 6. Resolve p.
-            HTML::TemporaryExecutionContext execution_context { realm };
-            WebIDL::resolve_promise(realm, promise, JS::js_undefined());
-        }));
     }));
 
     // 4. Return p.

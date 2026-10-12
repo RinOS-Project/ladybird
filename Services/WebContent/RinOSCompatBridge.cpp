@@ -1220,17 +1220,17 @@ struct PageSession {
 
         view->on_cache_storage_owner_mutation =
             [this](u16 operation, ByteString origin,
-                   ByteString top_level_site, ByteString key,
-                   ByteString value, u64 owner_generation,
-                   u64 frame_identity) {
+                ByteString top_level_site, ByteString key,
+                ByteString value, u64 owner_generation,
+                u64 frame_identity) {
                 return cache_storage_owner_mutation(
                     operation, origin, top_level_site, key, value,
                     owner_generation, frame_identity);
             };
         view->on_cache_storage_owner_snapshot =
             [this](ByteString origin, ByteString top_level_site,
-                   u64 owner_generation, u64 frame_identity,
-                   ByteString& snapshot) {
+                u64 owner_generation, u64 frame_identity,
+                ByteString& snapshot) {
                 return cache_storage_owner_snapshot(
                     origin, top_level_site, owner_generation,
                     frame_identity, snapshot);
@@ -1244,6 +1244,10 @@ struct PageSession {
         };
         view->on_request_microphone_permission = [this](ByteString origin) {
             return request_microphone_permission(move(origin));
+        };
+        view->on_request_clipboard_permission = [this](ByteString origin,
+                                                    bool write) {
+            return request_clipboard_permission(move(origin), write);
         };
         view->on_request_camera_permission = [this](ByteString origin) {
             return request_camera_permission(move(origin));
@@ -2452,6 +2456,14 @@ struct PageSession {
         }
         if (rin_webcontent_permission_producer_complete_type(
                 &permission_producer, page_id, permission_renderer_generation,
+                &completion, "clipboard")) {
+            view->complete_clipboard_permission(
+                completion.navigation_generation, completion.request_id,
+                completion.result == RIN_WEBCONTENT_PERMISSION_RESULT_ALLOW);
+            return 0;
+        }
+        if (rin_webcontent_permission_producer_complete_type(
+                &permission_producer, page_id, permission_renderer_generation,
                 &completion, "camera")) {
             view->complete_camera_permission(
                 completion.navigation_generation, completion.request_id,
@@ -2554,14 +2566,20 @@ struct PageSession {
     {
         WebView::ViewImplementation::PermissionRequest result {};
         u64 request_id = 0u;
-        if (permission_producer.bound != 1u ||
-            permission_navigation_generation == 0u ||
-            !rin_webcontent_permission_producer_request_from_document(
-                &permission_producer, page_id,
-                permission_navigation_generation,
-                permission_renderer_generation, origin.characters(),
-                "microphone",
-                "Allow this site to use your microphone?", &request_id))
+        if (permission_producer.bound != 1u || permission_navigation_generation == 0u || !rin_webcontent_permission_producer_request_from_document(&permission_producer, page_id, permission_navigation_generation, permission_renderer_generation, origin.characters(), "microphone", "Allow this site to use your microphone?", &request_id))
+            return result;
+
+        result.navigation_generation = permission_navigation_generation;
+        result.request_id = request_id;
+        return result;
+    }
+
+    WebView::ViewImplementation::PermissionRequest
+    request_clipboard_permission(ByteString origin, bool write)
+    {
+        WebView::ViewImplementation::PermissionRequest result { };
+        u64 request_id = 0u;
+        if (permission_producer.bound != 1u || permission_navigation_generation == 0u || !rin_webcontent_permission_producer_request_from_document(&permission_producer, page_id, permission_navigation_generation, permission_renderer_generation, origin.characters(), "clipboard", write ? "Allow this site to write to your clipboard?" : "Allow this site to read from your clipboard?", &request_id))
             return result;
 
         result.navigation_generation = permission_navigation_generation;
@@ -2572,15 +2590,9 @@ struct PageSession {
     WebView::ViewImplementation::PermissionRequest
     request_camera_permission(ByteString origin)
     {
-        WebView::ViewImplementation::PermissionRequest result {};
+        WebView::ViewImplementation::PermissionRequest result { };
         u64 request_id = 0u;
-        if (permission_producer.bound != 1u ||
-            permission_navigation_generation == 0u ||
-            !rin_webcontent_permission_producer_request_from_document(
-                &permission_producer, page_id,
-                permission_navigation_generation,
-                permission_renderer_generation, origin.characters(),
-                "camera", "Allow this site to use your camera?", &request_id))
+        if (permission_producer.bound != 1u || permission_navigation_generation == 0u || !rin_webcontent_permission_producer_request_from_document(&permission_producer, page_id, permission_navigation_generation, permission_renderer_generation, origin.characters(), "camera", "Allow this site to use your camera?", &request_id))
             return result;
         result.navigation_generation = permission_navigation_generation;
         result.request_id = request_id;

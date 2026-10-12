@@ -142,6 +142,7 @@ endpoint WebContentClient
     request_http_cookie_owner(u64 page_id, u32 operation, ByteString request_url, ByteString origin, ByteString cookie_data, u32 policy) => (bool accepted, bool found, u64 generation, ByteString response_data)
     request_notification_permission(u64 page_id) => (u32 navigation_generation, u64 request_id)
     request_microphone_permission(u64 page_id, ByteString origin) => (u32 navigation_generation, u64 request_id)
+    request_clipboard_permission(u64 page_id, ByteString origin, bool write) => (u32 navigation_generation, u64 request_id)
     request_camera_permission(u64 page_id, ByteString origin) => (u32 navigation_generation, u64 request_id)
     request_camera_capture_open(u64 page_id, ByteString origin) => (bool accepted, u64 session_id, ByteBuffer profile)
     request_camera_capture_read(u64 page_id, u64 session_id) => (bool accepted, ByteBuffer chunk)

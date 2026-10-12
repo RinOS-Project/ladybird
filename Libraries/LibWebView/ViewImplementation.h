@@ -323,6 +323,7 @@ public:
     Function<PermissionRequest()> on_request_notification_permission;
     Function<PermissionRequest(ByteString)> on_request_microphone_permission;
     Function<PermissionRequest(ByteString)> on_request_camera_permission;
+    Function<PermissionRequest(ByteString, bool)> on_request_clipboard_permission;
     Function<PermissionRequest(ByteString, u32)> on_request_geolocation_permission;
     Function<void(u32 navigation_generation, u64 request_id)> on_cancel_geolocation_permission;
     Function<CameraCaptureOpenResponse(ByteString)> on_camera_capture_open;
@@ -333,6 +334,8 @@ public:
                                           String permission);
     void complete_microphone_permission(u32 navigation_generation, u64 request_id,
                                         bool allowed);
+    void complete_clipboard_permission(u32 navigation_generation, u64 request_id,
+                                       bool allowed);
     void complete_camera_permission(u32 navigation_generation, u64 request_id,
                                    bool allowed);
     void complete_geolocation_permission(

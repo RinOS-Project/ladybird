@@ -403,6 +403,19 @@ void PageClient::page_did_create_new_document(Web::DOM::Document& document)
 
 void PageClient::page_did_retire_document(Web::DOM::Document& document)
 {
+    for (size_t index = 0; index < m_pending_clipboard_permissions.size();) {
+        auto const& pending = m_pending_clipboard_permissions[index];
+        if (pending.document.ptr() != &document) {
+            ++index;
+            continue;
+        }
+
+        auto promise = pending.promise;
+        m_pending_clipboard_permissions.remove(index);
+        auto& realm = promise->promise()->shape().realm();
+        Web::WebIDL::resolve_promise(realm, *promise, JS::Value(false));
+    }
+
     const auto frame_identity = document.unique_id().value();
     if (frame_identity == 0u)
         return;
@@ -415,6 +428,7 @@ void PageClient::page_did_retire_document(Web::DOM::Document& document)
 void PageClient::page_did_change_active_document_in_top_level_browsing_context(Web::DOM::Document& document)
 {
     resolve_pending_notification_permissions();
+    resolve_pending_clipboard_permissions();
     resolve_pending_microphone_permissions();
     resolve_pending_camera_permissions();
     for (auto& active : m_active_camera_tracks) {
@@ -892,15 +906,49 @@ void PageClient::page_did_request_microphone_permission(
     }
 
     for (auto const& pending : m_pending_microphone_permissions) {
-        if (pending.navigation_generation == response->navigation_generation() &&
-            pending.request_id == response->request_id()) {
+        if (pending.navigation_generation == response->navigation_generation() && pending.request_id == response->request_id()) {
             resolve_denied();
             return;
         }
     }
-    m_pending_microphone_permissions.append({
-        response->navigation_generation(), response->request_id(), promise,
+    m_pending_microphone_permissions.append({ response->navigation_generation(), response->request_id(), promise,
         GC::Weak { document }, origin });
+}
+
+bool PageClient::page_did_request_clipboard_permission(
+    JS::PromiseCapability& promise, Web::DOM::Document const& document,
+    bool write)
+{
+    auto resolve_denied = [&] {
+        auto& realm = promise.promise()->shape().realm();
+        Web::WebIDL::resolve_promise(realm, promise, JS::Value(false));
+    };
+
+    auto const& origin = document.origin();
+    if (!document.is_fully_active() || origin.is_opaque() || m_pending_clipboard_permissions.size() >= 4u) {
+        resolve_denied();
+        return true;
+    }
+    auto serialized_origin = origin.serialize().to_byte_string();
+    if (serialized_origin.is_empty() || serialized_origin.length() >= RIN_WEBCONTENT_URL_MAX) {
+        resolve_denied();
+        return true;
+    }
+    auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::RequestClipboardPermission>(
+        m_id, move(serialized_origin), write);
+    if (!response || response->navigation_generation() == 0u || response->request_id() == 0u) {
+        resolve_denied();
+        return true;
+    }
+    for (auto const& pending : m_pending_clipboard_permissions) {
+        if (pending.navigation_generation == response->navigation_generation() && pending.request_id == response->request_id()) {
+            resolve_denied();
+            return true;
+        }
+    }
+    m_pending_clipboard_permissions.append({ response->navigation_generation(), response->request_id(), promise,
+        GC::Weak { document }, origin });
+    return true;
 }
 
 void PageClient::page_did_request_camera_permission(
@@ -917,8 +965,7 @@ void PageClient::page_did_request_camera_permission(
         return;
     }
     auto serialized_origin = origin.serialize().to_byte_string();
-    if (serialized_origin.is_empty() ||
-        serialized_origin.length() >= RIN_WEBCONTENT_URL_MAX) {
+    if (serialized_origin.is_empty() || serialized_origin.length() >= RIN_WEBCONTENT_URL_MAX) {
         resolve_denied();
         return;
     }
@@ -1226,6 +1273,16 @@ void PageClient::resolve_pending_notification_permissions()
     m_pending_notification_permissions.clear();
 }
 
+void PageClient::resolve_pending_clipboard_permissions()
+{
+    for (auto& pending : m_pending_clipboard_permissions) {
+        auto& pending_realm = pending.promise->promise()->shape().realm();
+        Web::WebIDL::resolve_promise(pending_realm, *pending.promise,
+                                    JS::Value(false));
+    }
+    m_pending_clipboard_permissions.clear();
+}
+
 void PageClient::resolve_pending_microphone_permissions()
 {
     for (auto& pending : m_pending_microphone_permissions) {
@@ -1241,7 +1298,7 @@ void PageClient::resolve_pending_camera_permissions()
     for (auto& pending : m_pending_camera_permissions) {
         auto& pending_realm = pending.promise->promise()->shape().realm();
         Web::WebIDL::resolve_promise(pending_realm, *pending.promise,
-                                    JS::Value(false));
+            JS::Value(false));
     }
     m_pending_camera_permissions.clear();
 }
@@ -1262,15 +1319,12 @@ void PageClient::resolve_pending_geolocation_permissions()
 void PageClient::complete_notification_permission(
     u32 navigation_generation, u64 request_id, String permission)
 {
-    if (navigation_generation == 0u || request_id == 0u ||
-        (permission != "granted" && permission != "denied" &&
-         permission != "default"))
+    if (navigation_generation == 0u || request_id == 0u || (permission != "granted" && permission != "denied" && permission != "default"))
         return;
 
     for (size_t index = 0; index < m_pending_notification_permissions.size(); ++index) {
         auto const& pending = m_pending_notification_permissions[index];
-        if (pending.navigation_generation != navigation_generation ||
-            pending.request_id != request_id)
+        if (pending.navigation_generation != navigation_generation || pending.request_id != request_id)
             continue;
 
         auto promise = pending.promise;
@@ -1290,16 +1344,36 @@ void PageClient::complete_microphone_permission(
 
     for (size_t index = 0; index < m_pending_microphone_permissions.size(); ++index) {
         auto const& pending = m_pending_microphone_permissions[index];
-        if (pending.navigation_generation != navigation_generation ||
-            pending.request_id != request_id)
+        if (pending.navigation_generation != navigation_generation || pending.request_id != request_id)
             continue;
 
         auto promise = pending.promise;
         m_pending_microphone_permissions.remove(index);
         auto& realm = promise->promise()->shape().realm();
-        bool const still_authorized = pending.document &&
-            pending.document->is_fully_active() &&
-            pending.document->origin().is_same_origin(pending.origin);
+        bool const still_authorized = pending.document && pending.document->is_fully_active() && pending.document->origin().is_same_origin(pending.origin);
+        Web::WebIDL::resolve_promise(
+            realm, *promise, JS::Value(allowed && still_authorized));
+        return;
+    }
+}
+
+void PageClient::complete_clipboard_permission(
+    u32 navigation_generation, u64 request_id, bool allowed)
+{
+    if (navigation_generation == 0u || request_id == 0u)
+        return;
+
+    for (size_t index = 0; index < m_pending_clipboard_permissions.size(); ++index) {
+        auto const& pending = m_pending_clipboard_permissions[index];
+        if (pending.navigation_generation != navigation_generation || pending.request_id != request_id)
+            continue;
+
+        auto promise = pending.promise;
+        auto document = pending.document;
+        auto origin = pending.origin;
+        m_pending_clipboard_permissions.remove(index);
+        auto& realm = promise->promise()->shape().realm();
+        bool const still_authorized = document && document->is_fully_active() && document->origin().is_same_origin(origin);
         Web::WebIDL::resolve_promise(
             realm, *promise, JS::Value(allowed && still_authorized));
         return;
@@ -1399,6 +1473,7 @@ void PageClient::complete_geolocation_permission(
 void PageClient::page_did_close_top_level_traversable()
 {
     resolve_pending_notification_permissions();
+    resolve_pending_clipboard_permissions();
     resolve_pending_microphone_permissions();
     resolve_pending_camera_permissions();
     for (auto& active : m_active_camera_tracks) {

@@ -97,6 +97,8 @@ public:
                                           String permission);
     void complete_microphone_permission(u32 navigation_generation, u64 request_id,
                                         bool allowed);
+    void complete_clipboard_permission(u32 navigation_generation, u64 request_id,
+                                       bool allowed);
     void complete_camera_permission(u32 navigation_generation, u64 request_id,
                                     bool allowed);
     void complete_geolocation_permission(
@@ -163,6 +165,8 @@ private:
         JS::PromiseCapability&, Web::DOM::Document const&) override;
     virtual void page_did_request_camera_permission(
         JS::PromiseCapability&, Web::DOM::Document const&) override;
+    virtual bool page_did_request_clipboard_permission(
+        JS::PromiseCapability&, Web::DOM::Document const&, bool write) override;
     virtual void page_did_request_geolocation(
         u64 request_id,
         GC::Ref<GC::Function<void(Web::GeolocationPositionResult)>>,
@@ -248,6 +252,7 @@ private:
 
     void setup_palette();
     void resolve_pending_notification_permissions();
+    void resolve_pending_clipboard_permissions();
     void resolve_pending_microphone_permissions();
     void resolve_pending_camera_permissions();
     void resolve_pending_geolocation_permissions();
@@ -285,6 +290,14 @@ private:
         GC::Ref<JS::PromiseCapability> promise;
     };
     Vector<PendingNotificationPermission> m_pending_notification_permissions;
+    struct PendingClipboardPermission {
+        u32 navigation_generation { 0u };
+        u64 request_id { 0u };
+        GC::Ref<JS::PromiseCapability> promise;
+        GC::Weak<Web::DOM::Document> document;
+        URL::Origin origin { URL::Origin::create_opaque() };
+    };
+    Vector<PendingClipboardPermission> m_pending_clipboard_permissions;
     struct PendingMicrophonePermission {
         u32 navigation_generation { 0 };
         u64 request_id { 0 };

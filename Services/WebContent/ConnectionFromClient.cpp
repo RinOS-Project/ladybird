@@ -1244,7 +1244,7 @@ void ConnectionFromClient::complete_notification_permission(
 {
     if (auto page = this->page(page_id); page.has_value())
         page->complete_notification_permission(navigation_generation, request_id,
-                                              move(permission));
+            move(permission));
 }
 
 void ConnectionFromClient::complete_microphone_permission(
@@ -1252,7 +1252,15 @@ void ConnectionFromClient::complete_microphone_permission(
 {
     if (auto page = this->page(page_id); page.has_value())
         page->complete_microphone_permission(navigation_generation, request_id,
-                                            allowed);
+            allowed);
+}
+
+void ConnectionFromClient::complete_clipboard_permission(
+    u64 page_id, u32 navigation_generation, u64 request_id, bool allowed)
+{
+    if (auto page = this->page(page_id); page.has_value())
+        page->complete_clipboard_permission(navigation_generation, request_id,
+            allowed);
 }
 
 void ConnectionFromClient::complete_camera_permission(
@@ -1260,7 +1268,7 @@ void ConnectionFromClient::complete_camera_permission(
 {
     if (auto page = this->page(page_id); page.has_value())
         page->complete_camera_permission(navigation_generation, request_id,
-                                         allowed);
+            allowed);
 }
 
 void ConnectionFromClient::complete_geolocation_permission(

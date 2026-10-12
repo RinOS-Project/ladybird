@@ -1527,6 +1527,18 @@ WebContentClient::request_microphone_permission(u64 page_id, ByteString origin)
     return { request.navigation_generation, request.request_id };
 }
 
+Messages::WebContentClient::RequestClipboardPermissionResponse
+WebContentClient::request_clipboard_permission(u64 page_id, ByteString origin,
+    bool write)
+{
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_request_clipboard_permission)
+        return { 0u, 0u };
+
+    auto request = view->on_request_clipboard_permission(move(origin), write);
+    return { request.navigation_generation, request.request_id };
+}
+
 Messages::WebContentClient::RequestCameraPermissionResponse
 WebContentClient::request_camera_permission(u64 page_id, ByteString origin)
 {

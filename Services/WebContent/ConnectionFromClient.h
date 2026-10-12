@@ -127,6 +127,8 @@ private:
                                                   u64 request_id, String permission) override;
     virtual void complete_microphone_permission(u64 page_id, u32 navigation_generation,
                                                 u64 request_id, bool allowed) override;
+    virtual void complete_clipboard_permission(u64 page_id, u32 navigation_generation,
+                                               u64 request_id, bool allowed) override;
     virtual void complete_camera_permission(u64 page_id, u32 navigation_generation,
                                             u64 request_id, bool allowed) override;
     virtual void complete_geolocation_permission(

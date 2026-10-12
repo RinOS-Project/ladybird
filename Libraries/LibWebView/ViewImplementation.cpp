@@ -104,9 +104,7 @@ WebContentClient const& ViewImplementation::client() const
 void ViewImplementation::complete_notification_permission(
     u32 navigation_generation, u64 request_id, String permission)
 {
-    if (navigation_generation == 0u || request_id == 0u ||
-        (permission != "granted" && permission != "denied" &&
-         permission != "default"))
+    if (navigation_generation == 0u || request_id == 0u || (permission != "granted" && permission != "denied" && permission != "default"))
         return;
     client().async_complete_notification_permission(
         page_id(), navigation_generation, request_id, move(permission));
@@ -118,6 +116,15 @@ void ViewImplementation::complete_microphone_permission(
     if (navigation_generation == 0u || request_id == 0u)
         return;
     client().async_complete_microphone_permission(
+        page_id(), navigation_generation, request_id, allowed);
+}
+
+void ViewImplementation::complete_clipboard_permission(
+    u32 navigation_generation, u64 request_id, bool allowed)
+{
+    if (navigation_generation == 0u || request_id == 0u)
+        return;
+    client().async_complete_clipboard_permission(
         page_id(), navigation_generation, request_id, allowed);
 }
 

@@ -444,6 +444,12 @@ public:
     virtual void page_did_request_notification_permission(JS::PromiseCapability&);
     virtual void page_did_request_microphone_permission(JS::PromiseCapability&, DOM::Document const&);
     virtual void page_did_request_camera_permission(JS::PromiseCapability&, DOM::Document const&);
+    virtual bool page_did_request_clipboard_permission(
+        JS::PromiseCapability&, DOM::Document const&, bool write)
+    {
+        (void)write;
+        return false;
+    }
     virtual void page_did_request_geolocation(
         u64 request_id,
         GC::Ref<GC::Function<void(GeolocationPositionResult)>>,
