@@ -55,6 +55,7 @@ if (AK_OS_RINOS)
     target_include_directories(rinoswebcontentbridge PRIVATE
         ${LADYBIRD_SOURCE_DIR}/../../src/shared
         ${LADYBIRD_SOURCE_DIR}/../../libs/rinruntime/include
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/aquamarine
     )
     target_link_libraries(rinoswebcontentbridge PUBLIC LibCore LibGfx LibMain LibURL LibWeb LibWebView)
 endif()
