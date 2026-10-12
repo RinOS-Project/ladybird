@@ -11,6 +11,7 @@
 #include <LibWeb/Clipboard/Clipboard.h>
 #include <LibWeb/Clipboard/ClipboardItem.h>
 #include <LibWeb/Clipboard/SystemClipboard.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/FileAPI/Blob.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
@@ -344,7 +345,7 @@ GC::Ref<WebIDL::Promise> Clipboard::read_text()
                 // 3. Let data be a copy of the system clipboard data.
                 as<HTML::Window>(realm.global_object()).page().request_clipboard_entries(GC::create_function(realm.heap(), [&realm, promise, bound_document, origin](Vector<SystemClipboardItem> data) mutable {
                     // 4. Queue a global task on the clipboard task source, given realm’s global object, to perform the below steps:
-                    queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, data = move(data)]() mutable {
+                    queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, data = move(data)]() mutable {
                         HTML::TemporaryExecutionContext execution_context { realm };
                         if (!clipboard_document_is_authorized(bound_document, origin)) {
                             WebIDL::reject_promise(realm, promise,
