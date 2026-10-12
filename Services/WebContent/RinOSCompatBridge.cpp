@@ -496,13 +496,17 @@ static bool camera_capture_owner_exchange(
         return false;
     }
     const size_t trailing_size = response_header.payload_len - sizeof(response);
+#if defined(__cpp_exceptions)
     try {
+#endif
         response_data.resize(trailing_size);
+#if defined(__cpp_exceptions)
     } catch (...) {
         errno = ENOMEM;
         close_owner_channel();
         return false;
     }
+#endif
     if (!recv_all(s_service_worker_owner_fd, &response, sizeof(response),
                   deadline_ms) ||
         (trailing_size != 0u &&
@@ -585,13 +589,17 @@ static bool tls_identity_owner_exchange(
         return false;
     }
     const size_t trailing_size = request_header.payload_len - sizeof(response);
+#if defined(__cpp_exceptions)
     try {
+#endif
         response_data.resize(trailing_size);
+#if defined(__cpp_exceptions)
     } catch (...) {
         close_owner_channel();
         errno = ENOMEM;
         return false;
     }
+#endif
     if ((trailing_size != 0u &&
          !recv_all(s_service_worker_owner_fd, response_data.data(),
                    trailing_size, deadline)) ||
@@ -4766,12 +4774,16 @@ bool request_tls_client_certificate(
         request.signature_algorithms_cert_size +
         request.certificate_authorities_size;
     std::vector<u8> payload;
+#if defined(__cpp_exceptions)
     try {
+#endif
         payload.resize(trailing_size);
+#if defined(__cpp_exceptions)
     } catch (...) {
         tls_owner_clear(&request, sizeof(request));
         return false;
     }
+#endif
     size_t offset = 0u;
     __builtin_memcpy(payload.data() + offset, serialized_url.characters(),
                      request.url_size);
@@ -4849,12 +4861,16 @@ bool sign_tls_client_certificate(
     __builtin_memcpy(request.capability, signer_capability.data(),
                      sizeof(request.capability));
     std::vector<u8> payload;
+#if defined(__cpp_exceptions)
     try {
+#endif
         payload.assign(message.data(), message.data() + message.size());
+#if defined(__cpp_exceptions)
     } catch (...) {
         tls_owner_clear(&request, sizeof(request));
         return false;
     }
+#endif
     RinWebContentTlsIdentityOwnerResponseV1 response {};
     std::vector<u8> response_data;
     const bool exchanged = tls_identity_owner_exchange(
