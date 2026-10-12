@@ -427,6 +427,18 @@ void PageClient::page_did_retire_document(Web::DOM::Document& document)
         {}, {}, {}, {}, 0u, 0u, 0u, frame_identity);
 }
 
+void PageClient::page_did_activate_document(Web::DOM::Document& document)
+{
+    const auto frame_identity = document.unique_id().value();
+    if (frame_identity == 0u)
+        return;
+
+    const auto origin = document.origin().serialize().to_byte_string();
+    (void)request_service_worker_owner(
+        RIN_WEBCONTENT_SERVICE_WORKER_OWNER_REGISTER_DOCUMENT,
+        {}, origin, {}, {}, 0u, 0u, 0u, frame_identity);
+}
+
 void PageClient::page_did_change_active_document_in_top_level_browsing_context(Web::DOM::Document& document)
 {
     resolve_pending_notification_permissions();

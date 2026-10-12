@@ -5404,6 +5404,8 @@ void Document::make_active()
     // 2. Set document's browsing context's WindowProxy's [[Window]] internal slot value to window.
     m_browsing_context->window_proxy()->set_window(window);
 
+    page().client().page_did_activate_document(*this);
+
     if (m_browsing_context->is_top_level()) {
         page().client().page_did_change_active_document_in_top_level_browsing_context(*this);
     }

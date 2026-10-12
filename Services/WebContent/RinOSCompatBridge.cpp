@@ -1366,7 +1366,8 @@ struct PageSession {
         } else if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_SHOW_NOTIFICATION) {
             result.accepted = response.result ==
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_NOTIFICATION_POSTED;
-        } else if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RETIRE_DOCUMENT) {
+        } else if (operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RETIRE_DOCUMENT ||
+                   operation == RIN_WEBCONTENT_SERVICE_WORKER_OWNER_REGISTER_DOCUMENT) {
             result.accepted = response.result ==
                 RIN_WEBCONTENT_SERVICE_WORKER_OWNER_RESULT_CONTEXT_UPDATED;
         } else {
