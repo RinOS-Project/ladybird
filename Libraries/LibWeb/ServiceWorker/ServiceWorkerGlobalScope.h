@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <LibWeb/Bindings/ServiceWorkerGlobalScopeGlobalMixin.h>
 #include <LibWeb/HTML/WorkerGlobalScope.h>
 
 namespace Web::ServiceWorker {
@@ -39,6 +40,7 @@ public:
     explicit ServiceWorkerGlobalScope(JS::Realm&, GC::Ref<Web::Page>);
 
 private:
+    virtual void initialize_web_interfaces_impl() override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     GC::Ptr<CookieStore::CookieStore> m_cookie_store;

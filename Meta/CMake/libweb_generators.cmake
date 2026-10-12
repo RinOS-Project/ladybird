@@ -322,6 +322,7 @@ function (generate_js_bindings target)
             IntrinsicDefinitions.cpp IntrinsicDefinitions.h
             DedicatedWorkerExposedInterfaces.cpp DedicatedWorkerExposedInterfaces.h
             SharedWorkerExposedInterfaces.cpp SharedWorkerExposedInterfaces.h
+            ServiceWorkerExposedInterfaces.cpp ServiceWorkerExposedInterfaces.h
             ShadowRealmExposedInterfaces.cpp ShadowRealmExposedInterfaces.h
             WindowExposedInterfaces.cpp WindowExposedInterfaces.h)
         list(TRANSFORM exposed_interface_sources PREPEND "Bindings/")
@@ -342,6 +343,8 @@ function (generate_js_bindings target)
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/DedicatedWorkerExposedInterfaces.cpp "Bindings/DedicatedWorkerExposedInterfaces.cpp"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/SharedWorkerExposedInterfaces.h "Bindings/SharedWorkerExposedInterfaces.h"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/SharedWorkerExposedInterfaces.cpp "Bindings/SharedWorkerExposedInterfaces.cpp"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/ServiceWorkerExposedInterfaces.h "Bindings/ServiceWorkerExposedInterfaces.h"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/ServiceWorkerExposedInterfaces.cpp "Bindings/ServiceWorkerExposedInterfaces.cpp"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/ShadowRealmExposedInterfaces.h "Bindings/ShadowRealmExposedInterfaces.h"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/ShadowRealmExposedInterfaces.cpp "Bindings/ShadowRealmExposedInterfaces.cpp"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different tmp/WindowExposedInterfaces.h "Bindings/WindowExposedInterfaces.h"

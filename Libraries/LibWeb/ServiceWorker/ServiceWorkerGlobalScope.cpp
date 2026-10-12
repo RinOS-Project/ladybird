@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/ServiceWorkerExposedInterfaces.h>
 #include <LibWeb/CookieStore/CookieStore.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/ServiceWorker/EventNames.h>
@@ -18,6 +19,16 @@ ServiceWorkerGlobalScope::~ServiceWorkerGlobalScope() = default;
 ServiceWorkerGlobalScope::ServiceWorkerGlobalScope(JS::Realm& realm, GC::Ref<Web::Page> page)
     : HTML::WorkerGlobalScope(realm, page)
 {
+}
+
+void ServiceWorkerGlobalScope::initialize_web_interfaces_impl()
+{
+    auto& realm = this->realm();
+
+    Bindings::add_service_worker_exposed_interfaces(*this);
+    ServiceWorkerGlobalScopeGlobalMixin::initialize(realm, *this);
+
+    Base::initialize_web_interfaces_impl();
 }
 
 void ServiceWorkerGlobalScope::visit_edges(Cell::Visitor& visitor)
