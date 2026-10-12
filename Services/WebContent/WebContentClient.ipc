@@ -149,4 +149,5 @@ endpoint WebContentClient
     request_camera_capture_close(u64 page_id, u64 session_id) => (bool accepted)
     request_geolocation_permission(u64 page_id, ByteString origin, u32 timeout_ms) => (u32 navigation_generation, u64 request_id)
     cancel_geolocation_permission(u64 page_id, u32 navigation_generation, u64 request_id) =|
+    cancel_clipboard_permission(u64 page_id, u32 navigation_generation, u64 request_id) =|
 }

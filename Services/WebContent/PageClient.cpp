@@ -411,6 +411,8 @@ void PageClient::page_did_retire_document(Web::DOM::Document& document)
         }
 
         auto promise = pending.promise;
+        client().async_cancel_clipboard_permission(
+            m_id, pending.navigation_generation, pending.request_id);
         m_pending_clipboard_permissions.remove(index);
         auto& realm = promise->promise()->shape().realm();
         Web::WebIDL::resolve_promise(realm, *promise, JS::Value(false));
@@ -1276,6 +1278,8 @@ void PageClient::resolve_pending_notification_permissions()
 void PageClient::resolve_pending_clipboard_permissions()
 {
     for (auto& pending : m_pending_clipboard_permissions) {
+        client().async_cancel_clipboard_permission(
+            m_id, pending.navigation_generation, pending.request_id);
         auto& pending_realm = pending.promise->promise()->shape().realm();
         Web::WebIDL::resolve_promise(pending_realm, *pending.promise,
                                     JS::Value(false));

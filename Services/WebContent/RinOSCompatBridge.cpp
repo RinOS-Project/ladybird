@@ -1249,6 +1249,10 @@ struct PageSession {
                                                     bool write) {
             return request_clipboard_permission(move(origin), write);
         };
+        view->on_cancel_clipboard_permission = [this](u32 navigation_generation,
+                                                      u64 request_id) {
+            cancel_clipboard_permission(navigation_generation, request_id);
+        };
         view->on_request_camera_permission = [this](ByteString origin) {
             return request_camera_permission(move(origin));
         };
@@ -2585,6 +2589,16 @@ struct PageSession {
         result.navigation_generation = permission_navigation_generation;
         result.request_id = request_id;
         return result;
+    }
+
+    void cancel_clipboard_permission(u32 navigation_generation, u64 request_id)
+    {
+        if (permission_producer.bound != 1u || request_id == 0u ||
+            navigation_generation != permission_navigation_generation)
+            return;
+        (void)rin_webcontent_permission_producer_cancel(
+            &permission_producer, page_id, navigation_generation,
+            permission_renderer_generation, request_id);
     }
 
     WebView::ViewImplementation::PermissionRequest
