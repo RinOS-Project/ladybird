@@ -26,7 +26,7 @@ void ServiceWorkerGlobalScope::initialize_web_interfaces_impl()
     auto& realm = this->realm();
 
     Bindings::add_service_worker_exposed_interfaces(*this);
-    ServiceWorkerGlobalScopeGlobalMixin::initialize(realm, *this);
+    Bindings::ServiceWorkerGlobalScopeGlobalMixin::initialize(realm, *this);
 
     Base::initialize_web_interfaces_impl();
 }

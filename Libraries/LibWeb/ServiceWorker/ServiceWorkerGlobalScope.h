@@ -12,7 +12,9 @@
 namespace Web::ServiceWorker {
 
 // https://w3c.github.io/ServiceWorker/#serviceworkerglobalscope
-class ServiceWorkerGlobalScope : public HTML::WorkerGlobalScope {
+class ServiceWorkerGlobalScope
+    : public HTML::WorkerGlobalScope
+    , public Bindings::ServiceWorkerGlobalScopeGlobalMixin {
     WEB_PLATFORM_OBJECT(ServiceWorkerGlobalScope, HTML::WorkerGlobalScope);
     GC_DECLARE_ALLOCATOR(ServiceWorkerGlobalScope);
 
