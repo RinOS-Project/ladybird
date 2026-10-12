@@ -1296,6 +1296,15 @@ ConnectionFromClient::revoke_camera_capture(
     return false;
 }
 
+Messages::WebContentServer::RevokeGeolocationPermissionResponse
+ConnectionFromClient::revoke_geolocation_permission(
+    u64 page_id, String domain, u64 sequence)
+{
+    if (auto page = this->page(page_id); page.has_value())
+        return page->revoke_geolocation_permission(move(domain), sequence);
+    return false;
+}
+
 void ConnectionFromClient::request_file(u64 page_id, Web::FileRequest file_request)
 {
     i32 const id = last_id++;

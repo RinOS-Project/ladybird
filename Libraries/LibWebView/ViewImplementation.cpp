@@ -172,6 +172,20 @@ bool ViewImplementation::revoke_camera_capture(ByteString domain, u64 sequence)
     return response && response->stopped();
 }
 
+bool ViewImplementation::revoke_geolocation_permission(ByteString domain,
+                                                       u64 sequence)
+{
+    if (sequence == 0u || domain.is_empty())
+        return false;
+    auto string_domain = String::from_utf8(domain.view());
+    if (string_domain.is_error())
+        return false;
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentServer::RevokeGeolocationPermission>(
+            page_id(), string_domain.release_value(), sequence);
+    return response && response->stopped();
+}
+
 u64 ViewImplementation::page_id() const
 {
     VERIFY(m_client_state.client);

@@ -2515,6 +2515,21 @@ struct PageSession {
         return 0;
     }
 
+    int revoke_location(RinWebContentLocationRevokeV1 const& revocation)
+    {
+        if (!rin_webcontent_client_location_revoke_valid(&revocation))
+            return -EINVAL;
+        if (revocation.sequence == last_location_revocation_sequence)
+            return 0;
+        if (revocation.sequence < last_location_revocation_sequence)
+            return -ESTALE;
+        if (!view->revoke_geolocation_permission(
+                ByteString { revocation.domain }, revocation.sequence))
+            return -EIO;
+        last_location_revocation_sequence = revocation.sequence;
+        return 0;
+    }
+
     WebView::ViewImplementation::PermissionRequest
     request_notification_permission()
     {
@@ -3424,6 +3439,7 @@ struct PageSession {
     ByteString permission_authenticated_origin;
     uint64_t last_microphone_revocation_sequence { 0 };
     uint64_t last_camera_revocation_sequence { 0 };
+    uint64_t last_location_revocation_sequence { 0 };
 
     int paint_shm_handle { -1 };
     void* paint_shm_addr { nullptr };
@@ -3767,6 +3783,25 @@ static int handle_revoke_camera(PageSession& page, int client_fd,
     auto result = page.revoke_camera(revocation);
     return send_message(client_fd, RIN_WEBCONTENT_CMD_REVOKE_CAMERA_V1,
                         result, page.page_id, nullptr, 0, deadline_ms)
+        ? 0
+        : -EIO;
+}
+
+static int handle_revoke_location(PageSession& page, int client_fd,
+                                  ReadonlyBytes payload, u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentLocationRevokeV1))
+        return send_message(client_fd,
+                            RIN_WEBCONTENT_CMD_REVOKE_LOCATION_V1, -EINVAL,
+                            page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+    auto const& revocation =
+        *reinterpret_cast<RinWebContentLocationRevokeV1 const*>(payload.data());
+    auto result = page.revoke_location(revocation);
+    return send_message(client_fd,
+                        RIN_WEBCONTENT_CMD_REVOKE_LOCATION_V1, result,
+                        page.page_id, nullptr, 0, deadline_ms)
         ? 0
         : -EIO;
 }
@@ -4398,6 +4433,10 @@ static void handle_client(int client_fd)
     case RIN_WEBCONTENT_CMD_REVOKE_CAMERA_V1:
         (void)handle_revoke_camera(*page, client_fd, payload_bytes,
                                    deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_REVOKE_LOCATION_V1:
+        (void)handle_revoke_location(*page, client_fd, payload_bytes,
+                                     deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_GET_PAGE_STATE_V1:
         (void)handle_get_state(*page, client_fd, header.command, deadline_ms);

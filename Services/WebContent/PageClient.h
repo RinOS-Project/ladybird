@@ -107,6 +107,7 @@ public:
         u32 heading_millidegrees, u32 flags);
     bool revoke_microphone_capture(String domain, u64 sequence);
     bool revoke_camera_capture(String domain, u64 sequence);
+    bool revoke_geolocation_permission(String domain, u64 sequence);
 
     Vector<Web::CSS::StyleSheetIdentifier> list_style_sheets() const;
 
@@ -309,6 +310,7 @@ private:
         URL::Origin origin { URL::Origin::create_opaque() };
     };
     Vector<PendingGeolocationPermission> m_pending_geolocation_permissions;
+    u64 m_last_geolocation_revocation_sequence { 0 };
     struct ActiveMicrophoneTrack {
         GC::Weak<Web::MediaCapture::MediaStreamTrack> track;
         String domain;

@@ -343,6 +343,7 @@ public:
         u32 heading_millidegrees, u32 flags);
     bool revoke_microphone_capture(ByteString domain, u64 sequence);
     bool revoke_camera_capture(ByteString domain, u64 sequence);
+    bool revoke_geolocation_permission(ByteString domain, u64 sequence);
 
     Menu& page_context_menu() { return *m_page_context_menu; }
     Menu& link_context_menu() { return *m_link_context_menu; }

@@ -1187,6 +1187,35 @@ bool PageClient::revoke_microphone_capture(String domain, u64 sequence)
     return stopped;
 }
 
+bool PageClient::revoke_geolocation_permission(String domain, u64 sequence)
+{
+    if (sequence == 0u || domain.is_empty())
+        return false;
+    if (sequence <= m_last_geolocation_revocation_sequence)
+        return sequence == m_last_geolocation_revocation_sequence;
+
+    bool const revoke_all = domain == "*"_string;
+    for (size_t index = 0; index < m_pending_geolocation_permissions.size();) {
+        auto const& pending = m_pending_geolocation_permissions[index];
+        if (!revoke_all && pending.origin.host().serialize() != domain) {
+            ++index;
+            continue;
+        }
+
+        auto const navigation_generation = pending.navigation_generation;
+        auto const request_id = pending.request_id;
+        auto callback = pending.callback;
+        m_pending_geolocation_permissions.remove(index);
+        client().async_cancel_geolocation_permission(
+            m_id, navigation_generation, request_id);
+        Web::GeolocationPositionResult result;
+        result.status = Web::GeolocationPositionResult::Status::PermissionDenied;
+        callback->function()(result);
+    }
+    m_last_geolocation_revocation_sequence = sequence;
+    return true;
+}
+
 void PageClient::resolve_pending_notification_permissions()
 {
     for (auto& pending : m_pending_notification_permissions) {
