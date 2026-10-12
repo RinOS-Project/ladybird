@@ -459,4 +459,16 @@ void Geolocation::run_in_parallel_when_document_is_visible(DOM::Document& docume
     timeout_timer->start();
 }
 
+void Geolocation::call_back_with_error(GC::Ptr<WebIDL::CallbackType> error_callback, GeolocationPositionError::ErrorCode code) const
+{
+    if (!error_callback)
+        return;
+
+    auto error = realm().create<GeolocationPositionError>(realm(), code);
+    HTML::queue_a_task(HTML::Task::Source::Geolocation, nullptr, nullptr,
+        GC::create_function(heap(), [error_callback, error] {
+            (void)WebIDL::invoke_callback(*error_callback, {}, WebIDL::ExceptionBehavior::Report, { { error } });
+        }));
+}
+
 }
