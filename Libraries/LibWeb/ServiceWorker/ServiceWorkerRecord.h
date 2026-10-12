@@ -7,7 +7,7 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
-#include <AK/OrderedHashMap.h>
+#include <AK/HashMap.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Bindings/ServiceWorkerPrototype.h>
 #include <LibWeb/Bindings/WorkerPrototype.h>
