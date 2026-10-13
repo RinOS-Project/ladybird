@@ -610,7 +610,8 @@ public:
             if (auto strong_request = request.strong_ref())
                 (void)strong_request->stop();
             failure_reporter->report(transfer_id, failure);
-            Application::the().display_error_dialog(message);
+            if (failure != FileDownloader::DownloadFailure::Cancelled)
+                Application::the().display_error_dialog(message);
         });
     }
 
