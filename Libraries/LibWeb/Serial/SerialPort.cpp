@@ -120,6 +120,12 @@ GC::Ref<WebIDL::Promise> SerialPort::open(SerialOptions options)
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::NotAllowedError::create(
                 realm, "The serial feature is disabled by Permissions Policy"_utf16));
+    if (!window->associated_document().is_fully_active() ||
+        window->page().client().id() == 0u ||
+        window->page().client().id() > UINT32_MAX)
+        return WebIDL::create_rejected_promise_from_exception(realm,
+            WebIDL::NotAllowedError::create(realm,
+                "Serial open has no active page identity"_utf16));
     if (m_state != SerialPortState::Closed)
         return WebIDL::create_rejected_promise_from_exception(realm,
             WebIDL::InvalidStateError::create(realm, "Serial port is not closed"_utf16));
@@ -152,9 +158,10 @@ GC::Ref<WebIDL::Promise> SerialPort::open(SerialOptions options)
         ? RIN_SERIAL_FLOW_HARDWARE : RIN_SERIAL_FLOW_NONE;
     m_buffer_size = buffer_size;
     m_state = SerialPortState::Opening;
-    int result = rin_web_serial_open(m_device.capability, baud_rate, data_bits,
-                                     stop_bits, parity_value, flow_value,
-                                     buffer_size, &m_handle);
+    int result = rin_web_serial_open_for_page(
+        static_cast<uint32_t>(window->page().client().id()),
+        m_device.capability, baud_rate, data_bits, stop_bits, parity_value,
+        flow_value, buffer_size, &m_handle);
     if (result != RIN_SERIAL_OK) {
         m_handle = 0u;
         m_state = SerialPortState::Closed;
