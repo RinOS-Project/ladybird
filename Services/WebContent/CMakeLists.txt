@@ -50,11 +50,11 @@ if (AK_OS_RINOS)
     add_library(rinoswebcontentbridge STATIC
         RinOSCompatBridge.cpp
         RinNetworkProxyConsumer.cpp
-        ${LADYBIRD_SOURCE_DIR}/../../src/shared/webcontent_bridge_recovery_policy.c
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/src/webcontent_bridge_recovery_policy.c
     )
     target_include_directories(rinoswebcontentbridge PRIVATE
-        ${LADYBIRD_SOURCE_DIR}/../../src/shared
-        ${LADYBIRD_SOURCE_DIR}/../../libs/rinruntime/include
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/include
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/include
         ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/aquamarine
     )
     target_link_libraries(rinoswebcontentbridge PUBLIC LibCore LibGfx LibMain LibURL LibWeb LibWebView)

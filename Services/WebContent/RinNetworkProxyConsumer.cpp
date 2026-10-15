@@ -12,7 +12,7 @@
 #include <LibWeb/Loader/ProxyMappings.h>
 
 #include "../../../../src/services/networkd/rin_network_service.h"
-#include "../../../../src/shared/rin_socket_abi.h"
+#include <rinruntime/rin_socket_abi.h>
 
 #include <errno.h>
 #include <fcntl.h>
