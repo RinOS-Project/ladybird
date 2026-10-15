@@ -34,7 +34,7 @@
 #    include <netinet/in.h>
 #    include <LibThreading/Mutex.h>
 #    include <unistd.h>
-#    include "rinos_http_transport_policy.h"
+#    include <rinruntime/rinos_http_transport_policy.h>
 static void rs_serial(char const* msg) { ::write(2, msg, __builtin_strlen(msg)); }
 #else
 static void rs_serial(char const*) { }

@@ -39,7 +39,7 @@
 #include <LibWebView/SiteIsolation.h>
 #include <LibWebView/ViewImplementation.h>
 #include <rin/web/webcontent_protocol.h>
-#include <webcontent_client_policy.h>
+#include <rinruntime/webcontent_client_policy.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/DevToolsConsoleClient.h>
 #include <WebContent/PageClient.h>

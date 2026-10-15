@@ -53,7 +53,7 @@ if (AK_OS_RINOS)
     # RinOS RequestServer sources share the bounded HTTP transport admission
     # policy with the platform bridge. Keep this target-local so non-RinOS
     # Ladybird builds do not acquire a repository-specific include path.
-    target_include_directories(requestserverservice PRIVATE ${LADYBIRD_SOURCE_DIR}/../../src/shared)
+    target_include_directories(requestserverservice PRIVATE ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/include)
     target_include_directories(requestserverservice PRIVATE
         ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinhttp/include)
     target_sources(requestserverservice PRIVATE

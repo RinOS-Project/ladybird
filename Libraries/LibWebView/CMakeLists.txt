@@ -70,7 +70,7 @@ target_link_libraries(LibWebView PRIVATE LibCore LibDatabase LibDevTools LibFile
 
 if (AK_OS_RINOS)
     target_include_directories(LibWebView PRIVATE
-        ${LADYBIRD_SOURCE_DIR}/../../src/shared
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/include
     )
 endif()
 

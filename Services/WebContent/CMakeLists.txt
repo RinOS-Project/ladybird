@@ -31,6 +31,9 @@ endif()
 target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../..>)
 target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${LADYBIRD_SOURCE_DIR}>)
 target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${LADYBIRD_SOURCE_DIR}/Services/>)
+if (AK_OS_RINOS)
+    target_include_directories(webcontentservice PRIVATE ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/include)
+endif()
 
 target_link_libraries(webcontentservice PUBLIC LibCore LibCrypto LibFileSystem LibGfx LibHTTP LibIPC LibJS LibMain LibMedia LibWeb LibWebSocket LibRequests LibWebView LibImageDecoderClient LibGC)
 if (RINOS_LEGACY_OPENSSL)
@@ -54,7 +57,7 @@ if (AK_OS_RINOS)
     )
     target_include_directories(rinoswebcontentbridge PRIVATE
         ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/include
-        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/include
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/include/rinruntime
         ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/aquamarine
     )
     target_link_libraries(rinoswebcontentbridge PUBLIC LibCore LibGfx LibMain LibURL LibWeb LibWebView)

@@ -38,19 +38,19 @@
 #include <LibWebView/HeadlessWebView.h>
 #include <LibWebView/Utilities.h>
 
-#include "../../../../public-base/libs/rinruntime/include/rinruntime/render_context.hpp"
-#include "webcontent_service_abi.h"
+#include "<rinruntime/render_context.hpp>"
+#include <rinruntime/webcontent_service_abi.h>
 #include "RinOSCompatBridge.h"
-#include "webcontent_bridge_recovery_policy.h"
-#include "webcontent_service_policy.h"
-#include "rin_socket_abi.h"
-#include "webcontent_peer_identity_policy.h"
-#include "webcontent_network_failure_policy.h"
-#include "webcontent_client_policy.h"
+#include <rinruntime/webcontent_bridge_recovery_policy.h>
+#include <rinruntime/webcontent_service_policy.h>
+#include <rinruntime/rin_socket_abi.h>
+#include <rinruntime/webcontent_peer_identity_policy.h>
+#include <rinruntime/webcontent_network_failure_policy.h>
+#include <rinruntime/webcontent_client_policy.h>
 #include "RinNetworkProxyConsumer.h"
 #include "../../../../src/webengine/RinLadybirdRuntime.hpp"
-#include "webcontent_permission_producer.h"
-#include "../../../../public-base/libs/rinruntime/include/rinruntime/rin_web_serial_portal.h"
+#include <rinruntime/webcontent_permission_producer.h>
+#include "<rinruntime/rin_web_serial_portal.h>"
 
 #include <errno.h>
 #include <fcntl.h>
