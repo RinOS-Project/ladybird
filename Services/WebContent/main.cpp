@@ -161,7 +161,13 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     Core::EventLoop event_loop;
 
 #if defined(AK_OS_RINOS)
-    WebView::platform_init(Optional<ByteString> { ByteString("/sys/apps/webcontent"sv) });
+#if defined(RIN_CONSUMER_PROFILE)
+    WebView::platform_init(Optional<ByteString> {
+        ByteString("/Apps/org.rinos.browser/services"sv) });
+#else
+    WebView::platform_init(Optional<ByteString> {
+        ByteString("/sys/apps/webcontent"sv) });
+#endif
 #else
     WebView::platform_init();
 #endif

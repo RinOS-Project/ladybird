@@ -4655,7 +4655,11 @@ static ErrorOr<int> run_bridge()
 
     // RinOS does not provide /proc/self/exe, so pin helper/resource discovery
     // to the packaged bridge bundle directory.
+#if defined(RIN_CONSUMER_PROFILE)
+    auto bundle_path = ByteString("/Apps/org.rinos.browser/services"sv);
+#else
     auto bundle_path = ByteString("/sys/apps/webcontent"sv);
+#endif
     if (RinRuntime::setSystemUiFontLoader(load_system_ui_font, nullptr) !=
         RIN_SUCCESS)
         rin_log("[webcontent] public UI font owner registration failed; builtin fallback remains active\n");

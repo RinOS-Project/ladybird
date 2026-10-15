@@ -145,7 +145,11 @@ ErrorOr<Vector<ByteString>> get_paths_for_helper_process(StringView process_name
 
 #if defined(AK_OS_RINOS)
     // On RinOS all helper binaries live next to the main binary.
+#if defined(RIN_CONSUMER_PROFILE)
+    TRY(paths.try_append(ByteString::formatted("{}/{}.RIN", application_path, process_name)));
+#else
     TRY(paths.try_append(ByteString::formatted("{}/{}", application_path, process_name)));
+#endif
 #elif !defined(AK_OS_MACOS) && !defined(AK_OS_WINDOWS)
     auto prefix = find_prefix(LexicalPath(application_path));
     TRY(paths.try_append(LexicalPath::join(prefix.string(), libexec_path, process_name).string()));
