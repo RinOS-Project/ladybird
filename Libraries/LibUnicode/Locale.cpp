@@ -715,14 +715,56 @@ Optional<String> remove_likely_subtags(StringView locale)
 bool is_locale_character_ordering_right_to_left(StringView locale)
 {
 #ifdef AK_OS_RINOS
-    // RTL locales: Arabic, Hebrew, Farsi, Urdu, etc.
+    // Resolve the effective script through the manifest-pinned CLDR
+    // likely-subtags projection.  A language-name list is not sufficient:
+    // the same language can use different scripts, and CLDR can add or
+    // change the default region/script without a LibUnicode source edit.
     auto parsed = parse_unicode_language_id(locale);
     if (!parsed.has_value() || !parsed->language.has_value())
         return false;
-    auto lang = parsed->language->bytes_as_string_view();
-    return lang == "ar"sv || lang == "he"sv || lang == "fa"sv || lang == "ur"sv
-        || lang == "yi"sv || lang == "ps"sv || lang == "sd"sv || lang == "ckb"sv
-        || lang == "ug"sv || lang == "arc"sv || lang == "syc"sv;
+
+    Optional<String> script = parsed->script;
+    if (!script.has_value()) {
+        auto maximized = add_likely_subtags(locale);
+        if (!maximized.has_value())
+            return false;
+        auto maximized_parsed = parse_unicode_language_id(*maximized);
+        if (!maximized_parsed.has_value())
+            return false;
+        script = maximized_parsed->script;
+    }
+    if (!script.has_value())
+        return false;
+
+    auto script_view = script->bytes_as_string_view();
+    // Unicode script direction is the stable boundary here; CLDR's likely
+    // subtags select the script, while this set covers the RTL scripts that
+    // may occur in a locale identifier (including historical scripts).
+    return script_view.equals_ignoring_ascii_case("Adlm"sv)
+        || script_view.equals_ignoring_ascii_case("Arab"sv)
+        || script_view.equals_ignoring_ascii_case("Armi"sv)
+        || script_view.equals_ignoring_ascii_case("Avst"sv)
+        || script_view.equals_ignoring_ascii_case("Elym"sv)
+        || script_view.equals_ignoring_ascii_case("Hebr"sv)
+        || script_view.equals_ignoring_ascii_case("Hung"sv)
+        || script_view.equals_ignoring_ascii_case("Khar"sv)
+        || script_view.equals_ignoring_ascii_case("Lydi"sv)
+        || script_view.equals_ignoring_ascii_case("Mand"sv)
+        || script_view.equals_ignoring_ascii_case("Mani"sv)
+        || script_view.equals_ignoring_ascii_case("Mend"sv)
+        || script_view.equals_ignoring_ascii_case("Nbat"sv)
+        || script_view.equals_ignoring_ascii_case("Nkoo"sv)
+        || script_view.equals_ignoring_ascii_case("Palm"sv)
+        || script_view.equals_ignoring_ascii_case("Phli"sv)
+        || script_view.equals_ignoring_ascii_case("Phlp"sv)
+        || script_view.equals_ignoring_ascii_case("Prti"sv)
+        || script_view.equals_ignoring_ascii_case("Rohg"sv)
+        || script_view.equals_ignoring_ascii_case("Samar"sv)
+        || script_view.equals_ignoring_ascii_case("Sogd"sv)
+        || script_view.equals_ignoring_ascii_case("Syrc"sv)
+        || script_view.equals_ignoring_ascii_case("Thaa"sv)
+        || script_view.equals_ignoring_ascii_case("Ugar"sv)
+        || script_view.equals_ignoring_ascii_case("Yezi"sv);
 #else
     auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
