@@ -38,7 +38,7 @@
 #include <LibWebView/HeadlessWebView.h>
 #include <LibWebView/Utilities.h>
 
-#include "<rinruntime/render_context.hpp>"
+#include <rinruntime/render_context.hpp>
 #include <rinruntime/webcontent_service_abi.h>
 #include "RinOSCompatBridge.h"
 #include <rinruntime/webcontent_bridge_recovery_policy.h>
@@ -50,7 +50,7 @@
 #include "RinNetworkProxyConsumer.h"
 #include "../../../../src/webengine/RinLadybirdRuntime.hpp"
 #include <rinruntime/webcontent_permission_producer.h>
-#include "<rinruntime/rin_web_serial_portal.h>"
+#include <rinruntime/rin_web_serial_portal.h>
 
 #include <errno.h>
 #include <fcntl.h>
