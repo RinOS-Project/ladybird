@@ -35,7 +35,8 @@ target_include_directories(imagedecoderservice PRIVATE ${CMAKE_CURRENT_BINARY_DI
 target_include_directories(imagedecoderservice PRIVATE ${LADYBIRD_SOURCE_DIR}/Services/)
 if (AK_OS_RINOS)
     target_include_directories(imagedecoderservice PRIVATE
-        ${LADYBIRD_SOURCE_DIR}/../../public-base/RinOS-SDK/include)
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/RinOS-SDK/include
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinimage/include)
 endif()
 
 target_link_libraries(ImageDecoder PRIVATE imagedecoderservice LibCore LibMain LibThreading)
