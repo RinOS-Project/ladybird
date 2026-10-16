@@ -8,6 +8,7 @@
 #include <AK/ScopeGuard.h>
 #include <LibUnicode/DateTimeFormat.h>
 #include <LibUnicode/ICU.h>
+#include <LibUnicode/Locale.h>
 #include <LibUnicode/UnicodeKeywords.h>
 #ifdef AK_OS_RINOS
 #    include <LibUnicode/generated_rinos_currency_codes.h>
@@ -273,9 +274,40 @@ Vector<String> const& available_number_systems()
 #endif
 
 #ifdef AK_OS_RINOS
-Vector<String> available_number_systems(StringView)
+Vector<String> available_number_systems(StringView locale)
 {
-    return { "latn"_string };
+    auto locale_id = parse_unicode_locale_id(locale);
+    if (!locale_id.has_value())
+        return {};
+
+    // Keep the default ordering aligned with RinOS libunicode's product
+    // locale policy.  The generated inventory below is still the complete
+    // capability list; this only selects the locale's default first.
+    auto preferred_number_system = "latn"sv;
+    if (auto const& language = locale_id->language_id.language; language.has_value()) {
+        auto language_view = language->bytes_as_string_view();
+        if (language_view.equals_ignoring_ascii_case("ar"sv))
+            preferred_number_system = "arab"sv;
+        else if (language_view.equals_ignoring_ascii_case("fa"sv))
+            preferred_number_system = "arabext"sv;
+        else if (language_view.equals_ignoring_ascii_case("hi"sv))
+            preferred_number_system = "deva"sv;
+        else if (language_view.equals_ignoring_ascii_case("th"sv))
+            preferred_number_system = "thai"sv;
+    }
+
+    Vector<String> result;
+    for (auto const& system : available_number_systems()) {
+        if (system.bytes_as_string_view() == preferred_number_system) {
+            result.append(system);
+            break;
+        }
+    }
+    for (auto const& system : available_number_systems()) {
+        if (!result.contains_slow(system))
+            result.append(system);
+    }
+    return result;
 }
 #else
 Vector<String> available_number_systems(StringView locale)
