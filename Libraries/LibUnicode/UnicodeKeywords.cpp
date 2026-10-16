@@ -13,6 +13,7 @@
 #ifdef AK_OS_RINOS
 #    include <LibUnicode/generated_rinos_currency_codes.h>
 #    include <LibUnicode/generated_rinos_numbering_systems.h>
+#    include <rinicu/data_policy.h>
 #endif
 
 #ifndef AK_OS_RINOS
@@ -274,26 +275,45 @@ Vector<String> const& available_number_systems()
 #endif
 
 #ifdef AK_OS_RINOS
+static Optional<StringView> rinos_numbering_system_name(u32 id)
+{
+    // These IDs are the append-only projection defined by RinICU's RICUDB1
+    // policy.  Keep the lookup indexed by the wire ID rather than deriving a
+    // default from a language name; the record is generated from CLDR's
+    // locale defaultNumberingSystem field.
+    static constexpr char const* names[] = {
+        "latn", "arab", "arabext", "deva", "thai", "beng", "gujr",
+        "guru", "knda", "khmr", "laoo", "mlym", "mymr", "orya",
+        "telu", "tamldec", "tibt", "fullwide", "hanidec", "adlm",
+        "olck", "cakm", "hmnp", "mtei", "nkoo",
+    };
+    if (id >= sizeof(names) / sizeof(names[0]))
+        return {};
+    return StringView { names[id] };
+}
+
 Vector<String> available_number_systems(StringView locale)
 {
     auto locale_id = parse_unicode_locale_id(locale);
     if (!locale_id.has_value())
         return {};
 
-    // Keep the default ordering aligned with RinOS libunicode's product
-    // locale policy.  The generated inventory below is still the complete
-    // capability list; this only selects the locale's default first.
+    // RICUDB1 is generated from the official CLDR locale record.  An absent
+    // field is the legacy/product-root case and retains CLDR's latn default;
+    // a malformed or unknown present ID must not be guessed from the locale
+    // language or advertised as a supported numbering system.
+    ByteString locale_z(locale);
+    RinIcuDataLocaleRecord record {};
     auto preferred_number_system = "latn"sv;
-    if (auto const& language = locale_id->language_id.language; language.has_value()) {
-        auto language_view = language->bytes_as_string_view();
-        if (language_view.equals_ignoring_ascii_case("ar"sv))
-            preferred_number_system = "arab"sv;
-        else if (language_view.equals_ignoring_ascii_case("fa"sv))
-            preferred_number_system = "arabext"sv;
-        else if (language_view.equals_ignoring_ascii_case("hi"sv))
-            preferred_number_system = "deva"sv;
-        else if (language_view.equals_ignoring_ascii_case("th"sv))
-            preferred_number_system = "thai"sv;
+    if (rin_icu_locale_info(&rin_icu_client(), locale_z.characters(), &record) != 0 ||
+        !rin_icu_data_locale_valid(&record))
+        return {};
+    if (rin_icu_data_numbering_system_present(record.week_data)) {
+        auto name = rinos_numbering_system_name(
+            rin_icu_data_numbering_system(record.week_data));
+        if (!name.has_value())
+            return {};
+        preferred_number_system = *name;
     }
 
     Vector<String> result;
