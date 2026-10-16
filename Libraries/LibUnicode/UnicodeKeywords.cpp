@@ -9,6 +9,9 @@
 #include <LibUnicode/DateTimeFormat.h>
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/UnicodeKeywords.h>
+#ifdef AK_OS_RINOS
+#    include <LibUnicode/generated_rinos_currency_codes.h>
+#endif
 
 #ifndef AK_OS_RINOS
 #    include <unicode/calendar.h>
@@ -81,7 +84,16 @@ Vector<String> available_calendars(StringView locale)
 #ifdef AK_OS_RINOS
 Vector<String> const& available_currencies()
 {
-    static Vector<String> currencies { "USD"_string, "EUR"_string, "JPY"_string, "GBP"_string, "CNY"_string };
+    // Keep the inventory synchronized with the pinned CLDR release instead
+    // of advertising a hand-written five-currency subset.  Formatting
+    // behavior is still bounded by RinICU's separate currency projection.
+    static auto currencies = []() -> Vector<String> {
+        Vector<String> result;
+        result.ensure_capacity(RINOS_GENERATED_CURRENCY_CODE_COUNT);
+        for (size_t i = 0; i < RINOS_GENERATED_CURRENCY_CODE_COUNT; ++i)
+            result.append(MUST(String::from_utf8(g_rinos_generated_currency_codes[i])));
+        return result;
+    }();
     return currencies;
 }
 #else
