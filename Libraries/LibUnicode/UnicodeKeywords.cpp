@@ -11,6 +11,7 @@
 #include <LibUnicode/UnicodeKeywords.h>
 #ifdef AK_OS_RINOS
 #    include <LibUnicode/generated_rinos_currency_codes.h>
+#    include <LibUnicode/generated_rinos_numbering_systems.h>
 #endif
 
 #ifndef AK_OS_RINOS
@@ -231,7 +232,18 @@ Vector<String> available_hour_cycles(StringView locale)
 #ifdef AK_OS_RINOS
 Vector<String> const& available_number_systems()
 {
-    static Vector<String> systems { "latn"_string };
+    // Keep the advertised keyword values synchronized with the product digit
+    // tables.  The generated list is sourced from CLDR's BCP 47 registry, but
+    // deliberately excludes algorithmic and otherwise unsupported systems.
+    static auto systems = []() -> Vector<String> {
+        Vector<String> result;
+        result.ensure_capacity(RINOS_GENERATED_NUMBERING_SYSTEM_COUNT);
+        for (size_t i = 0; i < RINOS_GENERATED_NUMBERING_SYSTEM_COUNT; ++i) {
+            auto const* system = g_rinos_generated_numbering_systems[i];
+            result.append(MUST(String::from_utf8(StringView { system, strlen(system) })));
+        }
+        return result;
+    }();
     return systems;
 }
 #else
