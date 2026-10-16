@@ -91,7 +91,7 @@ Vector<String> const& available_currencies()
         Vector<String> result;
         result.ensure_capacity(RINOS_GENERATED_CURRENCY_CODE_COUNT);
         for (size_t i = 0; i < RINOS_GENERATED_CURRENCY_CODE_COUNT; ++i)
-            result.append(MUST(String::from_utf8(g_rinos_generated_currency_codes[i])));
+            result.append(MUST(String::from_utf8(StringView { g_rinos_generated_currency_codes[i], 3 })));
         return result;
     }();
     return currencies;
