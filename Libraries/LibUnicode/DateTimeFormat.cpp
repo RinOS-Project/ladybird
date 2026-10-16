@@ -111,15 +111,19 @@ StringView hour_cycle_to_string(HourCycle hour_cycle)
 Optional<HourCycle> default_hour_cycle(StringView locale)
 {
 #ifdef AK_OS_RINOS
-    // RinOS: derive default hour cycle from locale
-    // Most common: h12 for en, ja uses H23, etc.
-    auto lang = parse_unicode_language_id(locale);
-    if (lang.has_value()) {
-        auto& l = lang->language;
-        if (l == "ja"sv || l == "zh"sv || l == "ko"sv || l == "de"sv || l == "fr"sv || l == "it"sv || l == "ru"sv)
-            return HourCycle::H23;
-    }
-    return HourCycle::H12;
+    // The RICUDB1 record already carries the official CLDR default-hour
+    // policy.  Do not infer it from language names: regions such as en-US
+    // and en-GB intentionally differ, while a process may use a locale that
+    // is not represented by the bounded product catalog.
+    ByteString locale_z(locale);
+    RinIcuDataLocaleRecord record {};
+    if (rin_icu_locale_info(&rin_icu_client(), locale_z.characters(), &record) != 0 ||
+        !rin_icu_data_locale_valid(&record))
+        return {};
+
+    return (record.flags & RIN_ICU_DATA_FLAG_DEFAULT_H12) != 0u
+        ? HourCycle::H12
+        : HourCycle::H23;
 #else
     UErrorCode status = U_ZERO_ERROR;
 
