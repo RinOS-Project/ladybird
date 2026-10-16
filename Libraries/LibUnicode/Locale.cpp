@@ -509,6 +509,29 @@ String canonicalize_unicode_extension_values(StringView key, StringView value)
 
 StringView default_locale()
 {
+#ifdef AK_OS_RINOS
+    // Locale changes are generation-based in RinOS and can be delivered while
+    // a process is alive.  Read the bounded session record on each query so a
+    // new formatter/segmenter observes the current session locale without
+    // retaining a stale process-global value.
+    static thread_local char locale_buffer[sizeof(((RinLocaleInfoV1*)nullptr)->locale)] {};
+    RinLocaleInfoV1 info {};
+    if (rin_locale_get(&info) == RIN_RESULT_OK) {
+        size_t length = 0;
+        while (length < sizeof(info.locale) && info.locale[length] != '\0')
+            ++length;
+
+        if (length != 0 && length < sizeof(info.locale)) {
+            __builtin_memcpy(locale_buffer, info.locale, length);
+            locale_buffer[length] = '\0';
+            return { locale_buffer, length };
+        }
+    }
+
+    // The public ABI may be unavailable during very early process startup.
+    // Do not expose an unterminated or partially copied kernel value; the
+    // existing invariant fallback remains deterministic and safe.
+#endif
     return "en"sv;
 }
 

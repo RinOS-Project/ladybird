@@ -23,8 +23,14 @@
 #include <LibUnicode/Segmenter.h>
 
 extern "C" {
+#include <rin/contract_abi.h>
 #include <rinicu/rinicu.h>
 #include <rin_unicode.h>
+
+// The locale is owned by the RinOS session/kernel preference service.  Keep
+// LibUnicode on the public ABI rather than inventing a process environment
+// fallback or caching a build-time locale.
+int rin_locale_get(RinLocaleInfoV1* info);
 }
 
 namespace Unicode {
