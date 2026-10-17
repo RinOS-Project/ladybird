@@ -11,7 +11,7 @@
 #include <LibURL/Parser.h>
 #include <LibWeb/Loader/ProxyMappings.h>
 
-#include "../../../../src/services/networkd/rin_network_service.h"
+#include "../../../../src/services/networkd/network_service.h"
 #include <rinruntime/rin_socket_abi.h>
 
 #include <errno.h>
