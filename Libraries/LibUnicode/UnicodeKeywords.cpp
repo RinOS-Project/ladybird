@@ -11,6 +11,7 @@
 #include <LibUnicode/Locale.h>
 #include <LibUnicode/UnicodeKeywords.h>
 #ifdef AK_OS_RINOS
+#    include <LibUnicode/RinICUBridge.h>
 #    include <LibUnicode/generated_rinos_currency_codes.h>
 #    include <LibUnicode/generated_rinos_numbering_systems.h>
 #    include <rinicu/data_policy.h>
@@ -281,15 +282,16 @@ static Optional<StringView> rinos_numbering_system_name(u32 id)
     // policy.  Keep the lookup indexed by the wire ID rather than deriving a
     // default from a language name; the record is generated from CLDR's
     // locale defaultNumberingSystem field.
-    static constexpr char const* names[] = {
-        "latn", "arab", "arabext", "deva", "thai", "beng", "gujr",
-        "guru", "knda", "khmr", "laoo", "mlym", "mymr", "orya",
-        "telu", "tamldec", "tibt", "fullwide", "hanidec", "adlm",
-        "olck", "cakm", "hmnp", "mtei", "nkoo",
+    static constexpr StringView names[] = {
+        "latn"sv, "arab"sv, "arabext"sv, "deva"sv, "thai"sv, "beng"sv,
+        "gujr"sv, "guru"sv, "knda"sv, "khmr"sv, "laoo"sv, "mlym"sv,
+        "mymr"sv, "orya"sv, "telu"sv, "tamldec"sv, "tibt"sv,
+        "fullwide"sv, "hanidec"sv, "adlm"sv, "olck"sv, "cakm"sv,
+        "hmnp"sv, "mtei"sv, "nkoo"sv,
     };
     if (id >= sizeof(names) / sizeof(names[0]))
         return {};
-    return StringView { names[id] };
+    return names[id];
 }
 
 Vector<String> available_number_systems(StringView locale)

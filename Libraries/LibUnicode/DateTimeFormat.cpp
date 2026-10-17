@@ -31,6 +31,7 @@
 #else
 #include <LibUnicode/RinICUBridge.h>
 #include <LibUnicode/TimeZone.h>
+#include <rinicu/data_policy.h>
 #endif
 
 namespace Unicode {
