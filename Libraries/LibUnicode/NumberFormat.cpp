@@ -885,6 +885,75 @@ NonnullOwnPtr<NumberFormat> NumberFormat::create(
 #else // AK_OS_RINOS
 
 // RinOS: number formatting via rinicu IPC
+//
+// CLDR pluralRanges.xml is a separate data set from the cardinal/ordinal
+// rules.  The product service already returns the two endpoint categories,
+// so keep the bounded product projection here instead of treating the end
+// category as the range result for every locale.  Entries not represented by
+// this product table deliberately retain CLDR's default (the end category).
+static bool rinos_plural_range_locale(StringView locale, StringView language)
+{
+    if (locale == language)
+        return true;
+    return locale.starts_with(language) && locale.length() > language.length() &&
+        locale[language.length()] == '-';
+}
+
+static PluralCategory rinos_plural_range_category(StringView locale, PluralCategory start, PluralCategory end)
+{
+    // CLDR 48.2 pluralRanges exceptions whose result differs from the end
+    // category.  The product locale catalog is bounded; this table is not a
+    // claim that all CLDR locales or all ICU data are implemented.
+    if (rinos_plural_range_locale(locale, "ka"sv) &&
+        ((start == PluralCategory::One && end == PluralCategory::Other) ||
+         (start == PluralCategory::Other && end == PluralCategory::One)))
+        return start == PluralCategory::One ? PluralCategory::One : PluralCategory::Other;
+
+    if ((rinos_plural_range_locale(locale, "ak"sv) ||
+         rinos_plural_range_locale(locale, "fa"sv) ||
+         rinos_plural_range_locale(locale, "or"sv) ||
+         rinos_plural_range_locale(locale, "sd"sv)) &&
+        start == PluralCategory::One && end == PluralCategory::One)
+        return PluralCategory::Other;
+
+    if (rinos_plural_range_locale(locale, "lv"sv) &&
+        ((start == PluralCategory::Zero && end == PluralCategory::Zero) ||
+         (start == PluralCategory::One && end == PluralCategory::Zero) ||
+         (start == PluralCategory::Other && end == PluralCategory::Zero)))
+        return PluralCategory::Other;
+
+    if (rinos_plural_range_locale(locale, "he"sv) &&
+        ((start == PluralCategory::One &&
+          (end == PluralCategory::Two || end == PluralCategory::Other)) ||
+         (start == PluralCategory::Two && end == PluralCategory::Other) ||
+         (start == PluralCategory::Other &&
+          (end == PluralCategory::One || end == PluralCategory::Two ||
+           end == PluralCategory::Other))))
+        return PluralCategory::Other;
+
+    if (rinos_plural_range_locale(locale, "ro"sv) &&
+        start == PluralCategory::Few && end == PluralCategory::One)
+        return PluralCategory::Few;
+
+    if (rinos_plural_range_locale(locale, "sl"sv) && end == PluralCategory::One &&
+        (start == PluralCategory::One || start == PluralCategory::Two ||
+         start == PluralCategory::Few || start == PluralCategory::Other))
+        return PluralCategory::Few;
+
+    if (rinos_plural_range_locale(locale, "ar"sv)) {
+        if (start == PluralCategory::Zero &&
+            (end == PluralCategory::One || end == PluralCategory::Two))
+            return PluralCategory::Zero;
+        if (start == PluralCategory::One && end == PluralCategory::Two)
+            return PluralCategory::Other;
+        if (start == PluralCategory::Other &&
+            (end == PluralCategory::One || end == PluralCategory::Two))
+            return PluralCategory::Other;
+    }
+
+    return end;
+}
+
 class RinNumberFormatImpl : public NumberFormat {
 public:
     RinNumberFormatImpl(String locale, DisplayOptions display_options, RoundingOptions rounding_options, bool is_unit)
@@ -1006,9 +1075,11 @@ public:
         return PluralCategory::Other;
     }
 
-    virtual PluralCategory select_plural_range(Value const&, Value const& end) const override
+    virtual PluralCategory select_plural_range(Value const& start, Value const& end) const override
     {
-        return select_plural(end);
+        auto start_category = select_plural(start);
+        auto end_category = select_plural(end);
+        return rinos_plural_range_category(m_locale, start_category, end_category);
     }
 
     virtual Vector<PluralCategory> available_plural_categories() const override
