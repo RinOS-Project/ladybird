@@ -36,6 +36,7 @@ target_include_directories(imagedecoderservice PRIVATE ${LADYBIRD_SOURCE_DIR}/Se
 if (AK_OS_RINOS)
     target_include_directories(imagedecoderservice PRIVATE
         ${LADYBIRD_SOURCE_DIR}/../../public-base/RinOS-SDK/include
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs
         ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinimage/include)
 endif()
 
