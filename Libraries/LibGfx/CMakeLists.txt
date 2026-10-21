@@ -130,7 +130,10 @@ else()
             ${AQUAMARINE_ROOT}/aq_transform.c
             ${AQUAMARINE_ROOT}/aq_render3d.c
         )
-        target_include_directories(aquamarine PUBLIC ${AQUAMARINE_ROOT})
+        target_include_directories(aquamarine PUBLIC
+            ${AQUAMARINE_ROOT}
+            ${AQUAMARINE_ROOT}/..
+        )
         if (AK_OS_RINOS)
             # aq_text.c uses RinOS's Unicode tables. Its standalone target
             # does not inherit LibGfx's private native include directories.
