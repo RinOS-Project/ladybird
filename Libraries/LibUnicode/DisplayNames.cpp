@@ -219,9 +219,11 @@ Optional<Utf16String> date_time_field_display_name(StringView locale, StringView
 Optional<Utf16String> time_zone_display_name(StringView locale, StringView time_zone_identifier, TimeZoneOffset::InDST in_dst, double time)
 {
 #ifdef AK_OS_RINOS
-    (void)in_dst;
     (void)time;
-    return rin_display_name(locale, time_zone_identifier, RIN_ICU_DISPLAY_NAME_TIME_ZONE);
+    auto type = in_dst == TimeZoneOffset::InDST::Yes
+        ? RIN_ICU_DISPLAY_NAME_TIME_ZONE_DAYLIGHT
+        : RIN_ICU_DISPLAY_NAME_TIME_ZONE_STANDARD;
+    return rin_display_name(locale, time_zone_identifier, type);
 #else
     auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
