@@ -7,6 +7,7 @@
 #include <AK/Array.h>
 #include <LibUnicode/DisplayNames.h>
 #include <LibUnicode/ICU.h>
+#include <cmath>
 
 #ifndef AK_OS_RINOS
 #include <unicode/dtptngen.h>
@@ -50,6 +51,23 @@ static Optional<Utf16String> rin_display_name(StringView locale, StringView code
     size_t len = 0;
 
     if (rin_icu_display_name(&rin_icu_client(), locale_z.characters(), code_z.characters(), type, rin_icu_style(style), rin_icu_language_display(language_display), buf, sizeof(buf), &len) == 0 && len > 0)
+        return Utf16String::from_utf8(StringView { buf, len });
+    return {};
+}
+
+static Optional<Utf16String> rin_display_name_at_epoch_ms(StringView locale, StringView code, u32 type, double time, Style style = Style::Long, LanguageDisplay language_display = LanguageDisplay::Standard)
+{
+    if (!::isfinite(time) || ::trunc(time) != time
+        || time <= static_cast<double>(NumericLimits<i64>::min())
+        || time >= static_cast<double>(NumericLimits<i64>::max()))
+        return {};
+
+    ByteString locale_z(locale);
+    ByteString code_z(code);
+    char buf[256];
+    size_t len = 0;
+    auto epoch_ms = static_cast<i64>(time);
+    if (rin_icu_display_name_at_epoch_ms(&rin_icu_client(), locale_z.characters(), code_z.characters(), type, rin_icu_style(style), rin_icu_language_display(language_display), epoch_ms, buf, sizeof(buf), &len) == 0 && len > 0)
         return Utf16String::from_utf8(StringView { buf, len });
     return {};
 }
@@ -219,11 +237,10 @@ Optional<Utf16String> date_time_field_display_name(StringView locale, StringView
 Optional<Utf16String> time_zone_display_name(StringView locale, StringView time_zone_identifier, TimeZoneOffset::InDST in_dst, double time)
 {
 #ifdef AK_OS_RINOS
-    (void)time;
     auto type = in_dst == TimeZoneOffset::InDST::Yes
         ? RIN_ICU_DISPLAY_NAME_TIME_ZONE_DAYLIGHT
         : RIN_ICU_DISPLAY_NAME_TIME_ZONE_STANDARD;
-    return rin_display_name(locale, time_zone_identifier, type);
+    return rin_display_name_at_epoch_ms(locale, time_zone_identifier, type, time);
 #else
     auto locale_data = LocaleData::for_locale(locale);
     if (!locale_data.has_value())
