@@ -51,6 +51,7 @@
 #include "../../../../src/webengine/RinLadybirdRuntime.hpp"
 #include <rinruntime/webcontent_permission_producer.h>
 #include <rinruntime/rin_web_serial_portal.h>
+#include <rin/gui/text_input.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -946,6 +947,12 @@ struct PageSession {
         rin_webcontent_permission_producer_initialize(&permission_producer);
 
         view->on_load_start = [this](URL::URL const& url, bool) {
+            if (composition_active) {
+                RinWebContentCompositionRequestV1 cancel {};
+                cancel.struct_size = sizeof(cancel);
+                cancel.version = RIN_WEBCONTENT_COMPOSITION_VERSION;
+                (void)dispatch_composition(cancel);
+            }
             auto serialized = remap_markup_internal_url(url.serialize().to_byte_string());
             loading = true;
             progress_percent = 15;
@@ -1275,6 +1282,12 @@ struct PageSession {
 
     ~PageSession()
     {
+        if (composition_active) {
+            RinWebContentCompositionRequestV1 cancel {};
+            cancel.struct_size = sizeof(cancel);
+            cancel.version = RIN_WEBCONTENT_COMPOSITION_VERSION;
+            (void)dispatch_composition(cancel);
+        }
         rin_webcontent_permission_producer_unbind(&permission_producer);
         close_paint_shm();
     }
@@ -3315,6 +3328,94 @@ struct PageSession {
         return true;
     }
 
+    bool dispatch_composition(
+        RinWebContentCompositionRequestV1 const& request)
+    {
+        if (!rin_webcontent_composition_request_valid(&request))
+            return false;
+        const bool active =
+            (request.flags & RIN_WEBCONTENT_COMPOSITION_FLAG_ACTIVE) != 0u;
+        if (!active) {
+            if (!composition_active)
+                return true;
+            auto result = view->evaluate_json(R"JS((() => {
+                const key = Symbol.for("rinos.webcontent.ime-target.v1");
+                const target = window[key];
+                if (target && target.isConnected)
+                    target.dispatchEvent(new CompositionEvent(
+                        "compositionend", { data: "", bubbles: true }));
+                window[key] = null;
+                return true;
+            })())JS"sv);
+            if (result.is_error())
+                return false;
+            auto response = result.release_value();
+            if (!response.get_bool().value_or(false)) return false;
+            composition_active = false;
+            metrics_dirty = true;
+            mark_dirty();
+            return true;
+        }
+
+        refresh_metrics(true);
+        if (!text_input_enabled ||
+            text_input_content_type == RIN_TEXT_INPUT_CONTENT_PASSWORD) {
+            if (composition_active) {
+                RinWebContentCompositionRequestV1 cancel {};
+                cancel.struct_size = sizeof(cancel);
+                cancel.version = RIN_WEBCONTENT_COMPOSITION_VERSION;
+                (void)dispatch_composition(cancel);
+            }
+            return false;
+        }
+
+        auto text_or_error = String::from_utf8(
+            StringView { request.text, request.text_bytes });
+        if (text_or_error.is_error())
+            return false;
+        auto escaped_text = JsonValue(
+            text_or_error.release_value()).serialized();
+        StringBuilder script;
+        script.append(R"JS((() => {
+            const key = Symbol.for("rinos.webcontent.ime-target.v1");
+            const active = document.activeElement;
+            const editable = element => element &&
+                (element.isContentEditable ||
+                 ((element.tagName === "INPUT" || element.tagName === "TEXTAREA") &&
+                  !element.disabled && !element.readOnly &&
+                  !(element.tagName === "INPUT" &&
+                    String(element.type || "").toLowerCase() === "password"));
+            if (!editable(active)) return false;
+            let target = window[key];
+            const dispatch = (element, type, data) =>
+                element.dispatchEvent(new CompositionEvent(type,
+                    { data, bubbles: true }));
+            if (!target || !target.isConnected) {
+                target = active;
+                window[key] = target;
+                dispatch(target, "compositionstart", "");
+            } else if (target !== active) {
+                dispatch(target, "compositionend", "");
+                target = active;
+                window[key] = target;
+                dispatch(target, "compositionstart", "");
+            }
+            dispatch(target, "compositionupdate", )JS"sv);
+        script.append(escaped_text.bytes_as_string_view());
+        script.append(R"JS();
+            return true;
+        })())JS"sv);
+        auto result = view->evaluate_json(script.to_byte_string());
+        if (result.is_error())
+            return false;
+        auto response = result.release_value();
+        if (!response.get_bool().value_or(false)) return false;
+        composition_active = true;
+        metrics_dirty = true;
+        mark_dirty();
+        return true;
+    }
+
     void fill_state(RinWebContentPageState& state)
     {
         refresh_metrics();
@@ -3390,6 +3491,7 @@ struct PageSession {
     int reported_viewport_height { 600 };
     bool text_input_enabled { false };
     int text_input_content_type { 0 };
+    bool composition_active { false };
     int text_input_x { 0 };
     int text_input_y { 0 };
     int text_input_width { 1 };
@@ -3697,6 +3799,15 @@ static int handle_key_or_text(PageSession& page, ReadonlyBytes payload)
         return -EINVAL;
     auto const& request = *reinterpret_cast<RinWebContentKeyOrTextRequest const*>(payload.data());
     return page.dispatch_key_or_text(request) ? 0 : -EINVAL;
+}
+
+static int handle_composition(PageSession& page, ReadonlyBytes payload)
+{
+    if (payload.size() != sizeof(RinWebContentCompositionRequestV1))
+        return -EINVAL;
+    auto const& request = *reinterpret_cast<
+        RinWebContentCompositionRequestV1 const*>(payload.data());
+    return page.dispatch_composition(request) ? 0 : -EINVAL;
 }
 
 static int handle_scroll(PageSession& page, ReadonlyBytes payload)
@@ -4437,6 +4548,11 @@ static void handle_client(int client_fd)
         return;
     case RIN_WEBCONTENT_CMD_DISPATCH_KEY_OR_TEXT_V1:
         (void)send_message(client_fd, header.command, handle_key_or_text(*page, payload_bytes), header.page_id, nullptr, 0, deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_DISPATCH_COMPOSITION_V1:
+        (void)send_message(client_fd, header.command,
+                           handle_composition(*page, payload_bytes),
+                           header.page_id, nullptr, 0, deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_SCROLL_TO_V1:
         (void)send_message(client_fd, header.command, handle_scroll(*page, payload_bytes), header.page_id, nullptr, 0, deadline_ms);
