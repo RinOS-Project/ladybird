@@ -17,8 +17,135 @@ using i32 = __INT32_TYPE__;
 using i16 = __INT16_TYPE__;
 using i8 = __INT8_TYPE__;
 
+#if defined(__FLT16_MANT_DIG__)
 using f16 = _Float16;
 static_assert(__FLT16_MANT_DIG__ == 11 && __FLT16_MAX_EXP__ == 16);
+#else
+// Keep IEEE binary16 available on targets where the compiler does not expose
+// a native half type (notably baseline IA-32). Integer-only conversions avoid
+// imposing an ISA requirement such as F16C or AVX-512FP16.
+struct f16 {
+    constexpr f16() = default;
+    template<typename T>
+    requires(__is_integral(T))
+    constexpr f16(T value)
+        : m_bits(from_double(static_cast<double>(value)))
+    {
+    }
+    constexpr f16(float value)
+        : m_bits(from_double(static_cast<double>(value)))
+    {
+    }
+    constexpr f16(double value)
+        : m_bits(from_double(value))
+    {
+    }
+
+    constexpr operator float() const { return to_float(m_bits); }
+    constexpr u16 bits() const { return m_bits; }
+
+    static constexpr f16 from_bits(u16 bits)
+    {
+        f16 value;
+        value.m_bits = bits;
+        return value;
+    }
+
+private:
+    static constexpr u64 round_to_even(u64 value, unsigned shift)
+    {
+        auto truncated = value >> shift;
+        auto remainder = value & ((u64 { 1 } << shift) - 1);
+        auto halfway = u64 { 1 } << (shift - 1);
+        if (remainder > halfway || (remainder == halfway && (truncated & 1u)))
+            ++truncated;
+        return truncated;
+    }
+
+    static constexpr u16 from_double(double value)
+    {
+        auto raw = __builtin_bit_cast(u64, value);
+        auto sign = static_cast<u16>((raw >> 48) & 0x8000u);
+        auto exponent = static_cast<unsigned>((raw >> 52) & 0x7ffu);
+        auto fraction = raw & 0x000fffffffffffffull;
+
+        if (exponent == 0x7ffu) {
+            if (fraction == 0)
+                return static_cast<u16>(sign | 0x7c00u);
+            auto payload = static_cast<u16>(fraction >> 42) | 0x0200u;
+            return static_cast<u16>(sign | 0x7c00u | (payload & 0x03ffu));
+        }
+
+        // Every binary64 subnormal is far below half of the least binary16
+        // subnormal, so it rounds to signed zero.
+        if (exponent == 0)
+            return sign;
+
+        auto unbiased_exponent = static_cast<int>(exponent) - 1023;
+        if (unbiased_exponent > 15)
+            return static_cast<u16>(sign | 0x7c00u);
+        if (unbiased_exponent < -25)
+            return sign;
+
+        auto significand = (u64 { 1 } << 52) | fraction;
+        if (unbiased_exponent < -14) {
+            auto shift = static_cast<unsigned>(28 - unbiased_exponent);
+            return static_cast<u16>(sign | round_to_even(significand, shift));
+        }
+
+        auto rounded_significand = round_to_even(significand, 42);
+        auto half_exponent = static_cast<unsigned>(unbiased_exponent + 15);
+        if (rounded_significand == 0x800u) {
+            rounded_significand = 0x400u;
+            ++half_exponent;
+        }
+        if (half_exponent >= 31u)
+            return static_cast<u16>(sign | 0x7c00u);
+        return static_cast<u16>(sign | (half_exponent << 10) | (rounded_significand & 0x03ffu));
+    }
+
+    static constexpr float to_float(u16 bits)
+    {
+        auto sign = static_cast<u32>(bits & 0x8000u) << 16;
+        auto exponent = static_cast<unsigned>((bits >> 10) & 0x1fu);
+        auto fraction = static_cast<u32>(bits & 0x03ffu);
+        u32 raw;
+
+        if (exponent == 0) {
+            if (fraction == 0)
+                raw = sign;
+            else {
+                int unbiased_exponent = -14;
+                while ((fraction & 0x0400u) == 0) {
+                    fraction <<= 1;
+                    --unbiased_exponent;
+                }
+                fraction &= 0x03ffu;
+                raw = sign | (static_cast<u32>(unbiased_exponent + 127) << 23) | (fraction << 13);
+            }
+        } else if (exponent == 0x1fu) {
+            raw = sign | 0x7f800000u | (fraction << 13);
+        } else {
+            raw = sign | (static_cast<u32>(static_cast<int>(exponent) - 15 + 127) << 23) | (fraction << 13);
+        }
+        return __builtin_bit_cast(float, raw);
+    }
+
+    u16 m_bits { 0 };
+};
+
+static_assert(sizeof(f16) == sizeof(u16));
+static_assert(f16(1.0).bits() == 0x3c00u);
+static_assert(f16(65504.0).bits() == 0x7bffu);
+static_assert(f16(0x1p-14).bits() == 0x0400u);
+static_assert(f16(0x1p-24).bits() == 0x0001u);
+static_assert(f16(1.00048828125).bits() == 0x3c00u);
+static_assert(f16(1.00146484375).bits() == 0x3c02u);
+static_assert(f16(0x1p-25).bits() == 0x0000u);
+static_assert(f16(65520.0).bits() == 0x7c00u);
+static_assert(static_cast<double>(f16::from_bits(0x0001u)) == 0x1p-24);
+static_assert(static_cast<double>(f16::from_bits(0x0400u)) == 0x1p-14);
+#endif
 
 using f32 = float;
 static_assert(__FLT_MANT_DIG__ == 24 && __FLT_MAX_EXP__ == 128);

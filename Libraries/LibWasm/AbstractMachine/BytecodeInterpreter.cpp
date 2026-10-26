@@ -6118,10 +6118,17 @@ CompiledInstructions try_compile_instructions(Expression const& expression, Span
         }
     };
 
-    auto find_root = [&parent](this auto& self, ValueID x) -> ValueID {
-        if (parent[x.value()] != x)
-            parent[x.value()] = self(parent[x.value()]);
-        return parent[x.value()];
+    auto find_root = [&parent](ValueID x) -> ValueID {
+        auto root = x;
+        while (parent[root.value()] != root)
+            root = parent[root.value()];
+
+        while (parent[x.value()] != x) {
+            auto next = parent[x.value()];
+            parent[x.value()] = root;
+            x = next;
+        }
+        return root;
     };
 
     auto union_alias = [&](ValueID a, ValueID b) {
