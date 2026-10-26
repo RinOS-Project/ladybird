@@ -29,6 +29,21 @@ static Optional<Gfx::IntRect> command_bounding_rectangle(DisplayListCommand cons
         });
 }
 
+template<typename Callback>
+static void for_each_node_from_common_ancestor_to_target(
+    AccumulatedVisualContextTree const& tree,
+    VisualContextIndex common_ancestor_index,
+    VisualContextIndex target_index, Callback& callback)
+{
+    if (!target_index.value() || target_index == common_ancestor_index)
+        return;
+
+    auto const& node = tree.node_at(target_index);
+    for_each_node_from_common_ancestor_to_target(
+        tree, common_ancestor_index, node.parent_index, callback);
+    callback(node);
+}
+
 static bool command_is_clip(DisplayListCommand const& command)
 {
     return command.visit(
@@ -70,13 +85,6 @@ void DisplayListPlayer::execute_impl(DisplayList& display_list, ScrollStateSnaps
     auto const& visual_context_tree = display_list.visual_context_tree();
 
     VERIFY(m_surface);
-
-    auto for_each_node_from_common_ancestor_to_target = [&](this auto const& self, VisualContextIndex common_ancestor_index, VisualContextIndex target_index, auto&& callback) -> void {
-        if (!target_index.value() || target_index == common_ancestor_index)
-            return;
-        self(common_ancestor_index, visual_context_tree.node_at(target_index).parent_index, callback);
-        callback(visual_context_tree.node_at(target_index));
-    };
 
     auto apply_accumulated_visual_context = [&](AccumulatedVisualContextNode const& node) {
         node.data.visit(
@@ -125,10 +133,13 @@ void DisplayListPlayer::execute_impl(DisplayList& display_list, ScrollStateSnaps
             applied_depth--;
         }
 
-        for_each_node_from_common_ancestor_to_target(common_ancestor_index, target_index, [&](AccumulatedVisualContextNode const& node) {
+        auto apply_node = [&](AccumulatedVisualContextNode const& node) {
             apply_accumulated_visual_context(node);
             applied_depth++;
-        });
+        };
+        for_each_node_from_common_ancestor_to_target(
+            visual_context_tree, common_ancestor_index, target_index,
+            apply_node);
 
         applied_context_index = target_index;
     };
