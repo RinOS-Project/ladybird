@@ -12,6 +12,7 @@
 #include <AK/LexicalPath.h>
 #endif
 #include <AK/Optional.h>
+#include <AK/Vector.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Forward.h>
 #include <LibDatabase/Forward.h>
@@ -105,6 +106,7 @@ public:
     virtual Utf16String clipboard_text() const;
     virtual Vector<Web::Clipboard::SystemClipboardRepresentation> clipboard_entries() const;
     virtual void insert_clipboard_entry(Web::Clipboard::SystemClipboardRepresentation);
+    virtual void insert_clipboard_item(Web::Clipboard::SystemClipboardItem);
 
     struct BrowsingDataSizes {
         u64 cache_size_since_requested_time { 0 };
@@ -293,7 +295,7 @@ private:
     StringView m_user_agent_string;
     StringView m_navigator_compatibility_mode;
 
-    Optional<Web::Clipboard::SystemClipboardRepresentation> m_clipboard;
+    Vector<Web::Clipboard::SystemClipboardRepresentation> m_clipboard;
 
     FileDownloader m_file_downloader;
 

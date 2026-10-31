@@ -93,6 +93,7 @@ static String os_specific_well_known_format(StringView mime_type_string)
 static void write_blobs_and_option_to_clipboard(JS::Realm& realm, ReadonlySpan<GC::Ref<FileAPI::Blob>> items, StringView presentation_style)
 {
     auto& window = as<HTML::Window>(realm.global_object());
+    SystemClipboardItem clipboard_item;
 
     // FIXME: 1. Let webCustomFormats be a sequence<Blob>.
 
@@ -114,13 +115,16 @@ static void write_blobs_and_option_to_clipboard(JS::Realm& realm, ReadonlySpan<G
             // FIXME: 8. Append webCustomFormat to webCustomFormats.
         }
 
-        // 3. Let payload be the result of UTF-8 decoding item’s underlying byte sequence.
-        auto decoder = TextCodec::decoder_for("UTF-8"sv);
-        auto payload = MUST(TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, item->raw_bytes()));
-
-        // 4. Insert payload and presentationStyle into the system clipboard using formatString as the native clipboard format.
-        window.page().client().page_did_insert_clipboard_entry({ payload.to_byte_string(), move(format_string) }, presentation_style);
+        // Preserve the Blob's bytes. In particular, image/png is binary and
+        // must not pass through a UTF-8 decoder before reaching the clipboard.
+        auto bytes = item->raw_bytes();
+        clipboard_item.system_clipboard_representations.append({
+            ByteString { bytes },
+            move(format_string) });
     }
+
+    if (!clipboard_item.system_clipboard_representations.is_empty())
+        window.page().client().page_did_insert_clipboard_item(clipboard_item, presentation_style);
 
     // FIXME: 3. Write web custom formats given webCustomFormats.
 }
@@ -225,8 +229,16 @@ GC::Ref<WebIDL::Promise> Clipboard::read(ClipboardUnsanitizedFormats formats)
                             if (mime_type.is_empty())
                                 continue;
 
-                            auto decoder = TextCodec::decoder_for("UTF-8"sv);
-                            auto string = MUST(TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, system_clipboard_representation.data));
+                            GC::Ref<WebIDL::Promise> representation_data = [&]() {
+                                if (mime_type == "image/png"sv) {
+                                    auto bytes = MUST(ByteBuffer::copy(system_clipboard_representation.data.bytes()));
+                                    auto blob = FileAPI::Blob::create(realm, move(bytes), mime_type);
+                                    return WebIDL::create_resolved_promise(realm, blob);
+                                }
+                                auto decoder = TextCodec::decoder_for("UTF-8"sv);
+                                auto string = MUST(TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, system_clipboard_representation.data));
+                                return WebIDL::create_resolved_promise(realm, JS::PrimitiveString::create(realm.vm(), move(string)));
+                            }();
 
                             // 3. Let representation be a new representation.
                             ClipboardItem::Representation representation {
@@ -234,7 +246,7 @@ GC::Ref<WebIDL::Promise> Clipboard::read(ClipboardUnsanitizedFormats formats)
                                 .mime_type = move(mime_type),
 
                                 // 7. Resolve representation’s data with systemClipboardRepresentation’s data.
-                                .data = WebIDL::create_resolved_promise(realm, JS::PrimitiveString::create(realm.vm(), move(string))),
+                                .data = move(representation_data),
                             };
 
                             // 5. Let isUnsanitized be false.

@@ -804,23 +804,27 @@ void Application::display_error_dialog(StringView error_message) const
 
 Utf16String Application::clipboard_text() const
 {
-    if (!m_clipboard.has_value())
-        return {};
-    if (m_clipboard->mime_type != "text/plain"sv)
-        return {};
-    return Utf16String::from_utf8(m_clipboard->data);
+    for (auto const& representation : m_clipboard) {
+        if (representation.mime_type == "text/plain"sv)
+            return Utf16String::from_utf8(representation.data);
+    }
+    return {};
 }
 
 Vector<Web::Clipboard::SystemClipboardRepresentation> Application::clipboard_entries() const
 {
-    if (!m_clipboard.has_value())
-        return {};
-    return { *m_clipboard };
+    return m_clipboard;
 }
 
 void Application::insert_clipboard_entry(Web::Clipboard::SystemClipboardRepresentation entry)
 {
-    m_clipboard = move(entry);
+    m_clipboard.clear();
+    m_clipboard.append(move(entry));
+}
+
+void Application::insert_clipboard_item(Web::Clipboard::SystemClipboardItem item)
+{
+    m_clipboard = move(item.system_clipboard_representations);
 }
 
 NonnullRefPtr<Core::Promise<Application::BrowsingDataSizes>> Application::estimate_browsing_data_size_accessed_since(UnixDateTime since)

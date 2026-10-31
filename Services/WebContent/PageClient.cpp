@@ -1542,6 +1542,11 @@ void PageClient::page_did_insert_clipboard_entry(Web::Clipboard::SystemClipboard
     client().async_did_insert_clipboard_entry(m_id, entry, presentation_style);
 }
 
+void PageClient::page_did_insert_clipboard_item(Web::Clipboard::SystemClipboardItem const& item, StringView presentation_style)
+{
+    client().async_did_insert_clipboard_item(m_id, item, presentation_style);
+}
+
 void PageClient::page_did_request_clipboard_entries(u64 request_id)
 {
     client().async_did_request_clipboard_entries(m_id, request_id);

@@ -1226,6 +1226,11 @@ void WebContentClient::did_insert_clipboard_entry(u64, Web::Clipboard::SystemCli
     Application::the().insert_clipboard_entry(move(entry));
 }
 
+void WebContentClient::did_insert_clipboard_item(u64, Web::Clipboard::SystemClipboardItem item, String)
+{
+    Application::the().insert_clipboard_item(move(item));
+}
+
 void WebContentClient::did_request_clipboard_entries(u64 page_id, u64 request_id)
 {
     if (auto view = view_for_page_id(page_id); view.has_value()) {
