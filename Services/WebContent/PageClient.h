@@ -226,8 +226,8 @@ private:
     virtual void page_did_set_device_pixel_ratio_for_testing(double ratio) override;
     virtual void page_did_change_theme_color(Gfx::Color color) override;
     virtual void page_did_insert_clipboard_entry(Web::Clipboard::SystemClipboardRepresentation const&, StringView presentation_style) override;
-    virtual void page_did_insert_clipboard_item(Web::Clipboard::SystemClipboardItem const&, StringView presentation_style) override;
-    virtual void page_did_request_clipboard_entries(u64 request_id) override;
+    virtual bool page_did_insert_clipboard_item(Web::Clipboard::SystemClipboardItem const&, StringView presentation_style, StringView origin, u64 frame_identity) override;
+    virtual void page_did_request_clipboard_entries(u64 request_id, StringView origin, u64 frame_identity) override;
     virtual void page_did_change_audio_play_state(Web::HTML::AudioPlayState) override;
     virtual void page_did_allocate_backing_stores(i32 front_bitmap_id, Web::SharedBackingStore front_backing_store, i32 back_bitmap_id, Web::SharedBackingStore back_backing_store) override;
     virtual WorkerAgentResponse request_worker_agent(Web::Bindings::AgentType) override;

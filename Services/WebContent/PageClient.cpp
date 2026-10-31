@@ -44,9 +44,13 @@
 #include <WebContent/DevToolsConsoleClient.h>
 #include <WebContent/PageClient.h>
 #include <WebContent/PageHost.h>
+#ifdef AK_OS_RINOS
+#    include "RinOSCompatBridge.h"
+#endif
 #include <WebContent/WebContentClientEndpoint.h>
 #include <WebContent/WebDriverConnection.h>
 #include <WebContent/WebUIConnection.h>
+#include <algorithm>
 
 #ifdef AK_OS_RINOS
 #include <unistd.h>
@@ -1542,14 +1546,236 @@ void PageClient::page_did_insert_clipboard_entry(Web::Clipboard::SystemClipboard
     client().async_did_insert_clipboard_entry(m_id, entry, presentation_style);
 }
 
-void PageClient::page_did_insert_clipboard_item(Web::Clipboard::SystemClipboardItem const& item, StringView presentation_style)
+bool PageClient::page_did_insert_clipboard_item(
+    Web::Clipboard::SystemClipboardItem const& item,
+    StringView presentation_style, StringView origin, u64 frame_identity)
 {
+#ifdef AK_OS_RINOS
+    (void)presentation_style;
+    if (m_id == 0u || m_id > UINT32_MAX || frame_identity == 0u ||
+        origin.is_empty() || origin.length() >= RIN_WEBCONTENT_URL_MAX ||
+        item.system_clipboard_representations.is_empty() ||
+        item.system_clipboard_representations.size() >
+            RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_FORMATS)
+        return false;
+
+    RinWebContentClipboardOwnerRequestV1 request {};
+    request.struct_size = sizeof(request);
+    request.version = RIN_WEBCONTENT_CLIPBOARD_OWNER_VERSION;
+    request.operation = RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE;
+    request.frame_identity = frame_identity;
+    memcpy(request.origin, origin.characters(), origin.length());
+
+    RinWebContentClipboardOwnerFormatV1 formats[
+        RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_FORMATS] {};
+    ReadonlyBytes data_parts[RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_FORMATS] {};
+    size_t data_size = 0u;
+    u32 format_count = 0u;
+    for (auto const& representation :
+         item.system_clipboard_representations) {
+        auto mime = representation.mime_type.to_byte_string();
+        if (!rin_webcontent_client_clipboard_mime_valid(
+                mime.characters(), mime.length()))
+            continue;
+        auto bytes = representation.data.bytes();
+        if (bytes.size() > RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_DATA_BYTES -
+                               data_size)
+            return false;
+        auto& format = formats[format_count];
+        format.format_index = format_count;
+        format.mime_size = mime.length();
+        format.data_size = bytes.size();
+        memcpy(format.mime, mime.characters(), mime.length());
+        data_parts[format_count] = bytes;
+        data_size += bytes.size();
+        ++format_count;
+    }
+    if (format_count == 0u)
+        return false;
+    request.format_count = format_count;
+    const size_t descriptor_size =
+        format_count * sizeof(RinWebContentClipboardOwnerFormatV1);
+    if (data_size > SIZE_MAX - sizeof(request) - descriptor_size)
+        return false;
+    std::vector<u8> payload;
+#if defined(__cpp_exceptions)
+    try {
+#endif
+        payload.resize(sizeof(request) + descriptor_size + data_size);
+#if defined(__cpp_exceptions)
+    } catch (...) {
+        return false;
+    }
+#endif
+    memcpy(payload.data(), &request, sizeof(request));
+    memcpy(payload.data() + sizeof(request), formats, descriptor_size);
+    size_t offset = sizeof(request) + descriptor_size;
+    for (u32 index = 0u; index < format_count; ++index) {
+        auto const bytes = data_parts[index];
+        if (!bytes.is_empty())
+            memcpy(payload.data() + offset, bytes.data(), bytes.size());
+        offset += bytes.size();
+    }
+
+    RinWebContentClipboardOwnerResponseV1 response {};
+    std::vector<u8> response_data;
+    const bool committed = RinWebContentBridge::exchange_clipboard_owner(
+        static_cast<u32>(m_id), payload.data(), payload.size(), response,
+        response_data);
+    volatile u8* payload_bytes = payload.data();
+    for (size_t index = 0u; index < payload.size(); ++index)
+        payload_bytes[index] = 0u;
+    volatile u8* response_bytes = response_data.data();
+    for (size_t index = 0u; index < response_data.size(); ++index)
+        response_bytes[index] = 0u;
+    volatile u8* request_bytes = reinterpret_cast<volatile u8*>(&request);
+    for (size_t index = 0u; index < sizeof(request); ++index)
+        request_bytes[index] = 0u;
+    return committed;
+#else
     client().async_did_insert_clipboard_item(m_id, item, presentation_style);
+    return true;
+#endif
 }
 
-void PageClient::page_did_request_clipboard_entries(u64 request_id)
+void PageClient::page_did_request_clipboard_entries(
+    u64 request_id, StringView origin, u64 frame_identity)
 {
+#ifdef AK_OS_RINOS
+    Vector<Web::Clipboard::SystemClipboardItem> items;
+    if (m_id == 0u || m_id > UINT32_MAX || frame_identity == 0u ||
+        origin.is_empty() || origin.length() >= RIN_WEBCONTENT_URL_MAX) {
+        page().retrieved_clipboard_entries(request_id, move(items), false);
+        return;
+    }
+
+    auto initialize_request = [&](RinWebContentClipboardOwnerRequestV1& request,
+                                  u32 operation) {
+        request = {};
+        request.struct_size = sizeof(request);
+        request.version = RIN_WEBCONTENT_CLIPBOARD_OWNER_VERSION;
+        request.operation = operation;
+        request.frame_identity = frame_identity;
+        memcpy(request.origin, origin.characters(), origin.length());
+    };
+
+    RinWebContentClipboardOwnerRequestV1 query {};
+    initialize_request(query, RIN_WEBCONTENT_CLIPBOARD_OWNER_QUERY);
+    RinWebContentClipboardOwnerResponseV1 query_response {};
+    std::vector<u8> query_data;
+    if (!RinWebContentBridge::exchange_clipboard_owner(
+            static_cast<u32>(m_id), &query, sizeof(query), query_response,
+            query_data)) {
+        page().retrieved_clipboard_entries(request_id, move(items), false);
+        return;
+    }
+
+    bool succeeded = true;
+    if (query_response.format_count != 0u) {
+        Web::Clipboard::SystemClipboardItem item;
+        bool complete = true;
+        for (u32 index = 0u; index < query_response.format_count; ++index) {
+            RinWebContentClipboardOwnerFormatV1 format {};
+            memcpy(&format, query_data.data() +
+                    index * sizeof(format), sizeof(format));
+            if (format.data_size > SIZE_MAX) {
+                complete = false;
+                break;
+            }
+            std::vector<u8> bytes;
+#if defined(__cpp_exceptions)
+            try {
+#endif
+                bytes.resize(static_cast<size_t>(format.data_size));
+#if defined(__cpp_exceptions)
+            } catch (...) {
+                complete = false;
+                break;
+            }
+#endif
+            size_t offset = 0u;
+            while (offset < bytes.size()) {
+                const auto chunk_size = static_cast<u32>(
+                    std::min<size_t>(
+                        bytes.size() - offset,
+                        RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_CHUNK_BYTES));
+                RinWebContentClipboardOwnerRequestV1 read_request {};
+                initialize_request(
+                    read_request,
+                    RIN_WEBCONTENT_CLIPBOARD_OWNER_READ_CHUNK);
+                read_request.format_index = format.format_index;
+                read_request.chunk_size = chunk_size;
+                read_request.generation = query_response.generation;
+                read_request.offset = offset;
+                RinWebContentClipboardOwnerResponseV1 read_response {};
+                std::vector<u8> chunk;
+                if (!RinWebContentBridge::exchange_clipboard_owner(
+                        static_cast<u32>(m_id), &read_request,
+                        sizeof(read_request), read_response, chunk) ||
+                    read_response.total_data_size != format.data_size ||
+                    chunk.size() != chunk_size) {
+                    complete = false;
+                    volatile u8* chunk_bytes = chunk.data();
+                    for (size_t byte = 0u; byte < chunk.size(); ++byte)
+                        chunk_bytes[byte] = 0u;
+                    volatile u8* read_request_bytes =
+                        reinterpret_cast<volatile u8*>(&read_request);
+                    for (size_t byte = 0u; byte < sizeof(read_request); ++byte)
+                        read_request_bytes[byte] = 0u;
+                    break;
+                }
+                memcpy(bytes.data() + offset, chunk.data(), chunk.size());
+                offset += chunk.size();
+                volatile u8* chunk_bytes = chunk.data();
+                for (size_t byte = 0u; byte < chunk.size(); ++byte)
+                    chunk_bytes[byte] = 0u;
+                volatile u8* read_request_bytes =
+                    reinterpret_cast<volatile u8*>(&read_request);
+                for (size_t byte = 0u; byte < sizeof(read_request); ++byte)
+                    read_request_bytes[byte] = 0u;
+            }
+            if (!complete)
+                break;
+
+            String mime;
+            if (format.mime_size == sizeof("text/plain") - 1u &&
+                memcmp(format.mime, "text/plain", format.mime_size) == 0)
+                mime = "text/plain"_string;
+            else if (format.mime_size == sizeof("text/html") - 1u &&
+                     memcmp(format.mime, "text/html", format.mime_size) == 0)
+                mime = "text/html"_string;
+            else if (format.mime_size == sizeof("image/png") - 1u &&
+                     memcmp(format.mime, "image/png", format.mime_size) == 0)
+                mime = "image/png"_string;
+            else {
+                complete = false;
+                break;
+            }
+            auto data = bytes.empty()
+                ? ByteString {}
+                : ByteString { ReadonlyBytes { bytes.data(), bytes.size() } };
+            item.system_clipboard_representations.append(
+                { move(data), move(mime) });
+            volatile u8* bytes_to_clear = bytes.data();
+            for (size_t byte = 0u; byte < bytes.size(); ++byte)
+                bytes_to_clear[byte] = 0u;
+        }
+        if (complete && !item.system_clipboard_representations.is_empty())
+            items.append(move(item));
+        succeeded = complete;
+    }
+    volatile u8* query_data_bytes = query_data.data();
+    for (size_t index = 0u; index < query_data.size(); ++index)
+        query_data_bytes[index] = 0u;
+    volatile u8* query_bytes = reinterpret_cast<volatile u8*>(&query);
+    for (size_t index = 0u; index < sizeof(query); ++index)
+        query_bytes[index] = 0u;
+    page().retrieved_clipboard_entries(request_id, move(items), succeeded);
+#else
+    (void)origin;
+    (void)frame_identity;
     client().async_did_request_clipboard_entries(m_id, request_id);
+#endif
 }
 
 void PageClient::page_did_change_audio_play_state(Web::HTML::AudioPlayState play_state)

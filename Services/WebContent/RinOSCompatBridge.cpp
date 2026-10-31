@@ -253,16 +253,23 @@ static bool socket_set_nonblocking(int fd)
     return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
-static bool client_rpc_deadline_create(u64* deadline_ms)
+static bool client_rpc_deadline_create_with_timeout(u64* deadline_ms,
+                                                    u64 timeout_ms)
 {
     auto now = monotonic_time_ms();
     if (deadline_ms == nullptr ||
-        now > UINT64_MAX - static_cast<u64>(RIN_WEBCONTENT_RPC_TIMEOUT_MS)) {
+        timeout_ms == 0u || now > UINT64_MAX - timeout_ms) {
         errno = ETIMEDOUT;
         return false;
     }
-    *deadline_ms = now + static_cast<u64>(RIN_WEBCONTENT_RPC_TIMEOUT_MS);
+    *deadline_ms = now + timeout_ms;
     return true;
+}
+
+static bool client_rpc_deadline_create(u64* deadline_ms)
+{
+    return client_rpc_deadline_create_with_timeout(
+        deadline_ms, static_cast<u64>(RIN_WEBCONTENT_RPC_TIMEOUT_MS));
 }
 
 static bool socket_wait_for_event(int fd, short events, u64 deadline_ms)
@@ -358,12 +365,13 @@ static void close_owner_channel()
  * generation-bound reverse channel.  These are WebContent-side RPCs; the
  * similarly named RinLadybird runtime calls belong to the Browser process
  * and must not be linked into this service. */
-static bool owner_channel_request(u32 command, u32 page_id,
+static bool owner_channel_request_with_timeout(
+                                  u32 command, u32 page_id,
                                   void const* payload, size_t payload_size,
                                   size_t minimum_response_size,
                                   size_t maximum_response_size,
                                   RinWebContentMsgHeader* response_header,
-                                  u64* deadline_out)
+                                  u64* deadline_out, u64 timeout_ms)
 {
     if (s_service_worker_owner_fd < 0 ||
         s_owner_channel_session.session_id == 0u ||
@@ -389,7 +397,7 @@ static bool owner_channel_request(u32 command, u32 page_id,
     }
 
     u64 deadline_ms;
-    if (!client_rpc_deadline_create(&deadline_ms))
+    if (!client_rpc_deadline_create_with_timeout(&deadline_ms, timeout_ms))
         return false;
     *deadline_out = deadline_ms;
     RinWebContentMsgHeader request_header {};
@@ -427,6 +435,19 @@ static bool owner_channel_request(u32 command, u32 page_id,
         return false;
     }
     return true;
+}
+
+static bool owner_channel_request(u32 command, u32 page_id,
+                                  void const* payload, size_t payload_size,
+                                  size_t minimum_response_size,
+                                  size_t maximum_response_size,
+                                  RinWebContentMsgHeader* response_header,
+                                  u64* deadline_out)
+{
+    return owner_channel_request_with_timeout(
+        command, page_id, payload, payload_size, minimum_response_size,
+        maximum_response_size, response_header, deadline_out,
+        static_cast<u64>(RIN_WEBCONTENT_RPC_TIMEOUT_MS));
 }
 
 static void tls_owner_clear(void* memory, size_t size)
@@ -5074,6 +5095,148 @@ bool sign_tls_client_certificate(
     }
     tls_owner_clear(response_data.data(), response_data.size());
     tls_owner_clear(&request, sizeof(request));
+    return true;
+}
+
+bool exchange_clipboard_owner(
+    u32 page_id, const void* request_payload, size_t request_payload_size,
+    RinWebContentClipboardOwnerResponseV1& response,
+    std::vector<u8>& response_data)
+{
+    response = {};
+    response_data.clear();
+    if (page_id == 0u || request_payload == nullptr ||
+        request_payload_size > UINT32_MAX ||
+        request_payload_size < sizeof(RinWebContentClipboardOwnerRequestV1))
+        return false;
+
+    RinWebContentClipboardOwnerRequestV1 request {};
+    __builtin_memcpy(&request, request_payload, sizeof(request));
+    if (!rin_webcontent_client_clipboard_owner_request_valid(
+            &request, request_payload,
+            static_cast<u32>(request_payload_size))) {
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+
+    const size_t maximum_response_size =
+        sizeof(response) + RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_CHUNK_BYTES +
+        RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_FORMATS *
+            sizeof(RinWebContentClipboardOwnerFormatV1);
+    RinWebContentMsgHeader response_header {};
+    u64 deadline_ms = 0u;
+    if (!owner_channel_request_with_timeout(
+            RIN_WEBCONTENT_CMD_CLIPBOARD_OWNER_V1, page_id,
+            request_payload, request_payload_size, sizeof(response),
+            maximum_response_size, &response_header, &deadline_ms,
+            UINT64_C(10000))) {
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+    const size_t trailing_size =
+        response_header.payload_len - sizeof(response);
+    if (!recv_all(s_service_worker_owner_fd, &response, sizeof(response),
+                  deadline_ms)) {
+        close_owner_channel();
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+#if defined(__cpp_exceptions)
+    try {
+#endif
+        response_data.resize(trailing_size);
+#if defined(__cpp_exceptions)
+    } catch (...) {
+        close_owner_channel();
+        tls_owner_clear(&response, sizeof(response));
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+#endif
+    if (trailing_size != 0u &&
+        !recv_all(s_service_worker_owner_fd, response_data.data(),
+                  trailing_size, deadline_ms)) {
+        close_owner_channel();
+        tls_owner_clear(response_data.data(), response_data.size());
+        response_data.clear();
+        tls_owner_clear(&response, sizeof(response));
+        tls_owner_clear(&request, sizeof(request));
+        return false;
+    }
+
+    bool valid = response.struct_size == sizeof(response) &&
+        response.version == RIN_WEBCONTENT_CLIPBOARD_OWNER_VERSION &&
+        response.reserved0 == 0u && response.reserved1 == 0u &&
+        response.data_size == trailing_size;
+    if (valid && request.operation == RIN_WEBCONTENT_CLIPBOARD_OWNER_QUERY) {
+        valid = response.format_count <=
+                    RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_FORMATS &&
+            trailing_size == static_cast<size_t>(response.format_count) *
+                sizeof(RinWebContentClipboardOwnerFormatV1) &&
+            (response.format_count == 0u || response.generation != 0u) &&
+            response.total_data_size <=
+                RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_DATA_BYTES;
+        if (valid) {
+            u64 total = 0u;
+            for (u32 index = 0u; index < response.format_count; ++index) {
+                RinWebContentClipboardOwnerFormatV1 format {};
+                __builtin_memcpy(&format, response_data.data() +
+                    index * sizeof(format), sizeof(format));
+                bool duplicate_index = false;
+                for (u32 previous = 0u; previous < index; ++previous) {
+                    RinWebContentClipboardOwnerFormatV1 previous_format {};
+                    __builtin_memcpy(&previous_format, response_data.data() +
+                        previous * sizeof(previous_format),
+                        sizeof(previous_format));
+                    if (previous_format.format_index == format.format_index)
+                        duplicate_index = true;
+                }
+                if (format.format_index >=
+                        RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_FORMATS ||
+                    duplicate_index || format.mime_size == 0u ||
+                    format.mime_size >
+                        RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_MIME_BYTES ||
+                    !rin_webcontent_client_clipboard_mime_valid(
+                        format.mime, format.mime_size) ||
+                    format.mime[format.mime_size] != '\0' ||
+                    !rin_webcontent_client_bytes_zero(
+                        format.mime + format.mime_size + 1u,
+                        sizeof(format.mime) - format.mime_size - 1u) ||
+                    format.data_size >
+                        RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_DATA_BYTES - total) {
+                    valid = false;
+                    break;
+                }
+                total += format.data_size;
+            }
+            if (total != response.total_data_size)
+                valid = false;
+        }
+    } else if (valid &&
+               request.operation == RIN_WEBCONTENT_CLIPBOARD_OWNER_READ_CHUNK) {
+        valid = response.format_count == 0u &&
+            response.generation == request.generation &&
+            response.total_data_size <=
+                RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_DATA_BYTES &&
+            trailing_size <= request.chunk_size &&
+            request.offset <= response.total_data_size &&
+            trailing_size <= response.total_data_size - request.offset;
+    } else if (valid && request.operation ==
+                           RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE) {
+        valid = response.format_count == 0u && trailing_size == 0u &&
+            response.generation != 0u && response.total_data_size == 0u;
+    } else if (valid) {
+        valid = false;
+    }
+    tls_owner_clear(&request, sizeof(request));
+    if (!valid) {
+        errno = EPROTO;
+        close_owner_channel();
+        tls_owner_clear(response_data.data(), response_data.size());
+        response_data.clear();
+        tls_owner_clear(&response, sizeof(response));
+        return false;
+    }
     return true;
 }
 

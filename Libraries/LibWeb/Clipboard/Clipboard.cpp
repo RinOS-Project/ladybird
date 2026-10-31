@@ -90,7 +90,7 @@ static String os_specific_well_known_format(StringView mime_type_string)
 }
 
 // https://w3c.github.io/clipboard-apis/#write-blobs-and-option-to-the-clipboard
-static void write_blobs_and_option_to_clipboard(JS::Realm& realm, ReadonlySpan<GC::Ref<FileAPI::Blob>> items, StringView presentation_style)
+static bool write_blobs_and_option_to_clipboard(JS::Realm& realm, ReadonlySpan<GC::Ref<FileAPI::Blob>> items, StringView presentation_style)
 {
     auto& window = as<HTML::Window>(realm.global_object());
     SystemClipboardItem clipboard_item;
@@ -123,8 +123,12 @@ static void write_blobs_and_option_to_clipboard(JS::Realm& realm, ReadonlySpan<G
             move(format_string) });
     }
 
-    if (!clipboard_item.system_clipboard_representations.is_empty())
-        window.page().client().page_did_insert_clipboard_item(clipboard_item, presentation_style);
+    if (clipboard_item.system_clipboard_representations.is_empty())
+        return false;
+    auto serialized_origin = window.associated_document().origin().serialize().to_byte_string();
+    return window.page().client().page_did_insert_clipboard_item(
+        clipboard_item, presentation_style, serialized_origin,
+        window.associated_document().unique_id().value());
 
     // FIXME: 3. Write web custom formats given webCustomFormats.
 }
@@ -171,6 +175,7 @@ GC::Ref<WebIDL::Promise> Clipboard::read(ClipboardUnsanitizedFormats formats)
     auto& window = as<HTML::Window>(realm.global_object());
     auto bound_document = GC::Weak { window.associated_document() };
     auto origin = window.associated_document().origin();
+    auto frame_identity = window.associated_document().unique_id().value();
     auto permission = request_clipboard_permission(
         realm, window, window.associated_document(),
         window.has_transient_activation(), false);
@@ -186,9 +191,9 @@ GC::Ref<WebIDL::Promise> Clipboard::read(ClipboardUnsanitizedFormats formats)
     }
 
     // 4. Run the following steps in parallel:
-    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, permission, bound_document, origin, formats = move(formats)]() mutable {
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, permission, bound_document, origin, frame_identity, formats = move(formats)]() mutable {
         (void)WebIDL::upon_fulfillment(*permission,
-            GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, formats = move(formats)](JS::Value allowed) mutable -> WebIDL::ExceptionOr<JS::Value> {
+            GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, frame_identity, formats = move(formats)](JS::Value allowed) mutable -> WebIDL::ExceptionOr<JS::Value> {
                 if (!allowed.is_boolean() || !allowed.as_bool()) {
                     WebIDL::reject_promise(realm, promise,
                         WebIDL::NotAllowedError::create(
@@ -202,8 +207,15 @@ GC::Ref<WebIDL::Promise> Clipboard::read(ClipboardUnsanitizedFormats formats)
                     return JS::js_undefined();
                 }
                 // 3. Let data be a copy of the system clipboard data.
-                as<HTML::Window>(realm.global_object()).page().request_clipboard_entries(GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, formats = move(formats)](Vector<SystemClipboardItem> data) mutable {
+                auto serialized_origin = origin.serialize().to_byte_string();
+                as<HTML::Window>(realm.global_object()).page().request_clipboard_entries(GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, formats = move(formats)](Vector<SystemClipboardItem> data, bool succeeded) mutable {
                     HTML::TemporaryExecutionContext execution_context { realm };
+                    if (!succeeded) {
+                        WebIDL::reject_promise(realm, promise,
+                            WebIDL::NotAllowedError::create(
+                                realm, "System clipboard read failed"_utf16));
+                        return;
+                    }
                     if (!clipboard_document_is_authorized(bound_document, origin)) {
                         WebIDL::reject_promise(realm, promise,
                             WebIDL::NotAllowedError::create(
@@ -314,7 +326,7 @@ GC::Ref<WebIDL::Promise> Clipboard::read(ClipboardUnsanitizedFormats formats)
                         // 2. Resolve p with clipboardItems.
                         WebIDL::resolve_promise(realm, promise, clipboard_items);
                     }));
-                }));
+                }), serialized_origin, frame_identity);
                 return JS::js_undefined();
             }));
     }));
@@ -334,14 +346,15 @@ GC::Ref<WebIDL::Promise> Clipboard::read_text()
     auto& window = as<HTML::Window>(realm.global_object());
     auto bound_document = GC::Weak { window.associated_document() };
     auto origin = window.associated_document().origin();
+    auto frame_identity = window.associated_document().unique_id().value();
     auto permission = request_clipboard_permission(
         realm, window, window.associated_document(),
         window.has_transient_activation(), false);
 
     // 3. Run the following steps in parallel:
-    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, permission, bound_document, origin]() mutable {
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(realm.heap(), [&realm, promise, permission, bound_document, origin, frame_identity]() mutable {
         (void)WebIDL::upon_fulfillment(*permission,
-            GC::create_function(realm.heap(), [&realm, promise, bound_document, origin](JS::Value allowed) -> WebIDL::ExceptionOr<JS::Value> {
+            GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, frame_identity](JS::Value allowed) -> WebIDL::ExceptionOr<JS::Value> {
                 if (!allowed.is_boolean() || !allowed.as_bool()) {
                     WebIDL::reject_promise(realm, promise,
                         WebIDL::NotAllowedError::create(
@@ -355,7 +368,15 @@ GC::Ref<WebIDL::Promise> Clipboard::read_text()
                     return JS::js_undefined();
                 }
                 // 3. Let data be a copy of the system clipboard data.
-                as<HTML::Window>(realm.global_object()).page().request_clipboard_entries(GC::create_function(realm.heap(), [&realm, promise, bound_document, origin](Vector<SystemClipboardItem> data) mutable {
+                auto serialized_origin = origin.serialize().to_byte_string();
+                as<HTML::Window>(realm.global_object()).page().request_clipboard_entries(GC::create_function(realm.heap(), [&realm, promise, bound_document, origin](Vector<SystemClipboardItem> data, bool succeeded) mutable {
+                    if (!succeeded) {
+                        HTML::TemporaryExecutionContext execution_context { realm };
+                        WebIDL::reject_promise(realm, promise,
+                            WebIDL::NotAllowedError::create(
+                                realm, "System clipboard read failed"_utf16));
+                        return;
+                    }
                     // 4. Queue a global task on the clipboard task source, given realm’s global object, to perform the below steps:
                     queue_global_task(HTML::Task::Source::Clipboard, realm.global_object(), GC::create_function(realm.heap(), [&realm, promise, bound_document, origin, data = move(data)]() mutable {
                         HTML::TemporaryExecutionContext execution_context { realm };
@@ -414,7 +435,7 @@ GC::Ref<WebIDL::Promise> Clipboard::read_text()
                         // 2. Reject p with "NotFoundError" DOMException in realm.
                         WebIDL::reject_promise(realm, promise, WebIDL::NotFoundError::create(realm, "Did not find a text item in the system clipboard"_utf16));
                     }));
-                }));
+                }), serialized_origin, frame_identity);
                 return JS::js_undefined();
             }));
     }));
@@ -474,6 +495,13 @@ GC::Ref<WebIDL::Promise> Clipboard::write(GC::RootVector<GC::Root<ClipboardItem>
                     // 3. If data’s size is greater than 1, and the current operating system does not support multiple native
                     //    clipboard items on the system clipboard, then add data[0] to dataList, else, set dataList to data.
                     auto data_list = move(data);
+#ifdef AK_OS_RINOS
+                    // RinOS exposes one atomic system ClipboardItem with
+                    // multiple representations, so select the first web item
+                    // when Clipboard.write() receives several.
+                    if (data_list.size() > 1u)
+                        data_list.remove(1u, data_list.size() - 1u);
+#endif
 
                     // 4. For each clipboardItem in dataList:
                     for (auto const& clipboard_item : data_list) {
@@ -567,7 +595,13 @@ GC::Ref<WebIDL::Promise> Clipboard::write(GC::RootVector<GC::Root<ClipboardItem>
                                     realm, "Clipboard writing document is no longer active"_utf16));
                             return;
                         }
-                        write_blobs_and_option_to_clipboard(realm, clean_item_list, option);
+                        if (!write_blobs_and_option_to_clipboard(
+                                realm, clean_item_list, option)) {
+                            WebIDL::reject_promise(realm, promise,
+                                WebIDL::NotAllowedError::create(
+                                    realm, "System clipboard write failed"_utf16));
+                            return;
+                        }
                     }
 
                     // 5. Resolve p.
@@ -643,7 +677,14 @@ GC::Ref<WebIDL::Promise> Clipboard::write_text(String data)
                                 realm, "Clipboard writing document is no longer active"_utf16));
                         return;
                     }
-                    write_blobs_and_option_to_clipboard(realm, item_list, option);
+                    if (!write_blobs_and_option_to_clipboard(
+                            realm, item_list, option)) {
+                        HTML::TemporaryExecutionContext execution_context { realm };
+                        WebIDL::reject_promise(realm, promise,
+                            WebIDL::NotAllowedError::create(
+                                realm, "System clipboard write failed"_utf16));
+                        return;
+                    }
 
                     // 6. Resolve p.
                     HTML::TemporaryExecutionContext execution_context { realm };
