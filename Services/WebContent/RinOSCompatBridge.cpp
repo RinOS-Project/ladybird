@@ -5225,6 +5225,27 @@ bool exchange_clipboard_owner(
                            RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE) {
         valid = response.format_count == 0u && trailing_size == 0u &&
             response.generation != 0u && response.total_data_size == 0u;
+    } else if (valid && request.operation ==
+                           RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE_BEGIN) {
+        valid = response.format_count == 0u && trailing_size == 0u &&
+            response.generation != 0u &&
+            response.total_data_size <=
+                RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_DATA_BYTES;
+    } else if (valid && request.operation ==
+                           RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE_CHUNK) {
+        valid = response.format_count == 0u && trailing_size == 0u &&
+            response.generation == request.generation &&
+            response.total_data_size <=
+                RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_DATA_BYTES;
+    } else if (valid && request.operation ==
+                           RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE_COMMIT) {
+        valid = response.format_count == 0u && trailing_size == 0u &&
+            response.generation != 0u && response.total_data_size == 0u;
+    } else if (valid && request.operation ==
+                           RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE_ABORT) {
+        valid = response.format_count == 0u && trailing_size == 0u &&
+            response.generation == request.generation &&
+            response.total_data_size == 0u;
     } else if (valid) {
         valid = false;
     }

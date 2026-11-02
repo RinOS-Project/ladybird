@@ -1559,13 +1559,6 @@ bool PageClient::page_did_insert_clipboard_item(
             RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_FORMATS)
         return false;
 
-    RinWebContentClipboardOwnerRequestV1 request {};
-    request.struct_size = sizeof(request);
-    request.version = RIN_WEBCONTENT_CLIPBOARD_OWNER_VERSION;
-    request.operation = RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE;
-    request.frame_identity = frame_identity;
-    memcpy(request.origin, origin.characters(), origin.length());
-
     RinWebContentClipboardOwnerFormatV1 formats[
         RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_FORMATS] {};
     ReadonlyBytes data_parts[RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_FORMATS] {};
@@ -1592,45 +1585,134 @@ bool PageClient::page_did_insert_clipboard_item(
     }
     if (format_count == 0u)
         return false;
-    request.format_count = format_count;
     const size_t descriptor_size =
         format_count * sizeof(RinWebContentClipboardOwnerFormatV1);
-    if (data_size > SIZE_MAX - sizeof(request) - descriptor_size)
-        return false;
+    auto initialize_request = [&](RinWebContentClipboardOwnerRequestV1& request,
+                                  u32 operation) {
+        request = {};
+        request.struct_size = sizeof(request);
+        request.version = RIN_WEBCONTENT_CLIPBOARD_OWNER_VERSION;
+        request.operation = operation;
+        request.frame_identity = frame_identity;
+        memcpy(request.origin, origin.characters(), origin.length());
+    };
+    auto clear_bytes = [](void* pointer, size_t size) {
+        volatile u8* bytes = static_cast<volatile u8*>(pointer);
+        for (size_t index = 0u; index < size; ++index)
+            bytes[index] = 0u;
+    };
+    auto abort_transaction = [&](u64 transaction) {
+        if (transaction == 0u)
+            return;
+        RinWebContentClipboardOwnerRequestV1 abort_request {};
+        initialize_request(abort_request,
+            RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE_ABORT);
+        abort_request.generation = transaction;
+        RinWebContentClipboardOwnerResponseV1 abort_response {};
+        std::vector<u8> abort_response_data;
+        (void)RinWebContentBridge::exchange_clipboard_owner(
+            static_cast<u32>(m_id), &abort_request, sizeof(abort_request),
+            abort_response, abort_response_data);
+        clear_bytes(abort_response_data.data(), abort_response_data.size());
+        clear_bytes(&abort_request, sizeof(abort_request));
+        clear_bytes(&abort_response, sizeof(abort_response));
+    };
+
+    RinWebContentClipboardOwnerRequestV1 request {};
+    initialize_request(request,
+        RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE_BEGIN);
+    request.format_count = format_count;
     std::vector<u8> payload;
 #if defined(__cpp_exceptions)
     try {
 #endif
-        payload.resize(sizeof(request) + descriptor_size + data_size);
+        payload.resize(sizeof(request) + descriptor_size);
 #if defined(__cpp_exceptions)
     } catch (...) {
+        clear_bytes(&request, sizeof(request));
         return false;
     }
 #endif
     memcpy(payload.data(), &request, sizeof(request));
     memcpy(payload.data() + sizeof(request), formats, descriptor_size);
-    size_t offset = sizeof(request) + descriptor_size;
-    for (u32 index = 0u; index < format_count; ++index) {
-        auto const bytes = data_parts[index];
-        if (!bytes.is_empty())
-            memcpy(payload.data() + offset, bytes.data(), bytes.size());
-        offset += bytes.size();
-    }
-
     RinWebContentClipboardOwnerResponseV1 response {};
     std::vector<u8> response_data;
-    const bool committed = RinWebContentBridge::exchange_clipboard_owner(
+    const bool began = RinWebContentBridge::exchange_clipboard_owner(
         static_cast<u32>(m_id), payload.data(), payload.size(), response,
-        response_data);
-    volatile u8* payload_bytes = payload.data();
-    for (size_t index = 0u; index < payload.size(); ++index)
-        payload_bytes[index] = 0u;
-    volatile u8* response_bytes = response_data.data();
-    for (size_t index = 0u; index < response_data.size(); ++index)
-        response_bytes[index] = 0u;
-    volatile u8* request_bytes = reinterpret_cast<volatile u8*>(&request);
-    for (size_t index = 0u; index < sizeof(request); ++index)
-        request_bytes[index] = 0u;
+        response_data) && response.generation != 0u &&
+        response.total_data_size == data_size;
+    const u64 transaction = began ? response.generation : 0u;
+    clear_bytes(payload.data(), payload.size());
+    payload.clear();
+    clear_bytes(response_data.data(), response_data.size());
+    response_data.clear();
+    clear_bytes(&request, sizeof(request));
+    clear_bytes(&response, sizeof(response));
+    if (!began)
+        return false;
+
+    for (u32 index = 0u; index < format_count; ++index) {
+        auto const bytes = data_parts[index];
+        size_t offset = 0u;
+        while (offset < bytes.size()) {
+            const size_t remaining = bytes.size() - offset;
+            const u32 chunk_size = static_cast<u32>(
+                remaining < RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_CHUNK_BYTES
+                    ? remaining
+                    : RIN_WEBCONTENT_CLIPBOARD_OWNER_MAX_CHUNK_BYTES);
+            RinWebContentClipboardOwnerRequestV1 chunk_request {};
+            initialize_request(chunk_request,
+                RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE_CHUNK);
+            chunk_request.format_index = index;
+            chunk_request.chunk_size = chunk_size;
+            chunk_request.generation = transaction;
+            chunk_request.offset = offset;
+#if defined(__cpp_exceptions)
+            try {
+#endif
+                payload.resize(sizeof(chunk_request) + chunk_size);
+#if defined(__cpp_exceptions)
+            } catch (...) {
+                abort_transaction(transaction);
+                clear_bytes(&chunk_request, sizeof(chunk_request));
+                clear_bytes(&response, sizeof(response));
+                clear_bytes(payload.data(), payload.size());
+                return false;
+            }
+#endif
+            memcpy(payload.data(), &chunk_request, sizeof(chunk_request));
+            memcpy(payload.data() + sizeof(chunk_request),
+                   bytes.data() + offset, chunk_size);
+            const bool chunked = RinWebContentBridge::exchange_clipboard_owner(
+                static_cast<u32>(m_id), payload.data(), payload.size(),
+                response, response_data) &&
+                response.generation == transaction &&
+                response.total_data_size == data_size;
+            clear_bytes(payload.data(), payload.size());
+            payload.clear();
+            clear_bytes(response_data.data(), response_data.size());
+            response_data.clear();
+            clear_bytes(&chunk_request, sizeof(chunk_request));
+            clear_bytes(&response, sizeof(response));
+            if (!chunked) {
+                abort_transaction(transaction);
+                return false;
+            }
+            offset += chunk_size;
+        }
+    }
+
+    initialize_request(request,
+        RIN_WEBCONTENT_CLIPBOARD_OWNER_WRITE_COMMIT);
+    request.generation = transaction;
+    const bool committed = RinWebContentBridge::exchange_clipboard_owner(
+        static_cast<u32>(m_id), &request, sizeof(request), response,
+        response_data) && response.generation != 0u;
+    if (!committed)
+        abort_transaction(transaction);
+    clear_bytes(response_data.data(), response_data.size());
+    clear_bytes(&request, sizeof(request));
+    clear_bytes(&response, sizeof(response));
     return committed;
 #else
     client().async_did_insert_clipboard_item(m_id, item, presentation_style);
