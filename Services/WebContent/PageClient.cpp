@@ -1747,6 +1747,18 @@ void PageClient::page_did_request_clipboard_entries(
             else if (format.mime_size == sizeof("image/png") - 1u &&
                      memcmp(format.mime, "image/png", format.mime_size) == 0)
                 mime = "image/png"_string;
+            else if (rin_webcontent_client_clipboard_mime_valid(
+                         format.mime, format.mime_size) &&
+                     format.mime_size > sizeof("web ") - 1u &&
+                     memcmp(format.mime, "web ", sizeof("web ") - 1u) == 0) {
+                auto custom_mime = String::from_utf8(StringView {
+                    format.mime, format.mime_size });
+                if (custom_mime.is_error()) {
+                    complete = false;
+                    break;
+                }
+                mime = custom_mime.release_value();
+            }
             else {
                 complete = false;
                 break;
