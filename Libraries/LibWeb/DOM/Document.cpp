@@ -5279,6 +5279,12 @@ bool Document::is_allowed_to_use_feature(PolicyControlledFeature feature) const
                                                          "geolocation"sv);
     case PolicyControlledFeature::WebSerial:
         return document_allows_permissions_policy_feature(*this, "serial"sv);
+    case PolicyControlledFeature::PublicKeyCredentialsCreate:
+        return document_allows_permissions_policy_feature(
+            *this, "publickey-credentials-create"sv);
+    case PolicyControlledFeature::PublicKeyCredentialsGet:
+        return document_allows_permissions_policy_feature(
+            *this, "publickey-credentials-get"sv);
     case PolicyControlledFeature::FocusWithoutUserActivation:
     case PolicyControlledFeature::EncryptedMedia:
         // FIXME: Implement allowlist for this.

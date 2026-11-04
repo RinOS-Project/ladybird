@@ -1521,6 +1521,27 @@ WebContentClient::request_notification_permission(u64 page_id)
     return { request.navigation_generation, request.request_id };
 }
 
+Messages::WebContentClient::RequestWebAuthnResponse
+WebContentClient::request_webauthn(u64 page_id, ByteBuffer event)
+{
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_request_webauthn)
+        return { 0u, 0u };
+    auto request = view->on_request_webauthn(move(event));
+    return { request.navigation_generation, request.request_id };
+}
+
+void WebContentClient::cancel_webauthn(
+    u64 page_id, u32 navigation_generation, u64 request_id)
+{
+    if (navigation_generation == 0u || request_id == 0u)
+        return;
+    auto view = view_for_page_id(page_id);
+    if (!view.has_value() || !view->on_cancel_webauthn)
+        return;
+    view->on_cancel_webauthn(navigation_generation, request_id);
+}
+
 Messages::WebContentClient::RequestMicrophonePermissionResponse
 WebContentClient::request_microphone_permission(u64 page_id, ByteString origin)
 {

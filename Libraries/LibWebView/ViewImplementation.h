@@ -320,6 +320,8 @@ public:
         u32 navigation_generation { 0 };
         u64 request_id { 0 };
     };
+    Function<PermissionRequest(ByteBuffer)> on_request_webauthn;
+    Function<void(u32 navigation_generation, u64 request_id)> on_cancel_webauthn;
     Function<PermissionRequest()> on_request_notification_permission;
     Function<PermissionRequest(ByteString)> on_request_microphone_permission;
     Function<PermissionRequest(ByteString)> on_request_camera_permission;
@@ -345,6 +347,8 @@ public:
         i64 altitude_mm, u32 horizontal_accuracy_mm,
         u32 vertical_accuracy_mm, u32 speed_mm_per_second,
         u32 heading_millidegrees, u32 flags);
+    void complete_webauthn(u32 navigation_generation, u64 request_id,
+                           ByteBuffer completion);
     bool revoke_microphone_capture(ByteString domain, u64 sequence);
     bool revoke_camera_capture(ByteString domain, u64 sequence);
     bool revoke_geolocation_permission(ByteString domain, u64 sequence);

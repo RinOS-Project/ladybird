@@ -125,6 +125,9 @@ private:
     virtual void handle_file_return(u64 page_id, i32 error, Optional<IPC::File> file, i32 request_id) override;
     virtual void complete_notification_permission(u64 page_id, u32 navigation_generation,
                                                   u64 request_id, String permission) override;
+    virtual void complete_webauthn(u64 page_id, u32 navigation_generation,
+                                   u64 request_id,
+                                   ByteBuffer completion) override;
     virtual void complete_microphone_permission(u64 page_id, u32 navigation_generation,
                                                 u64 request_id, bool allowed) override;
     virtual void complete_clipboard_permission(u64 page_id, u32 navigation_generation,

@@ -10,6 +10,7 @@
 
 #include <LibGfx/Rect.h>
 #include <LibWeb/CSS/StyleSheetIdentifier.h>
+#include <LibWeb/DOM/AbortSignal.h>
 #include <LibWeb/HTML/AudioPlayState.h>
 #include <LibWeb/HTML/FileFilter.h>
 #include <LibWeb/Page/Page.h>
@@ -95,6 +96,10 @@ public:
     void console_peer_did_misbehave(char const* reason);
     void complete_notification_permission(u32 navigation_generation, u64 request_id,
                                           String permission);
+#if defined(AK_OS_RINOS)
+    void complete_webauthn(u32 navigation_generation, u64 request_id,
+                           RinWebContentWebAuthnCompleteV1 const& completion);
+#endif
     void complete_microphone_permission(u32 navigation_generation, u64 request_id,
                                         bool allowed);
     void complete_clipboard_permission(u32 navigation_generation, u64 request_id,
@@ -161,6 +166,13 @@ private:
     virtual void page_did_request_media_context_menu(Web::CSSPixelPoint, ByteString const& target, unsigned modifiers, Web::Page::MediaContextMenu const&) override;
     virtual void page_did_request_download(URL::URL const&, ByteString const&) override;
     virtual void page_did_request_notification_permission(JS::PromiseCapability&) override;
+#if defined(AK_OS_RINOS)
+    virtual Web::WebAuthnRequestIdentity page_did_request_webauthn(
+        Web::DOM::Document const&, Web::DOM::AbortSignal*,
+        RinWebContentWebAuthnEventV1 const&,
+        GC::Ref<GC::Function<void(RinWebContentWebAuthnCompleteV1 const&)>>) override;
+    virtual void page_did_cancel_webauthn_request(u32, u64) override;
+#endif
     virtual void page_did_request_microphone_permission(
         JS::PromiseCapability&, Web::DOM::Document const&) override;
     virtual void page_did_request_camera_permission(
@@ -254,6 +266,9 @@ private:
 
     void setup_palette();
     void resolve_pending_notification_permissions();
+#if defined(AK_OS_RINOS)
+    void resolve_pending_webauthn_requests();
+#endif
     void resolve_pending_clipboard_permissions();
     void resolve_pending_microphone_permissions();
     void resolve_pending_camera_permissions();
@@ -292,6 +307,19 @@ private:
         GC::Ref<JS::PromiseCapability> promise;
     };
     Vector<PendingNotificationPermission> m_pending_notification_permissions;
+#if defined(AK_OS_RINOS)
+    struct PendingWebAuthnRequest {
+        u32 navigation_generation { 0u };
+        u64 request_id { 0u };
+        GC::Ref<GC::Function<void(RinWebContentWebAuthnCompleteV1 const&)>>
+            completion;
+        GC::Weak<Web::DOM::Document> document;
+        URL::Origin origin { URL::Origin::create_opaque() };
+        GC::Weak<Web::DOM::AbortSignal> signal;
+        Optional<Web::DOM::AbortSignal::AbortAlgorithmID> abort_algorithm;
+    };
+    Vector<PendingWebAuthnRequest> m_pending_webauthn_requests;
+#endif
     struct PendingClipboardPermission {
         u32 navigation_generation { 0u };
         u64 request_id { 0u };

@@ -164,6 +164,10 @@ private:
         u64 page_id, u32 operation, ByteString request_url, ByteString origin,
         ByteString cookie_data, u32 policy) override;
     virtual Messages::WebContentClient::RequestNotificationPermissionResponse request_notification_permission(u64 page_id) override;
+    virtual Messages::WebContentClient::RequestWebAuthnResponse request_webauthn(
+        u64 page_id, ByteBuffer event) override;
+    virtual void cancel_webauthn(u64 page_id, u32 navigation_generation,
+                                 u64 request_id) override;
     virtual Messages::WebContentClient::RequestMicrophonePermissionResponse request_microphone_permission(
         u64 page_id, ByteString origin) override;
     virtual Messages::WebContentClient::RequestClipboardPermissionResponse request_clipboard_permission(

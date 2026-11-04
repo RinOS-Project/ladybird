@@ -142,6 +142,10 @@ void PageClient::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_top_level_document_console_client);
     for (auto const& pending : m_pending_notification_permissions)
         visitor.visit(pending.promise);
+#if defined(AK_OS_RINOS)
+    for (auto const& pending : m_pending_webauthn_requests)
+        visitor.visit(pending.completion);
+#endif
     for (auto const& pending : m_pending_microphone_permissions)
         visitor.visit(pending.promise);
     for (auto const& pending : m_pending_camera_permissions)
@@ -397,6 +401,9 @@ void PageClient::page_did_start_loading(URL::URL const& url, bool is_redirect)
 void PageClient::page_did_create_new_document(Web::DOM::Document& document)
 {
     resolve_pending_camera_permissions();
+#if defined(AK_OS_RINOS)
+    resolve_pending_webauthn_requests();
+#endif
     for (auto& active : m_active_camera_tracks) {
         if (active.track)
             (void)active.track->revoke_capture();
@@ -407,6 +414,19 @@ void PageClient::page_did_create_new_document(Web::DOM::Document& document)
 
 void PageClient::page_did_retire_document(Web::DOM::Document& document)
 {
+#if defined(AK_OS_RINOS)
+    for (size_t index = 0; index < m_pending_webauthn_requests.size();) {
+        auto const& pending = m_pending_webauthn_requests[index];
+        if (pending.document.ptr() != &document) {
+            ++index;
+            continue;
+        }
+        auto navigation_generation = pending.navigation_generation;
+        auto request_id = pending.request_id;
+        page_did_cancel_webauthn_request(navigation_generation, request_id);
+        index = 0;
+    }
+#endif
     for (size_t index = 0; index < m_pending_clipboard_permissions.size();) {
         auto const& pending = m_pending_clipboard_permissions[index];
         if (pending.document.ptr() != &document) {
@@ -455,6 +475,9 @@ void PageClient::page_did_change_active_document_in_top_level_browsing_context(W
     }
     m_active_camera_tracks.clear();
     resolve_pending_geolocation_permissions();
+#if defined(AK_OS_RINOS)
+    resolve_pending_webauthn_requests();
+#endif
 
     auto& realm = document.realm();
 
@@ -893,6 +916,149 @@ void PageClient::page_did_request_notification_permission(
     m_pending_notification_permissions.append({
         response->navigation_generation(), response->request_id(), promise });
 }
+
+#if defined(AK_OS_RINOS)
+Web::WebAuthnRequestIdentity PageClient::page_did_request_webauthn(
+    Web::DOM::Document const& document, Web::DOM::AbortSignal* signal,
+    RinWebContentWebAuthnEventV1 const& event,
+    GC::Ref<GC::Function<void(RinWebContentWebAuthnCompleteV1 const&)>> completion)
+{
+    auto const& origin = document.origin();
+    if (!document.is_fully_active() || origin.is_opaque() ||
+        m_pending_webauthn_requests.size() >= 1u)
+        return {};
+    for (auto const& pending : m_pending_webauthn_requests) {
+        if (pending.document.ptr() == &document)
+            return {};
+    }
+    auto payload = ByteBuffer::copy(&event, sizeof(event));
+    if (payload.is_error()) return {};
+    auto response = client().send_sync_but_allow_failure<
+        Messages::WebContentClient::RequestWebAuthn>(
+            m_id, payload.release_value());
+    if (!response || response->navigation_generation() == 0u ||
+        response->request_id() == 0u)
+        return {};
+    for (auto const& pending : m_pending_webauthn_requests) {
+        if (pending.navigation_generation == response->navigation_generation() &&
+            pending.request_id == response->request_id())
+            return {};
+    }
+    m_pending_webauthn_requests.append({
+        response->navigation_generation(), response->request_id(), completion,
+        GC::Weak { document }, origin, GC::Weak { signal }, {} });
+    if (signal != nullptr) {
+        auto weak_page_client = GC::Weak { *this };
+        auto abort_algorithm = signal->add_abort_algorithm(
+            [weak_page_client, navigation_generation = response->navigation_generation(),
+             request_id = response->request_id()] {
+                if (weak_page_client)
+                    weak_page_client->page_did_cancel_webauthn_request(
+                        navigation_generation, request_id);
+            });
+        if (abort_algorithm.has_value()) {
+            for (auto& pending : m_pending_webauthn_requests) {
+                if (pending.navigation_generation == response->navigation_generation() &&
+                    pending.request_id == response->request_id()) {
+                    pending.abort_algorithm = abort_algorithm.value();
+                    break;
+                }
+            }
+        } else {
+            page_did_cancel_webauthn_request(
+                response->navigation_generation(), response->request_id());
+        }
+    }
+    return { response->navigation_generation(), response->request_id() };
+}
+
+void PageClient::page_did_cancel_webauthn_request(
+    u32 navigation_generation, u64 request_id)
+{
+    if (navigation_generation == 0u || request_id == 0u)
+        return;
+    for (size_t index = 0; index < m_pending_webauthn_requests.size(); ++index) {
+        auto const& pending = m_pending_webauthn_requests[index];
+        if (pending.navigation_generation != navigation_generation ||
+            pending.request_id != request_id)
+            continue;
+        auto request = move(m_pending_webauthn_requests[index]);
+        m_pending_webauthn_requests.remove(index);
+        client().async_cancel_webauthn(m_id, navigation_generation, request_id);
+        if (request.signal && request.abort_algorithm.has_value() &&
+            !request.signal->aborted())
+            request.signal->remove_abort_algorithm(
+                request.abort_algorithm.value());
+        RinWebContentWebAuthnCompleteV1 completion {};
+        completion.struct_size = sizeof(completion);
+        completion.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        completion.result = RIN_RESULT_INTERRUPTED;
+        completion.request_id = request_id;
+        completion.navigation_generation = navigation_generation;
+        request.completion->function()(completion);
+        __builtin_memset(&completion, 0, sizeof(completion));
+        return;
+    }
+}
+
+void PageClient::resolve_pending_webauthn_requests()
+{
+    auto pending_requests = move(m_pending_webauthn_requests);
+    m_pending_webauthn_requests.clear();
+    for (auto& request : pending_requests) {
+        client().async_cancel_webauthn(
+            m_id, request.navigation_generation, request.request_id);
+        if (request.signal && request.abort_algorithm.has_value() &&
+            !request.signal->aborted())
+            request.signal->remove_abort_algorithm(
+                request.abort_algorithm.value());
+        RinWebContentWebAuthnCompleteV1 completion {};
+        completion.struct_size = sizeof(completion);
+        completion.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        completion.result = RIN_RESULT_INTERRUPTED;
+        completion.request_id = request.request_id;
+        completion.navigation_generation = request.navigation_generation;
+        request.completion->function()(completion);
+        __builtin_memset(&completion, 0, sizeof(completion));
+    }
+}
+
+void PageClient::complete_webauthn(
+    u32 navigation_generation, u64 request_id,
+    RinWebContentWebAuthnCompleteV1 const& completion)
+{
+    if (navigation_generation == 0u || request_id == 0u ||
+        completion.navigation_generation != navigation_generation ||
+        completion.request_id != request_id ||
+        !rin_webcontent_client_webauthn_complete_valid(&completion))
+        return;
+    for (size_t index = 0; index < m_pending_webauthn_requests.size(); ++index) {
+        auto const& pending = m_pending_webauthn_requests[index];
+        if (pending.navigation_generation != navigation_generation ||
+            pending.request_id != request_id)
+            continue;
+        auto request = move(m_pending_webauthn_requests[index]);
+        m_pending_webauthn_requests.remove(index);
+        if (request.signal && request.abort_algorithm.has_value() &&
+            !request.signal->aborted())
+            request.signal->remove_abort_algorithm(
+                request.abort_algorithm.value());
+        RinWebContentWebAuthnCompleteV1 resolved = completion;
+        if (!request.document || !request.document->is_fully_active() ||
+            !request.document->origin().is_same_origin(request.origin)) {
+            __builtin_memset(&resolved, 0, sizeof(resolved));
+            resolved.struct_size = sizeof(resolved);
+            resolved.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+            resolved.result = RIN_RESULT_INTERRUPTED;
+            resolved.request_id = request_id;
+            resolved.navigation_generation = navigation_generation;
+        }
+        request.completion->function()(resolved);
+        __builtin_memset(&resolved, 0, sizeof(resolved));
+        return;
+    }
+}
+#endif
 
 void PageClient::page_did_request_microphone_permission(
     JS::PromiseCapability& promise, Web::DOM::Document const& document)
@@ -1496,6 +1662,9 @@ void PageClient::page_did_close_top_level_traversable()
     resolve_pending_clipboard_permissions();
     resolve_pending_microphone_permissions();
     resolve_pending_camera_permissions();
+#if defined(AK_OS_RINOS)
+    resolve_pending_webauthn_requests();
+#endif
     for (auto& active : m_active_camera_tracks) {
         if (active.track)
             (void)active.track->revoke_capture();

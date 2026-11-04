@@ -153,6 +153,16 @@ void ViewImplementation::complete_geolocation_permission(
         vertical_accuracy_mm, speed_mm_per_second, heading_millidegrees, flags);
 }
 
+void ViewImplementation::complete_webauthn(
+    u32 navigation_generation, u64 request_id, ByteBuffer completion)
+{
+    if (navigation_generation == 0u || request_id == 0u ||
+        completion.is_empty())
+        return;
+    client().async_complete_webauthn(
+        page_id(), navigation_generation, request_id, move(completion));
+}
+
 bool ViewImplementation::revoke_microphone_capture(ByteString domain, u64 sequence)
 {
     if (sequence == 0u || domain.is_empty())

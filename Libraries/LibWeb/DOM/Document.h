@@ -178,6 +178,8 @@ enum class PolicyControlledFeature : u8 {
     Camera,
     Geolocation,
     WebSerial,
+    PublicKeyCredentialsCreate,
+    PublicKeyCredentialsGet,
     EncryptedMedia,
     FocusWithoutUserActivation,
     Fullscreen,

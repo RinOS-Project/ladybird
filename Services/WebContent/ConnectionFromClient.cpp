@@ -1247,6 +1247,31 @@ void ConnectionFromClient::complete_notification_permission(
             move(permission));
 }
 
+void ConnectionFromClient::complete_webauthn(
+    u64 page_id, u32 navigation_generation, u64 request_id,
+    ByteBuffer completion_bytes)
+{
+#if defined(AK_OS_RINOS)
+    if (completion_bytes.size() != sizeof(RinWebContentWebAuthnCompleteV1) ||
+        navigation_generation == 0u || request_id == 0u)
+        return;
+    RinWebContentWebAuthnCompleteV1 completion {};
+    __builtin_memcpy(&completion, completion_bytes.data(), sizeof(completion));
+    if (completion.navigation_generation != navigation_generation ||
+        completion.request_id != request_id)
+        return;
+    if (auto page = this->page(page_id); page.has_value())
+        page->complete_webauthn(navigation_generation, request_id,
+                                completion);
+    __builtin_memset(&completion, 0, sizeof(completion));
+#else
+    (void)page_id;
+    (void)navigation_generation;
+    (void)request_id;
+    (void)completion_bytes;
+#endif
+}
+
 void ConnectionFromClient::complete_microphone_permission(
     u64 page_id, u32 navigation_generation, u64 request_id, bool allowed)
 {

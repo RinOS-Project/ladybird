@@ -940,6 +940,11 @@ ErrorOr<JsonObject> BridgeView::inspect_accessibility_json(int timeout_ms)
 }
 
 struct PageSession {
+    struct WebAuthnEventRecord {
+        RinWebContentWebAuthnEventV1 event {};
+        bool delivered { false };
+    };
+
     struct DownloadEventRecord {
         u32 event { RIN_WEBCONTENT_DOWNLOAD_EVENT_NONE };
         u32 revision { 0 };
@@ -1270,6 +1275,13 @@ struct PageSession {
         view->on_request_notification_permission = [this] {
             return request_notification_permission();
         };
+        view->on_request_webauthn = [this](ByteBuffer event) {
+            return request_webauthn(move(event));
+        };
+        view->on_cancel_webauthn = [this](u32 navigation_generation,
+                                          u64 request_id) {
+            cancel_webauthn(navigation_generation, request_id);
+        };
         view->on_request_microphone_permission = [this](ByteString origin) {
             return request_microphone_permission(move(origin));
         };
@@ -1310,6 +1322,7 @@ struct PageSession {
             (void)dispatch_composition(cancel);
         }
         rin_webcontent_permission_producer_unbind(&permission_producer);
+        clear_webauthn_events();
         close_paint_shm();
     }
 
@@ -2418,6 +2431,13 @@ struct PageSession {
         permission_authenticated_origin = {};
     }
 
+    void clear_webauthn_events()
+    {
+        for (auto& record : webauthn_events)
+            __builtin_memset(&record.event, 0, sizeof(record.event));
+        webauthn_events.clear();
+    }
+
     void rebind_permission_origin(ByteString origin)
     {
         clear_permission_binding();
@@ -2437,6 +2457,7 @@ struct PageSession {
     bool begin_permission_navigation()
     {
         clear_permission_binding();
+        clear_webauthn_events();
         if (permission_navigation_generation == UINT32_MAX ||
             permission_renderer_generation == UINT64_MAX)
             return false;
@@ -2447,6 +2468,145 @@ struct PageSession {
          * until navigation reaches WebContent, and redirects are not known
          * yet. A successful on_load_start() installs the canonical origin. */
         return true;
+    }
+
+    WebView::ViewImplementation::PermissionRequest
+    request_webauthn(ByteBuffer payload)
+    {
+        WebView::ViewImplementation::PermissionRequest response {};
+        RinWebContentWebAuthnEventV1 event {};
+        if (payload.size() != sizeof(event) || permission_producer.bound != 1u ||
+            permission_navigation_generation == 0u ||
+            permission_authenticated_origin.is_empty() ||
+            webauthn_events.size() >= RIN_WEBAUTHN_GUARD_REQUEST_MAX)
+            return response;
+        __builtin_memcpy(&event, payload.data(), sizeof(event));
+        do {
+            if (event.event != RIN_WEBCONTENT_WEBAUTHN_EVENT_BEGIN ||
+                event.request_id != 0u || event.cancel_request_id != 0u ||
+                event.navigation_generation != 0u ||
+                event.challenge_size == 0u ||
+                event.challenge_size > RIN_WEBCONTENT_WEBAUTHN_CHALLENGE_MAX ||
+                !rin_webcontent_client_url_valid(event.document_url) ||
+                next_webauthn_event_id == 0u ||
+                next_webauthn_event_id == UINT64_MAX)
+                break;
+
+            auto document_url = URL::Parser::basic_parse(event.document_url);
+            if (!document_url.has_value()) break;
+            auto document_origin = document_url->origin();
+            if (document_origin.is_opaque() ||
+                document_origin.serialize().to_byte_string() !=
+                    permission_authenticated_origin)
+                break;
+
+            event.request_id = next_webauthn_event_id++;
+            event.navigation_generation = permission_navigation_generation;
+            auto origin_size = permission_authenticated_origin.length();
+            if (origin_size == 0u ||
+                origin_size >= sizeof(event.request.origin))
+                break;
+            __builtin_memset(event.request.origin, 0,
+                             sizeof(event.request.origin));
+            __builtin_memcpy(event.request.origin,
+                             permission_authenticated_origin.characters(),
+                             origin_size);
+            event.request.origin_size = static_cast<u32>(origin_size);
+            __builtin_memset(event.request.client_data_hash, 0,
+                             sizeof(event.request.client_data_hash));
+            if (!rin_webcontent_client_webauthn_event_valid(&event))
+                break;
+            webauthn_events.append({ event, false });
+            response.navigation_generation = permission_navigation_generation;
+            response.request_id = event.request_id;
+        } while (false);
+        __builtin_memset(&event, 0, sizeof(event));
+        return response;
+    }
+
+    void cancel_webauthn(u32 navigation_generation, u64 request_id)
+    {
+        if (navigation_generation == 0u || request_id == 0u ||
+            navigation_generation != permission_navigation_generation ||
+            next_webauthn_event_id == 0u ||
+            next_webauthn_event_id == UINT64_MAX)
+            return;
+        bool found = false;
+        for (auto const& record : webauthn_events) {
+            if (record.event.event == RIN_WEBCONTENT_WEBAUTHN_EVENT_BEGIN &&
+                record.event.request_id == request_id) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return;
+        RinWebContentWebAuthnEventV1 event {};
+        event.struct_size = sizeof(event);
+        event.version = RIN_WEBCONTENT_EXTENSION_ABI_VERSION;
+        event.event = RIN_WEBCONTENT_WEBAUTHN_EVENT_CANCEL;
+        event.request_id = next_webauthn_event_id++;
+        event.cancel_request_id = request_id;
+        event.navigation_generation = navigation_generation;
+        if (rin_webcontent_client_webauthn_event_valid(&event))
+            webauthn_events.append({ event, false });
+        __builtin_memset(&event, 0, sizeof(event));
+    }
+
+    int poll_webauthn(RinWebContentWebAuthnPollV1 const& request,
+                      RinWebContentWebAuthnEventV1& event)
+    {
+        if (!rin_webcontent_client_webauthn_poll_valid(&request))
+            return -EINVAL;
+        if (request.navigation_generation != permission_navigation_generation)
+            return -ESTALE;
+        if (permission_producer.bound != 1u)
+            return -ENOTSUP;
+        for (auto& record : webauthn_events) {
+            if (record.delivered ||
+                record.event.request_id <= request.after_request_id)
+                continue;
+            event = record.event;
+            record.delivered = true;
+            return 0;
+        }
+        return -EAGAIN;
+    }
+
+    int complete_webauthn(
+        RinWebContentWebAuthnCompleteV1 const& completion)
+    {
+        if (!rin_webcontent_client_webauthn_complete_valid(&completion))
+            return -EINVAL;
+        if (completion.navigation_generation != permission_navigation_generation)
+            return -ESTALE;
+        if (permission_producer.bound != 1u)
+            return -ENOTSUP;
+        bool found = false;
+        for (auto const& record : webauthn_events) {
+            if (record.event.event == RIN_WEBCONTENT_WEBAUTHN_EVENT_BEGIN &&
+                record.event.request_id == completion.request_id) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return -ESTALE;
+        auto bytes = ByteBuffer::copy(&completion, sizeof(completion));
+        if (bytes.is_error()) return -ENOMEM;
+        view->complete_webauthn(completion.navigation_generation,
+                                 completion.request_id,
+                                 bytes.release_value());
+        for (size_t index = 0; index < webauthn_events.size();) {
+            auto const& event = webauthn_events[index].event;
+            if (event.request_id == completion.request_id ||
+                event.cancel_request_id == completion.request_id) {
+                __builtin_memset(&webauthn_events[index].event, 0,
+                                 sizeof(webauthn_events[index].event));
+                webauthn_events.remove(index);
+            } else {
+                ++index;
+            }
+        }
+        return 0;
     }
 
     int poll_permission(RinWebContentPermissionPollV1 const& request,
@@ -3584,6 +3744,8 @@ struct PageSession {
      * document. Binding it here ensures that a callback cannot publish an
      * origin from a stale document or a replaced WebContent process. */
     RinWebContentPermissionProducerV1 permission_producer {};
+    Vector<WebAuthnEventRecord> webauthn_events;
+    u64 next_webauthn_event_id { 1u };
     uint32_t permission_navigation_generation { 0 };
     uint64_t permission_renderer_generation { 1 };
     ByteString permission_authenticated_origin;
@@ -3859,6 +4021,48 @@ static int handle_poll_permission(PageSession& page, int client_fd,
             : -EIO;
     return send_message(client_fd, RIN_WEBCONTENT_CMD_POLL_PERMISSION_V1, 0,
                         page.page_id, &event, sizeof(event), deadline_ms)
+        ? 0
+        : -EIO;
+}
+
+static int handle_poll_webauthn(PageSession& page, int client_fd,
+                                ReadonlyBytes payload, u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentWebAuthnPollV1))
+        return send_message(client_fd, RIN_WEBCONTENT_CMD_POLL_WEBAUTHN_V1,
+                            -EINVAL, page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+    auto const& request =
+        *reinterpret_cast<RinWebContentWebAuthnPollV1 const*>(payload.data());
+    RinWebContentWebAuthnEventV1 event {};
+    auto result = page.poll_webauthn(request, event);
+    if (result != 0)
+        return send_message(client_fd, RIN_WEBCONTENT_CMD_POLL_WEBAUTHN_V1,
+                            result, page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+    return send_message(client_fd, RIN_WEBCONTENT_CMD_POLL_WEBAUTHN_V1, 0,
+                        page.page_id, &event, sizeof(event), deadline_ms)
+        ? 0
+        : -EIO;
+}
+
+static int handle_complete_webauthn(PageSession& page, int client_fd,
+                                    ReadonlyBytes payload, u64 deadline_ms)
+{
+    if (payload.size() != sizeof(RinWebContentWebAuthnCompleteV1))
+        return send_message(client_fd,
+                            RIN_WEBCONTENT_CMD_COMPLETE_WEBAUTHN_V1, -EINVAL,
+                            page.page_id, nullptr, 0, deadline_ms)
+            ? 0
+            : -EIO;
+    auto const& completion =
+        *reinterpret_cast<RinWebContentWebAuthnCompleteV1 const*>(
+            payload.data());
+    auto result = page.complete_webauthn(completion);
+    return send_message(client_fd, RIN_WEBCONTENT_CMD_COMPLETE_WEBAUTHN_V1,
+                        result, page.page_id, nullptr, 0, deadline_ms)
         ? 0
         : -EIO;
 }
@@ -4581,6 +4785,14 @@ static void handle_client(int client_fd)
     case RIN_WEBCONTENT_CMD_POLL_PERMISSION_V1:
         (void)handle_poll_permission(*page, client_fd, payload_bytes,
                                       deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_POLL_WEBAUTHN_V1:
+        (void)handle_poll_webauthn(*page, client_fd, payload_bytes,
+                                   deadline_ms);
+        return;
+    case RIN_WEBCONTENT_CMD_COMPLETE_WEBAUTHN_V1:
+        (void)handle_complete_webauthn(*page, client_fd, payload_bytes,
+                                       deadline_ms);
         return;
     case RIN_WEBCONTENT_CMD_COMPLETE_PERMISSION_V1:
         (void)handle_complete_permission(*page, client_fd, payload_bytes,

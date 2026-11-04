@@ -55,8 +55,15 @@
 #include <LibWeb/StorageAPI/StorageEndpoint.h>
 #include <LibWeb/UIEvents/KeyCode.h>
 #include <LibWebView/StorageSetResult.h>
+#if defined(AK_OS_RINOS)
+#    include <rin/web/webcontent_protocol.h>
+#endif
 
 namespace Web {
+
+namespace DOM {
+class AbortSignal;
+}
 
 class PageClient;
 
@@ -66,6 +73,11 @@ struct CameraCaptureProfile {
     u32 max_frame_size { 0u };
     u32 width { 0u };
     u32 height { 0u };
+};
+
+struct WebAuthnRequestIdentity {
+    u32 navigation_generation { 0 };
+    u64 request_id { 0 };
 };
 
 class WEB_API Page final : public JS::Cell {
@@ -443,6 +455,16 @@ public:
     // receive a destination pathname or a writable file descriptor.
     virtual void page_did_request_download(URL::URL const&, ByteString const&) { }
     virtual void page_did_request_notification_permission(JS::PromiseCapability&);
+#if defined(AK_OS_RINOS)
+    virtual WebAuthnRequestIdentity page_did_request_webauthn(
+        DOM::Document const&, DOM::AbortSignal*,
+        RinWebContentWebAuthnEventV1 const&,
+        GC::Ref<GC::Function<void(RinWebContentWebAuthnCompleteV1 const&)>>)
+    {
+        return {};
+    }
+    virtual void page_did_cancel_webauthn_request(u32, u64) { }
+#endif
     virtual void page_did_request_microphone_permission(JS::PromiseCapability&, DOM::Document const&);
     virtual void page_did_request_camera_permission(JS::PromiseCapability&, DOM::Document const&);
     virtual bool page_did_request_clipboard_permission(
