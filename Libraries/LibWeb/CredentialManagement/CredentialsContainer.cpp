@@ -229,17 +229,32 @@ static bool make_creation_event(DOM::Document const& document,
     event.request.attestation = RIN_PASS_WEBAUTHN_ATTESTATION_NONE;
     if (public_key.pub_key_cred_params.is_empty())
         return false;
-    bool supports_es256 = false;
     for (auto const& parameter : public_key.pub_key_cred_params) {
         if (parameter.type != "public-key"_string)
             continue;
-        if (parameter.alg == -7)
-            supports_es256 = true;
+        if (parameter.alg != RIN_PASS_WEBAUTHN_COSE_ALGORITHM_ES256 &&
+            parameter.alg != RIN_PASS_WEBAUTHN_COSE_ALGORITHM_EDDSA &&
+            parameter.alg != RIN_PASS_WEBAUTHN_COSE_ALGORITHM_RS256)
+            continue;
+        bool already_present = false;
+        for (u32 index = 0; index < event.request.algorithm_count; ++index) {
+            if (event.request.algorithms[index] == parameter.alg) {
+                already_present = true;
+                break;
+            }
+        }
+        // WebAuthn treats duplicate parameters as ignored. Retain the first
+        // occurrence so the RP's preference order reaches the authenticator.
+        if (!already_present) {
+            if (event.request.algorithm_count >=
+                RIN_PASS_WEBAUTHN_MAX_ALGORITHMS)
+                return false;
+            event.request.algorithms[event.request.algorithm_count++] =
+                parameter.alg;
+        }
     }
-    if (!supports_es256)
+    if (event.request.algorithm_count == 0u)
         return false;
-    event.request.algorithm_count = 1u;
-    event.request.algorithms[0] = -7; // COSE ES256, the only creation algorithm in the Rin Pass ABI.
 
     if (public_key.timeout.has_value())
         map_timeout(public_key.timeout, event.timeout_ms);
