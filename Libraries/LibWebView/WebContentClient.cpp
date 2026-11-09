@@ -1521,7 +1521,7 @@ WebContentClient::request_notification_permission(u64 page_id)
     return { request.navigation_generation, request.request_id };
 }
 
-Messages::WebContentClient::RequestWebAuthnResponse
+Messages::WebContentClient::RequestWebauthnResponse
 WebContentClient::request_webauthn(u64 page_id, ByteBuffer event)
 {
     auto view = view_for_page_id(page_id);

@@ -9,11 +9,12 @@
 #include <AK/ByteBuffer.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
+#include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/CredentialManagement/AuthenticatorAssertionResponse.h>
 #include <LibWeb/CredentialManagement/AuthenticatorAttestationResponse.h>
 #include <LibWeb/CredentialManagement/CredentialsContainer.h>
 #include <LibWeb/DOM/Document.h>
-#include <LibWeb/HTML/TemporaryExecutionContext.h>
+#include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 #include <LibWeb/WebIDL/DOMException.h>
@@ -22,6 +23,7 @@
 #if defined(AK_OS_RINOS)
 #    include <rin/contract_abi.h>
 #    include <rin/web/webcontent_protocol.h>
+#    include <rinruntime/webcontent_client_policy.h>
 #endif
 
 namespace Web::CredentialManagement {
@@ -31,6 +33,10 @@ GC_DEFINE_ALLOCATOR(CredentialsContainer);
 namespace {
 
 #if defined(AK_OS_RINOS)
+
+static constexpr i32 cose_algorithm_es256 = -7;
+static constexpr i32 cose_algorithm_eddsa = -8;
+static constexpr i32 cose_algorithm_rs256 = -257;
 
 static void secure_clear(void* data, size_t size)
 {
@@ -62,7 +68,7 @@ static bool copy_buffer_source(GC::Root<WebIDL::BufferSource> const& source,
 {
     if (!source)
         return false;
-    auto copy = WebIDL::get_buffer_source_copy(*source);
+    auto copy = WebIDL::get_buffer_source_copy(*source->raw_object());
     if (copy.is_error())
         return false;
     auto bytes = copy.release_value();
@@ -81,7 +87,7 @@ static Optional<String> default_rp_id(DOM::Document const& document)
 {
     auto origin = document.origin().serialize().to_byte_string();
     auto view = origin.view();
-    constexpr StringView https_prefix = "https://"_sv;
+    constexpr StringView https_prefix = "https://"sv;
     if (!view.starts_with(https_prefix) || view.length() <= https_prefix.length())
         return {};
     size_t host_end = https_prefix.length();
@@ -129,11 +135,11 @@ static bool map_user_verification(Bindings::UserVerificationRequirement value,
     u32& output)
 {
     auto name = Bindings::idl_enum_to_string(value);
-    if (name == "required"_sv)
+    if (name == "required"sv)
         output = RIN_PASS_WEBAUTHN_USER_VERIFICATION_REQUIRED;
-    else if (name == "preferred"_sv)
+    else if (name == "preferred"sv)
         output = RIN_PASS_WEBAUTHN_USER_VERIFICATION_PREFERRED;
-    else if (name == "discouraged"_sv)
+    else if (name == "discouraged"sv)
         output = RIN_PASS_WEBAUTHN_USER_VERIFICATION_DISCOURAGED;
     else
         return false;
@@ -156,9 +162,9 @@ static bool map_descriptor(PublicKeyCredentialDescriptor const& descriptor,
     u16 transport_mask = 0;
     for (auto transport : descriptor.transports.value()) {
         auto name = Bindings::idl_enum_to_string(transport);
-        if (name == "usb"_sv)
+        if (name == "usb"sv)
             transport_mask |= RIN_PASS_WEBAUTHN_TRANSPORT_USB;
-        else if (name == "internal"_sv)
+        else if (name == "internal"sv)
             transport_mask |= RIN_PASS_WEBAUTHN_TRANSPORT_INTERNAL;
     }
     if (transport_mask == 0u)
@@ -198,7 +204,7 @@ static bool make_creation_event(DOM::Document const& document,
 {
     if (!map_common_options(document, options.signal, event, true) ||
         public_key.exclude_credentials.size() > RIN_PASS_WEBAUTHN_MAX_CREDENTIALS ||
-        Bindings::idl_enum_to_string(public_key.attestation) != "none"_sv)
+        Bindings::idl_enum_to_string(public_key.attestation) != "none"sv)
         return false;
 
     Optional<String> rp_id;
@@ -232,9 +238,9 @@ static bool make_creation_event(DOM::Document const& document,
     for (auto const& parameter : public_key.pub_key_cred_params) {
         if (parameter.type != "public-key"_string)
             continue;
-        if (parameter.alg != RIN_PASS_WEBAUTHN_COSE_ALGORITHM_ES256 &&
-            parameter.alg != RIN_PASS_WEBAUTHN_COSE_ALGORITHM_EDDSA &&
-            parameter.alg != RIN_PASS_WEBAUTHN_COSE_ALGORITHM_RS256)
+        if (parameter.alg != cose_algorithm_es256 &&
+            parameter.alg != cose_algorithm_eddsa &&
+            parameter.alg != cose_algorithm_rs256)
             continue;
         bool already_present = false;
         for (u32 index = 0; index < event.request.algorithm_count; ++index) {
@@ -264,16 +270,16 @@ static bool make_creation_event(DOM::Document const& document,
                 event.request.user_verification))
             return false;
         if (selection.require_resident_key ||
-            Bindings::idl_enum_to_string(selection.resident_key) == "required"_sv)
+            Bindings::idl_enum_to_string(selection.resident_key) == "required"sv)
             event.request.resident_key = RIN_PASS_WEBAUTHN_RESIDENT_KEY_REQUIRED;
-        else if (Bindings::idl_enum_to_string(selection.resident_key) == "preferred"_sv)
+        else if (Bindings::idl_enum_to_string(selection.resident_key) == "preferred"sv)
             event.request.resident_key = RIN_PASS_WEBAUTHN_RESIDENT_KEY_PREFERRED;
         auto attachment = selection.authenticator_attachment;
         if (attachment.has_value()) {
             auto name = Bindings::idl_enum_to_string(attachment.value());
-            if (name == "platform"_sv)
+            if (name == "platform"sv)
                 event.request.authenticator = RIN_PASS_WEBAUTHN_AUTHENTICATOR_PLATFORM;
-            else if (name == "cross-platform"_sv)
+            else if (name == "cross-platform"sv)
                 event.request.authenticator = RIN_PASS_WEBAUTHN_AUTHENTICATOR_SECURITY_KEY;
             else
                 return false;
@@ -520,9 +526,9 @@ static bool make_attestation_object(ReadonlyBytes authenticator_data,
 {
     size_t offset = 0;
     if (!append_cbor_length(output, capacity, offset, 5u, 3u) ||
-        !append_cbor_text(output, capacity, offset, "fmt"_sv) ||
-        !append_cbor_text(output, capacity, offset, "none"_sv) ||
-        !append_cbor_text(output, capacity, offset, "authData"_sv) ||
+        !append_cbor_text(output, capacity, offset, "fmt"sv) ||
+        !append_cbor_text(output, capacity, offset, "none"sv) ||
+        !append_cbor_text(output, capacity, offset, "authData"sv) ||
         !append_cbor_length(output, capacity, offset, 2u,
             authenticator_data.size()) ||
         authenticator_data.size() > capacity - offset)
@@ -530,7 +536,7 @@ static bool make_attestation_object(ReadonlyBytes authenticator_data,
     __builtin_memcpy(output + offset, authenticator_data.data(),
         authenticator_data.size());
     offset += authenticator_data.size();
-    if (!append_cbor_text(output, capacity, offset, "attStmt"_sv) ||
+    if (!append_cbor_text(output, capacity, offset, "attStmt"sv) ||
         !append_cbor_length(output, capacity, offset, 5u, 0u))
         return false;
     output_size = offset;
@@ -610,7 +616,7 @@ static void complete_web_authn(JS::Realm& realm, GC::Ref<WebIDL::Promise> promis
         reject_web_authn(realm, promise, RIN_RESULT_NO_MEMORY);
         return;
     }
-    auto id = String::from_utf8(encoded_id.value().view());
+    auto id = String::from_utf8(encoded_id.value().bytes_as_string_view());
     auto raw_id = make_array_buffer(realm, credential_id);
     auto client_data_buffer = make_array_buffer(realm, client_data);
     auto authenticator_data_buffer = make_array_buffer(realm, authenticator_data);
@@ -745,7 +751,7 @@ GC::Ref<WebIDL::Promise> CredentialsContainer::get(CredentialRequestOptions cons
             return WebIDL::create_rejected_promise_from_exception(realm,
                 WebIDL::AbortError::create(realm, "WebAuthn request was cancelled"_utf16));
         auto mediation = Bindings::idl_enum_to_string(options.mediation);
-        if (mediation != "optional"_sv && mediation != "required"_sv)
+        if (mediation != "optional"sv && mediation != "required"sv)
             return WebIDL::create_rejected_promise_from_exception(realm,
                 WebIDL::NotSupportedError::create(realm,
                     "The requested WebAuthn mediation mode is not available"_utf16));
@@ -794,7 +800,7 @@ GC::Ref<WebIDL::Promise> CredentialsContainer::create(CredentialCreationOptions 
             return WebIDL::create_rejected_promise_from_exception(realm,
                 WebIDL::AbortError::create(realm, "WebAuthn request was cancelled"_utf16));
         auto mediation = Bindings::idl_enum_to_string(options.mediation);
-        if (mediation != "optional"_sv && mediation != "required"_sv)
+        if (mediation != "optional"sv && mediation != "required"sv)
             return WebIDL::create_rejected_promise_from_exception(realm,
                 WebIDL::NotSupportedError::create(realm,
                     "The requested WebAuthn mediation mode is not available"_utf16));

@@ -160,7 +160,7 @@ void ViewImplementation::complete_webauthn(
         completion.is_empty())
         return;
     client().async_complete_webauthn(
-        page_id(), navigation_generation, request_id, move(completion));
+        page_id(), navigation_generation, request_id, completion.bytes());
 }
 
 bool ViewImplementation::revoke_microphone_capture(ByteString domain, u64 sequence)

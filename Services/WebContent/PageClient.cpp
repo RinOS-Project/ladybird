@@ -934,7 +934,7 @@ Web::WebAuthnRequestIdentity PageClient::page_did_request_webauthn(
     auto payload = ByteBuffer::copy(&event, sizeof(event));
     if (payload.is_error()) return {};
     auto response = client().send_sync_but_allow_failure<
-        Messages::WebContentClient::RequestWebAuthn>(
+        Messages::WebContentClient::RequestWebauthn>(
             m_id, payload.release_value());
     if (!response || response->navigation_generation() == 0u ||
         response->request_id() == 0u)
@@ -946,7 +946,8 @@ Web::WebAuthnRequestIdentity PageClient::page_did_request_webauthn(
     }
     m_pending_webauthn_requests.append({
         response->navigation_generation(), response->request_id(), completion,
-        GC::Weak { document }, origin, GC::Weak { signal }, {} });
+        GC::Weak { document }, origin,
+        GC::Weak<Web::DOM::AbortSignal> { signal }, {} });
     if (signal != nullptr) {
         auto weak_page_client = GC::Weak { *this };
         auto abort_algorithm = signal->add_abort_algorithm(
@@ -1763,7 +1764,8 @@ bool PageClient::page_did_insert_clipboard_item(
         request.version = RIN_WEBCONTENT_CLIPBOARD_OWNER_VERSION;
         request.operation = operation;
         request.frame_identity = frame_identity;
-        memcpy(request.origin, origin.characters(), origin.length());
+        memcpy(request.origin, origin.characters_without_null_termination(),
+               origin.length());
     };
     auto clear_bytes = [](void* pointer, size_t size) {
         volatile u8* bytes = static_cast<volatile u8*>(pointer);
@@ -1907,7 +1909,8 @@ void PageClient::page_did_request_clipboard_entries(
         request.version = RIN_WEBCONTENT_CLIPBOARD_OWNER_VERSION;
         request.operation = operation;
         request.frame_identity = frame_identity;
-        memcpy(request.origin, origin.characters(), origin.length());
+        memcpy(request.origin, origin.characters_without_null_termination(),
+               origin.length());
     };
 
     RinWebContentClipboardOwnerRequestV1 query {};

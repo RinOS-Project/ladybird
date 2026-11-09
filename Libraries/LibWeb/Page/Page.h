@@ -35,6 +35,7 @@
 #include <LibWeb/CSS/PreferredColorScheme.h>
 #include <LibWeb/CSS/PreferredContrast.h>
 #include <LibWeb/CSS/PreferredMotion.h>
+#include <LibWeb/Clipboard/SystemClipboard.h>
 #include <LibWeb/DOM/RequestFullscreenError.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>

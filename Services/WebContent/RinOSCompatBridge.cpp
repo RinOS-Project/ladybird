@@ -49,6 +49,7 @@
 #include <rinruntime/webcontent_client_policy.h>
 #include "RinNetworkProxyConsumer.h"
 #include "../../../../src/webengine/RinLadybirdRuntime.hpp"
+#include "../../../../src/webengine/rin_webauthn_guard.h"
 #include <rinruntime/webcontent_permission_producer.h>
 #include <rinruntime/rin_web_serial_portal.h>
 #include <rin/gui/text_input.h>
@@ -2492,7 +2493,8 @@ struct PageSession {
                 next_webauthn_event_id == UINT64_MAX)
                 break;
 
-            auto document_url = URL::Parser::basic_parse(event.document_url);
+            auto document_url = URL::Parser::basic_parse(StringView {
+                event.document_url, strlen(event.document_url) });
             if (!document_url.has_value()) break;
             auto document_origin = document_url->origin();
             if (document_origin.is_opaque() ||
