@@ -56,6 +56,8 @@ if (AK_OS_RINOS)
     target_include_directories(requestserverservice PRIVATE ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinruntime/include)
     target_include_directories(requestserverservice PRIVATE
         ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinhttp/include)
+    target_include_directories(requestserverservice PRIVATE
+        ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinsecure/include)
     target_sources(requestserverservice PRIVATE
         ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinhttp/http.c
         ${LADYBIRD_SOURCE_DIR}/../../public-base/libs/rinuri/uri.c
