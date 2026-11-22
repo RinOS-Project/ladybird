@@ -78,7 +78,7 @@ else ()
     list(APPEND SOURCES Platform/ProcessStatisticsUnimplemented.cpp)
 endif()
 
-if (AK_OS_RINOS AND NOT LAGOM_TOOLS_ONLY)
+if (AK_OS_RINOS AND NOT LINUX AND NOT BSD AND NOT LAGOM_TOOLS_ONLY)
     list(APPEND SOURCES TimeZoneWatcherRinOS.cpp)
 elseif (LINUX OR BSD)
     list(APPEND SOURCES TimeZoneWatcherUnix.cpp)

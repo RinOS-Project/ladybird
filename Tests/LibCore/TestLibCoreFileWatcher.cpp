@@ -13,6 +13,7 @@
 #include <LibFileSystem/FileSystem.h>
 #include <LibTest/TestCase.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <unistd.h>
 
 #ifdef AK_OS_MACOS
@@ -67,6 +68,61 @@ TEST_CASE(file_watcher_child_events)
     timer2->start();
 
     auto catchall_timer = Core::Timer::create_single_shot(3 * TIMEOUT_PER_STEP_IN_MS, [&] {
+        VERIFY_NOT_REACHED();
+    });
+    catchall_timer->start();
+
+    event_loop.exec();
+}
+
+TEST_CASE(file_watcher_child_rename_events)
+{
+    auto event_loop = Core::EventLoop();
+    static constexpr char source_path[] = "/tmp/file-watcher-rename-source";
+    static constexpr char destination_path[] = "/tmp/file-watcher-rename-destination";
+    static constexpr auto source_path_view = "/tmp/file-watcher-rename-source"sv;
+    static constexpr auto destination_path_view = "/tmp/file-watcher-rename-destination"sv;
+    (void)Core::System::unlink(source_path_view);
+    (void)Core::System::unlink(destination_path_view);
+    EXPECT_NE(creat(source_path, 0600), -1);
+
+    auto file_watcher = MUST(Core::FileWatcher::create());
+    MUST(file_watcher->add_watch("/tmp/"sv,
+        Core::FileWatcherEvent::Type::ChildCreated
+            | Core::FileWatcherEvent::Type::ChildDeleted));
+
+    int event_count = 0;
+    file_watcher->on_change = [&](Core::FileWatcherEvent const& event) {
+        if (event.event_path != source_path_view && event.event_path != destination_path_view)
+            return;
+
+        if (event_count == 0) {
+            EXPECT_EQ(event.event_path, source_path_view);
+            EXPECT(has_flag(event.type, Core::FileWatcherEvent::Type::ChildDeleted));
+        } else if (event_count == 1) {
+            EXPECT_EQ(event.event_path, destination_path_view);
+            EXPECT(has_flag(event.type, Core::FileWatcherEvent::Type::ChildCreated));
+        } else if (event_count == 2) {
+            EXPECT_EQ(event.event_path, destination_path_view);
+            EXPECT(has_flag(event.type, Core::FileWatcherEvent::Type::ChildDeleted));
+            MUST(file_watcher->remove_watch("/tmp/"sv));
+            event_loop.quit(0);
+        }
+
+        ++event_count;
+    };
+
+    auto rename_timer = Core::Timer::create_single_shot(TIMEOUT_PER_STEP_IN_MS, [&] {
+        EXPECT_EQ(rename(source_path, destination_path), 0);
+    });
+    rename_timer->start();
+
+    auto delete_timer = Core::Timer::create_single_shot(2 * TIMEOUT_PER_STEP_IN_MS, [&] {
+        MUST(Core::System::unlink(destination_path_view));
+    });
+    delete_timer->start();
+
+    auto catchall_timer = Core::Timer::create_single_shot(4 * TIMEOUT_PER_STEP_IN_MS, [&] {
         VERIFY_NOT_REACHED();
     });
     catchall_timer->start();
