@@ -14,6 +14,7 @@
 #include <AK/Noncopyable.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/OwnPtr.h>
+#include <AK/Platform.h>
 #include <AK/RefCounted.h>
 #include <AK/Vector.h>
 #include <LibCore/Export.h>
@@ -72,6 +73,9 @@ protected:
     HashMap<unsigned, Vector<FileWatcherPath>> m_wd_to_paths;
 };
 
+#if defined(AK_OS_LINUX) || defined(AK_OS_RINOS)
+#    define LIBCORE_HAS_BLOCKING_FILE_WATCHER 1
+
 class CORE_API BlockingFileWatcher final : public FileWatcherBase {
     AK_MAKE_NONCOPYABLE(BlockingFileWatcher);
 
@@ -91,6 +95,7 @@ private:
     Vector<FileWatcherEvent> m_pending_events;
     [[maybe_unused]] size_t m_next_pending_event { 0 };
 };
+#endif
 
 class CORE_API FileWatcher : public FileWatcherBase
     , public RefCounted<FileWatcher> {
