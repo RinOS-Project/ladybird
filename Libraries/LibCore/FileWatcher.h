@@ -38,6 +38,11 @@ struct FileWatcherEvent {
     ByteString event_path;
 };
 
+struct FileWatcherPath {
+    ByteString path;
+    FileWatcherEvent::Type event_mask;
+};
+
 AK_ENUM_BITWISE_OPERATORS(FileWatcherEvent::Type);
 
 enum class FileWatcherFlags : u32 {
@@ -64,7 +69,7 @@ protected:
 
     int m_watcher_fd { -1 };
     HashMap<ByteString, unsigned> m_path_to_wd;
-    HashMap<unsigned, ByteString> m_wd_to_path;
+    HashMap<unsigned, Vector<FileWatcherPath>> m_wd_to_paths;
 };
 
 class CORE_API BlockingFileWatcher final : public FileWatcherBase {

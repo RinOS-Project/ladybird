@@ -129,6 +129,81 @@ TEST_CASE(blocking_file_watcher_nonblocking_empty_result)
     MUST(Core::System::rmdir(directory));
 }
 
+TEST_CASE(file_watcher_aliases_share_a_descriptor_without_crossing_event_masks)
+{
+    char directory_template[] = "/tmp/file-watcher-alias-XXXXXX";
+    auto* directory_path = mkdtemp(directory_template);
+    EXPECT_NE(directory_path, nullptr);
+    if (!directory_path)
+        return;
+
+    auto root = StringView { directory_path, strlen(directory_path) };
+    auto watched_path = ByteString::formatted("{}/watched", root);
+    auto alias_path = ByteString::formatted("{}/alias", root);
+    auto created_path = ByteString::formatted("{}/created", watched_path);
+    auto after_remove_path = ByteString::formatted("{}/after-remove", watched_path);
+    MUST(Core::System::mkdir(watched_path, 0700));
+    MUST(Core::System::symlink(watched_path, alias_path));
+
+    auto watcher = MUST(Core::BlockingFileWatcher::create(Core::FileWatcherFlags::Nonblock));
+    MUST(watcher->add_watch(watched_path, Core::FileWatcherEvent::Type::ChildCreated | Core::FileWatcherEvent::Type::Deleted));
+    MUST(watcher->add_watch(alias_path, Core::FileWatcherEvent::Type::ContentModified));
+
+    int fd = open(created_path.characters(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+    EXPECT_NE(fd, -1);
+    if (fd >= 0)
+        EXPECT_EQ(close(fd), 0);
+    auto created_event = MUST(watcher->wait_for_event());
+    EXPECT(created_event.has_value());
+    if (created_event.has_value()) {
+        EXPECT_EQ(created_event->event_path, created_path);
+        EXPECT_EQ(created_event->type, Core::FileWatcherEvent::Type::ChildCreated);
+    }
+    EXPECT(!MUST(watcher->wait_for_event()).has_value());
+
+    fd = open(created_path.characters(), O_WRONLY | O_APPEND);
+    EXPECT_NE(fd, -1);
+    if (fd >= 0) {
+        char byte = 'x';
+        EXPECT_EQ(write(fd, &byte, sizeof(byte)), static_cast<ssize_t>(sizeof(byte)));
+        EXPECT_EQ(close(fd), 0);
+    }
+    auto modified_event = MUST(watcher->wait_for_event());
+    EXPECT(modified_event.has_value());
+    if (modified_event.has_value()) {
+        EXPECT_EQ(modified_event->event_path, ByteString::formatted("{}/created", alias_path));
+        EXPECT_EQ(modified_event->type, Core::FileWatcherEvent::Type::ContentModified);
+    }
+
+    EXPECT(MUST(watcher->remove_watch(alias_path)));
+    EXPECT(watcher->is_watching(watched_path));
+    EXPECT(!watcher->is_watching(alias_path));
+    fd = open(after_remove_path.characters(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+    EXPECT_NE(fd, -1);
+    if (fd >= 0)
+        EXPECT_EQ(close(fd), 0);
+    auto after_remove_event = MUST(watcher->wait_for_event());
+    EXPECT(after_remove_event.has_value());
+    if (after_remove_event.has_value()) {
+        EXPECT_EQ(after_remove_event->event_path, after_remove_path);
+        EXPECT_EQ(after_remove_event->type, Core::FileWatcherEvent::Type::ChildCreated);
+    }
+
+    MUST(Core::System::unlink(created_path));
+    MUST(Core::System::unlink(after_remove_path));
+    MUST(Core::System::rmdir(watched_path));
+    auto deleted_event = MUST(watcher->wait_for_event());
+    EXPECT(deleted_event.has_value());
+    if (deleted_event.has_value()) {
+        EXPECT_EQ(deleted_event->event_path, watched_path);
+        EXPECT_EQ(deleted_event->type, Core::FileWatcherEvent::Type::Deleted);
+    }
+    EXPECT(!watcher->is_watching(watched_path));
+    EXPECT(!MUST(watcher->remove_watch(watched_path)));
+    MUST(Core::System::unlink(alias_path));
+    MUST(Core::System::rmdir(root));
+}
+
 TEST_CASE(file_watcher_child_events)
 {
     auto event_loop = Core::EventLoop();
