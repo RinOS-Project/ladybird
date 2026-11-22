@@ -70,8 +70,8 @@ else()
 endif()
 
 # FIXME: Implement ProcessStatistics for Windows and *BSD
-if (LINUX)
-    list(APPEND SOURCES Platform/ProcessStatisticsLinux.cpp)
+if (LINUX OR AK_OS_RINOS)
+    list(APPEND SOURCES Platform/ProcessStatisticsProcfs.cpp)
 elseif (APPLE AND NOT IOS)
     list(APPEND SOURCES Platform/ProcessStatisticsMach.cpp)
 else ()

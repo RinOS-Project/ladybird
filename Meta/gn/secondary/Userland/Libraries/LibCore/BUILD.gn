@@ -100,8 +100,8 @@ source_set("sources") {
     sources += [ "MachPort.cpp" ]
   }
 
-  if (current_os == "linux") {
-    sources += [ "Platform/ProcessStatisticsLinux.cpp" ]
+  if (current_os == "linux" || current_os == "rinos") {
+    sources += [ "Platform/ProcessStatisticsProcfs.cpp" ]
   } else if (current_os == "mac") {
     sources += [
       "Platform/ProcessStatisticsMach.cpp",

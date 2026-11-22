@@ -128,7 +128,8 @@ Optional<Process> ProcessManager::remove_process(pid_t pid)
 void ProcessManager::update_all_process_statistics()
 {
     Threading::MutexLocker locker { m_lock };
-    (void)update_process_statistics(m_statistics);
+    if (auto result = update_process_statistics(m_statistics); result.is_error())
+        dbgln("Failed to update process statistics: {}", result.error());
 }
 
 JsonValue ProcessManager::serialize_json()
@@ -149,8 +150,8 @@ JsonValue ProcessManager::serialize_json()
         JsonObject object;
         object.set("name"sv, move(process_name));
         object.set("pid"sv, process.pid);
-        object.set("cpu"sv, process.cpu_percent);
-        object.set("memory"sv, process.memory_usage_bytes);
+        object.set("cpu"sv, process.cpu_percent_available ? JsonValue(process.cpu_percent) : JsonValue {});
+        object.set("memory"sv, process.memory_usage_available ? JsonValue(process.memory_usage_bytes) : JsonValue {});
         serialized.must_append(move(object));
     });
 

@@ -22,6 +22,12 @@ if (AK_OS_RINOS)
     )
 endif()
 
+if (LINUX OR AK_OS_RINOS)
+    list(APPEND TEST_SOURCES
+        TestLibCoreProcessStatistics.cpp
+    )
+endif()
+
 foreach(source IN LISTS TEST_SOURCES)
     ladybird_test("${source}" LibCore)
 endforeach()

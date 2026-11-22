@@ -19,6 +19,11 @@ static auto user_hz = sysconf(_SC_CLK_TCK);
 
 ErrorOr<void> update_process_statistics(ProcessStatistics& statistics)
 {
+    for (auto& process : statistics.processes) {
+        process->cpu_percent_available = false;
+        process->memory_usage_available = false;
+    }
+
     host_cpu_load_info_data_t cpu_info {};
     mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
     auto res = host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, reinterpret_cast<host_info_t>(&cpu_info), &count);
@@ -48,6 +53,7 @@ ErrorOr<void> update_process_statistics(ProcessStatistics& statistics)
         }
 
         process->memory_usage_bytes = basic_info.resident_size;
+        process->memory_usage_available = true;
 
         task_thread_times_info_data_t time_info {};
         count = TASK_THREAD_TIMES_INFO_COUNT;
@@ -66,8 +72,9 @@ ErrorOr<void> update_process_statistics(ProcessStatistics& statistics)
         process->time_spent_in_process = time_in_process.to_microseconds();
 
         process->cpu_percent = 0.0f;
-        if (time_diff_process > AK::Duration::zero())
+        if (total_cpu_micro_diff > 0 && time_diff_process > AK::Duration::zero())
             process->cpu_percent = 100.0f * static_cast<float>(time_diff_process.to_microseconds()) / total_cpu_micro_diff;
+        process->cpu_percent_available = total_cpu_micro_diff > 0;
     }
 
     return {};

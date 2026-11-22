@@ -138,8 +138,8 @@
                     let row = newTable.insertRow();
                     insertColumn(row, process.name);
                     insertColumn(row, process.pid);
-                    insertColumn(row, cpuFormatter.format(process.cpu));
-                    insertColumn(row, memoryFormatter.formatBytes(process.memory));
+                    insertColumn(row, process.cpu == null ? "Unavailable" : cpuFormatter.format(process.cpu));
+                    insertColumn(row, process.memory == null ? "Unavailable" : memoryFormatter.formatBytes(process.memory));
                 });
 
                 oldTable.parentNode.replaceChild(newTable, oldTable);
