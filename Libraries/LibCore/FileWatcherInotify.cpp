@@ -132,7 +132,12 @@ ErrorOr<NonnullRefPtr<FileWatcher>> FileWatcher::create(FileWatcherFlags flags)
         return Error::from_errno(errno);
 
     auto notifier = Notifier::construct(watcher_fd, Notifier::Type::Read);
-    return adopt_nonnull_ref_or_enomem(new (nothrow) FileWatcher(watcher_fd, move(notifier)));
+    auto watcher = adopt_nonnull_ref_or_enomem(new (nothrow) FileWatcher(watcher_fd, move(notifier)));
+    if (watcher.is_error()) {
+        (void)::close(watcher_fd);
+        return watcher.release_error();
+    }
+    return watcher.release_value();
 }
 
 FileWatcher::FileWatcher(int watcher_fd, NonnullRefPtr<Notifier> notifier)
@@ -160,6 +165,51 @@ FileWatcher::FileWatcher(int watcher_fd, NonnullRefPtr<Notifier> notifier)
 }
 
 FileWatcher::~FileWatcher() = default;
+
+ErrorOr<NonnullOwnPtr<BlockingFileWatcher>> BlockingFileWatcher::create(FileWatcherFlags flags)
+{
+    auto watcher_fd = ::inotify_init1(file_watcher_flags_to_inotify_flags(flags | FileWatcherFlags::CloseOnExec));
+    if (watcher_fd < 0)
+        return Error::from_errno(errno);
+
+    auto watcher = adopt_nonnull_own_or_enomem(new (nothrow) BlockingFileWatcher(watcher_fd));
+    if (watcher.is_error()) {
+        (void)::close(watcher_fd);
+        return watcher.release_error();
+    }
+    return watcher.release_value();
+}
+
+BlockingFileWatcher::~BlockingFileWatcher() = default;
+
+ErrorOr<Optional<FileWatcherEvent>> BlockingFileWatcher::wait_for_event()
+{
+    if (m_next_pending_event == m_pending_events.size()) {
+        m_pending_events.clear();
+        m_next_pending_event = 0;
+
+        auto events = get_events_from_fd(m_watcher_fd, m_wd_to_path);
+        if (events.is_error())
+            return events.release_error();
+        m_pending_events = events.release_value();
+        if (m_pending_events.is_empty())
+            return Optional<FileWatcherEvent> {};
+    }
+
+    auto event = move(m_pending_events[m_next_pending_event++]);
+    if (has_flag(event.type, FileWatcherEvent::Type::Deleted)) {
+        auto result = remove_watch(event.event_path);
+        if (result.is_error())
+            dbgln_if(FILE_WATCHER_DEBUG, "wait_for_event: {}", result.error());
+    }
+    return Optional<FileWatcherEvent> { move(event) };
+}
+
+FileWatcherBase::~FileWatcherBase()
+{
+    if (m_watcher_fd >= 0)
+        (void)::close(m_watcher_fd);
+}
 
 ErrorOr<bool> FileWatcherBase::add_watch(ByteString path, FileWatcherEvent::Type event_mask)
 {
@@ -202,11 +252,12 @@ ErrorOr<bool> FileWatcherBase::remove_watch(ByteString path)
         return false;
     }
 
-    m_path_to_wd.remove(it);
-    m_wd_to_path.remove(it->value);
-
-    if (::inotify_rm_watch(m_watcher_fd, it->value) < 0)
+    auto watch_descriptor = it->value;
+    if (::inotify_rm_watch(m_watcher_fd, watch_descriptor) < 0 && errno != EINVAL)
         return Error::from_errno(errno);
+
+    m_path_to_wd.remove(it);
+    m_wd_to_path.remove(watch_descriptor);
 
     dbgln_if(FILE_WATCHER_DEBUG, "remove_watch: stopped watching path '{}' on InodeWatcher {}", path, m_watcher_fd);
     return true;

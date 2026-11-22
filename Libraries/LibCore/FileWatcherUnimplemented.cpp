@@ -11,6 +11,20 @@
 
 namespace Core {
 
+ErrorOr<NonnullOwnPtr<BlockingFileWatcher>> BlockingFileWatcher::create(FileWatcherFlags)
+{
+    return Error::from_errno(ENOTSUP);
+}
+
+BlockingFileWatcher::~BlockingFileWatcher() = default;
+
+ErrorOr<Optional<FileWatcherEvent>> BlockingFileWatcher::wait_for_event()
+{
+    return Error::from_errno(ENOTSUP);
+}
+
+FileWatcherBase::~FileWatcherBase() = default;
+
 ErrorOr<NonnullRefPtr<FileWatcher>> FileWatcher::create(FileWatcherFlags)
 {
     return Error::from_errno(ENOTSUP);

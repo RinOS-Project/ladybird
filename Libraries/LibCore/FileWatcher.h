@@ -13,7 +13,9 @@
 #include <AK/HashMap.h>
 #include <AK/Noncopyable.h>
 #include <AK/NonnullRefPtr.h>
+#include <AK/OwnPtr.h>
 #include <AK/RefCounted.h>
+#include <AK/Vector.h>
 #include <LibCore/Export.h>
 #include <LibCore/Notifier.h>
 
@@ -48,7 +50,7 @@ AK_ENUM_BITWISE_OPERATORS(FileWatcherFlags);
 
 class CORE_API FileWatcherBase {
 public:
-    virtual ~FileWatcherBase() = default;
+    virtual ~FileWatcherBase();
 
     ErrorOr<bool> add_watch(ByteString path, FileWatcherEvent::Type event_mask);
     ErrorOr<bool> remove_watch(ByteString path);
@@ -65,14 +67,24 @@ protected:
     HashMap<unsigned, ByteString> m_wd_to_path;
 };
 
-class BlockingFileWatcher final : public FileWatcherBase {
+class CORE_API BlockingFileWatcher final : public FileWatcherBase {
     AK_MAKE_NONCOPYABLE(BlockingFileWatcher);
 
 public:
-    explicit BlockingFileWatcher(FileWatcherFlags = FileWatcherFlags::None);
-    ~BlockingFileWatcher();
+    static ErrorOr<NonnullOwnPtr<BlockingFileWatcher>> create(FileWatcherFlags = FileWatcherFlags::None);
+    virtual ~BlockingFileWatcher() override;
 
-    Optional<FileWatcherEvent> wait_for_event();
+    // Returns an empty optional when a nonblocking watcher has no event available.
+    ErrorOr<Optional<FileWatcherEvent>> wait_for_event();
+
+private:
+    explicit BlockingFileWatcher(int watcher_fd)
+        : FileWatcherBase(watcher_fd)
+    {
+    }
+
+    Vector<FileWatcherEvent> m_pending_events;
+    [[maybe_unused]] size_t m_next_pending_event { 0 };
 };
 
 class CORE_API FileWatcher : public FileWatcherBase
