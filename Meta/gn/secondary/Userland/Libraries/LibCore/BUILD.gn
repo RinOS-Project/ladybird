@@ -117,8 +117,8 @@ source_set("filewatcher") {
   sources = [ "FileWatcher.h" ]
   deps = [ "//AK" ]
   frameworks = []
-  if (current_os == "linux") {
-    sources += [ "FileWatcherLinux.cpp" ]
+  if (current_os == "linux" || current_os == "rinos") {
+    sources += [ "FileWatcherInotify.cpp" ]
   } else if (current_os == "mac") {
     sources += [ "FileWatcherMacOS.mm" ]
     frameworks += [
@@ -136,8 +136,10 @@ source_set("timezonewatcher") {
   sources = [ "TimeZoneWatcher.h" ]
   deps = [ "//AK" ]
   frameworks = []
-  if (current_os == "linux") {
-    sources += [ "TimeZoneWatcherLinux.cpp" ]
+  if (current_os == "rinos") {
+    sources += [ "TimeZoneWatcherRinOS.cpp" ]
+  } else if (current_os == "linux" || current_os == "bsd") {
+    sources += [ "TimeZoneWatcherUnix.cpp" ]
   } else if (current_os == "mac") {
     sources += [ "TimeZoneWatcherMacOS.mm" ]
     frameworks += [
