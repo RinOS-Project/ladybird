@@ -70,6 +70,13 @@ static ErrorOr<Vector<FileWatcherEvent>> get_events_from_fd(int fd, HashMap<unsi
         auto const event_size = sizeof(inotify_event) + event->len;
         offset += event_size;
 
+        if ((event->mask & IN_Q_OVERFLOW) != 0) {
+            FileWatcherEvent overflow_event;
+            overflow_event.type = FileWatcherEvent::Type::QueueOverflow;
+            TRY(results.try_append(move(overflow_event)));
+            continue;
+        }
+
         if ((event->mask & IN_IGNORED) != 0)
             continue;
 

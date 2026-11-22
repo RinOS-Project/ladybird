@@ -28,6 +28,9 @@ struct FileWatcherEvent {
         ChildCreated = 1 << 3,
         ChildDeleted = 1 << 4,
         DoNotFollowLink = 1 << 5,
+        // The backend lost one or more events for this watcher. event_path is empty;
+        // consumers must rescan all watched paths and reconcile their state.
+        QueueOverflow = 1 << 6,
     };
     Type type { Type::Invalid };
     ByteString event_path;
@@ -124,6 +127,7 @@ struct Formatter<Core::FileWatcherEvent::Type> : Formatter<FormatString> {
         TRY(put_string_if_has_flag(Core::FileWatcherEvent::Type::Deleted, "Deleted"sv));
         TRY(put_string_if_has_flag(Core::FileWatcherEvent::Type::ContentModified, "ContentModified"sv));
         TRY(put_string_if_has_flag(Core::FileWatcherEvent::Type::MetadataModified, "MetadataModified"sv));
+        TRY(put_string_if_has_flag(Core::FileWatcherEvent::Type::QueueOverflow, "QueueOverflow"sv));
         TRY(builder.put_string("]"sv));
 
         VERIFY(had_any_flag);

@@ -14,6 +14,8 @@
 #include <LibTest/TestCase.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #ifdef AK_OS_MACOS
@@ -128,6 +130,55 @@ TEST_CASE(file_watcher_child_rename_events)
     catchall_timer->start();
 
     event_loop.exec();
+}
+
+TEST_CASE(file_watcher_queue_overflow)
+{
+    char directory_template[] = "/tmp/file-watcher-overflow-XXXXXX";
+    auto* directory_path = mkdtemp(directory_template);
+    EXPECT_NE(directory_path, nullptr);
+    if (!directory_path)
+        return;
+
+    auto directory = StringView { directory_path, strlen(directory_path) };
+    auto event_loop = Core::EventLoop();
+    auto file_watcher = MUST(Core::FileWatcher::create());
+    MUST(file_watcher->add_watch(directory, Core::FileWatcherEvent::Type::ChildCreated));
+
+    bool saw_overflow = false;
+    file_watcher->on_change = [&](Core::FileWatcherEvent const& event) {
+        if (!has_flag(event.type, Core::FileWatcherEvent::Type::QueueOverflow))
+            return;
+
+        EXPECT(event.event_path.is_empty());
+        saw_overflow = true;
+        event_loop.quit(0);
+    };
+
+    static constexpr size_t event_count = 20000;
+    size_t files_created = 0;
+    for (; files_created < event_count; ++files_created) {
+        auto path = ByteString::formatted("{}/{}", directory, files_created);
+        int fd = open(path.characters(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+        EXPECT_NE(fd, -1);
+        if (fd < 0)
+            break;
+        EXPECT_EQ(close(fd), 0);
+    }
+
+    EXPECT_EQ(files_created, event_count);
+    auto timeout = Core::Timer::create_single_shot(15000, [&] {
+        VERIFY_NOT_REACHED();
+    });
+    timeout->start();
+    event_loop.exec();
+    EXPECT(saw_overflow);
+
+    for (size_t index = 0; index < files_created; ++index) {
+        auto path = ByteString::formatted("{}/{}", directory, index);
+        (void)Core::System::unlink(path);
+    }
+    MUST(Core::System::rmdir(directory));
 }
 
 TEST_CASE(contents_changed)
